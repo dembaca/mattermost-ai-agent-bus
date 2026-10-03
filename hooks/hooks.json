@@ -1,0 +1,27 @@
+{
+  "description": "Keeps the agent's Mattermost presence honest and its inbox answered. On a new prompt the bot shows as 🛠 working; when the turn ends it goes back to 💤 idle. Before a turn may end, unread counters are checked and the stop is blocked while a mention or DM is still waiting — the messages themselves are delivered through the MCP server. Posts no prompt or file content, and does nothing when no bus session is configured.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/turn-status.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-inbox-check.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

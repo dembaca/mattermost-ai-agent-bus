@@ -180,9 +180,16 @@ class WebSocketInbox:
                     )
                 )
         except asyncio.CancelledError:
+            # close() cancels us and owns the socket from here on.
             raise
         except Exception as exc:  # noqa: BLE001
             log.error("websocket reader stopped: %s", exc)
+        # Reached on a dropped connection or a clean server-side close. Drop the
+        # dead socket so the next wait_for_events reconnects: otherwise _ws stays
+        # set, nothing feeds the queue, and every later call times out silently —
+        # the agent goes deaf with no error anywhere.
+        self._ws = None
+        self._reader = None
 
     async def wait_for_events(
         self,
@@ -204,4 +211,24 @@ class WebSocketInbox:
                 events.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:
                 break
+        await self._mark_delivered_read(events)
         return events
+
+    async def _mark_delivered_read(self, events: list[ClassifiedEvent]) -> None:
+        """Clear Mattermost's unread counters for channels we just delivered.
+
+        Handing an event to the agent is what "read" means here. Without this
+        the counters keep climbing, and the Stop hook that reads them to decide
+        "is anyone waiting on me?" would block every turn forever.
+        """
+        seen: set[str] = set()
+        for event in events:
+            cid = event.post.get("channel_id")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            try:
+                await self.client.view_channel(cid)
+            except Exception as exc:  # noqa: BLE001
+                # Never fail delivery over bookkeeping.
+                log.warning("could not mark channel %s read: %s", cid, exc)

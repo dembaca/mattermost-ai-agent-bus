@@ -59,3 +59,44 @@ async def test_explicit_watch_list_is_not_overridden():
     await inbox.ensure_identity()
     assert inbox.watched_channel_ids == {"preset"}
     assert client.resolved == []
+
+
+class _DeadSocket:
+    """A socket whose read loop ends, as on a dropped connection."""
+
+    def __init__(self):
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
+
+    async def close(self):
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_dead_socket_is_dropped_so_the_next_wait_reconnects():
+    """Regression: a dropped WebSocket left _ws set, so the inbox went silently
+    deaf — every later wait_for_events timed out with nothing feeding the queue."""
+    import asyncio
+
+    inbox = WebSocketInbox(client=_FakeClient(), watched_channel_ids={"c"})
+    inbox._ws = _DeadSocket()
+    await inbox._read_loop()
+    assert inbox._ws is None, "dead socket must be cleared to allow a reconnect"
+    assert inbox._reader is None
+    del asyncio
+
+
+@pytest.mark.asyncio
+async def test_close_still_closes_the_socket():
+    """The reconnect fix must not stop close() from closing a live socket."""
+    inbox = WebSocketInbox(client=_FakeClient())
+    sock = _DeadSocket()
+    inbox._ws = sock
+    await inbox.close()
+    assert sock.closed is True
+    assert inbox._ws is None

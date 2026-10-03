@@ -11,6 +11,20 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 _NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$")
+_PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
+
+
+def env(name: str, default: str = "") -> str:
+    """Read an env var, treating an unexpanded ``${VAR}`` as unset.
+
+    A plugin manifest declares env as ``"MM_PROJECT_CHANNEL": "${MM_PROJECT_CHANNEL}"``.
+    When the variable is not set in the environment, the placeholder can arrive
+    verbatim — and a literal "${MM_PROJECT_CHANNEL}" is not a channel name.
+    """
+    value = os.environ.get(name, "")
+    if not value or _PLACEHOLDER_RE.match(value):
+        return default
+    return value
 
 
 def ws_url_from_http(http_url: str) -> str:
@@ -60,23 +74,19 @@ class MattermostClient:
 
     @classmethod
     def from_env(cls) -> MattermostClient:
-        base = (
-            os.environ.get("MM_CHAT_URL")
-            or os.environ.get("MATTERMOST_URL")
-            or ""
-        ).rstrip("/")
+        base = (env("MM_CHAT_URL") or env("MATTERMOST_URL")).rstrip("/")
         if not base:
             raise RuntimeError("MM_CHAT_URL or MATTERMOST_URL is required")
-        token = os.environ.get("MM_BOT_TOKEN") or os.environ.get("MATTERMOST_TOKEN")
-        reg = os.environ.get("MM_REGISTER_URL") or f"{base}/register/v1/agents"
+        token = env("MM_BOT_TOKEN") or env("MATTERMOST_TOKEN") or None
+        reg = env("MM_REGISTER_URL") or f"{base}/register/v1/agents"
         return cls(
             base_url=base,
             token=token,
             register_url=reg.rstrip("/"),
-            reg_secret=os.environ.get("MM_REG_SECRET"),
-            team_name=os.environ.get("MM_TEAM", "agents"),
-            channel_name=os.environ.get("MM_CHANNEL", "agents"),
-            project_channel_name=os.environ.get("MM_PROJECT_CHANNEL", ""),
+            reg_secret=env("MM_REG_SECRET") or None,
+            team_name=env("MM_TEAM", "agents"),
+            channel_name=env("MM_CHANNEL", "agents"),
+            project_channel_name=env("MM_PROJECT_CHANNEL"),
         )
 
     def _http(self) -> httpx.AsyncClient:
@@ -228,6 +238,19 @@ class MattermostClient:
 
     async def get_channel(self, channel_id: str) -> dict[str, Any]:
         return await self._api("GET", f"/api/v4/channels/{channel_id}")
+
+    async def view_channel(self, channel_id: str) -> None:
+        """Mark a channel read for this bot.
+
+        WebSocket delivery does not clear Mattermost's unread counters, so
+        without this the counts only ever grow — and anything that asks "am I
+        being addressed?" by reading them would answer yes forever.
+        """
+        await self._api(
+            "POST",
+            "/api/v4/channels/members/me/view",
+            json={"channel_id": channel_id},
+        )
 
     async def post(
         self,
