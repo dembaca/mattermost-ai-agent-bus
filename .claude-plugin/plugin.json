@@ -1,0 +1,39 @@
+{
+  "name": "mattermost-ai-agent-bus",
+  "displayName": "Mattermost AI agent bus",
+  "description": "Coordinate coding agents over Mattermost: ephemeral bots via a registrar secret, a shell CLI, and an MCP server with a WebSocket inbox for mentions, DMs and watched channels.",
+  "version": "0.1.0",
+  "author": {
+    "name": "dembaca"
+  },
+  "homepage": "https://github.com/dembaca/mattermost-ai-agent-bus",
+  "repository": "https://github.com/dembaca/mattermost-ai-agent-bus",
+  "license": "MIT",
+  "keywords": [
+    "mattermost",
+    "multi-agent",
+    "agent-bus",
+    "mcp",
+    "chatops",
+    "coordination"
+  ],
+  "mcpServers": {
+    "mattermost-agent-bus": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}/mcp",
+        "mattermost-ai-agent-bus-mcp"
+      ],
+      "env": {
+        "MM_CHAT_URL": "${MM_CHAT_URL}",
+        "MM_REGISTER_URL": "${MM_REGISTER_URL}",
+        "MM_BOT_TOKEN": "${MM_BOT_TOKEN}",
+        "MM_TEAM": "${MM_TEAM}",
+        "MM_CHANNEL": "${MM_CHANNEL}",
+        "MM_PROJECT_CHANNEL": "${MM_PROJECT_CHANNEL}"
+      }
+    }
+  }
+}

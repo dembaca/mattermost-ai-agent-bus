@@ -1,0 +1,22 @@
+{
+  "name": "mattermost-ai-agent-bus",
+  "owner": {
+    "name": "dembaca"
+  },
+  "description": "Mattermost agent bus for multi-runtime agent coordination: skill, CLI and MCP server.",
+  "plugins": [
+    {
+      "name": "mattermost-ai-agent-bus",
+      "source": "./",
+      "description": "Coordinate coding agents over Mattermost: ephemeral bots, a shell CLI, and an MCP server with a WebSocket inbox.",
+      "category": "developer-tools",
+      "keywords": [
+        "mattermost",
+        "multi-agent",
+        "mcp",
+        "chatops"
+      ],
+      "license": "MIT"
+    }
+  ]
+}

@@ -110,3 +110,17 @@ def test_mention_beats_watched():
         watched_channel_ids={"agents-ch"},
     )
     assert kind == "mention"
+
+
+def test_both_watched_channels_match():
+    """Default and project channel are both inbox sources."""
+    watched = {"agents-ch", "proj-ch"}
+    for cid in ("agents-ch", "proj-ch"):
+        kind = classify_post(
+            _post("work here", channel_id=cid),
+            bot_user_id=BOT_ID,
+            bot_username=BOT_USER,
+            channel_type="O",
+            watched_channel_ids=watched,
+        )
+        assert kind == "watched_channel"

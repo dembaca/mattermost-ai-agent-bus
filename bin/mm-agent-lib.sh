@@ -71,6 +71,30 @@ mm_json_post() {
     -d "$body"
 }
 
+# Mattermost API v4 call with the bot token.
+# Sets MM_API_STATUS and MM_API_BODY instead of failing, so a caller can tell
+# "404 = does not exist" from a real error. Returns non-zero only when the
+# request could not be made at all.
+#   mm_api GET /api/v4/teams/name/bgl
+#   [[ "$MM_API_STATUS" == 200 ]] || ...
+mm_api() {
+  local method="$1" path="$2" payload="${3:-}"
+  local chat tok resp
+  chat="$(mm_chat_url)" || return $?
+  tok="$(mm_bot_token)" || return $?
+  # Status is appended on its own line rather than written to a temp file:
+  # no writable TMPDIR is needed, which matters inside a sandbox.
+  local args=(-sS -w $'\n%{http_code}' -X "$method"
+    -H "$(mm_auth_header "$tok")")
+  if [[ -n "$payload" ]]; then
+    args+=(-H "Content-Type: application/json" -d "$payload")
+  fi
+  resp="$(curl "${args[@]}" "${chat}${path}" || true)"
+  MM_API_STATUS="${resp##*$'\n'}"
+  MM_API_BODY="${resp%$'\n'*}"
+  [[ "$MM_API_STATUS" =~ ^[0-9]{3}$ ]] || return 1
+}
+
 mm_validate_short_name() {
   local name="$1"
   if ! [[ "$name" =~ ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ ]]; then

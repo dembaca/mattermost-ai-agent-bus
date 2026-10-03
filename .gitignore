@@ -30,3 +30,6 @@ htmlcov/
 
 # Agent session files
 .mm-agent-session.env
+
+# Local scratch (fake servers, probe output)
+scratchpad/

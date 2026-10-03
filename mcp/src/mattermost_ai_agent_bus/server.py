@@ -17,9 +17,12 @@ log = logging.getLogger(__name__)
 mcp = MCPServer(
     "mattermost-ai-agent-bus",
     instructions=(
-        "Mattermost agent bus: start an ephemeral bot session with MM_REG_SECRET, "
-        "post/reply in the agents channel, wait_for_events for mentions/DMs/"
-        "watched-channel posts, then session_end."
+        "Mattermost agent bus. When MM_BOT_TOKEN is already set, a host-side session "
+        "hook registered the bot and resolved the channels — post/reply directly and "
+        "do NOT call session_start/session_end. Only when MM_BOT_TOKEN is unset, "
+        "register with session_start (needs MM_REG_SECRET) and session_end when done. "
+        "Posts go to MM_PROJECT_CHANNEL when set, else MM_CHANNEL; wait_for_events "
+        "covers mentions/DMs and both channels. Never create channels or teams."
     ),
 )
 
