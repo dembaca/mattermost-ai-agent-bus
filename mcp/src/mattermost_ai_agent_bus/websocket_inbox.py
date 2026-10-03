@@ -180,9 +180,16 @@ class WebSocketInbox:
                     )
                 )
         except asyncio.CancelledError:
+            # close() cancels us and owns the socket from here on.
             raise
         except Exception as exc:  # noqa: BLE001
             log.error("websocket reader stopped: %s", exc)
+        # Reached on a dropped connection or a clean server-side close. Drop the
+        # dead socket so the next wait_for_events reconnects: otherwise _ws stays
+        # set, nothing feeds the queue, and every later call times out silently —
+        # the agent goes deaf with no error anywhere.
+        self._ws = None
+        self._reader = None
 
     async def wait_for_events(
         self,
