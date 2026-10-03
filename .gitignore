@@ -33,3 +33,6 @@ htmlcov/
 
 # Local scratch (fake servers, probe output)
 scratchpad/
+
+# Screenshots dropped in the repo root
+*.png
