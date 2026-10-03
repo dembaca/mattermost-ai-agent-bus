@@ -31,6 +31,12 @@ fi
 
 export MM_AGENT_SESSION_FILE="$SESSION_FILE"
 
+# Mark it gone before unregistering, so a bot that survives a failed teardown
+# at least does not sit there looking available.
+MM_BOT_TOKEN="$(sed -n 's/^MM_BOT_TOKEN=//p' "$SESSION_FILE" | head -n1)" \
+MM_CHAT_URL="$(sed -n 's/^MM_CHAT_URL=//p' "$SESSION_FILE" | head -n1)" \
+  "$BIN/mm-agent-status.sh" offline || true
+
 if "$BIN/mm-agent-unregister.sh" "$MM_BOT_NAME" >/dev/null 2>&1; then
   log "unregistered ${MM_BOT_NAME}"
 else

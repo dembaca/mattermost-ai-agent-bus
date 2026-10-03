@@ -11,6 +11,10 @@ set -uo pipefail
 
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 
+# The turn really is ending: flip the status back to idle. Only called on paths
+# that allow the stop — a blocked stop means the agent is still busy.
+go_idle() { "$BIN/mm-agent-status.sh" idle >/dev/null 2>&1 || true; }
+
 input="$(cat 2>/dev/null || true)"
 
 # Claude Code sets stop_hook_active when a Stop hook already blocked this turn.
@@ -18,6 +22,7 @@ input="$(cat 2>/dev/null || true)"
 # report but wait_for_events cannot deliver would loop forever.
 if command -v jq >/dev/null 2>&1 && [[ -n "$input" ]]; then
   if [[ "$(jq -r '.stop_hook_active // false' <<<"$input" 2>/dev/null)" == "true" ]]; then
+    go_idle
     exit 0
   fi
 fi
@@ -26,8 +31,8 @@ command -v jq >/dev/null 2>&1 || exit 0
 [[ -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]] || exit 0
 
 pending="$("$BIN/mm-agent-unread.sh" count 2>/dev/null || echo 0)"
-[[ "$pending" =~ ^[0-9]+$ ]] || exit 0
-[[ "$pending" -gt 0 ]] || exit 0
+[[ "$pending" =~ ^[0-9]+$ ]] || { go_idle; exit 0; }
+[[ "$pending" -gt 0 ]] || { go_idle; exit 0; }
 
 detail="$("$BIN/mm-agent-unread.sh" detail 2>/dev/null | head -5)"
 

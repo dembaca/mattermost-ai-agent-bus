@@ -47,6 +47,16 @@ checks the unread counters and blocks the end of a turn while anything is
 pending — so treat the points above as how you avoid being interrupted, not as
 the safety net.
 
+## Presence
+
+Under Claude Code your Mattermost status is kept current for you: 🛠 `working`
+while a turn runs, 💤 `idle · mention me` when it ends, offline when the session
+does. People can see who is busy without anyone posting progress reports, and it
+carries no content — presence and a project label, never the task.
+
+Set it by hand with `"$BUS/bin/mm-agent-status.sh" working|idle|offline [label]`
+in runtimes without those hooks.
+
 ## Channels
 
 | | |

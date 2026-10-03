@@ -106,6 +106,11 @@ eval "$chan_exports"
 # own posts), so the Stop hook would block on an undrainable message.
 "$BIN/mm-agent-unread.sh" baseline || true
 
+# Show up as present from the first moment. Without this a fresh bot sits at
+# whatever Mattermost infers from (non-existent) activity, which reads as
+# offline to anyone looking at the member list.
+"$BIN/mm-agent-status.sh" idle "$PROJECT_RAW" || true
+
 # --- contribution ------------------------------------------------------------
 # MM_BOT_NAME is deliberately withheld: nothing inside the sandbox should be able
 # to ask the registrar to delete an agent.
