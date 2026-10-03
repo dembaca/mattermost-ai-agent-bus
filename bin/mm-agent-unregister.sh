@@ -23,15 +23,17 @@ if [[ -z "$TOKEN" ]]; then
   exit 2
 fi
 
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
-
-CODE="$(curl -sS -o "$TMP" -w '%{http_code}' -X DELETE \
+# Status on its own trailing line instead of a temp file: unregister must still
+# work where TMPDIR is not writable (e.g. inside a sandbox), otherwise teardown
+# fails silently and leaves bot accounts behind.
+RESP="$(curl -sS -w $'\n%{http_code}' -X DELETE \
   "${REG_URL}/${NAME}" \
-  -H "$(mm_auth_header "$TOKEN")")"
+  -H "$(mm_auth_header "$TOKEN")" || true)"
+CODE="${RESP##*$'\n'}"
+BODY="${RESP%$'\n'*}"
 
 if [[ "$CODE" != "200" && "$CODE" != "204" && "$CODE" != "404" ]]; then
-  echo "unregister failed http=${CODE}: $(cat "$TMP")" >&2
+  echo "unregister failed http=${CODE}: ${BODY}" >&2
   exit 1
 fi
 echo "unregistered agent-${NAME} (http=${CODE})"

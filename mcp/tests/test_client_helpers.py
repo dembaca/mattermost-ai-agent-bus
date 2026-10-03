@@ -50,6 +50,54 @@ def test_from_env_aliases(monkeypatch):
     assert c.register_url == "https://mm.example/register/v1/agents"
 
 
+def test_from_env_project_channel_defaults_to_empty(monkeypatch):
+    monkeypatch.setenv("MM_CHAT_URL", "https://mm.example")
+    monkeypatch.setenv("MM_CHANNEL", "agents")
+    monkeypatch.delenv("MM_PROJECT_CHANNEL", raising=False)
+    c = MattermostClient.from_env()
+    assert c.project_channel_name == ""
+    # Without a project channel the work channel is the default channel.
+    assert c.work_channel_name == "agents"
+
+
+def test_project_channel_becomes_work_channel(monkeypatch):
+    monkeypatch.setenv("MM_CHAT_URL", "https://mm.example")
+    monkeypatch.setenv("MM_CHANNEL", "agents")
+    monkeypatch.setenv("MM_PROJECT_CHANNEL", "proj-bus")
+    c = MattermostClient.from_env()
+    # The default channel is kept: the agent stays addressable there.
+    assert c.channel_name == "agents"
+    assert c.project_channel_name == "proj-bus"
+    assert c.work_channel_name == "proj-bus"
+
+
+@pytest.mark.asyncio
+async def test_get_channel_id_caches_per_name(monkeypatch):
+    """Both channels resolve independently and each is fetched only once."""
+    c = MattermostClient(
+        base_url="https://mm.example",
+        token="tok",
+        channel_name="agents",
+        project_channel_name="proj-bus",
+    )
+    calls: list[str] = []
+
+    async def fake_api(method, path, **kwargs):
+        calls.append(path)
+        if path.startswith("/api/v4/teams/name/"):
+            return {"id": "team1"}
+        return {"id": f"cid-{path.rsplit('/', 1)[-1]}"}
+
+    monkeypatch.setattr(c, "_api", fake_api)
+
+    assert await c.get_channel_id() == "cid-proj-bus"  # default = work channel
+    assert await c.get_channel_id("agents") == "cid-agents"
+    assert await c.get_channel_id() == "cid-proj-bus"  # cached, no new call
+
+    channel_calls = [p for p in calls if "/channels/name/" in p]
+    assert len(channel_calls) == 2
+
+
 @pytest.mark.asyncio
 async def test_session_start_name_validation():
     c = MattermostClient(

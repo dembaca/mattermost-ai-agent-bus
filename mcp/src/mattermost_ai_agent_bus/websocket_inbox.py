@@ -84,11 +84,17 @@ class WebSocketInbox:
         self._bot_user_id = me["id"]
         self._bot_username = me.get("username") or ""
         if not self.watched_channel_ids:
-            try:
-                cid = await self.client.get_channel_id()
-                self.watched_channel_ids.add(cid)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("could not resolve default watched channel: %s", exc)
+            # Watch the default channel (where the agent stays addressable) and the
+            # project channel (where it works) — either may be where it is called.
+            names = [self.client.channel_name]
+            if self.client.project_channel_name:
+                names.append(self.client.project_channel_name)
+            for name in names:
+                try:
+                    cid = await self.client.get_channel_id(name)
+                    self.watched_channel_ids.add(cid)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("could not resolve watched channel %r: %s", name, exc)
 
     async def _channel(self, channel_id: str) -> dict[str, Any]:
         if channel_id not in self._channel_cache:

@@ -44,11 +44,19 @@ class MattermostClient:
     reg_secret: str | None = None
     team_name: str = "agents"
     channel_name: str = "agents"
+    project_channel_name: str = ""
     _client: httpx.AsyncClient | None = field(default=None, repr=False, init=False)
     _me: dict[str, Any] | None = field(default=None, repr=False, init=False)
     _team_id: str | None = field(default=None, repr=False, init=False)
-    _channel_id: str | None = field(default=None, repr=False, init=False)
+    _channel_ids: dict[str, str] = field(
+        default_factory=dict, repr=False, init=False
+    )
     session: SessionInfo | None = field(default=None, repr=False, init=False)
+
+    @property
+    def work_channel_name(self) -> str:
+        """Channel used for posting: the project channel when set, else the default."""
+        return self.project_channel_name or self.channel_name
 
     @classmethod
     def from_env(cls) -> MattermostClient:
@@ -68,6 +76,7 @@ class MattermostClient:
             reg_secret=os.environ.get("MM_REG_SECRET"),
             team_name=os.environ.get("MM_TEAM", "agents"),
             channel_name=os.environ.get("MM_CHANNEL", "agents"),
+            project_channel_name=os.environ.get("MM_PROJECT_CHANNEL", ""),
         )
 
     def _http(self) -> httpx.AsyncClient:
@@ -142,7 +151,7 @@ class MattermostClient:
         self.session = info
         self._me = None
         self._team_id = None
-        self._channel_id = None
+        self._channel_ids.clear()
         os.environ["MM_CHAT_URL"] = info.url
         os.environ["MATTERMOST_URL"] = info.url
         os.environ["MM_BOT_NAME"] = info.name
@@ -199,16 +208,22 @@ class MattermostClient:
     async def get_channel_id(
         self, channel_name: str | None = None, team_name: str | None = None
     ) -> str:
-        cname = channel_name or self.channel_name
-        if self._channel_id and cname == self.channel_name and not team_name:
-            return self._channel_id
+        """Resolve a channel name to its id.
+
+        Defaults to the work channel (project channel when set, else MM_CHANNEL).
+        Never creates a channel: a missing one surfaces as the API's 404.
+        """
+        cname = channel_name or self.work_channel_name
+        key = f"{team_name or self.team_name}/{cname}"
+        cached = self._channel_ids.get(key)
+        if cached:
+            return cached
         tid = await self.get_team_id(team_name)
         data = await self._api(
             "GET", f"/api/v4/teams/{tid}/channels/name/{cname}"
         )
         cid = data["id"]
-        if cname == self.channel_name and not team_name:
-            self._channel_id = cid
+        self._channel_ids[key] = cid
         return cid
 
     async def get_channel(self, channel_id: str) -> dict[str, Any]:

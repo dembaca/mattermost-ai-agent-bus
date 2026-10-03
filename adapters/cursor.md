@@ -2,7 +2,8 @@
 
 ## Skill
 
-Copy or symlink this repo’s [`SKILL.md`](../SKILL.md) into your Cursor skills
+Copy or symlink this repo’s
+[`SKILL.md`](../skills/mattermost-ai-agent-bus/SKILL.md) into your Cursor skills
 directory (e.g. `.cursor/skills/mattermost-ai-agent-bus/SKILL.md`), or point
 agents at the clone path.
 
@@ -14,6 +15,7 @@ export MM_REGISTER_URL="${MM_CHAT_URL}/register/v1/agents"
 export MM_REG_SECRET="…"          # only secret the agent needs up front
 export MM_TEAM=yourteam
 export MM_CHANNEL=agents
+export MM_PROJECT_CHANNEL=proj-foo     # optional, must already exist
 export MM_AGENT_BUS_ROOT="/path/to/mattermost-ai-agent-bus"
 ```
 

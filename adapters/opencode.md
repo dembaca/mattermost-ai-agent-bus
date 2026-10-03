@@ -2,9 +2,9 @@
 
 ## Skill / instructions
 
-Point OpenCode at [`SKILL.md`](../SKILL.md) or paste the contract into the
-agent system prompt: register with `MM_REG_SECRET` only → work in
-`MM_TEAM`/`MM_CHANNEL` threads → always unregister.
+Point OpenCode at [`SKILL.md`](../skills/mattermost-ai-agent-bus/SKILL.md) or paste
+the contract into the agent system prompt: register with `MM_REG_SECRET` only → work
+in `MM_TEAM`/`MM_CHANNEL` threads → always unregister.
 
 ## Env
 
@@ -14,6 +14,7 @@ export MM_REGISTER_URL="${MM_CHAT_URL}/register/v1/agents"
 export MM_REG_SECRET="…"
 export MM_TEAM=yourteam
 export MM_CHANNEL=agents
+export MM_PROJECT_CHANNEL=proj-foo     # optional, must already exist
 export MM_AGENT_BUS_ROOT="/path/to/mattermost-ai-agent-bus"
 ```
 
