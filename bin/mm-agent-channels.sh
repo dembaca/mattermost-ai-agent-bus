@@ -41,22 +41,23 @@ resolve_channel() {
   esac
 }
 
-# Join an existing channel if not already a member. Joining is not creating, but
-# Mattermost checks create_post against membership — a non-member gets 403 even
-# in a public channel.
+# Join an existing channel. Joining is not creating, but Mattermost checks
+# create_post against membership — a non-member gets 403 even in a public
+# channel.
+#
+# Deliberately no membership pre-check first: reading a channel's member list
+# needs read_channel, which a non-member does not have, so Mattermost answers
+# 403 — not 404 — for exactly the case such a check exists to detect. It can
+# never succeed. Joining is idempotent (201 even when already a member), so just
+# join.
 ensure_member() {
   local cid="$1" cname="$2" uid="$3"
-  mm_api GET "/api/v4/channels/${cid}/members/${uid}"
-  [[ "$MM_API_STATUS" == "200" ]] && return 0
-  if [[ "$MM_API_STATUS" != "404" ]]; then
-    die "could not check membership of '${cname}': HTTP ${MM_API_STATUS} ${MM_API_BODY}"
-  fi
   mm_api POST "/api/v4/channels/${cid}/members" \
     "$(jq -nc --arg u "$uid" '{user_id:$u}')"
   case "$MM_API_STATUS" in
-    200|201) echo "joined ${cname}" >&2 ;;
+    200|201) echo "member of ${cname}" >&2 ;;
     403)
-      die "bot lacks join_public_channels on this instance — cannot join '${cname}'"
+      die "cannot join '${cname}': either it is private and a human must add the bot, or this instance denies join_public_channels"
       ;;
     *) die "could not join '${cname}': HTTP ${MM_API_STATUS} ${MM_API_BODY}" ;;
   esac
