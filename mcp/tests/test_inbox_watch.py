@@ -100,3 +100,64 @@ async def test_close_still_closes_the_socket():
     await inbox.close()
     assert sock.closed is True
     assert inbox._ws is None
+
+
+class _BackfillClient(_FakeClient):
+    """Client with history the WebSocket never saw."""
+
+    def __init__(self, posts, **kw):
+        super().__init__(**kw)
+        self.posts = posts
+        self.viewed: list[str] = []
+
+    async def unread_channels(self):
+        return [{"channel_id": "dm1", "type": "D", "last_viewed_at": 100, "pending": 1}]
+
+    async def list_recent(self, channel_id=None, per_page=20, since_ms=None):
+        return [p for p in self.posts if p["channel_id"] == channel_id]
+
+    async def view_channel(self, channel_id):
+        self.viewed.append(channel_id)
+
+
+def _post(pid, msg="hi", user="human1", channel="dm1"):
+    return {"id": pid, "user_id": user, "channel_id": channel, "message": msg}
+
+
+@pytest.mark.asyncio
+async def test_messages_sent_before_connect_are_still_delivered():
+    """Regression: the socket streams from connect time, so anything sent
+    earlier in the session was invisible to the queue while the REST counters
+    still reported it — the Stop hook blocked on an undeliverable message."""
+    client = _BackfillClient([_post("p1", "sent while nobody was listening")])
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"c"})
+    inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
+    inbox._ws = _DeadSocket()  # already "connected": do not dial out
+    await inbox._backfill()
+    events = await inbox.wait_for_events(timeout_sec=1)
+    assert [e.post["id"] for e in events] == ["p1"]
+    assert events[0].kind == "dm"
+
+
+@pytest.mark.asyncio
+async def test_backfill_does_not_deliver_a_post_twice():
+    """Backfill and the live stream overlap at connect time."""
+    client = _BackfillClient([_post("p1")])
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"c"})
+    inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
+    inbox._ws = _DeadSocket()  # already "connected": do not dial out
+    await inbox._backfill()
+    await inbox._backfill()
+    events = await inbox.wait_for_events(timeout_sec=1)
+    assert len(events) == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_ignores_own_posts():
+    """A bot's own welcome DM counts as unread for it but can never be for it."""
+    client = _BackfillClient([_post("p1", user="bot1")])
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"c"})
+    inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
+    inbox._ws = _DeadSocket()  # already "connected": do not dial out
+    await inbox._backfill()
+    assert await inbox.wait_for_events(timeout_sec=0.2) == []
