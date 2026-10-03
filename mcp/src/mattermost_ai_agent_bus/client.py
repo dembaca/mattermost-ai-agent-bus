@@ -239,6 +239,44 @@ class MattermostClient:
     async def get_channel(self, channel_id: str) -> dict[str, Any]:
         return await self._api("GET", f"/api/v4/channels/{channel_id}")
 
+    async def unread_channels(self) -> list[dict[str, Any]]:
+        """Channels with something pending, each with the watermark to read from.
+
+        Returns [{channel_id, type, last_viewed_at, pending}]. A DM counts
+        unread messages (total minus the watermark); elsewhere only an explicit
+        mention means someone wants this agent.
+
+        Note `member.msg_count` is the watermark, not a pending count — unread
+        is channel.total_msg_count - member.msg_count.
+        """
+        tid = await self.get_team_id()
+        members = await self._api(
+            "GET", f"/api/v4/users/me/teams/{tid}/channels/members"
+        )
+        channels = await self._api("GET", "/api/v4/users/me/channels")
+        by_id = {c["id"]: c for c in (channels or [])}
+        out: list[dict[str, Any]] = []
+        for member in members or []:
+            cid = member.get("channel_id")
+            channel = by_id.get(cid) or {}
+            ctype = channel.get("type") or "O"
+            if ctype in ("D", "G"):
+                pending = (channel.get("total_msg_count") or 0) - (
+                    member.get("msg_count") or 0
+                )
+            else:
+                pending = member.get("mention_count") or 0
+            if pending > 0:
+                out.append(
+                    {
+                        "channel_id": cid,
+                        "type": ctype,
+                        "last_viewed_at": member.get("last_viewed_at") or 0,
+                        "pending": pending,
+                    }
+                )
+        return out
+
     async def view_channel(self, channel_id: str) -> None:
         """Mark a channel read for this bot.
 

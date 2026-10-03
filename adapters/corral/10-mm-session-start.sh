@@ -100,6 +100,11 @@ if ! chan_exports="$("$BIN/mm-agent-channels.sh" resolve)"; then
 fi
 eval "$chan_exports"
 
+# Record the supervising corral process. mm-agent-sweep.sh uses it to tell a
+# live session from an abandoned one: a session file exists for the whole run,
+# so without this a sweep unregisters the bot of the session it runs alongside.
+printf 'MM_SESSION_PID=%s\n' "$PPID" >>"$MM_AGENT_SESSION_FILE"
+
 # Start from an empty inbox. A fresh bot is not born with one: Mattermost posts
 # a welcome DM *as the bot* to whoever created it, and the bot's own post counts
 # as unread for the bot. Nothing can ever deliver that (classify_post ignores

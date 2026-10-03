@@ -78,6 +78,9 @@ class WebSocketInbox:
     )
     _bot_user_id: str = field(default="", repr=False, init=False)
     _bot_username: str = field(default="", repr=False, init=False)
+    # Post ids already queued. Backfill and the live stream overlap around the
+    # moment the socket opens, so without this a message can be delivered twice.
+    _seen_ids: set[str] = field(default_factory=set, repr=False, init=False)
 
     async def ensure_identity(self) -> None:
         me = await self.client.get_me()
@@ -122,6 +125,47 @@ class WebSocketInbox:
             if event in ("hello", "authorized") or msg.get("status") == "OK":
                 break
         self._reader = asyncio.create_task(self._read_loop())
+        await self._backfill()
+
+    async def _backfill(self) -> None:
+        """Queue anything that arrived before the socket existed.
+
+        The WebSocket is connected lazily on the first wait_for_events and only
+        streams from that moment, so a message sent earlier in the session was
+        never seen by the reader — permanently invisible to the queue, while
+        the REST counters still reported it. That mismatch is what made the Stop
+        hook block on a message nothing could deliver.
+        """
+        try:
+            pending = await self.client.unread_channels()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("could not look for missed messages: %s", exc)
+            return
+        for entry in pending:
+            cid = entry["channel_id"]
+            try:
+                posts = await self.client.list_recent(
+                    channel_id=cid,
+                    per_page=50,
+                    since_ms=entry.get("last_viewed_at") or None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("could not backfill channel %s: %s", cid, exc)
+                continue
+            for post in posts:
+                kind = classify_post(
+                    post,
+                    bot_user_id=self._bot_user_id,
+                    bot_username=self._bot_username,
+                    channel_type=entry.get("type"),
+                    watched_channel_ids=self.watched_channel_ids,
+                )
+                if not kind:
+                    continue
+                if post.get("id") in self._seen_ids:
+                    continue
+                self._seen_ids.add(post["id"])
+                await self._queue.put(ClassifiedEvent(kind=kind, post=post))
 
     async def close(self) -> None:
         if self._reader:
@@ -174,6 +218,11 @@ class WebSocketInbox:
                 )
                 if not kind:
                     continue
+                pid = post.get("id")
+                if pid:
+                    if pid in self._seen_ids:
+                        continue
+                    self._seen_ids.add(pid)
                 await self._queue.put(
                     ClassifiedEvent(
                         kind=kind, post=post, channel=channel, raw=msg

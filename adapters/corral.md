@@ -99,6 +99,12 @@ registrar accepts for deleting *that* bot, so the sweep works with no
 ./bin/mm-agent-sweep.sh --apply
 ```
 
+**A session file is not evidence that a bot is abandoned** — it exists for the
+whole run. Each one records `MM_SESSION_PID`, the supervising corral process,
+and a session whose process is still alive is skipped. Files written before that
+guard existed have no PID and are skipped too; `--force` includes them. Without
+this, sweeping while a session runs revokes that session's credentials mid-task.
+
 Bots whose session file is already gone need the registration secret, because a
 bot token can only delete its own agent (the registrar answers `401` otherwise):
 
