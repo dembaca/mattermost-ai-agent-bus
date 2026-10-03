@@ -35,14 +35,34 @@ if [[ -z "${MM_CHAT_URL:-${MATTERMOST_URL:-}}" ]]; then
 fi
 
 # --- identity ----------------------------------------------------------------
-# Name must satisfy mm_validate_short_name: 3–32 chars, lowercase alnum/hyphen,
-# starting and ending alphanumeric.
-raw="${CORRAL_SESSION_ID:-$$}"
-slug="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-')"
-NAME="cc-${slug}"
-NAME="${NAME:0:32}"
+# Two names, two audiences:
+#   NAME    the username (registrar prefixes "agent-"). Must satisfy
+#           mm_validate_short_name: 3–32 chars, lowercase alnum/hyphen, starting
+#           and ending alphanumeric. Shaped host-project-session so a human can
+#           tell at a glance which machine and checkout a bot belongs to.
+#   DISPLAY free-form, this is what people actually read in the channel list.
+slugify() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' \
+    | sed -e 's/--*/-/g' -e 's/^-//' -e 's/-$//'
+}
+
+host_raw="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)"
+HOST="$(slugify "${host_raw%%.*}")"
+PROJECT_RAW="$(basename "${CORRAL_WORKDIR:-$PWD}")"
+PROJECT="$(slugify "$PROJECT_RAW")"
+SID="$(slugify "${CORRAL_SESSION_ID:-$$}")"
+SID="${SID##*-}"            # the trailing segment is the distinctive part
+SID="${SID:0:6}"
+
+# Budget 24 chars so "agent-<name>" stays comfortably short in the UI: keep the
+# session suffix whole (it is what makes the name unique) and trim the rest.
+NAME="$(printf '%s-%s-%s' "${HOST:0:8}" "${PROJECT:0:9}" "${SID:-0}")"
+NAME="$(slugify "$NAME")"
+NAME="${NAME:0:24}"
 while [[ "$NAME" == *- ]]; do NAME="${NAME%-}"; done   # must end alphanumeric
 [[ ${#NAME} -ge 3 ]] || NAME="cc-session"
+
+DISPLAY="Claude Code · ${PROJECT_RAW} @ ${host_raw%%.*}"
 
 # One session file per corral session; the shared default would be clobbered by
 # concurrent sessions.
@@ -55,7 +75,7 @@ export MM_AGENT_SESSION_FILE
 # --- register ----------------------------------------------------------------
 # Capture the export lines from stdout; the script's own diagnostics are on
 # stderr and pass through to corral's banner untouched.
-if ! exports="$("$BIN/mm-agent-register.sh" --ephemeral --exports "$NAME")"; then
+if ! exports="$("$BIN/mm-agent-register.sh" --ephemeral --exports "$NAME" "$DISPLAY")"; then
   log "registration failed — continuing without a bot"
   exit 0
 fi
@@ -79,6 +99,12 @@ if ! chan_exports="$("$BIN/mm-agent-channels.sh" resolve)"; then
   cleanup_and_fail "channel resolution failed — unregistered ${NAME} again"
 fi
 eval "$chan_exports"
+
+# Start from an empty inbox. A fresh bot is not born with one: Mattermost posts
+# a welcome DM *as the bot* to whoever created it, and the bot's own post counts
+# as unread for the bot. Nothing can ever deliver that (classify_post ignores
+# own posts), so the Stop hook would block on an undrainable message.
+"$BIN/mm-agent-unread.sh" baseline || true
 
 # --- contribution ------------------------------------------------------------
 # MM_BOT_NAME is deliberately withheld: nothing inside the sandbox should be able

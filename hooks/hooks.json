@@ -1,0 +1,16 @@
+{
+  "description": "Blocks the end of a turn while someone is waiting on this agent in Mattermost, so a mention or DM that arrived during a long task is never silently left unanswered. Reads only unread counters; the messages themselves are delivered through the MCP server's wait_for_events. Does nothing when no bus session is configured.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/stop-inbox-check.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

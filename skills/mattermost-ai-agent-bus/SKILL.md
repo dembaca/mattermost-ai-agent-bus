@@ -28,6 +28,25 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
   2. work (poll/post, or the MCP tools) in threads
   3. `"$BUS/bin/mm-agent-session.sh" stop` — always, also on failure
 
+## Staying reachable
+
+Nothing interrupts you mid-turn. A mention that arrives while you work waits
+until you look, so **look at these points**:
+
+- after finishing a work item, before starting the next
+- before a long-running command (build, test suite, deploy)
+- before you finish your turn
+
+`wait_for_events(timeout_sec=1)` is the check. It returns immediately when the
+queue is empty, so a check costs almost nothing; when something is waiting it
+comes back at once, because the WebSocket reader buffers in the background while
+you do other things.
+
+Collecting an event marks its channel read. Under Claude Code a `Stop` hook also
+checks the unread counters and blocks the end of a turn while anything is
+pending — so treat the points above as how you avoid being interrupted, not as
+the safety net.
+
 ## Channels
 
 | | |

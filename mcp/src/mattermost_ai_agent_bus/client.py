@@ -239,6 +239,19 @@ class MattermostClient:
     async def get_channel(self, channel_id: str) -> dict[str, Any]:
         return await self._api("GET", f"/api/v4/channels/{channel_id}")
 
+    async def view_channel(self, channel_id: str) -> None:
+        """Mark a channel read for this bot.
+
+        WebSocket delivery does not clear Mattermost's unread counters, so
+        without this the counts only ever grow — and anything that asks "am I
+        being addressed?" by reading them would answer yes forever.
+        """
+        await self._api(
+            "POST",
+            "/api/v4/channels/members/me/view",
+            json={"channel_id": channel_id},
+        )
+
     async def post(
         self,
         message: str,

@@ -211,4 +211,24 @@ class WebSocketInbox:
                 events.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:
                 break
+        await self._mark_delivered_read(events)
         return events
+
+    async def _mark_delivered_read(self, events: list[ClassifiedEvent]) -> None:
+        """Clear Mattermost's unread counters for channels we just delivered.
+
+        Handing an event to the agent is what "read" means here. Without this
+        the counters keep climbing, and the Stop hook that reads them to decide
+        "is anyone waiting on me?" would block every turn forever.
+        """
+        seen: set[str] = set()
+        for event in events:
+            cid = event.post.get("channel_id")
+            if not cid or cid in seen:
+                continue
+            seen.add(cid)
+            try:
+                await self.client.view_channel(cid)
+            except Exception as exc:  # noqa: BLE001
+                # Never fail delivery over bookkeeping.
+                log.warning("could not mark channel %s read: %s", cid, exc)
