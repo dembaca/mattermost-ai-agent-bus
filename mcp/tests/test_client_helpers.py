@@ -50,6 +50,34 @@ def test_from_env_aliases(monkeypatch):
     assert c.register_url == "https://mm.example/register/v1/agents"
 
 
+def test_unexpanded_placeholders_are_treated_as_unset(monkeypatch):
+    """A plugin manifest passes "${VAR}"; unset vars can arrive verbatim.
+
+    Regression: the literal "${MM_PROJECT_CHANNEL}" was taken for a channel name,
+    so every post_message 404'd while an explicit channel_id still worked.
+    """
+    monkeypatch.setenv("MM_CHAT_URL", "https://mm.example")
+    monkeypatch.setenv("MM_CHANNEL", "agents")
+    monkeypatch.setenv("MM_PROJECT_CHANNEL", "${MM_PROJECT_CHANNEL}")
+    monkeypatch.setenv("MM_REGISTER_URL", "${MM_REGISTER_URL}")
+    monkeypatch.setenv("MM_REG_SECRET", "${MM_REG_SECRET}")
+    monkeypatch.setenv("MM_BOT_TOKEN", "${MM_BOT_TOKEN}")
+    c = MattermostClient.from_env()
+    assert c.project_channel_name == ""
+    assert c.work_channel_name == "agents"
+    assert c.register_url == "https://mm.example/register/v1/agents"
+    assert c.reg_secret is None
+    assert c.token is None
+
+
+def test_placeholder_like_value_that_is_real_is_kept(monkeypatch):
+    """Only a bare ${NAME} is ignored — a real name containing $ is not."""
+    monkeypatch.setenv("MM_CHAT_URL", "https://mm.example")
+    monkeypatch.setenv("MM_PROJECT_CHANNEL", "proj-${weird}-name")
+    c = MattermostClient.from_env()
+    assert c.project_channel_name == "proj-${weird}-name"
+
+
 def test_from_env_project_channel_defaults_to_empty(monkeypatch):
     monkeypatch.setenv("MM_CHAT_URL", "https://mm.example")
     monkeypatch.setenv("MM_CHANNEL", "agents")
