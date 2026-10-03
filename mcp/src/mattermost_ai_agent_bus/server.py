@@ -1,0 +1,161 @@
+"""MCP server exposing Mattermost agent-bus tools."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+from typing import Any
+
+from mcp.server.mcpserver import MCPServer
+
+from .client import MattermostClient
+from .websocket_inbox import WebSocketInbox
+
+log = logging.getLogger(__name__)
+
+mcp = MCPServer(
+    "mattermost-ai-agent-bus",
+    instructions=(
+        "Mattermost agent bus: start an ephemeral bot session with MM_REG_SECRET, "
+        "post/reply in the agents channel, wait_for_events for mentions/DMs/"
+        "watched-channel posts, then session_end."
+    ),
+)
+
+_client: MattermostClient | None = None
+_inbox: WebSocketInbox | None = None
+
+
+def _get_client() -> MattermostClient:
+    global _client
+    if _client is None:
+        _client = MattermostClient.from_env()
+    return _client
+
+
+def _get_inbox() -> WebSocketInbox:
+    global _inbox
+    client = _get_client()
+    if _inbox is None or _inbox.client is not client:
+        _inbox = WebSocketInbox(client=client)
+    return _inbox
+
+
+def _dump(obj: Any) -> str:
+    return json.dumps(obj, indent=2, default=str)
+
+
+@mcp.tool()
+async def session_start(name: str, display_name: str = "") -> str:
+    """Register an ephemeral Mattermost bot via the registrar.
+
+    Requires MM_REG_SECRET and MM_REGISTER_URL / MM_CHAT_URL.
+    Returns session fields (username, user_id, url). Bot token is kept in-process.
+    """
+    client = _get_client()
+    info = await client.session_start(name, display_name or None)
+    global _inbox
+    _inbox = None  # reset inbox for new identity
+    return _dump(
+        {
+            "name": info.name,
+            "username": info.username,
+            "user_id": info.user_id,
+            "url": info.url,
+            "token_set": True,
+        }
+    )
+
+
+@mcp.tool()
+async def session_end(name: str = "") -> str:
+    """Unregister the ephemeral bot (DELETE registrar). Call when the task ends."""
+    client = _get_client()
+    global _inbox
+    if _inbox is not None:
+        await _inbox.close()
+        _inbox = None
+    await client.session_end(name or None)
+    return _dump({"ok": True, "ended": name or os.environ.get("MM_BOT_NAME", "")})
+
+
+@mcp.tool()
+async def get_me() -> str:
+    """Return the current bot user (users/me)."""
+    me = await _get_client().get_me()
+    return _dump(me)
+
+
+@mcp.tool()
+async def post_message(
+    message: str, channel_id: str = "", root_id: str = ""
+) -> str:
+    """Create a post. Uses default MM_CHANNEL when channel_id is empty."""
+    post = await _get_client().post(
+        message,
+        channel_id=channel_id or None,
+        root_id=root_id or None,
+    )
+    return _dump(post)
+
+
+@mcp.tool()
+async def reply_in_thread(
+    root_id: str, message: str, channel_id: str = ""
+) -> str:
+    """Reply in a thread (sets root_id on the new post)."""
+    post = await _get_client().post(
+        message,
+        channel_id=channel_id or None,
+        root_id=root_id,
+    )
+    return _dump(post)
+
+
+@mcp.tool()
+async def get_thread(post_id: str) -> str:
+    """Fetch a thread (root + replies) for post_id."""
+    data = await _get_client().thread(post_id)
+    return _dump(data)
+
+
+@mcp.tool()
+async def list_recent(
+    channel_id: str = "", per_page: int = 20, since_ms: int = 0
+) -> str:
+    """List recent posts in a channel (oldest→newest)."""
+    posts = await _get_client().list_recent(
+        channel_id=channel_id or None,
+        per_page=per_page,
+        since_ms=since_ms or None,
+    )
+    return _dump(posts)
+
+
+@mcp.tool()
+async def wait_for_events(
+    timeout_sec: float = 60.0, max_events: int = 10
+) -> str:
+    """Wait for inbox events: mentions, DMs, or watched-channel posts.
+
+    Connects the Mattermost WebSocket if needed. Returns JSON list of
+    {kind, post, channel} (empty list on timeout).
+    """
+    inbox = _get_inbox()
+    events = await inbox.wait_for_events(
+        timeout_sec=timeout_sec, max_events=max_events
+    )
+    payload = [
+        {"kind": e.kind, "post": e.post, "channel": e.channel} for e in events
+    ]
+    return _dump(payload)
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()

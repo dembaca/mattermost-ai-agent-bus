@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Example Cursor sessionEnd hook — copy to mm-session-end.sh and chmod +x.
+set -euo pipefail
+ROOT="${MM_AGENT_BUS_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+"${ROOT}/bin/mm-agent-session.sh" stop || true
+echo "mm-agent session stopped" >&2
+echo '{"continue":true}'

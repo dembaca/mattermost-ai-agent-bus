@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "${MM_AGENT_BUS_ROOT}/adapters/cursor/mm-session-start.sh",
+        "timeout": 60
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "${MM_AGENT_BUS_ROOT}/adapters/cursor/mm-session-end.sh",
+        "timeout": 60
+      }
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Example Cursor sessionStart hook — copy to mm-session-start.sh and chmod +x.
+set -euo pipefail
+ROOT="${MM_AGENT_BUS_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+if [[ -z "${MM_REG_SECRET:-}" ]]; then
+  echo "MM_REG_SECRET unset; skipping Mattermost session start" >&2
+  echo '{"continue":true}'
+  exit 0
+fi
+# shellcheck disable=SC1090
+eval "$("${ROOT}/bin/mm-agent-session.sh" start "cursor-${CURSOR_SESSION_ID:-$$}")"
+if [[ -n "${CURSOR_ENV_FILE:-}" ]]; then
+  {
+    echo "MM_CHAT_URL=${MM_CHAT_URL}"
+    echo "MM_BOT_NAME=${MM_BOT_NAME}"
+    echo "MM_BOT_USERNAME=${MM_BOT_USERNAME}"
+    echo "MM_BOT_USER_ID=${MM_BOT_USER_ID}"
+    echo "MM_BOT_TOKEN=${MM_BOT_TOKEN}"
+    echo "MATTERMOST_URL=${MATTERMOST_URL}"
+    echo "MATTERMOST_TOKEN=${MATTERMOST_TOKEN}"
+  } >>"$CURSOR_ENV_FILE"
+fi
+echo "mm-agent session started as ${MM_BOT_USERNAME}" >&2
+echo '{"continue":true}'
