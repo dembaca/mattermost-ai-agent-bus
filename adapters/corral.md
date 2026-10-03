@@ -87,6 +87,28 @@ Only presence and the project directory name are published — never a prompt, a
 file or a task description. `postEnd` sets offline *before* unregistering, so a
 bot that survives a failed teardown does not sit there looking available.
 
+## Cleaning up leftovers
+
+A failed teardown leaves a bot account behind. `postEnd` keeps the session file
+when it cannot unregister — that file holds the bot's own token, which the
+registrar accepts for deleting *that* bot, so the sweep works with no
+`MM_REG_SECRET` at all:
+
+```bash
+./bin/mm-agent-sweep.sh            # dry run: list what would go
+./bin/mm-agent-sweep.sh --apply
+```
+
+Bots whose session file is already gone need the registration secret, because a
+bot token can only delete its own agent (the registrar answers `401` otherwise):
+
+```bash
+export MM_REG_SECRET="$(gopass show -o "$MM_REG_SECRET_GOPASS")"
+./bin/mm-agent-sweep.sh --apply
+```
+
+Run it on the **host**: session files never enter a sandbox.
+
 ## Gotchas
 
 - **Editing a hook re-triggers corral's approve-once gate.** The next launch asks you to

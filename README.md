@@ -29,7 +29,7 @@ No absolute paths and no symlinks — the bundled MCP server locates itself via
 | [`.claude-plugin/`](.claude-plugin/) | Plugin + marketplace manifests |
 | [`docs/protocol.md`](docs/protocol.md) | Job / inbox / security contract |
 | [`docs/smoke-test.md`](docs/smoke-test.md) | End-to-end check against a live site |
-| [`bin/`](bin/) | Shell CLI (`session`, `register`, `channels`, `poll`, `post`, …) |
+| [`bin/`](bin/) | Shell CLI (`session`, `register`, `channels`, `status`, `unread`, `sweep`, `poll`, `post`, …) |
 | [`mcp/`](mcp/) | Python MCP server (WebSocket inbox) |
 | [`adapters/`](adapters/) | Runtime-specific setup (corral, Cursor, Claude, OpenCode) |
 
