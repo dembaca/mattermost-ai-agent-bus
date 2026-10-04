@@ -152,6 +152,7 @@ jq -nc \
        MM_TEAM_ID: $teamid,
        MM_CHANNEL: $chan,
        MM_CHANNEL_ID: $chanid,
+       MM_UNREGISTER_ON_EXIT: "1",
      }
      + (if $reg  != "" then {MM_REGISTER_URL: $reg} else {} end)
      + (if $proj != "" then {MM_PROJECT_CHANNEL: $proj,

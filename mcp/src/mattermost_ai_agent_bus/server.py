@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
+import signal
+import sys
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
@@ -165,8 +168,34 @@ async def wait_for_events(
     return _dump(payload)
 
 
+_exit_handled = False
+
+
+def _cleanup_on_exit() -> None:
+    """Unregister the bot this server owns when the process ends."""
+    global _exit_handled
+    if _exit_handled or _client is None:
+        return
+    _exit_handled = True
+    outcome = _client.shutdown_sync()
+    if outcome not in ("no session", "session not owned"):
+        log.info("exit cleanup: %s", outcome)
+
+
+def _install_exit_handlers() -> None:
+    # Claude Code ends an MCP server by closing stdin, which returns from
+    # mcp.run() and reaches atexit. SIGTERM/SIGHUP would skip it.
+    atexit.register(_cleanup_on_exit)
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(sig, lambda *_: sys.exit(0))
+        except (ValueError, OSError):  # not the main thread / unsupported
+            pass
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    _install_exit_handlers()
     mcp.run()
 
 
