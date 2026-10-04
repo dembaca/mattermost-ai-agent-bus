@@ -116,7 +116,6 @@ static binaries in `~/.local/bin` do.
 | `MM_TEAM` / `MM_TEAM_ID` | Team name / resolved id |
 | `MM_CHANNEL` / `MM_CHANNEL_ID` | Default channel name / resolved id |
 | `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional) |
-| `MM_AGENT_ENV_DIR` | Durable env dir (`~/.config/mm-agent-bus/agents`) |
 
 See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
 

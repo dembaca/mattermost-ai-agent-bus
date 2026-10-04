@@ -27,14 +27,6 @@ mm_bot_token() {
   printf '%s' "$tok"
 }
 
-mm_agent_env_dir() {
-  local d="${MM_AGENT_ENV_DIR:-${HOME}/.config/mm-agent-bus/agents}"
-  if [[ "$d" == ~* ]]; then
-    d="${d/#\~/$HOME}"
-  fi
-  printf '%s' "$d"
-}
-
 mm_session_file() {
   local f="${MM_AGENT_SESSION_FILE:-${XDG_RUNTIME_DIR:-/tmp}/mm-agent-session.env}"
   if [[ "$f" == ~* ]]; then
@@ -117,7 +109,7 @@ mm_load_env_file() {
     local key="${line%%=*}"
     local val="${line#*=}"
     case "$key" in
-      MM_CHAT_URL|MM_BOT_NAME|MM_BOT_USERNAME|MM_BOT_USER_ID|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_REG_SECRET|MM_TEAM|MM_CHANNEL|MM_REGISTER_URL)
+      MM_CHAT_URL|MM_BOT_NAME|MM_BOT_USERNAME|MM_BOT_USER_ID|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_TEAM|MM_CHANNEL)
         export "$key=$val"
         ;;
     esac

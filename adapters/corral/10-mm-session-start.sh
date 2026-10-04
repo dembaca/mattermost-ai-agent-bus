@@ -75,7 +75,7 @@ export MM_AGENT_SESSION_FILE
 # --- register ----------------------------------------------------------------
 # Capture the export lines from stdout; the script's own diagnostics are on
 # stderr and pass through to corral's banner untouched.
-if ! exports="$("$BIN/mm-agent-register.sh" --ephemeral --exports "$NAME" "$DISPLAY")"; then
+if ! exports="$("$BIN/mm-agent-register.sh" --exports "$NAME" "$DISPLAY")"; then
   log "registration failed — continuing without a bot"
   exit 0
 fi
