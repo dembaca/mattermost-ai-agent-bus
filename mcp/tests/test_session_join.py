@@ -182,3 +182,25 @@ async def test_session_file_success_is_reported():
     await c.session_start("proj")
     assert c.session_file_status["written"] is True
     assert Path(c.session_file_status["path"]).exists()
+
+
+def test_hook_in_subdirectory_finds_session_of_project_root(tmp_path, monkeypatch):
+    """The agent cd'ed into a subdirectory: the hook walks up to the server's dir."""
+    session_file.write(INFO, "agents", "agents")  # keyed on CLAUDE_PROJECT_DIR=tmp_path
+    sub = tmp_path / "src" / "deep"
+    sub.mkdir(parents=True)
+    r = _bash(
+        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "$MM_BOT_TOKEN"',
+        MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_PROJECT_DIR=str(sub),
+    )
+    assert r.stdout.strip() == "tok-secret", r.stderr
+
+
+def test_hook_outside_project_finds_nothing(tmp_path):
+    other = tmp_path.parent / "elsewhere"
+    other.mkdir(exist_ok=True)
+    r = _bash(
+        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "[$MM_BOT_TOKEN]"',
+        MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_PROJECT_DIR=str(other),
+    )
+    assert r.stdout.strip() == "[]"

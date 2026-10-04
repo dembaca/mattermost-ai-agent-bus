@@ -129,15 +129,25 @@ mm_load_session_file() {
 }
 
 # Session file written by the MCP server's session_start (see
-# mcp/.../session_file.py). Keyed on the project directory, which is what the
-# server and the hooks share. Must match session_file_path() there.
+# mcp/.../session_file.py). Keyed on the directory the server runs in, which is
+# the project directory Claude Code was started in. A hook may run deeper (the
+# agent cd'ed into a subdirectory), so the lookup walks up from CLAUDE_PROJECT_DIR
+# / $PWD to the root and takes the nearest session file. The key must match
+# session_file_path() there.
 mm_hook_session_file() {
-  local dir state key
+  local dir state key f
   dir="$(cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null && pwd -P)" || return 1
   state="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
-  key="$(printf '%s' "$dir" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16)"
-  [[ -n "$key" ]] || return 1
-  printf '%s/mcp-%s.env' "$state" "$key"
+  while :; do
+    key="$(printf '%s' "$dir" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16)"
+    f="${state}/mcp-${key}.env"
+    if [[ -n "$key" && -f "$f" ]]; then
+      printf '%s' "$f"
+      return 0
+    fi
+    [[ "$dir" == "/" ]] && return 1
+    dir="$(dirname "$dir")"
+  done
 }
 
 # For hooks: pick up the bot token of an MCP-managed session. A no-op when the
