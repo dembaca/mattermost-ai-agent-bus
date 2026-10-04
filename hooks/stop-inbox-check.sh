@@ -9,6 +9,10 @@
 # A chat integration must never be able to wedge a coding session.
 set -uo pipefail
 
+# shellcheck source=../bin/mm-agent-lib.sh
+source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
+mm_load_hook_session || true
+
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 
 # The turn really is ending: flip the status back to idle. Only called on paths

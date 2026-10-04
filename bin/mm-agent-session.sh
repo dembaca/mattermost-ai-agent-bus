@@ -25,6 +25,14 @@ case "$CMD" in
         NAME="agt-$$"
       fi
     fi
+    # A live name cannot be registered twice (409), so a second session on the
+    # same host would be locked out: append a session suffix. Opt out with
+    # MM_AGENT_NAME_EXACT=1.
+    if [[ "${MM_AGENT_NAME_EXACT:-0}" != "1" && "$NAME" != *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f] ]]; then
+      sid="$(printf '%s' "${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-8)"
+      [[ -n "$sid" ]] || sid="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
+      NAME="$(printf '%s' "${NAME:0:23}" | sed 's/-*$//')-${sid}"
+    fi
     # shellcheck disable=SC1090
     eval "$("${BIN}/mm-agent-register.sh" --ephemeral --exports "$NAME")"
     mm_write_session_file
