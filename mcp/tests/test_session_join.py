@@ -204,3 +204,76 @@ def test_hook_outside_project_finds_nothing(tmp_path):
         MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_PROJECT_DIR=str(other),
     )
     assert r.stdout.strip() == "[]"
+
+
+def _shutdown_client(handler, *, own_session, token="bot-tok"):
+    c = MattermostClient(
+        base_url="https://mm.example", token=token,
+        register_url="https://mm.example/register/v1/agents",
+    )
+    if own_session:
+        c.session = INFO
+    real = httpx.Client
+    return c, real
+
+
+def _patch_http(monkeypatch, handler):
+    real = httpx.Client
+    monkeypatch.setattr(
+        "mattermost_ai_agent_bus.client.httpx.Client",
+        lambda **kw: real(transport=httpx.MockTransport(handler), **kw),
+    )
+
+
+def test_shutdown_unregisters_own_session(monkeypatch):
+    seen = []
+
+    def handler(req):
+        seen.append((req.method, req.url.path))
+        return httpx.Response(204)
+
+    _patch_http(monkeypatch, handler)
+    session_file.write(INFO, "agents", "agents")
+    c, _ = _shutdown_client(handler, own_session=True)
+    assert c.shutdown_sync() == "unregistered proj-ab12cd34"
+    assert seen == [("DELETE", "/register/v1/agents/proj-ab12cd34")]
+    assert not session_file.session_file_path().exists()
+    assert c.shutdown_sync() == "no session"  # idempotent
+
+
+def test_shutdown_host_registered_session(monkeypatch):
+    seen = []
+
+    def handler(req):
+        seen.append((req.method, req.url.path))
+        if req.url.path == "/api/v4/users/me":
+            return httpx.Response(200, json={"id": "u9", "username": "agent-vtpm-b87c"})
+        return httpx.Response(204)
+
+    _patch_http(monkeypatch, handler)
+    c, _ = _shutdown_client(handler, own_session=False)
+    assert c.shutdown_sync() == "unregistered vtpm-b87c"
+    assert ("PUT", "/api/v4/users/u9/status") in seen
+    assert seen[-1] == ("DELETE", "/register/v1/agents/vtpm-b87c")
+
+
+def test_shutdown_never_deletes_a_human(monkeypatch):
+    seen = []
+
+    def handler(req):
+        seen.append(req.method)
+        return httpx.Response(200, json={"id": "u1", "username": "andreas"})
+
+    _patch_http(monkeypatch, handler)
+    c, _ = _shutdown_client(handler, own_session=False)
+    assert "left alone" in c.shutdown_sync()
+    assert "DELETE" not in seen
+
+
+def test_shutdown_survives_network_failure(monkeypatch):
+    def handler(req):
+        raise httpx.ConnectError("down")
+
+    _patch_http(monkeypatch, handler)
+    c, _ = _shutdown_client(handler, own_session=True)
+    assert c.shutdown_sync().startswith("unregister failed")

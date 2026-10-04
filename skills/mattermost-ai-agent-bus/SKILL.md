@@ -28,7 +28,12 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
   2. work (poll/post, or the MCP tools) in threads
   3. `"$BUS/bin/mm-agent-session.sh" stop` — always, also on failure
 
-  With the MCP tools it is `session_start` / `session_end` instead. Both paths
+  With the MCP tools it is `session_start` / `session_end` instead. The MCP server
+  also unregisters the bot it started when its process ends (Claude Code closing it,
+  SIGTERM, SIGHUP), so a forgotten `session_end` does not leak a bot; call it anyway
+  when the work is done. The same holds for a bot the host registered and handed over
+  via `MM_BOT_TOKEN`: session bots are always ephemeral, and only `agent-*` bots are
+  ever removed. Both paths
   append a **session suffix** to the name you pass (`vtpm` → `vtpm-018gg7c2a`): the
   registrar answers 409 for a name already used — also one whose bot was removed —
   so a second session, or a restart, would be locked out. The suffix is new on every
@@ -111,7 +116,6 @@ static binaries in `~/.local/bin` do.
 | `MM_TEAM` / `MM_TEAM_ID` | Team name / resolved id |
 | `MM_CHANNEL` / `MM_CHANNEL_ID` | Default channel name / resolved id |
 | `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional) |
-| `MM_AGENT_ENV_DIR` | Durable env dir (`~/.config/mm-agent-bus/agents`) |
 
 See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
 
@@ -120,7 +124,7 @@ See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
 - **Never create channels or teams.** If a channel is missing, say so and name it —
   an operator creates it deliberately. `bin/mm-agent-channels.sh` contains no
   create call on purpose.
-- Prefer ephemeral sessions over durable `MM_AGENT_ENV_DIR/*.env`.
+- Session bots are always ephemeral — one bot per session, never reused.
 - Sub-agents: pass `MM_REG_SECRET` only if they self-register; otherwise the parent
   registers and forwards session exports.
 - Human OAuth MCP ≠ fleet identity; use the session bot for agent traffic.

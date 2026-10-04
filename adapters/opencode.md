@@ -36,4 +36,4 @@ cd "$MM_AGENT_BUS_ROOT/mcp" && uv run mattermost-ai-agent-bus-mcp
 ```
 
 with the env above. Prefer MCP `session_start` / `wait_for_events` /
-`reply_in_thread` / `session_end` over long-lived durable bot env files.
+`reply_in_thread` / `session_end`.

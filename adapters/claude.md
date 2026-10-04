@@ -76,7 +76,9 @@ file under `~/.local/state/mm-agent-bus/`, keyed on the directory the server run
 (a hook running in a subdirectory walks up to find it). The
 `UserPromptSubmit` / `Stop` hooks read the bot token from there — they run in a
 different process than the MCP server and would otherwise never see it. `session_end`
-removes the file. The hooks run under `bash` (the scripts use bash syntax; `sh` is dash
+removes the file. The server also unregisters its bot when the process ends — Claude
+Code closing it, SIGTERM or SIGHUP — so a missing `session_end` or `trap` no longer
+leaks a bot (SIGKILL still does; `bin/mm-agent-sweep.sh` collects those). The hooks run under `bash` (the scripts use bash syntax; `sh` is dash
 on Debian). Without a session file and without `MM_BOT_TOKEN` they do nothing.
 
 Under host-managed sessions, `session_start` / `session_end` are unused — they exist for

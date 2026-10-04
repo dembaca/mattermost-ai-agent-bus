@@ -5,7 +5,11 @@ scripts around a session. That is the best place for the bus lifecycle:
 
 - `preStart` registers an ephemeral bot **on the host** and contributes only the minted
   bot token into the sandbox — `MM_REG_SECRET` never crosses the boundary.
-- `postEnd` unregisters the bot, even when the session crashed or the launch aborted.
+- The bundled MCP server unregisters the bot itself when it exits (using the bot's own
+  token; `agent-*` only), so no `postEnd` is needed for a normal end.
+- `postEnd` stays worthwhile as a safety net: it runs on the host, survives a SIGKILL of
+  the sandbox or an aborted launch, and sets the status offline. It is idempotent next
+  to the MCP cleanup — a second unregister answers 404, which counts as done.
 
 The agent therefore starts with a working identity and resolved channel ids, and cannot
 register or delete agents itself.

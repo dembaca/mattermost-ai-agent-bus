@@ -280,6 +280,52 @@ class MattermostClient:
         ):
             os.environ.pop(key, None)
 
+    def shutdown_sync(self) -> str:
+        """Unregister the bot this process is responsible for, synchronously.
+
+        Runs from the process exit handler, where no event loop is available.
+        Session bots are ephemeral by design, so this covers both our own
+        ``session_start`` and a bot the host registered and handed over via
+        MM_BOT_TOKEN; only ``agent-*`` bots are touched, never a human. Best
+        effort, never raises; returns a short outcome for the log.
+        """
+        if not self.token or not self.register_url:
+            return "no session"
+        headers = {"Authorization": f"Bearer {self.token}"}
+        try:
+            with httpx.Client(timeout=5.0) as http:
+                if self.session:
+                    short = self.session.name
+                else:
+                    me = http.get(f"{self.base_url}/api/v4/users/me", headers=headers)
+                    me.raise_for_status()
+                    user = me.json()
+                    username = user.get("username", "")
+                    if not username.startswith("agent-"):
+                        return f"{username!r} is not an agent bot; left alone"
+                    short = username.removeprefix("agent-")
+                    # Gone before unregistered, so a failed delete does not
+                    # leave a bot that looks available.
+                    http.put(
+                        f"{self.base_url}/api/v4/users/{user['id']}/status",
+                        headers=headers,
+                        json={"user_id": user["id"], "status": "offline"},
+                    )
+                resp = http.delete(
+                    f"{self.register_url}/{short}",
+                    headers={"Authorization": f"Bearer {self.reg_secret or self.token}"},
+                )
+                ok = resp.status_code in (200, 204, 404)
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            return f"unregister failed: {type(exc).__name__}"
+        finally:
+            self.session = None
+            self.token = None
+        if ok:
+            session_file.remove()
+            return f"unregistered {short}"
+        return f"unregister failed: HTTP {resp.status_code}"
+
     async def get_me(self) -> dict[str, Any]:
         if self._me is None:
             self._me = await self._api("GET", "/api/v4/users/me")

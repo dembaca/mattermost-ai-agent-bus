@@ -37,7 +37,7 @@ case "$CMD" in
       NAME="$(printf '%s' "${NAME:0:$((31 - ${#sid}))}" | sed 's/-*$//')-${sid}"
     fi
     # shellcheck disable=SC1090
-    eval "$("${BIN}/mm-agent-register.sh" --ephemeral --exports "$NAME")"
+    eval "$("${BIN}/mm-agent-register.sh" --exports "$NAME")"
     mm_write_session_file
     mm_emit_session_exports
     echo "session started as ${MM_BOT_USERNAME}" >&2
