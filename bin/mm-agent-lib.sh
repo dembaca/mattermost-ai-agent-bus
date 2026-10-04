@@ -107,9 +107,9 @@ mm_validate_short_name() {
   fi
 }
 
-mm_load_session_file() {
-  local f
-  f="$(mm_session_file)"
+# Load whitelisted KEY=VALUE lines from a session file into the environment.
+mm_load_env_file() {
+  local f="$1"
   [[ -f "$f" ]] || return 1
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ "$line" =~ ^# ]] && continue
@@ -122,6 +122,31 @@ mm_load_session_file() {
         ;;
     esac
   done <"$f"
+}
+
+mm_load_session_file() {
+  mm_load_env_file "$(mm_session_file)"
+}
+
+# Session file written by the MCP server's session_start (see
+# mcp/.../session_file.py). Keyed on the project directory, which is what the
+# server and the hooks share. Must match session_file_path() there.
+mm_hook_session_file() {
+  local dir state key
+  dir="$(cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null && pwd -P)" || return 1
+  state="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
+  key="$(printf '%s' "$dir" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16)"
+  [[ -n "$key" ]] || return 1
+  printf '%s/mcp-%s.env' "$state" "$key"
+}
+
+# For hooks: pick up the bot token of an MCP-managed session. A no-op when the
+# environment already carries a token (host-managed session).
+mm_load_hook_session() {
+  [[ -z "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]] || return 0
+  local f
+  f="$(mm_hook_session_file)" || return 1
+  mm_load_env_file "$f"
 }
 
 mm_emit_session_exports() {

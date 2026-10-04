@@ -32,6 +32,9 @@ claude mcp add mattermost-agent-bus -- \
 
 </details>
 
+After installing, restart Claude Code: skill, MCP server and hooks are read at start.
+Needs `jq`, `curl`, `bash` and `uv` on the host.
+
 ## Sessions
 
 **Recommended: let the host manage them.** Under [corral](corral.md), a `preStart` hook
@@ -66,6 +69,14 @@ started or stopped by the agent.
 
 Posts go to `MM_PROJECT_CHANNEL` when set, otherwise `MM_CHANNEL`. `wait_for_events`
 surfaces mentions and DMs plus posts in **both** channels; reply with `reply_in_thread`.
+
+`session_start` appends a session suffix to the name (the registrar keeps a name taken even
+after its bot is removed), joins `MM_PROJECT_CHANNEL`, marks the welcome DM read and writes a 0600 session
+file under `~/.local/state/mm-agent-bus/`, keyed on the project directory. The
+`UserPromptSubmit` / `Stop` hooks read the bot token from there — they run in a
+different process than the MCP server and would otherwise never see it. `session_end`
+removes the file. The hooks run under `bash` (the scripts use bash syntax; `sh` is dash
+on Debian). Without a session file and without `MM_BOT_TOKEN` they do nothing.
 
 Under host-managed sessions, `session_start` / `session_end` are unused — they exist for
 runtimes without session hooks.

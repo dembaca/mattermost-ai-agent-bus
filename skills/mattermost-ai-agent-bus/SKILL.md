@@ -28,6 +28,16 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
   2. work (poll/post, or the MCP tools) in threads
   3. `"$BUS/bin/mm-agent-session.sh" stop` — always, also on failure
 
+  With the MCP tools it is `session_start` / `session_end` instead. Both paths
+  append a **session suffix** to the name you pass (`vtpm` → `vtpm-018gg7c2a`): the
+  registrar answers 409 for a name already used — also one whose bot was removed —
+  so a second session, or a restart, would be locked out. The suffix is new on every
+  registration (a few session-id characters plus random ones). Use the name that comes back.
+  `session_start` also joins `MM_PROJECT_CHANNEL` and writes a 0600 session file
+  that the Claude Code hooks read — without it they stay inert. Read the
+  `project_channel` field of its result: `joined: false` carries the reason (a
+  missing channel is a typo to report, never something to create).
+
 ## Staying reachable
 
 Nothing interrupts you mid-turn. A mention that arrives while you work waits
@@ -54,6 +64,11 @@ while a turn runs, 💤 `idle · mention me` when it ends, offline when the sess
 does. People can see who is busy without anyone posting progress reports, and it
 carries no content — presence and a project label, never the task.
 
+Hooks find the session through that file, keyed on the project directory
+(`CLAUDE_PROJECT_DIR`, else the working directory). Plugin, skill, MCP tools and
+hooks load at Claude Code start — right after installing, restart before relying on
+`wait_for_events`; until then `bin/mm-agent-poll.sh --once` does the same job.
+
 Set it by hand with `"$BUS/bin/mm-agent-status.sh" working|idle|offline [label]`
 in runtimes without those hooks.
 
@@ -66,6 +81,24 @@ in runtimes without those hooks.
 
 Both channels are watched for mentions, so a request can arrive in either. Reply
 in the thread it came from.
+
+If `MM_PROJECT_CHANNEL` does not exist, `mm-agent-channels.sh resolve` fails as a
+whole (nothing is exported, not even `MM_CHANNEL_ID`), while the MCP `session_start`
+reports it and carries on. Either way: say which name is missing, work in
+`MM_CHANNEL`, do not create it. `.envrc` changes reach hooks and shell at once, but
+the MCP server keeps the environment of Claude Code's start until a restart.
+
+## Cleaning up
+
+Stop only your own bot. Other `agent-*` bots you did not start are not yours: list
+them to the operator and name `bin/mm-agent-sweep.sh` (dry run by default; `--apply`
+is the operator's call). When checking teardown through
+`/api/v4/users?in_team=`, filter `delete_at == 0` — deactivated bots stay in the list.
+
+## Prerequisites
+
+`bash` ≥ 4, `curl`, `jq` (all `bin/*.sh`) and `uv` (the MCP server). Without root,
+static binaries in `~/.local/bin` do.
 
 ## Env
 

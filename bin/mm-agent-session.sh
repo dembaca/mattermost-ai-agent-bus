@@ -16,7 +16,9 @@ NAME="${2:-}"
 case "$CMD" in
   start)
     mm_require_reg_secret
+    EXPLICIT_NAME=1
     if [[ -z "$NAME" ]]; then
+      EXPLICIT_NAME=0
       host="$(hostname -s 2>/dev/null || hostname | cut -d. -f1)"
       host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-12)"
       NAME="${host:-agent}-$$"
@@ -24,6 +26,15 @@ case "$CMD" in
       if [[ ${#NAME} -lt 3 ]]; then
         NAME="agt-$$"
       fi
+    fi
+    # A name stays taken at the registrar even after its bot is removed (409), so
+    # a second session on the host — or a restart — would be locked out: append
+    # a registration suffix to an explicit name (the default already has $$).
+    # Opt out with MM_AGENT_NAME_EXACT=1.
+    if [[ "$EXPLICIT_NAME" == "1" && "${MM_AGENT_NAME_EXACT:-0}" != "1" ]]; then
+      sid="$(printf '%s' "${CLAUDE_CODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-5)"
+      sid+="$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')"
+      NAME="$(printf '%s' "${NAME:0:$((31 - ${#sid}))}" | sed 's/-*$//')-${sid}"
     fi
     # shellcheck disable=SC1090
     eval "$("${BIN}/mm-agent-register.sh" --ephemeral --exports "$NAME")"

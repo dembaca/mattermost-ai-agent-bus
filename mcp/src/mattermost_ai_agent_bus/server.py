@@ -21,6 +21,7 @@ mcp = MCPServer(
         "hook registered the bot and resolved the channels — post/reply directly and "
         "do NOT call session_start/session_end. Only when MM_BOT_TOKEN is unset, "
         "register with session_start (needs MM_REG_SECRET) and session_end when done. "
+        "session_start joins MM_PROJECT_CHANNEL and appends a session suffix to the name. "
         "Posts go to MM_PROJECT_CHANNEL when set, else MM_CHANNEL; wait_for_events "
         "covers mentions/DMs and both channels. Never create channels or teams."
     ),
@@ -50,16 +51,22 @@ def _dump(obj: Any) -> str:
 
 
 @mcp.tool()
-async def session_start(name: str, display_name: str = "") -> str:
+async def session_start(
+    name: str, display_name: str = "", unique: bool = True
+) -> str:
     """Register an ephemeral Mattermost bot via the registrar.
 
     Requires MM_REG_SECRET and MM_REGISTER_URL / MM_CHAT_URL.
-    Returns session fields (username, user_id, url). Bot token is kept in-process.
+    A session suffix is appended to ``name`` (set unique=false to opt out): a live
+    name cannot be registered twice. Joins MM_PROJECT_CHANNEL when set. Returns
+    session fields (name, username, user_id, url) and the join result. The bot
+    token goes to a 0600 session file so the Claude Code hooks can see it.
     """
     client = _get_client()
-    info = await client.session_start(name, display_name or None)
+    info = await client.session_start(name, display_name or None, unique=unique)
     global _inbox
     _inbox = None  # reset inbox for new identity
+    setup = await client.finish_session_setup()
     return _dump(
         {
             "name": info.name,
@@ -67,6 +74,7 @@ async def session_start(name: str, display_name: str = "") -> str:
             "user_id": info.user_id,
             "url": info.url,
             "token_set": True,
+            **setup,
         }
     )
 

@@ -48,7 +48,8 @@ agent must not start or stop one.
 `MM_CHANNEL` is the registrar's default channel — the bot is already a member and stays
 addressable there. `MM_PROJECT_CHANNEL` is optional: when set, posts default to it and
 the inbox watches **both**. The project channel must already exist; **this repo never
-creates channels or teams**.
+creates channels or teams**. Both the CLI (`mm-agent-channels.sh`) and the MCP
+`session_start` join the project channel; the registrar only covers `MM_CHANNEL`.
 
 ## Quick start (CLI)
 

@@ -10,5 +10,9 @@ set -uo pipefail
 
 cat >/dev/null 2>&1 || true   # drain the hook payload; we do not read it
 
+# shellcheck source=../bin/mm-agent-lib.sh
+source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
+mm_load_hook_session || true
+
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 exec "$BIN/mm-agent-status.sh" working >/dev/null 2>&1

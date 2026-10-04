@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import httpx
+
+from . import session_file
 
 _NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$")
 _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
@@ -25,6 +28,22 @@ def env(name: str, default: str = "") -> str:
     if not value or _PLACEHOLDER_RE.match(value):
         return default
     return value
+
+
+def unique_name(base: str) -> str:
+    """Append a registration suffix to a bot name.
+
+    The registrar is not idempotent: a live name answers 409 and its token cannot
+    be fetched again, and a name stays taken after the bot is removed. Without a
+    suffix a second session on the host is locked out; with a suffix that only
+    depends on the session, so is a restart within the same session. Hence: a
+    few characters of the Claude Code session id (to trace it back) plus a random
+    part (so every registration is new).
+    """
+    raw = env("CLAUDE_CODE_SESSION_ID") or env("CLAUDE_SESSION_ID")
+    sid = re.sub(r"[^a-z0-9]", "", raw.lower())[:5]
+    suffix = f"{sid}{secrets.token_hex(2)}"
+    return f"{base[: 32 - 1 - len(suffix)].rstrip('-')}-{suffix}"
 
 
 def ws_url_from_http(http_url: str) -> str:
@@ -128,14 +147,19 @@ class MattermostClient:
         return resp.json()
 
     async def session_start(
-        self, name: str, display_name: str | None = None
+        self, name: str, display_name: str | None = None, *, unique: bool = True
     ) -> SessionInfo:
-        """POST registrar → set token / session fields."""
+        """POST registrar → set token / session fields.
+
+        With ``unique`` (default) a session suffix is appended to ``name``.
+        """
         if not self.reg_secret:
             raise RuntimeError("MM_REG_SECRET is required for session_start")
         if not self.register_url:
             raise RuntimeError("MM_REGISTER_URL is required for session_start")
         name = name.strip().lower()
+        if unique and _NAME_RE.match(name) and len(name) >= 3:
+            name = unique_name(name)
         if not _NAME_RE.match(name) or not (3 <= len(name) <= 32):
             raise ValueError("name must be 3–32 lowercase alnum/hyphen")
         display = (display_name or name).strip()
@@ -169,7 +193,50 @@ class MattermostClient:
         os.environ["MM_BOT_USER_ID"] = info.user_id
         os.environ["MM_BOT_TOKEN"] = info.bot_token
         os.environ["MATTERMOST_TOKEN"] = info.bot_token
+        try:
+            session_file.write(info, self.team_name, self.channel_name)
+        except OSError:
+            pass  # hooks stay inert; the MCP tools themselves do not need the file
         return info
+
+    async def finish_session_setup(self) -> dict[str, Any]:
+        """What session_start leaves undone: join the project channel, empty the inbox.
+
+        Best effort — the bot is already registered, so a failure is reported,
+        never raised. The registrar only makes the bot a member of MM_CHANNEL;
+        without the join, posting to the project channel is a 403 even though
+        reading it works.
+        """
+        result: dict[str, Any] = {}
+        name = self.project_channel_name
+        if name and self.session:
+            try:
+                cid = await self.get_channel_id(name)
+                # No membership pre-check: a non-member cannot read the member
+                # list (403, not 404). Joining twice is harmless.
+                await self._api(
+                    "POST",
+                    f"/api/v4/channels/{cid}/members",
+                    json={"user_id": self.session.user_id},
+                )
+                result["project_channel"] = {"name": name, "id": cid, "joined": True}
+            except httpx.HTTPStatusError as exc:
+                code = exc.response.status_code
+                reason = {
+                    404: f"channel '{name}' does not exist in team '{self.team_name}' "
+                    "(check the name; this server never creates channels)",
+                    403: f"cannot join '{name}': private channel (a human must add "
+                    "the bot) or joining is denied on this instance",
+                }.get(code, f"HTTP {code}")
+                result["project_channel"] = {"name": name, "joined": False, "error": reason}
+        # A fresh bot is born with a welcome DM from itself that nothing can
+        # drain; mark everything read so the Stop hook starts from empty.
+        try:
+            for ch in await self.unread_channels():
+                await self.view_channel(ch["channel_id"])
+        except (httpx.HTTPError, KeyError):
+            pass
+        return result
 
     async def session_end(self, name: str | None = None) -> None:
         """DELETE registrar agent. Uses reg secret or bot token."""
@@ -191,6 +258,7 @@ class MattermostClient:
         self.session = None
         self.token = None
         self._me = None
+        session_file.remove()
         for key in (
             "MM_BOT_NAME",
             "MM_BOT_USERNAME",
