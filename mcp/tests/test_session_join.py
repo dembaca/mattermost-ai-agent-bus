@@ -151,3 +151,34 @@ def test_stop_hook_without_bus_exits_zero():
         env={k: v for k, v in os.environ.items() if not k.startswith(("MM_", "MATTERMOST"))},
     )
     assert r.returncode == 0, r.stderr
+
+
+async def test_session_file_failure_is_reported(monkeypatch, tmp_path):
+    """A hook hand-over that cannot be written must not fail silently."""
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    monkeypatch.setenv("XDG_STATE_HOME", str(blocker))  # a file, not a directory
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "username": "agent-x", "user_id": "uid1", "bot_token": "t"})
+
+    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+                         register_url="https://mm.example/register/v1/agents")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await c.session_start("proj")
+    st = c.session_file_status
+    assert st["written"] is False and st["error"] and st["project_dir"]
+
+
+async def test_session_file_success_is_reported():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "username": "agent-x", "user_id": "uid1", "bot_token": "t"})
+
+    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+                         register_url="https://mm.example/register/v1/agents")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await c.session_start("proj")
+    assert c.session_file_status["written"] is True
+    assert Path(c.session_file_status["path"]).exists()

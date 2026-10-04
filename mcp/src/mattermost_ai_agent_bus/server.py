@@ -74,6 +74,8 @@ async def session_start(
             "user_id": info.user_id,
             "url": info.url,
             "token_set": True,
+            # Hooks read the token from here; written=false means they stay inert.
+            "hooks_session_file": client.session_file_status,
             **setup,
         }
     )
