@@ -29,9 +29,10 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
   3. `"$BUS/bin/mm-agent-session.sh" stop` — always, also on failure
 
   With the MCP tools it is `session_start` / `session_end` instead. Both paths
-  append a **session suffix** to the name you pass (`vtpm` → `vtpm-018ggfvr`): the
-  registrar answers 409 for a live name and never hands the token out again, so a
-  second session on the same host would be locked out. Use the name that comes back.
+  append a **session suffix** to the name you pass (`vtpm` → `vtpm-018gg7c2a`): the
+  registrar answers 409 for a name already used — also one whose bot was removed —
+  so a second session, or a restart, would be locked out. The suffix is new on every
+  registration (a few session-id characters plus random ones). Use the name that comes back.
   `session_start` also joins `MM_PROJECT_CHANNEL` and writes a 0600 session file
   that the Claude Code hooks read — without it they stay inert. Read the
   `project_channel` field of its result: `joined: false` carries the reason (a

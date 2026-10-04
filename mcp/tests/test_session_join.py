@@ -88,14 +88,16 @@ async def test_no_project_channel_no_join():
 
 def test_unique_name_suffix_and_length():
     n = unique_name("vtpm-hogan")
-    assert n.startswith("vtpm-hogan-") and len(n) == len("vtpm-hogan-") + 8
+    assert n.startswith("vtpm-hogan-") and len(n) == len("vtpm-hogan-") + 4
     long = unique_name("a" * 32)
-    assert len(long) <= 32 and long.rsplit("-", 1)[0] == "a" * 23
+    assert len(long) <= 32 and long.rsplit("-", 1)[0] == "a" * 27  # 32 - "-" - 4 random chars
+    assert unique_name("vtpm") != unique_name("vtpm")
 
 
 def test_unique_name_uses_session_id(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "018ggFVR-xxxx")
-    assert unique_name("vtpm") == "vtpm-018ggfvr"
+    a, b = unique_name("vtpm"), unique_name("vtpm")
+    assert a.startswith("vtpm-018gg") and a != b  # same session, new name each time
 
 
 def test_session_file_is_private_and_removed():

@@ -31,15 +31,18 @@ def env(name: str, default: str = "") -> str:
 
 
 def unique_name(base: str) -> str:
-    """Append a session suffix to a bot name.
+    """Append a registration suffix to a bot name.
 
-    The registrar is not idempotent: registering a name that is still live
-    answers 409, and the token of the running session cannot be fetched again —
-    so a second session on the same host would be locked out. The suffix comes
-    from the Claude Code session id when exposed, else it is random.
+    The registrar is not idempotent: a live name answers 409 and its token cannot
+    be fetched again, and a name stays taken after the bot is removed. Without a
+    suffix a second session on the host is locked out; with a suffix that only
+    depends on the session, so is a restart within the same session. Hence: a
+    few characters of the Claude Code session id (to trace it back) plus a random
+    part (so every registration is new).
     """
     raw = env("CLAUDE_CODE_SESSION_ID") or env("CLAUDE_SESSION_ID")
-    suffix = re.sub(r"[^a-z0-9]", "", raw.lower())[:8] or secrets.token_hex(4)
+    sid = re.sub(r"[^a-z0-9]", "", raw.lower())[:5]
+    suffix = f"{sid}{secrets.token_hex(2)}"
     return f"{base[: 32 - 1 - len(suffix)].rstrip('-')}-{suffix}"
 
 

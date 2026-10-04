@@ -70,8 +70,8 @@ started or stopped by the agent.
 Posts go to `MM_PROJECT_CHANNEL` when set, otherwise `MM_CHANNEL`. `wait_for_events`
 surfaces mentions and DMs plus posts in **both** channels; reply with `reply_in_thread`.
 
-`session_start` appends a session suffix to the name (a live name cannot be registered
-twice), joins `MM_PROJECT_CHANNEL`, marks the welcome DM read and writes a 0600 session
+`session_start` appends a session suffix to the name (the registrar keeps a name taken even
+after its bot is removed), joins `MM_PROJECT_CHANNEL`, marks the welcome DM read and writes a 0600 session
 file under `~/.local/state/mm-agent-bus/`, keyed on the project directory. The
 `UserPromptSubmit` / `Stop` hooks read the bot token from there — they run in a
 different process than the MCP server and would otherwise never see it. `session_end`
