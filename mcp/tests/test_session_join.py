@@ -151,3 +151,56 @@ def test_stop_hook_without_bus_exits_zero():
         env={k: v for k, v in os.environ.items() if not k.startswith(("MM_", "MATTERMOST"))},
     )
     assert r.returncode == 0, r.stderr
+
+
+async def test_session_file_failure_is_reported(monkeypatch, tmp_path):
+    """A hook hand-over that cannot be written must not fail silently."""
+    blocker = tmp_path / "file"
+    blocker.write_text("")
+    monkeypatch.setenv("XDG_STATE_HOME", str(blocker))  # a file, not a directory
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "username": "agent-x", "user_id": "uid1", "bot_token": "t"})
+
+    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+                         register_url="https://mm.example/register/v1/agents")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await c.session_start("proj")
+    st = c.session_file_status
+    assert st["written"] is False and st["error"] and st["project_dir"]
+
+
+async def test_session_file_success_is_reported():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "username": "agent-x", "user_id": "uid1", "bot_token": "t"})
+
+    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+                         register_url="https://mm.example/register/v1/agents")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await c.session_start("proj")
+    assert c.session_file_status["written"] is True
+    assert Path(c.session_file_status["path"]).exists()
+
+
+def test_hook_in_subdirectory_finds_session_of_project_root(tmp_path, monkeypatch):
+    """The agent cd'ed into a subdirectory: the hook walks up to the server's dir."""
+    session_file.write(INFO, "agents", "agents")  # keyed on CLAUDE_PROJECT_DIR=tmp_path
+    sub = tmp_path / "src" / "deep"
+    sub.mkdir(parents=True)
+    r = _bash(
+        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "$MM_BOT_TOKEN"',
+        MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_PROJECT_DIR=str(sub),
+    )
+    assert r.stdout.strip() == "tok-secret", r.stderr
+
+
+def test_hook_outside_project_finds_nothing(tmp_path):
+    other = tmp_path.parent / "elsewhere"
+    other.mkdir(exist_ok=True)
+    r = _bash(
+        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "[$MM_BOT_TOKEN]"',
+        MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_PROJECT_DIR=str(other),
+    )
+    assert r.stdout.strip() == "[]"

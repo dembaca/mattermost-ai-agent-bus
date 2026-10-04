@@ -85,6 +85,9 @@ class MattermostClient:
         default_factory=dict, repr=False, init=False
     )
     session: SessionInfo | None = field(default=None, repr=False, init=False)
+    session_file_status: dict[str, Any] = field(
+        default_factory=dict, repr=False, init=False
+    )
 
     @property
     def work_channel_name(self) -> str:
@@ -193,10 +196,19 @@ class MattermostClient:
         os.environ["MM_BOT_USER_ID"] = info.user_id
         os.environ["MM_BOT_TOKEN"] = info.bot_token
         os.environ["MATTERMOST_TOKEN"] = info.bot_token
+        self.session_file_status: dict[str, Any]
         try:
-            session_file.write(info, self.team_name, self.channel_name)
-        except OSError:
-            pass  # hooks stay inert; the MCP tools themselves do not need the file
+            path = session_file.write(info, self.team_name, self.channel_name)
+            self.session_file_status = {"path": str(path), "written": True}
+        except OSError as exc:
+            # The MCP tools do not need the file, but the hooks do — say so
+            # instead of leaving them silently inert.
+            self.session_file_status = {
+                "path": str(session_file.session_file_path()),
+                "written": False,
+                "error": f"{type(exc).__name__}: {exc.strerror or exc}",
+            }
+        self.session_file_status["project_dir"] = session_file.project_dir()
         return info
 
     async def finish_session_setup(self) -> dict[str, Any]:
