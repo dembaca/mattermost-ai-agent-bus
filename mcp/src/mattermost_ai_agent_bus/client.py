@@ -284,16 +284,13 @@ class MattermostClient:
         """Unregister the bot this process is responsible for, synchronously.
 
         Runs from the process exit handler, where no event loop is available.
-        Responsible means: the bot came from our own ``session_start``, or the
-        host handed us a session and asked for teardown with
-        MM_UNREGISTER_ON_EXIT=1 (a durable bot passed via MM_BOT_TOKEN must
-        never be removed just because its agent exited). Best effort, never
-        raises; returns a short outcome for the log.
+        Session bots are ephemeral by design, so this covers both our own
+        ``session_start`` and a bot the host registered and handed over via
+        MM_BOT_TOKEN; only ``agent-*`` bots are touched, never a human. Best
+        effort, never raises; returns a short outcome for the log.
         """
         if not self.token or not self.register_url:
             return "no session"
-        if not (self.session or env("MM_UNREGISTER_ON_EXIT") == "1"):
-            return "session not owned"
         headers = {"Authorization": f"Bearer {self.token}"}
         try:
             with httpx.Client(timeout=5.0) as http:

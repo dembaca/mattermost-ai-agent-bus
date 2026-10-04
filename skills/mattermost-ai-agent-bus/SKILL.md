@@ -31,9 +31,9 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
   With the MCP tools it is `session_start` / `session_end` instead. The MCP server
   also unregisters the bot it started when its process ends (Claude Code closing it,
   SIGTERM, SIGHUP), so a forgotten `session_end` does not leak a bot; call it anyway
-  when the work is done. It never removes a bot it did not start — unless the host
-  sets `MM_UNREGISTER_ON_EXIT=1` alongside the token (corral does), and even then
-  only `agent-*` bots. Both paths
+  when the work is done. The same holds for a bot the host registered and handed over
+  via `MM_BOT_TOKEN`: session bots are always ephemeral, and only `agent-*` bots are
+  ever removed. Both paths
   append a **session suffix** to the name you pass (`vtpm` → `vtpm-018gg7c2a`): the
   registrar answers 409 for a name already used — also one whose bot was removed —
   so a second session, or a restart, would be locked out. The suffix is new on every
@@ -125,7 +125,7 @@ See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
 - **Never create channels or teams.** If a channel is missing, say so and name it —
   an operator creates it deliberately. `bin/mm-agent-channels.sh` contains no
   create call on purpose.
-- Prefer ephemeral sessions over durable `MM_AGENT_ENV_DIR/*.env`.
+- Session bots are always ephemeral — one bot per session, never reused.
 - Sub-agents: pass `MM_REG_SECRET` only if they self-register; otherwise the parent
   registers and forwards session exports.
 - Human OAuth MCP ≠ fleet identity; use the session bot for agent traffic.

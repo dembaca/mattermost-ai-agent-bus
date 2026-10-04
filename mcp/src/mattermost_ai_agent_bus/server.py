@@ -172,13 +172,13 @@ _exit_handled = False
 
 
 def _cleanup_on_exit() -> None:
-    """Unregister the bot this server owns when the process ends."""
+    """Unregister the session bot when the process ends."""
     global _exit_handled
     if _exit_handled or _client is None:
         return
     _exit_handled = True
     outcome = _client.shutdown_sync()
-    if outcome not in ("no session", "session not owned"):
+    if outcome != "no session":
         log.info("exit cleanup: %s", outcome)
 
 

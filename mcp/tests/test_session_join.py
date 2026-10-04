@@ -241,15 +241,7 @@ def test_shutdown_unregisters_own_session(monkeypatch):
     assert c.shutdown_sync() == "no session"  # idempotent
 
 
-def test_shutdown_leaves_foreign_session_alone(monkeypatch):
-    """A durable bot passed via MM_BOT_TOKEN must survive its agent."""
-    _patch_http(monkeypatch, lambda req: pytest.fail("no request expected"))
-    c, _ = _shutdown_client(None, own_session=False)
-    assert c.shutdown_sync() == "session not owned"
-
-
-def test_shutdown_host_session_when_asked(monkeypatch):
-    monkeypatch.setenv("MM_UNREGISTER_ON_EXIT", "1")
+def test_shutdown_host_registered_session(monkeypatch):
     seen = []
 
     def handler(req):
@@ -266,7 +258,6 @@ def test_shutdown_host_session_when_asked(monkeypatch):
 
 
 def test_shutdown_never_deletes_a_human(monkeypatch):
-    monkeypatch.setenv("MM_UNREGISTER_ON_EXIT", "1")
     seen = []
 
     def handler(req):
