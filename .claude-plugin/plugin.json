@@ -2,7 +2,7 @@
   "name": "mattermost-ai-agent-bus",
   "displayName": "Mattermost AI agent bus",
   "description": "Coordinate coding agents over Mattermost: ephemeral bots via a registrar secret, a shell CLI, and an MCP server with a WebSocket inbox for mentions, DMs and watched channels.",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "author": {
     "name": "dembaca"
   },
