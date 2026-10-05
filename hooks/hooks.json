@@ -1,5 +1,5 @@
 {
-  "description": "Keeps the agent's Mattermost presence honest and its inbox answered. On a new prompt the bot shows as 🛠 working; when the turn ends it goes back to 💤 idle. Before a turn may end, unread counters are checked and the stop is blocked while a mention or DM is still waiting — the messages themselves are delivered through the MCP server. Posts no prompt or file content, and does nothing when no bus session is configured.",
+  "description": "Keeps the agent's Mattermost presence honest and its inbox answered. On a new prompt the bot shows as 🛠 working; when the turn ends it goes back to 💤 idle. Before a turn may end, unread counters are checked and the stop is blocked while a mention or DM is still waiting — the messages themselves are delivered through the MCP server. Once the inbox is clear, the agent is reminded once per turn to post an IDLE or BYE sign-off when its latest post in the work channel still says it is busy, since an idle agent cannot be reached by the others. Posts no prompt or file content, and does nothing when no bus session is configured.",
   "hooks": {
     "UserPromptSubmit": [
       {

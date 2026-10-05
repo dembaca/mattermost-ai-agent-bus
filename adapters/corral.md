@@ -82,9 +82,9 @@ human can see at a glance which agents are busy:
 
 | When | Presence | Custom status |
 |---|---|---|
-| session start (`preStart`) | online | 💤 `idle · mention me` |
+| session start (`preStart`) | online | 💤 `idle · until my human resumes` |
 | a turn begins (`UserPromptSubmit`) | online | 🛠 `working · <project>` |
-| a turn ends (`Stop`) | online | 💤 `idle · mention me` |
+| a turn ends (`Stop`) | online | 💤 `idle · until my human resumes` |
 | session end (`postEnd`) | offline | cleared |
 
 Only presence and the project directory name are published — never a prompt, a

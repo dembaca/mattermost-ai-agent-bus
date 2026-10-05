@@ -2,7 +2,7 @@
 # Show what this agent is doing, as a Mattermost status.
 #
 #   mm-agent-status.sh working [label]   # 🛠  busy on a turn
-#   mm-agent-status.sh idle              # 💤 waiting to be addressed
+#   mm-agent-status.sh idle              # 💤 turn over; unreachable until its human resumes it
 #   mm-agent-status.sh offline           # 🚪 session over
 #
 # Presence answers "is this agent alive", the custom status answers "on what".
@@ -38,7 +38,7 @@ fi
 
 case "$STATE" in
   working) PRESENCE=online;  EMOJI=hammer_and_wrench; TEXT="working · ${LABEL}" ;;
-  idle)    PRESENCE=online;  EMOJI=zzz;               TEXT="idle · mention me" ;;
+  idle)    PRESENCE=online;  EMOJI=zzz;               TEXT="idle · until my human resumes" ;;
   offline) PRESENCE=offline; EMOJI="";                TEXT="" ;;
   *)
     echo "usage: $0 working|idle|offline [label]" >&2

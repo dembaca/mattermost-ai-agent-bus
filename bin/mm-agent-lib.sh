@@ -87,6 +87,45 @@ mm_api() {
   [[ "$MM_API_STATUS" =~ ^[0-9]{3}$ ]] || return 1
 }
 
+# Print the id of the work channel: the argument (an id or a channel name in
+# MM_TEAM) when given, else the project channel, else the default channel.
+# Prefers resolved ids from the environment and asks the API only for names.
+mm_work_channel_id() {
+  local arg="${1:-}" id="" name="" team_id
+  if [[ -n "$arg" ]]; then
+    # Mattermost ids are 26 lowercase alphanumerics; anything else is a name.
+    if [[ "$arg" =~ ^[a-z0-9]{26}$ ]]; then id="$arg"; else name="$arg"; fi
+  elif [[ -n "${MM_PROJECT_CHANNEL_ID:-}" ]]; then
+    id="$MM_PROJECT_CHANNEL_ID"
+  elif [[ -n "${MM_PROJECT_CHANNEL:-}" ]]; then
+    name="$MM_PROJECT_CHANNEL"
+  elif [[ -n "${MM_CHANNEL_ID:-}" ]]; then
+    id="$MM_CHANNEL_ID"
+  else
+    name="$(mm_channel)"
+  fi
+  if [[ -n "$id" ]]; then
+    printf '%s' "$id"
+    return 0
+  fi
+
+  team_id="${MM_TEAM_ID:-}"
+  if [[ -z "$team_id" ]]; then
+    mm_api GET "/api/v4/teams/name/$(mm_team)" || return 1
+    if [[ "$MM_API_STATUS" != "200" ]]; then
+      echo "could not resolve team '$(mm_team)': HTTP ${MM_API_STATUS}" >&2
+      return 1
+    fi
+    team_id="$(jq -r '.id' <<<"$MM_API_BODY")"
+  fi
+  mm_api GET "/api/v4/teams/${team_id}/channels/name/${name}" || return 1
+  if [[ "$MM_API_STATUS" != "200" ]]; then
+    echo "could not resolve channel '${name}': HTTP ${MM_API_STATUS}" >&2
+    return 1
+  fi
+  jq -r '.id' <<<"$MM_API_BODY"
+}
+
 mm_validate_short_name() {
   local name="$1"
   if ! [[ "$name" =~ ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ ]]; then

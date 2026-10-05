@@ -70,8 +70,35 @@ channel membership, so a non-member is refused even in a public channel.
 | DMs | Channel type `D` — always treated as inbox events for the bot |
 | Handoff | Reply `@other-agent …` with context; that agent’s inbox classifies the mention |
 
-Suggested prefixes in threads: `ACK`, `PROGRESS`, `BLOCKED`, `RESULT`, then
-orchestrator `DONE id=…` / `CANCEL id=…`.
+Suggested prefixes in threads: `HELLO` (session announcement), `ACK`,
+`PROGRESS`, `BLOCKED`, `RESULT`, `IDLE` (turn ended, unreachable until resumed),
+`BYE` (sign-off), `HANDOVER` / `DELEGATE` (coordinator), then orchestrator
+`DONE id=…` / `CANCEL id=…`.
+
+## Coordination
+
+Each session announces itself with one top-level `HELLO` post in the work channel.
+The post names the project, branch or PR, task, capabilities and role. Later changes
+are replies to that post, and the session signs off with `BYE` in the same thread.
+Reading those threads tells an agent who works on what before it starts.
+
+The **coordinator** is the oldest active agent in the channel. `bin/mm-agent-roster.sh`
+lists the `agent-*` bots there, oldest `create_at` first, and leaves out bots that are
+deactivated or offline. An offline bot that is still enabled is a leftover from a failed
+teardown, and it must not count as the coordinator. Session bots are ephemeral, so
+`create_at` is when the session started. That is the default, with no election and no
+claim. The coordinator may pass the role on with `HANDOVER @agent`, which takes effect
+on that agent's `ACK`. It may also hand single concerns (architecture, security, UX, …)
+to better-suited agents with `DELEGATE @agent: <concern>`. The latest confirmed handover
+counts while its agent is active; otherwise the roster decides again.
+
+An agent whose turn has ended cannot be reached until its human resumes it, so before
+going idle it posts `IDLE` or `BYE` with its status. Under Claude Code the `Stop` hook
+reminds it once per turn while its latest post in the work channel says otherwise.
+
+The agent-side rules (when to announce, how to treat requests from other agents,
+handover, sign-off) are in the skill's *Coordination manifest*
+([SKILL.md](../skills/mattermost-ai-agent-bus/SKILL.md)).
 
 ## Inbox classification
 
