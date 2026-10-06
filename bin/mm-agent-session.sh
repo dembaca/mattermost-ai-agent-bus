@@ -15,6 +15,13 @@ NAME="${2:-}"
 
 case "$CMD" in
   start)
+    # A token in the environment means this session already has a bot — most
+    # often one a host hook registered (corral). A second registration would
+    # only leak a bot nobody tears down.
+    if [[ -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]]; then
+      echo "a bus session already exists here (MM_BOT_TOKEN is set); not registering another" >&2
+      exit 1
+    fi
     mm_require_reg_secret
     EXPLICIT_NAME=1
     if [[ -z "$NAME" ]]; then
@@ -37,15 +44,25 @@ case "$CMD" in
       NAME="$(printf '%s' "${NAME:0:$((31 - ${#sid}))}" | sed 's/-*$//')-${sid}"
     fi
     # shellcheck disable=SC1090
+    # mm-agent-register.sh writes the session file (named after the bot).
     eval "$("${BIN}/mm-agent-register.sh" --exports "$NAME")"
-    mm_write_session_file
     mm_emit_session_exports
-    echo "session started as ${MM_BOT_USERNAME}" >&2
+    echo "session started as ${MM_BOT_USERNAME}; to stop from another shell:" >&2
+    echo "  MM_BOT_NAME=${MM_BOT_NAME} $0 stop" >&2
     ;;
   stop)
+    # Only ever this session's bot: the file comes from MM_AGENT_SESSION_FILE or
+    # MM_BOT_NAME in the environment, never from a shared default. Under a
+    # host-managed session MM_BOT_NAME is withheld, so this cannot reach the
+    # host's bot either.
+    if [[ -z "${MM_AGENT_SESSION_FILE:-}" && -z "${MM_BOT_NAME:-}" ]]; then
+      echo "no session in this environment; nothing to stop" >&2
+      echo "  (pass MM_BOT_NAME=<name> or MM_AGENT_SESSION_FILE=<path> from 'start')" >&2
+      exit 0
+    fi
     mm_load_session_file || true
     if [[ -z "${MM_BOT_NAME:-}" ]]; then
-      echo "no MM_BOT_NAME / session file; nothing to stop" >&2
+      echo "session file names no bot; nothing to stop" >&2
       exit 0
     fi
     "${BIN}/mm-agent-unregister.sh" "$MM_BOT_NAME" || true

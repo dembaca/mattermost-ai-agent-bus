@@ -2,13 +2,29 @@
 # Example Cursor sessionStart hook — copy to mm-session-start.sh and chmod +x.
 set -euo pipefail
 ROOT="${MM_AGENT_BUS_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# shellcheck source=../../bin/mm-agent-lib.sh
+source "${ROOT}/bin/mm-agent-lib.sh"
+
+input="$(cat 2>/dev/null || true)"
 if [[ -z "${MM_REG_SECRET:-}" ]]; then
   echo "MM_REG_SECRET unset; skipping Mattermost session start" >&2
   echo '{"continue":true}'
   exit 0
 fi
+
+# One session file per Cursor session, derived from the session_id Cursor passes
+# to both sessionStart and sessionEnd — so the end hook finds exactly this
+# session's bot, never another session's.
+SID="$(jq -r '.session_id // .conversation_id // empty' <<<"$input" 2>/dev/null | tr -cd 'A-Za-z0-9-')"
+if [[ -z "$SID" ]]; then
+  echo "no session_id in hook input; skipping Mattermost session start" >&2
+  echo '{"continue":true}'
+  exit 0
+fi
+export MM_AGENT_SESSION_FILE="$(mm_state_dir)/cursor-${SID}.env"
+
 # shellcheck disable=SC1090
-eval "$("${ROOT}/bin/mm-agent-session.sh" start "cursor-${CURSOR_SESSION_ID:-$$}")"
+eval "$("${ROOT}/bin/mm-agent-session.sh" start "cursor-${SID:0:8}")"
 if [[ -n "${CURSOR_ENV_FILE:-}" ]]; then
   {
     echo "MM_CHAT_URL=${MM_CHAT_URL}"
@@ -18,6 +34,7 @@ if [[ -n "${CURSOR_ENV_FILE:-}" ]]; then
     echo "MM_BOT_TOKEN=${MM_BOT_TOKEN}"
     echo "MATTERMOST_URL=${MATTERMOST_URL}"
     echo "MATTERMOST_TOKEN=${MATTERMOST_TOKEN}"
+    echo "MM_AGENT_SESSION_FILE=${MM_AGENT_SESSION_FILE}"
   } >>"$CURSOR_ENV_FILE"
 fi
 echo "mm-agent session started as ${MM_BOT_USERNAME}" >&2

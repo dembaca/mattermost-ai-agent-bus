@@ -27,8 +27,28 @@ mm_bot_token() {
   printf '%s' "$tok"
 }
 
+mm_state_dir() {
+  printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
+}
+
+# The session file of THIS session: MM_AGENT_SESSION_FILE when set, else one
+# named after the bot. There is deliberately no shared default — a single
+# host-wide file let one session overwrite another's, and a later `stop` then
+# removed whichever bot happened to be in it. Without either variable there is
+# no session to name, and that is an error, never a guess.
+#
+# Lives under the state dir rather than /tmp: a corral sandbox has no /tmp but a
+# writable $HOME, and CORRAL_SESSION_ID is only visible to host hooks — the bot
+# name is the one key every side knows.
 mm_session_file() {
-  local f="${MM_AGENT_SESSION_FILE:-${XDG_RUNTIME_DIR:-/tmp}/mm-agent-session.env}"
+  local f="${MM_AGENT_SESSION_FILE:-}"
+  if [[ -z "$f" ]]; then
+    if [[ -z "${MM_BOT_NAME:-}" ]]; then
+      echo "no session: set MM_AGENT_SESSION_FILE or MM_BOT_NAME" >&2
+      return 1
+    fi
+    f="$(mm_state_dir)/session-${MM_BOT_NAME}.env"
+  fi
   if [[ "$f" == ~* ]]; then
     f="${f/#\~/$HOME}"
   fi
@@ -156,7 +176,9 @@ mm_load_env_file() {
 }
 
 mm_load_session_file() {
-  mm_load_env_file "$(mm_session_file)"
+  local f
+  f="$(mm_session_file)" || return 1
+  mm_load_env_file "$f"
 }
 
 # Session file written by the MCP server's session_start (see
@@ -205,7 +227,7 @@ EOF
 
 mm_write_session_file() {
   local f
-  f="$(mm_session_file)"
+  f="$(mm_session_file)" || return 1
   umask 077
   mkdir -p "$(dirname "$f")"
   cat >"$f" <<EOF
