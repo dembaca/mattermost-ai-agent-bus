@@ -27,6 +27,13 @@ eval "$("$MM_AGENT_BUS_ROOT/bin/mm-agent-session.sh" start "cursor-$$")"
 "$MM_AGENT_BUS_ROOT/bin/mm-agent-session.sh" stop
 ```
 
+Each session gets its own session file
+(`~/.local/state/mm-agent-bus/session-<bot-name>.env`), and `stop` only acts on the
+one named in its environment. When every shell command starts fresh, as in agent
+tool calls, carry the name over: `MM_BOT_NAME=<name> …/mm-agent-session.sh stop`
+(`start` prints the exact line). There is no shared host-wide file any more, so
+concurrent sessions cannot overwrite or tear down each other.
+
 ## MCP
 
 Add a stdio MCP server that runs:

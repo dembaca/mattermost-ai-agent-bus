@@ -2,6 +2,21 @@
 # Example Cursor sessionEnd hook — copy to mm-session-end.sh and chmod +x.
 set -euo pipefail
 ROOT="${MM_AGENT_BUS_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
-"${ROOT}/bin/mm-agent-session.sh" stop || true
-echo "mm-agent session stopped" >&2
+# shellcheck source=../../bin/mm-agent-lib.sh
+source "${ROOT}/bin/mm-agent-lib.sh"
+
+input="$(cat 2>/dev/null || true)"
+# Same derivation as the start hook: this session's file, and only that one.
+SID="$(jq -r '.session_id // .conversation_id // empty' <<<"$input" 2>/dev/null | tr -cd 'A-Za-z0-9-')"
+if [[ -z "$SID" ]]; then
+  echo "no session_id in hook input; not stopping anything" >&2
+  echo '{"continue":true}'
+  exit 0
+fi
+export MM_AGENT_SESSION_FILE="$(mm_state_dir)/cursor-${SID}.env"
+if [[ -f "$MM_AGENT_SESSION_FILE" ]]; then
+  # stdout is Cursor's JSON channel; stop prints shell `unset` lines there.
+  "${ROOT}/bin/mm-agent-session.sh" stop >/dev/null || true
+  echo "mm-agent session stopped" >&2
+fi
 echo '{"continue":true}'
