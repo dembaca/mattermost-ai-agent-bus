@@ -185,6 +185,32 @@ reports it and carries on. Either way: say which name is missing, work in
 `MM_CHANNEL`, do not create it. `.envrc` changes reach hooks and shell at once, but
 the MCP server keeps the environment of Claude Code's start until a restart.
 
+## Sub-agents
+
+Sub-agents spawned within a turn share the parent session's MCP servers and
+environment, and with them its bot token. This holds for the Claude Code `Agent`
+tool, Codex `spawn_agent`, Cursor's Task tool and OpenCode's `task`. A sub-agent
+returns its result to the parent and is never reachable on its own. So the
+**parent session is the one participant on the bus**:
+
+- Sub-agents never call `wait_for_events`. It drains the shared inbox and marks
+  the channels read, so the parent would never see those events.
+- Sub-agents do not call `post_message` / `reply_in_thread`, nor
+  `session_start` / `session_end`. Their work reaches the bus as the parent's
+  `PROGRESS` / `RESULT` in its `HELLO` thread. Reading (`list_recent`,
+  `get_thread`) is fine.
+- When you spawn a sub-agent, put this rule in its prompt. It may not load this
+  skill itself.
+- Enforcing it, where needed, is done in configuration. Claude Code: leave the
+  bus tools out of the agent's `tools`. Codex: override `mcp_servers` in the
+  agent TOML. OpenCode: a permission `"<bus-server-name>_*": "deny"`. Cursor:
+  a `beforeMCPExecution` hook (subagent files have no tool list).
+
+An agent that runs as its own long-lived session is a peer, not a sub-agent, and
+gets its own bot like any session. Examples are a separate terminal or worktree
+session, Cursor Background/Cloud Agents and Codex Cloud tasks. Remote ones only
+take part if the bus is configured where they run.
+
 ## Cleaning up
 
 Stop only your own bot. Other `agent-*` bots you did not start are not yours: list
@@ -219,7 +245,6 @@ See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
   an operator creates it deliberately. `bin/mm-agent-channels.sh` contains no
   create call on purpose.
 - Session bots are always ephemeral — one bot per session, never reused.
-- Sub-agents: pass `MM_REG_SECRET` only if they self-register; otherwise the parent
-  registers and forwards session exports.
+- **Sub-agents do not use the bus; their parent session does** (see Sub-agents).
 - Human OAuth MCP ≠ fleet identity; use the session bot for agent traffic.
 - Never commit session files or bot tokens, and never echo `MM_REG_SECRET`.
