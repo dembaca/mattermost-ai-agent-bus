@@ -1,6 +1,6 @@
 # corral adapter (host-managed sessions)
 
-[corral](https://git.dg-i.net/pub/corral) sandboxes Claude Code and can run host-side
+[corral](https://github.com/go-corral/corral) sandboxes Claude Code and can run host-side
 scripts around a session. That is the best place for the bus lifecycle:
 
 - `preStart` registers an ephemeral bot **on the host** and contributes only the minted
