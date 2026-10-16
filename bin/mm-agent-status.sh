@@ -2,6 +2,7 @@
 # Show what this agent is doing, as a Mattermost status.
 #
 #   mm-agent-status.sh working [label]   # 🛠  busy on a turn
+#   mm-agent-status.sh listening UNTIL   # 👂 turn over, still answering the bus until epoch UNTIL
 #   mm-agent-status.sh idle              # 💤 turn over; unreachable until its human resumes it
 #   mm-agent-status.sh offline           # 🚪 session over
 #
@@ -32,16 +33,26 @@ if [[ -z "$UID_" ]]; then
 fi
 
 # Default label: the project this session works in.
-if [[ -z "$LABEL" ]]; then
+if [[ -z "$LABEL" && "$STATE" != listening ]]; then
   LABEL="$(basename "${CORRAL_WORKDIR:-$PWD}")"
 fi
 
+EXPIRES=""
 case "$STATE" in
+  listening)
+    # The window may end without the Stop hook running (the human pressed ESC),
+    # so the status carries its own expiry: Mattermost clears it on time rather
+    # than leaving a stale "listening" behind.
+    [[ "$LABEL" =~ ^[0-9]+$ ]] || { echo "usage: $0 listening UNTIL_EPOCH" >&2; exit 2; }
+    EXPIRES="$(mm_epoch_rfc3339 "$LABEL")" || exit 0
+    PRESENCE=online; EMOJI=ear
+    TEXT="listening · until $(mm_epoch_hhmm "$LABEL"), then idle"
+    ;;
   working) PRESENCE=online;  EMOJI=hammer_and_wrench; TEXT="working · ${LABEL}" ;;
   idle)    PRESENCE=online;  EMOJI=zzz;               TEXT="idle · until my human resumes" ;;
   offline) PRESENCE=offline; EMOJI="";                TEXT="" ;;
   *)
-    echo "usage: $0 working|idle|offline [label]" >&2
+    echo "usage: $0 working|idle|offline [label] | listening UNTIL_EPOCH" >&2
     exit 2
     ;;
 esac
@@ -54,7 +65,9 @@ mm_api PUT "/api/v4/users/${UID_}/status" \
 
 if [[ -n "$EMOJI" ]]; then
   mm_api PUT "/api/v4/users/me/status/custom" \
-    "$(jq -nc --arg e "$EMOJI" --arg t "$TEXT" '{emoji:$e, text:$t}')" >/dev/null || true
+    "$(jq -nc --arg e "$EMOJI" --arg t "$TEXT" --arg x "$EXPIRES" \
+      '{emoji:$e, text:$t} + (if $x != "" then {duration:"date_and_time", expires_at:$x} else {} end)')" \
+    >/dev/null || true
 else
   mm_api DELETE "/api/v4/users/me/status/custom" >/dev/null || true
 fi

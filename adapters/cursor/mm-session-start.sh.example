@@ -6,6 +6,11 @@ ROOT="${MM_AGENT_BUS_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 source "${ROOT}/bin/mm-agent-lib.sh"
 
 input="$(cat 2>/dev/null || true)"
+if ! why="$(mm_registration_wanted)"; then
+  echo "skipping Mattermost session start: ${why}" >&2
+  echo '{"continue":true}'
+  exit 0
+fi
 if [[ -z "${MM_REG_SECRET:-}" ]]; then
   echo "MM_REG_SECRET unset; skipping Mattermost session start" >&2
   echo '{"continue":true}'
@@ -28,7 +33,7 @@ eval "$("${ROOT}/bin/mm-agent-session.sh" start "cursor-${SID:0:8}")"
 if [[ -n "${CURSOR_ENV_FILE:-}" ]]; then
   {
     echo "MM_CHAT_URL=${MM_CHAT_URL}"
-    echo "MM_BOT_NAME=${MM_BOT_NAME}"
+    echo "MM_REG_BOT_NAME=${MM_REG_BOT_NAME}"
     echo "MM_BOT_USERNAME=${MM_BOT_USERNAME}"
     echo "MM_BOT_USER_ID=${MM_BOT_USER_ID}"
     echo "MM_BOT_TOKEN=${MM_BOT_TOKEN}"

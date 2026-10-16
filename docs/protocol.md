@@ -34,8 +34,10 @@ Steps 1 and 3 can run **on the host, outside the agent's sandbox** — a corral
 Three properties follow, and they are the reason to prefer it:
 
 - `MM_REG_SECRET` never crosses into the sandbox. Only the minted, short-lived bot
-  token does, so a compromised agent cannot create or delete agents.
-- `MM_BOT_NAME` — the registrar's delete key — is withheld too.
+  token does, so a compromised agent cannot create agents, and can delete none but
+  its own (the registrar accepts only the secret or the bot's own token).
+- `MM_REG_BOT_NAME`, the registrar's short name for the bot, is withheld too — not
+  as a secret, but so the CLI inside the sandbox cannot stop a session the host owns.
 - Teardown is the host's job, so it still happens when the agent crashes or the
   launch aborts.
 
@@ -95,6 +97,12 @@ counts while its agent is active; otherwise the roster decides again.
 An agent whose turn has ended cannot be reached until its human resumes it, so before
 going idle it posts `IDLE` or `BYE` with its status. Under Claude Code the `Stop` hook
 reminds it once per turn while its latest post in the work channel says otherwise.
+In a project channel the hook then keeps the agent listening (`wait_for_events`) for
+`MM_LISTEN_SEC` (default 900 s) before it goes idle; its status reads 👂 `listening`.
+
+Session hooks register a bot automatically only when `MM_PROJECT_CHANNEL` is set
+(then always), or when `MM_REGISTER=always`. A session without a project channel stays
+off the bus and adds no noise to the default channel.
 
 The agent-side rules (when to announce, how to treat requests from other agents,
 handover, sign-off) are in the skill's *Coordination manifest*

@@ -191,7 +191,7 @@ class MattermostClient:
         self._channel_ids.clear()
         os.environ["MM_CHAT_URL"] = info.url
         os.environ["MATTERMOST_URL"] = info.url
-        os.environ["MM_BOT_NAME"] = info.name
+        os.environ["MM_REG_BOT_NAME"] = info.name
         os.environ["MM_BOT_USERNAME"] = info.username
         os.environ["MM_BOT_USER_ID"] = info.user_id
         os.environ["MM_BOT_TOKEN"] = info.bot_token
@@ -252,7 +252,7 @@ class MattermostClient:
 
     async def session_end(self, name: str | None = None) -> None:
         """DELETE registrar agent. Uses reg secret or bot token."""
-        short = name or (self.session.name if self.session else os.environ.get("MM_BOT_NAME"))
+        short = name or (self.session.name if self.session else os.environ.get("MM_REG_BOT_NAME"))
         if not short:
             raise RuntimeError("no agent name; pass name or call session_start first")
         short = short.removeprefix("agent-")
@@ -272,7 +272,7 @@ class MattermostClient:
         self._me = None
         session_file.remove()
         for key in (
-            "MM_BOT_NAME",
+            "MM_REG_BOT_NAME",
             "MM_BOT_USERNAME",
             "MM_BOT_USER_ID",
             "MM_BOT_TOKEN",

@@ -7,11 +7,23 @@
 #
 # stdout is reserved for corral's contribution interface — exactly one JSON
 # object, or nothing. Every human-readable line goes to stderr.
+#
+# Spec: RT-6.1 in docs/arc42/06-runtime-view.md.
 set -euo pipefail
 
 BIN="$(cd "$(dirname "$0")/../../bin" && pwd)"
+# shellcheck source=../../bin/mm-agent-lib.sh
+source "$BIN/mm-agent-lib.sh"
 
 log() { echo "mm-bus: $*" >&2; }
+
+# --- wanted at all? ----------------------------------------------------------
+# Decided before the secret is read: a session that will not register has no
+# business touching it.
+if ! why="$(mm_registration_wanted)"; then
+  log "no bot for this session: ${why}"
+  exit 0
+fi
 
 # --- secret, gopass preferred ------------------------------------------------
 # gopass first: the secret then lives in neither a shell env nor a config file.
@@ -117,8 +129,11 @@ printf 'MM_SESSION_PID=%s\n' "$PPID" >>"$MM_AGENT_SESSION_FILE"
 "$BIN/mm-agent-status.sh" idle "$PROJECT_RAW" || true
 
 # --- contribution ------------------------------------------------------------
-# MM_BOT_NAME is deliberately withheld: nothing inside the sandbox should be able
-# to ask the registrar to delete an agent.
+# MM_REG_BOT_NAME is deliberately withheld. Not a secret — it is the username
+# without "agent-", and the registrar deletes a bot only with MM_REG_SECRET or
+# that bot's own token. Withholding it guards the host's lifecycle: without it
+# the CLI finds no session file, so `mm-agent-session.sh stop` inside the sandbox
+# cannot tear down a session the host owns.
 note="You are @${MM_BOT_USERNAME} on the Mattermost agent bus."
 if [[ -n "${MM_PROJECT_CHANNEL:-}" ]]; then
   note+=" Work in ~${MM_PROJECT_CHANNEL}; you are also addressable in ~${MM_CHANNEL}."

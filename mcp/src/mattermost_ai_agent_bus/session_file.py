@@ -49,7 +49,7 @@ def write(info: SessionInfo, team: str, channel: str) -> Path:
         "# ephemeral session — do not commit",
         f"MM_CHAT_URL={info.url}",
         f"MATTERMOST_URL={info.url}",
-        f"MM_BOT_NAME={info.name}",
+        f"MM_REG_BOT_NAME={info.name}",
         f"MM_BOT_USERNAME={info.username}",
         f"MM_BOT_USER_ID={info.user_id}",
         f"MM_BOT_TOKEN={info.bot_token}",
