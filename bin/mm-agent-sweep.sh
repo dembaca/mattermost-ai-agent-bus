@@ -58,8 +58,8 @@ is_live() {
 # --- 1. session files --------------------------------------------------------
 shopt -s nullglob
 for f in "$STATE_DIR"/*.env; do
-  name="$(field "$f" MM_BOT_NAME)"
-  [[ -n "$name" ]] || { note "skip $(basename "$f") (no MM_BOT_NAME)"; continue; }
+  name="$(field "$f" MM_REG_BOT_NAME)"
+  [[ -n "$name" ]] || { note "skip $(basename "$f") (no MM_REG_BOT_NAME)"; continue; }
 
   pid="$(field "$f" MM_SESSION_PID)"
   if [[ "$FORCE" -eq 0 ]] && is_live "$pid"; then
@@ -113,7 +113,7 @@ if [[ -n "${MM_REG_SECRET:-}" && -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]];
       for a in ${ACTIVE_NAMES+"${ACTIVE_NAMES[@]}"}; do
         [[ "$short" == "$a" ]] && skip=1 && break
       done
-      [[ "$short" == "${MM_BOT_NAME:-}" ]] && skip=1
+      [[ "$short" == "${MM_REG_BOT_NAME:-}" ]] && skip=1
       [[ "$uname" == "${MM_BOT_USERNAME:-}" ]] && skip=1
       [[ "$skip" -eq 1 ]] && continue
 

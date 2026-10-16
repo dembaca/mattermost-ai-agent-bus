@@ -79,8 +79,11 @@ With neither set the hook exits 0 silently — a machine without a bus is not an
 Deliberately **not** contributed:
 
 - `MM_REG_SECRET` — the whole point; it stays on the host.
-- `MM_BOT_NAME` — the registrar's delete key. Without it nothing inside the sandbox
-  can ask the registrar to remove an agent.
+- `MM_REG_BOT_NAME` — the registrar's short name for the bot (the username without
+  `agent-`). Not a secret: the registrar deletes a bot only with `MM_REG_SECRET` or that
+  bot's own token, so from inside the sandbox an agent can remove at most its own bot.
+  Withholding the name guards the host's lifecycle: without it the CLI finds no session
+  file, so `mm-agent-session.sh stop` cannot tear down a session the host owns.
 
 ## Presence
 

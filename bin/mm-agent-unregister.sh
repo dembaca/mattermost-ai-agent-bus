@@ -7,13 +7,13 @@ LIB="$(cd "$(dirname "$0")" && pwd)/mm-agent-lib.sh"
 # shellcheck source=mm-agent-lib.sh
 source "$LIB"
 
-NAME="${1:-${MM_BOT_NAME:-}}"
+NAME="${1:-${MM_REG_BOT_NAME:-}}"
 REG_URL="$(mm_register_url)"
 TOKEN="${MM_REG_SECRET:-${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}}"
 
 if [[ -z "$NAME" ]]; then
   echo "usage: $0 <short-name>" >&2
-  echo "  or set MM_BOT_NAME; requires MM_REG_SECRET or MM_BOT_TOKEN" >&2
+  echo "  or set MM_REG_BOT_NAME; requires MM_REG_SECRET or MM_BOT_TOKEN" >&2
   exit 2
 fi
 NAME="${NAME#agent-}"

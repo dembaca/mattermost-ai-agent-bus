@@ -94,7 +94,7 @@ async def session_end(name: str = "") -> str:
         await _inbox.close()
         _inbox = None
     await client.session_end(name or None)
-    return _dump({"ok": True, "ended": name or os.environ.get("MM_BOT_NAME", "")})
+    return _dump({"ok": True, "ended": name or os.environ.get("MM_REG_BOT_NAME", "")})
 
 
 @mcp.tool()

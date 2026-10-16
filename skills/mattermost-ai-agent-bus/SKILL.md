@@ -33,9 +33,9 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
   1. `eval "$("$BUS/bin/mm-agent-session.sh" start <short-name>)"`
   2. work (poll/post, or the MCP tools) in threads
   3. `"$BUS/bin/mm-agent-session.sh" stop` — always, also on failure. `stop`
-     only acts on the session named in its environment (`MM_BOT_NAME` or
+     only acts on the session named in its environment (`MM_REG_BOT_NAME` or
      `MM_AGENT_SESSION_FILE`, both exported by `start`). If each of your shell
-     commands starts fresh, pass it along: `MM_BOT_NAME=<name> … stop`. Never
+     commands starts fresh, pass it along: `MM_REG_BOT_NAME=<name> … stop`. Never
      reuse another session's file or token.
 
   With the MCP tools it is `session_start` / `session_end` instead. The MCP server

@@ -32,7 +32,7 @@ own short-lived bot identity.
 | Priority | Quality Goal | Concrete Scenario |
 |:--------:|-------------|-------------------|
 | 1 | `#reliable` Never wedges a coding session | Mattermost, the registrar or `jq` unavailable: every hook exits 0 within its timeout (Stop 10 s, UserPromptSubmit 5 s) and the session runs as if no bus existed |
-| 2 | `#secure` Secret confinement | In a host-managed session `MM_REG_SECRET` and `MM_BOT_NAME` are absent from the sandbox environment in 100 % of sessions; no bot outlives its session unnoticed (`mm-agent-sweep.sh` finds every leftover) |
+| 2 | `#secure` Secret confinement | In a host-managed session `MM_REG_SECRET` is absent from the sandbox environment in 100 % of sessions, so an agent can create no bot and remove none but its own; no bot outlives its session unnoticed (`mm-agent-sweep.sh` finds every leftover) |
 | 3 | `#usable` Reachability | A mention to a working agent is collected before its turn ends; in a project channel a mention arriving within 15 min after the turn ends is answered without human action |
 | 4 | `#usable` Low noise | A session without a project channel posts nothing and registers no bot, unless the human tells the agent to do so (or sets `MM_REGISTER=always`); status changes carry no prompt, file or task content |
 

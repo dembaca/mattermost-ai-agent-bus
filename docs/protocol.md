@@ -34,8 +34,10 @@ Steps 1 and 3 can run **on the host, outside the agent's sandbox** — a corral
 Three properties follow, and they are the reason to prefer it:
 
 - `MM_REG_SECRET` never crosses into the sandbox. Only the minted, short-lived bot
-  token does, so a compromised agent cannot create or delete agents.
-- `MM_BOT_NAME` — the registrar's delete key — is withheld too.
+  token does, so a compromised agent cannot create agents, and can delete none but
+  its own (the registrar accepts only the secret or the bot's own token).
+- `MM_REG_BOT_NAME`, the registrar's short name for the bot, is withheld too — not
+  as a secret, but so the CLI inside the sandbox cannot stop a session the host owns.
 - Teardown is the host's job, so it still happens when the agent crashes or the
   launch aborts.
 

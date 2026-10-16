@@ -26,7 +26,7 @@ def test_project_channel_registers_and_contributes_no_secret(mm, run):
     env = contribution["env"]
     assert env["MM_BOT_TOKEN"] == "bot-token-for-tests"
     assert env["MM_PROJECT_CHANNEL"] == "proj-x"
-    assert "MM_REG_SECRET" not in env and "MM_BOT_NAME" not in env
+    assert "MM_REG_SECRET" not in env and "MM_REG_BOT_NAME" not in env
     assert "test-secret" not in r.stdout
     assert any(p.endswith("/members") for m, p, _ in mm.writes if m == "POST")
 
