@@ -54,7 +54,7 @@ if [[ -z "$BOT_TOKEN" || -z "$USER_NAME" ]]; then
 fi
 
 export MM_CHAT_URL="$URL"
-export MM_BOT_NAME="$NAME"
+export MM_REG_BOT_NAME="$NAME"
 export MM_BOT_USERNAME="$USER_NAME"
 export MM_BOT_USER_ID="$USER_ID"
 export MM_BOT_TOKEN="$BOT_TOKEN"

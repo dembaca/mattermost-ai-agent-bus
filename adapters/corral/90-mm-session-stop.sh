@@ -29,14 +29,14 @@ fi
 export MM_AGENT_SESSION_FILE="$SESSION_FILE"
 mm_load_session_file || true
 
-if [[ -z "${MM_BOT_NAME:-}" ]]; then
-  log "session file has no MM_BOT_NAME; removing it"
+if [[ -z "${MM_REG_BOT_NAME:-}" ]]; then
+  log "session file has no MM_REG_BOT_NAME; removing it"
   rm -f "$SESSION_FILE"
   exit 0
 fi
 
 if [[ -z "${MM_REG_SECRET:-${MM_BOT_TOKEN:-}}" ]]; then
-  log "WARNING: no credential for ${MM_BOT_NAME}; keeping ${SESSION_FILE} so it can be retried"
+  log "WARNING: no credential for ${MM_REG_BOT_NAME}; keeping ${SESSION_FILE} so it can be retried"
   exit 0
 fi
 
@@ -44,13 +44,13 @@ fi
 # does not sit there looking available.
 "$BIN/mm-agent-status.sh" offline >/dev/null 2>&1 || true
 
-if "$BIN/mm-agent-unregister.sh" "$MM_BOT_NAME" >/dev/null 2>&1; then
-  log "unregistered ${MM_BOT_NAME}"
+if "$BIN/mm-agent-unregister.sh" "$MM_REG_BOT_NAME" >/dev/null 2>&1; then
+  log "unregistered ${MM_REG_BOT_NAME}"
   rm -f "$SESSION_FILE"
 else
   # Keep the session file: it holds the only credential that can still remove
   # this bot. Deleting it here is what turns a failed teardown into a permanent
   # orphan.
-  log "WARNING: could not unregister ${MM_BOT_NAME}"
+  log "WARNING: could not unregister ${MM_REG_BOT_NAME}"
   log "         retry: $BIN/mm-agent-sweep.sh"
 fi

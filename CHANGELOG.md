@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.6.0
+
+### Changed
+
+- **`MM_BOT_NAME` is now `MM_REG_BOT_NAME`**, everywhere: environment, session
+  files, CLI, MCP server, hooks. It is the registrar's short name for the bot,
+  not its Mattermost identity (`MM_BOT_USERNAME`). No fallback to the old name:
+  session files written before 0.6.0 are not read any more — run
+  `bin/mm-agent-sweep.sh --apply` on the host before updating, or rename the key
+  in leftover files under `~/.local/state/mm-agent-bus/`.
+- Docs no longer call the withheld name a security measure: the registrar
+  deletes a bot only with the secret or the bot's own token. Withholding it
+  keeps the CLI in the sandbox from stopping a session the host owns.
+
 ## 0.5.0
 
 ### Added

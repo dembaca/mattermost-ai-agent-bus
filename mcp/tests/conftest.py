@@ -14,7 +14,7 @@ _BUS_ENV = (
     "MM_REG_SECRET",
     "MM_BOT_TOKEN",
     "MATTERMOST_TOKEN",
-    "MM_BOT_NAME",
+    "MM_REG_BOT_NAME",
     "MM_BOT_USERNAME",
     "MM_BOT_USER_ID",
     "MM_TEAM",

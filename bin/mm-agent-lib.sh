@@ -43,11 +43,11 @@ mm_state_dir() {
 mm_session_file() {
   local f="${MM_AGENT_SESSION_FILE:-}"
   if [[ -z "$f" ]]; then
-    if [[ -z "${MM_BOT_NAME:-}" ]]; then
-      echo "no session: set MM_AGENT_SESSION_FILE or MM_BOT_NAME" >&2
+    if [[ -z "${MM_REG_BOT_NAME:-}" ]]; then
+      echo "no session: set MM_AGENT_SESSION_FILE or MM_REG_BOT_NAME" >&2
       return 1
     fi
-    f="$(mm_state_dir)/session-${MM_BOT_NAME}.env"
+    f="$(mm_state_dir)/session-${MM_REG_BOT_NAME}.env"
   fi
   if [[ "$f" == ~* ]]; then
     f="${f/#\~/$HOME}"
@@ -182,7 +182,7 @@ mm_load_env_file() {
     local key="${line%%=*}"
     local val="${line#*=}"
     case "$key" in
-      MM_CHAT_URL|MM_BOT_NAME|MM_BOT_USERNAME|MM_BOT_USER_ID|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_TEAM|MM_CHANNEL)
+      MM_CHAT_URL|MM_REG_BOT_NAME|MM_BOT_USERNAME|MM_BOT_USER_ID|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_TEAM|MM_CHANNEL)
         export "$key=$val"
         ;;
     esac
@@ -247,7 +247,7 @@ mm_epoch_hhmm() {
 mm_emit_session_exports() {
   cat <<EOF
 export MM_CHAT_URL=$(printf '%q' "${MM_CHAT_URL:-}")
-export MM_BOT_NAME=$(printf '%q' "${MM_BOT_NAME:-}")
+export MM_REG_BOT_NAME=$(printf '%q' "${MM_REG_BOT_NAME:-}")
 export MM_BOT_USERNAME=$(printf '%q' "${MM_BOT_USERNAME:-}")
 export MM_BOT_USER_ID=$(printf '%q' "${MM_BOT_USER_ID:-}")
 export MM_BOT_TOKEN=$(printf '%q' "${MM_BOT_TOKEN:-}")
@@ -265,7 +265,7 @@ mm_write_session_file() {
   cat >"$f" <<EOF
 # ephemeral session — do not commit
 MM_CHAT_URL=${MM_CHAT_URL:-}
-MM_BOT_NAME=${MM_BOT_NAME:-}
+MM_REG_BOT_NAME=${MM_REG_BOT_NAME:-}
 MM_BOT_USERNAME=${MM_BOT_USERNAME:-}
 MM_BOT_USER_ID=${MM_BOT_USER_ID:-}
 MM_BOT_TOKEN=${MM_BOT_TOKEN:-}
