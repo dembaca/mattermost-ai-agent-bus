@@ -57,6 +57,8 @@ no test.
 
 ### Sequence
 
+Every block carries two texts: the instruction for the agent (`reason`) and a one-line banner for the developer (`systemMessage`), so the terminal shows why the turn has not ended: 📨 collecting unread messages, ✋ signing off, 👂 `Listening on Mattermost until HH:MM (N min left) · ESC to stop`.
+
 1. Turn hooks read the unread counters (mentions, DMs) via the Shell CLI (IF-02). Anything pending → block: collect with `wait_for_events`, answer, finish. At most 3 drain rounds per turn.
 2. Turn hooks read the agent's latest post in the work channel. Not an `IDLE`/`BYE` → block once per turn: post a sign-off in the `HELLO` thread.
 3. In a project channel with the bus reachable, unless the sign-off was `BYE` or `MM_LISTEN_SEC=0`: Turn hooks open a listen window (default 900 s), set 👂 `listening · until HH:MM, then idle` with an expiry, and block: call `wait_for_events(timeout_sec=<slice>)`, where a slice is the rest of the window capped at `MM_LISTEN_CALL_SEC` (default 100 s). Claude Code moves an MCP call that runs past about 120 s to the background and ends the turn, so a longer call would never deliver its `[]`.
