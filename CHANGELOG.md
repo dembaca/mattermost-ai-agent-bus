@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.7.0
+
+### Added
+
+- **Banner in the terminal.** Every block of the `Stop` hook now shows the
+  developer a one-line `systemMessage` saying why the turn goes on:
+  📨 collecting unread messages, ✋ signing off, or
+  👂 `Listening on Mattermost until HH:MM (N min left) · ESC to stop` for each
+  slice of the listen window.
+
+### Changed
+
+- The `Stop` hook blocks with JSON on stdout and exit 0 (Claude Code's
+  structured hook output) instead of exit 2 with JSON on stderr.
+
 ## 0.6.1
 
 ### Fixed

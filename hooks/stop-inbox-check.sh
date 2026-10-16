@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Stop hook: do not let the agent finish a turn with someone waiting on it.
 #
-# Runs three checks in order, each blocking the stop with an instruction:
+# Runs three checks in order, each blocking the stop with an instruction for the
+# agent and a one-line banner for the human:
 #   1. drain   — unread mentions/DMs are waiting: collect them via wait_for_events.
 #   2. sign-off — the latest own post in the work channel is not IDLE/BYE: post one.
 #   3. listen  — in a project channel, keep answering the bus for MM_LISTEN_SEC
@@ -71,10 +72,14 @@ save_state() {
     "$DRAINS" "$SIGNOFF_ASKED" "$LISTEN_SINCE" "$LISTEN_UNTIL" >"$STATE" 2>/dev/null || true
 }
 
+# block <reason for the agent> [banner for the human]. The reason goes to the
+# model; the banner (systemMessage) is shown to the human in the terminal, so
+# they can tell at a glance why the turn has not ended yet.
 block() {
   save_state
-  jq -nc --arg r "$1" '{decision:"block", reason:$r}' >&2
-  exit 2
+  jq -nc --arg r "$1" --arg m "${2:-}" \
+    '{decision:"block", reason:$r} + (if $m == "" then {} else {systemMessage:$m} end)'
+  exit 0
 }
 
 # The turn really is ending: flip the status back to idle and forget the turn.
@@ -112,7 +117,7 @@ if [[ "$pending" -gt 0 && "$DRAINS" -lt "$MAX_DRAIN" ]]; then
     reason+=$'\n\nPending per channel:\n'"$detail"
   fi
   reason+=$'\n\nIf wait_for_events returns nothing, the counter is stale — say so and finish.'
-  block "$reason"
+  block "$reason" "📨 Collecting ${pending} unread Mattermost message(s)"
 fi
 
 have_post=0
@@ -133,7 +138,7 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
   reason+=" Reply in your HELLO thread with one line: IDLE (waiting for my human) or BYE (task done),"
   reason+=" plus what is done, what is open, and the branch/PR. If you coordinate and will be gone for long, hand over first."
   reason+=" If nothing changed since your last post, say so in one line and finish; this check will not block you again this turn."
-  block "$reason"
+  block "$reason" "✋ Signing off on Mattermost before going idle"
 fi
 
 # --- 3. listen --------------------------------------------------------------
@@ -162,7 +167,7 @@ if [[ -n "$STATE" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] &&
     reason+=" If it returns [], finish your turn without another word — this check asks for the next slice until"
     reason+=" the window is over. If it returns events, handle them like any request (reply in its thread; ignore"
     reason+=" posts that need nothing from you), then finish. Your human can end the window at any time with ESC."
-    block "$reason"
+    block "$reason" "👂 Listening on Mattermost until $(mm_epoch_hhmm "$LISTEN_UNTIL") ($(( (remaining + 59) / 60 )) min left) · ESC to stop"
   fi
 fi
 

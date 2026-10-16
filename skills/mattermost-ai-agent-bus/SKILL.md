@@ -183,7 +183,8 @@ that runs past about 120 s to the background: it asks you to call
   the rest of the window — and starts a fresh one when you answered on the bus.
   No second `IDLE` after an answer: you signed off before the window opened.
 
-Your human can end the window at any time with ESC. A `BYE` skips it;
+Your human sees a banner with the window end and the ESC hint, so you need
+not announce the window yourself. Your human can end it at any time with ESC. A `BYE` skips it;
 `MM_LISTEN_SEC=0` turns it off. Without a project channel there is no window.
 
 ## Presence

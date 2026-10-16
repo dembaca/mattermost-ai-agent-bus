@@ -113,11 +113,29 @@ class Result:
     stderr: str
 
     @property
-    def reason(self) -> str:
+    def decision(self) -> dict:
+        """The hook's JSON output on stdout ({} when it lets the stop through)."""
         try:
-            return json.loads(self.stderr.strip().splitlines()[-1])["reason"]
-        except (ValueError, IndexError, KeyError):
-            return ""
+            return json.loads(self.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return {}
+
+    @property
+    def blocked(self) -> bool:
+        return self.code == 0 and self.decision.get("decision") == "block"
+
+    @property
+    def passed(self) -> bool:
+        """Exited cleanly and let the stop through."""
+        return self.code == 0 and not self.blocked
+
+    @property
+    def reason(self) -> str:
+        return self.decision.get("reason", "")
+
+    @property
+    def banner(self) -> str:
+        return self.decision.get("systemMessage", "")
 
 
 @pytest.fixture
