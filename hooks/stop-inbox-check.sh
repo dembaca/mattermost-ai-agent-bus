@@ -131,10 +131,11 @@ fi
 # --- 3. listen --------------------------------------------------------------
 # A request or a reply to the agent's own post typically arrives within a turn
 # or two of the others, so in a project channel stay reachable for a while
-# before going fully idle. Needs the turn state (to know when the window ends)
-# and a project channel; MM_LISTEN_SEC=0 turns it off. A BYE ends the session's
-# part in the coordination, so it skips the window.
-if [[ -n "$STATE" && "$LISTEN_SEC" -gt 0 ]] &&
+# before going fully idle. Needs the turn state (to know when the window ends),
+# a project channel and a reachable bus — listening on a dead one would hold the
+# agent for nothing; MM_LISTEN_SEC=0 turns it off. A BYE ends the session's part
+# in the coordination, so it skips the window.
+if [[ -n "$STATE" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] &&
   [[ -n "${MM_PROJECT_CHANNEL_ID:-}${MM_PROJECT_CHANNEL:-}" ]] &&
   ! [[ "$LAST_MSG" =~ ^BYE([^A-Za-z]|$) ]]; then
   now="$(date +%s)"
