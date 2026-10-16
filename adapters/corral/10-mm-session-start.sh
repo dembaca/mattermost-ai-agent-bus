@@ -7,6 +7,8 @@
 #
 # stdout is reserved for corral's contribution interface — exactly one JSON
 # object, or nothing. Every human-readable line goes to stderr.
+#
+# Spec: RT-6.1 in docs/arc42/06-runtime-view.md.
 set -euo pipefail
 
 BIN="$(cd "$(dirname "$0")/../../bin" && pwd)"
