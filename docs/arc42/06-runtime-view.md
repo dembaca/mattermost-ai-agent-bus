@@ -59,9 +59,9 @@ no test.
 
 1. Turn hooks read the unread counters (mentions, DMs) via the Shell CLI (IF-02). Anything pending → block: collect with `wait_for_events`, answer, finish. At most 3 drain rounds per turn.
 2. Turn hooks read the agent's latest post in the work channel. Not an `IDLE`/`BYE` → block once per turn: post a sign-off in the `HELLO` thread.
-3. In a project channel with the bus reachable, unless the sign-off was `BYE` or `MM_LISTEN_SEC=0`: Turn hooks open a listen window (default 900 s), set 👂 `listening · until HH:MM, then idle` with an expiry, and block: call `wait_for_events(timeout_sec=<rest>)`.
-4. The MCP server waits on its WebSocket inbox (IF-03). Events → the agent handles them and finishes again; the hook resumes with the rest of the window, or opens a fresh one when the agent posted in the work channel since the window opened. No second sign-off inside a window.
-5. `wait_for_events` returns `[]` → window over: status 💤 idle, turn state removed, the turn ends.
+3. In a project channel with the bus reachable, unless the sign-off was `BYE` or `MM_LISTEN_SEC=0`: Turn hooks open a listen window (default 900 s), set 👂 `listening · until HH:MM, then idle` with an expiry, and block: call `wait_for_events(timeout_sec=<slice>)`, where a slice is the rest of the window capped at `MM_LISTEN_CALL_SEC` (default 100 s). Claude Code moves an MCP call that runs past about 120 s to the background and ends the turn, so a longer call would never deliver its `[]`.
+4. The MCP server waits on its WebSocket inbox (IF-03); a newer `wait_for_events` supersedes one still pending, which then returns `[]`. Events → the agent handles them and finishes again; the hook resumes with the rest of the window, or opens a fresh one when the agent posted in the work channel since the window opened. No second sign-off inside a window.
+5. `wait_for_events` returns `[]` → the agent finishes; the hook asks for the next slice while more than 5 s of the window are left. Window over: status 💤 idle, turn state removed, the turn ends.
 6. The next prompt (`UserPromptSubmit`) sets 🛠 working and clears the turn state.
 
 ### Error Handling
@@ -70,6 +70,7 @@ no test.
 |------|---------|----------------|
 | 1 | Counter cannot be drained (stale) | After 3 rounds the hook lets the turn end |
 | 1–3 | Bot id unknown (no turn state) | Falls back to `stop_hook_active`: one extra round per turn, no listen window |
+| 4 | Runtime moved a `wait_for_events` call to the background anyway | The next call supersedes it, so the backgrounded listener cannot take events from the foreground one |
 
 ---
 

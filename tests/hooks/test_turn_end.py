@@ -53,7 +53,8 @@ def test_listen_window_opens_in_project_channel(mm, run):
     """RT-6.2 step 3: after the sign-off, a project channel gets a listen window."""
     mm.own_post("IDLE done x", 1000)
     r = run(STOP, **IN_PROJECT)
-    assert r.code == 2 and "timeout_sec=900" in r.reason
+    assert r.code == 2 and "timeout_sec=100" in r.reason
+    assert any(f"{s} s left" in r.reason for s in range(895, 901))
     status = mm.custom_status()
     assert status["emoji"] == "ear" and status["duration"] == "date_and_time"
     assert status["expires_at"].endswith("Z")
@@ -66,8 +67,23 @@ def test_listen_window_resumes_with_rest(mm, run):
     now = int(time.time())
     set_window(run, now - 100, now + 300)
     r = run(STOP, **IN_PROJECT)
+    assert r.code == 2 and "timeout_sec=100" in r.reason
+    assert any(f"{s} s left" in r.reason for s in range(295, 301))
+
+
+def test_listen_slices_stay_below_background_limit(mm, run):
+    """RT-6.2 step 3: each call stays under the runtime's ~120 s background
+    limit; the last slice is the rest of the window."""
+    mm.own_post("IDLE done x", 1000)
+    run(STOP, **IN_PROJECT)
+    now = int(time.time())
+    set_window(run, now - 100, now + 40)
+    r = run(STOP, **IN_PROJECT)
     assert r.code == 2
-    assert any(f"timeout_sec={s}" in r.reason for s in range(295, 301))
+    assert any(f"timeout_sec={s}" in r.reason for s in range(35, 41))
+    set_window(run, now - 100, now + 900)
+    r = run(STOP, MM_LISTEN_CALL_SEC="50", **IN_PROJECT)
+    assert r.code == 2 and "timeout_sec=50" in r.reason
 
 
 def test_own_answer_opens_fresh_window_without_second_signoff(mm, run):

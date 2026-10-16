@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.6.1
+
+### Fixed
+
+- **Listen window no longer loops.** The `Stop` hook asked for one
+  `wait_for_events` call covering the whole window (up to 900 s), but Claude
+  Code moves an MCP call past about 120 s to the background and ends the turn.
+  The hook never saw the `[]` it waited for, fired again with a shorter rest,
+  and each round left another listener running. The window is now listened to
+  in slices of at most `MM_LISTEN_CALL_SEC` (default 100 s).
+- **A newer `wait_for_events` supersedes a pending one**: the older call returns
+  `[]`, so a backgrounded listener cannot swallow events meant for the
+  foreground.
+
 ## 0.6.0
 
 ### Changed

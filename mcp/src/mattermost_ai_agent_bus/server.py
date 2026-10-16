@@ -157,7 +157,9 @@ async def wait_for_events(
     """Wait for inbox events: mentions, DMs, or watched-channel posts.
 
     Connects the Mattermost WebSocket if needed. Returns JSON list of
-    {kind, post, channel} (empty list on timeout).
+    {kind, post, channel} (empty list on timeout). Keep timeout_sec below the
+    runtime's background limit (Claude Code: ~120 s) and call it in the
+    foreground; a newer call supersedes one still pending, which returns [].
     """
     inbox = _get_inbox()
     events = await inbox.wait_for_events(

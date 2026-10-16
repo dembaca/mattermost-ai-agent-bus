@@ -81,6 +81,13 @@ class WebSocketInbox:
     # Post ids already queued. Backfill and the live stream overlap around the
     # moment the socket opens, so without this a message can be delivered twice.
     _seen_ids: set[str] = field(default_factory=set, repr=False, init=False)
+    # The queue read of the wait_for_events call in progress. A runtime that
+    # moved an earlier call to the background (Claude Code does after ~120 s)
+    # leaves it pending; the newest call takes over, so a forgotten listener
+    # cannot swallow events the agent is waiting for in the foreground.
+    _getter: asyncio.Future[ClassifiedEvent] | None = field(
+        default=None, repr=False, init=False
+    )
 
     async def ensure_identity(self) -> None:
         me = await self.client.get_me()
@@ -246,15 +253,25 @@ class WebSocketInbox:
         timeout_sec: float = 60.0,
         max_events: int = 10,
     ) -> list[ClassifiedEvent]:
-        """Block until at least one classified event or timeout."""
+        """Block until at least one classified event or timeout.
+
+        A newer call supersedes one still waiting: the older returns [].
+        """
         if self._ws is None:
             await self.connect()
-        events: list[ClassifiedEvent] = []
+        if self._getter is not None and not self._getter.done():
+            self._getter.cancel()
+        getter = asyncio.ensure_future(self._queue.get())
+        self._getter = getter
         try:
-            first = await asyncio.wait_for(self._queue.get(), timeout=timeout_sec)
-            events.append(first)
-        except asyncio.TimeoutError:
+            done, _ = await asyncio.wait({getter}, timeout=timeout_sec)
+        finally:
+            if not getter.done():
+                getter.cancel()
+        if getter not in done or getter.cancelled():
+            # Timed out, or superseded by a newer call.
             return []
+        events: list[ClassifiedEvent] = [getter.result()]
         while len(events) < max_events:
             try:
                 events.append(self._queue.get_nowait())

@@ -5,7 +5,8 @@
 #   1. drain   — unread mentions/DMs are waiting: collect them via wait_for_events.
 #   2. sign-off — the latest own post in the work channel is not IDLE/BYE: post one.
 #   3. listen  — in a project channel, keep answering the bus for MM_LISTEN_SEC
-#                (default 900) by blocking in wait_for_events, before going idle.
+#                (default 900) by blocking in wait_for_events, before going idle;
+#                one call per MM_LISTEN_CALL_SEC slice (default 100).
 # Only when all three let go does the status flip to 💤 idle.
 # Spec: RT-6.2, RT-6.3, RT-6.4 in docs/arc42/06-runtime-view.md.
 #
@@ -28,6 +29,12 @@ BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 MAX_DRAIN=3
 LISTEN_SEC="${MM_LISTEN_SEC:-900}"
 [[ "$LISTEN_SEC" =~ ^[0-9]+$ ]] || LISTEN_SEC=900
+# Longest single wait_for_events call the window asks for. Claude Code moves an
+# MCP call that runs longer than about 120 s to the background and ends the
+# turn; the hook would never see the [] it waits for and fire again, stacking a
+# listener per round. So the window is listened to in slices below that limit.
+LISTEN_CALL_SEC="${MM_LISTEN_CALL_SEC:-100}"
+[[ "$LISTEN_CALL_SEC" =~ ^[0-9]+$ && "$LISTEN_CALL_SEC" -gt 0 ]] || LISTEN_CALL_SEC=100
 
 input="$(cat 2>/dev/null || true)"
 
@@ -149,10 +156,12 @@ if [[ -n "$STATE" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] &&
   remaining=$((LISTEN_UNTIL - now))
   if [[ "$remaining" -gt 5 ]]; then
     "$BIN/mm-agent-status.sh" listening "$LISTEN_UNTIL" >/dev/null 2>&1 || true
-    reason="Stay reachable on the bus before going idle: call wait_for_events with timeout_sec=${remaining}."
-    reason+=" If it returns [], finish your turn without another word. If it returns events, handle them like any"
-    reason+=" request (reply in its thread; ignore posts that need nothing from you), then finish — this check"
-    reason+=" resumes listening for the rest of the window. Your human can end the window at any time with ESC."
+    slice=$(( remaining < LISTEN_CALL_SEC ? remaining : LISTEN_CALL_SEC ))
+    reason="Stay reachable on the bus before going idle: call wait_for_events with timeout_sec=${slice}"
+    reason+=" (in the foreground; the window has ${remaining} s left and is listened to in slices)."
+    reason+=" If it returns [], finish your turn without another word — this check asks for the next slice until"
+    reason+=" the window is over. If it returns events, handle them like any request (reply in its thread; ignore"
+    reason+=" posts that need nothing from you), then finish. Your human can end the window at any time with ESC."
     block "$reason"
   fi
 fi
