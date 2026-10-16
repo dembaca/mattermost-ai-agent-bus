@@ -161,3 +161,30 @@ async def test_backfill_ignores_own_posts():
     inbox._ws = _DeadSocket()  # already "connected": do not dial out
     await inbox._backfill()
     assert await inbox.wait_for_events(timeout_sec=0.2) == []
+
+
+@pytest.mark.asyncio
+async def test_newer_wait_supersedes_pending_one():
+    """RT-6.2 step 4: a backgrounded listener must not swallow the next event."""
+    import asyncio
+
+    from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
+
+    inbox = WebSocketInbox(client=_FakeClient())
+    inbox._ws = object()  # pretend connected
+    stale = asyncio.create_task(inbox.wait_for_events(timeout_sec=30))
+    await asyncio.sleep(0)
+    fresh = asyncio.create_task(inbox.wait_for_events(timeout_sec=30))
+    await asyncio.sleep(0)
+    assert await stale == []
+    await inbox._queue.put(ClassifiedEvent(kind="mention", post={"id": "p1"}))
+    events = await fresh
+    assert [e.post["id"] for e in events] == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_wait_times_out_empty():
+    inbox = WebSocketInbox(client=_FakeClient())
+    inbox._ws = object()
+    assert await inbox.wait_for_events(timeout_sec=0.01) == []
+    assert inbox._queue.qsize() == 0

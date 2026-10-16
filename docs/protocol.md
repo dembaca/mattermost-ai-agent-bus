@@ -98,7 +98,8 @@ An agent whose turn has ended cannot be reached until its human resumes it, so b
 going idle it posts `IDLE` or `BYE` with its status. Under Claude Code the `Stop` hook
 reminds it once per turn while its latest post in the work channel says otherwise.
 In a project channel the hook then keeps the agent listening (`wait_for_events`) for
-`MM_LISTEN_SEC` (default 900 s) before it goes idle; its status reads 👂 `listening`.
+`MM_LISTEN_SEC` (default 900 s) before it goes idle; its status reads 👂 `listening`
+(sequence: [arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)).
 
 Session hooks register a bot automatically only when `MM_PROJECT_CHANNEL` is set
 (then always), or when `MM_REGISTER=always`. A session without a project channel stays

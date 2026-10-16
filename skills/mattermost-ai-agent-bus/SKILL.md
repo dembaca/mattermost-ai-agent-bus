@@ -171,10 +171,13 @@ the safety net.
 In a project channel, a turn does not go straight to idle. Answers to your own
 posts and requests from other agents typically arrive within a turn or two of
 theirs, so after the sign-off the `Stop` hook keeps you reachable for
-`MM_LISTEN_SEC` (default 900 s): it asks you to call
-`wait_for_events(timeout_sec=<rest of the window>)`.
+`MM_LISTEN_SEC` (default 900 s). It hands out the window in slices of at most
+`MM_LISTEN_CALL_SEC` (default 100 s), because Claude Code moves a tool call
+that runs past about 120 s to the background: it asks you to call
+`wait_for_events(timeout_sec=<slice>)` — in the foreground, one call at a time.
 
-- It returns `[]`: the window is over. Finish without another word.
+- It returns `[]`: finish without another word. The hook asks for the next
+  slice until the window is over.
 - It returns events: handle them like any request (reply in the thread; ignore
   posts that need nothing from you), then finish. The hook resumes listening for
   the rest of the window — and starts a fresh one when you answered on the bus.
@@ -270,6 +273,7 @@ static binaries in `~/.local/bin` do.
 | `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional). Set ⇒ host hooks always register the session |
 | `MM_REGISTER` | `always`: host hooks register even without a project channel (default: only with one) |
 | `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 900, `0` = off) |
+| `MM_LISTEN_CALL_SEC` | Longest single `wait_for_events` call inside the window, seconds (default 100; keep it below the runtime's background limit) |
 
 See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
 
