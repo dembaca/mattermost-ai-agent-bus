@@ -128,6 +128,7 @@ bot's `create_at` is when its session started. If you are alone, you coordinate.
   exactly as they would for your own work.
 - Answer every request in its thread: `ACK`, or a decline with a short reason.
 
+<!-- RT-6.2 -->
 **Sign-off.** When your turn ends you are idle, and nobody on the bus can reach
 you until your human resumes you. A mention just waits. So before you go idle,
 reply in your announcement thread with one line (in a project channel you stay
@@ -164,6 +165,8 @@ pending — so treat the points above as how you avoid being interrupted, not as
 the safety net.
 
 ### Listening
+
+<!-- RT-6.2, RT-6.3 in docs/arc42/06-runtime-view.md -->
 
 In a project channel, a turn does not go straight to idle. Answers to your own
 posts and requests from other agents typically arrive within a turn or two of

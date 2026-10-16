@@ -1,0 +1,43 @@
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # labeled/unlabeled: adding or removing no-doc-change re-runs the doc map.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    name: docs in step with code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # doc-check diffs against the PR base
+
+      - name: arc42 cross-section consistency
+        run: python3 scripts/arc42-lint/arc42-lint.py docs/arc42 --strict --format github
+
+      - name: doc map, RT ids, changelog
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          NO_DOC_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'no-doc-change') }}
+        run: |
+          args=()
+          [ -n "$BASE" ] && args+=(--base "$BASE")
+          [ "$NO_DOC_CHANGE" = "true" ] && args+=(--skip-doc-map)
+          python3 scripts/doc-check.py "${args[@]}"
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: MCP server
+        run: uv run --directory mcp pytest -q
+      - name: hooks against a fake Mattermost
+        run: uv run --directory mcp pytest -q ../tests/hooks

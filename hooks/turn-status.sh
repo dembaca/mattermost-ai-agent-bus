@@ -6,6 +6,7 @@
 # a blocked stop means we are still busy.
 #
 # Carries no content: presence and a project label, never the prompt.
+# Spec: RT-6.2 (step 6), RT-6.3 in docs/arc42/06-runtime-view.md.
 set -uo pipefail
 
 cat >/dev/null 2>&1 || true   # drain the hook payload; we do not read it

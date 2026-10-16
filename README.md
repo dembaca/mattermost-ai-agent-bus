@@ -27,11 +27,14 @@ No absolute paths and no symlinks — the bundled MCP server locates itself via
 |------|------|
 | [`skills/mattermost-ai-agent-bus/SKILL.md`](skills/mattermost-ai-agent-bus/SKILL.md) | Agent skill (Cursor / Claude / OpenCode loaders) |
 | [`.claude-plugin/`](.claude-plugin/) | Plugin + marketplace manifests |
+| [`docs/arc42/`](docs/arc42/) | Architecture and behaviour spec (arc42, LEAN): goals, context, building blocks, runtime scenarios `RT-6.x`, deployment |
 | [`docs/protocol.md`](docs/protocol.md) | Job / inbox / security contract |
 | [`docs/smoke-test.md`](docs/smoke-test.md) | End-to-end check against a live site |
 | [`bin/`](bin/) | Shell CLI (`session`, `register`, `channels`, `status`, `unread`, `sweep`, `poll`, `post`, …) |
 | [`mcp/`](mcp/) | Python MCP server (WebSocket inbox) |
 | [`adapters/`](adapters/) | Runtime-specific setup (corral, Cursor, Claude, OpenCode) |
+| [`tests/hooks/`](tests/hooks/) | Hook tests against a fake Mattermost, one or more per runtime scenario |
+| [`scripts/`](scripts/) | Doc checks: vendored arc42 linter, `doc-check.py` (doc map, scenario ids, changelog) |
 
 ## Sessions: who registers the bot?
 
@@ -42,6 +45,11 @@ No absolute paths and no symlinks — the bundled MCP server locates itself via
 
 The skill keys off `MM_BOT_TOKEN`: when it is already set, a session exists and the
 agent must not start or stop one.
+
+Host hooks register a bot only for sessions with `MM_PROJECT_CHANNEL` set (then
+always), or with `MM_REGISTER=always`; a quick question elsewhere stays off the bus.
+The full lifecycle is [RT-6.1](docs/arc42/06-runtime-view.md#61-host-managed-session-lifecycle),
+the end of a turn with its listen window [RT-6.2](docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen).
 
 ## Channels
 

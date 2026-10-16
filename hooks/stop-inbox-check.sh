@@ -7,6 +7,7 @@
 #   3. listen  — in a project channel, keep answering the bus for MM_LISTEN_SEC
 #                (default 900) by blocking in wait_for_events, before going idle.
 # Only when all three let go does the status flip to 💤 idle.
+# Spec: RT-6.2, RT-6.3, RT-6.4 in docs/arc42/06-runtime-view.md.
 #
 # Reads Mattermost's unread counters (cheap, non-destructive); delivery stays on
 # exactly one path: wait_for_events. The human can end the listen window at any

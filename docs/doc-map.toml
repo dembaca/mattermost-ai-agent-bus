@@ -1,0 +1,42 @@
+# Which docs a code change has to touch.
+#
+# scripts/doc-check.py --base <ref> compares the branch with <ref>: for every
+# rule whose `paths` match a changed file, at least one of its `docs` must have
+# changed too. A change that really needs no doc update says so explicitly: the
+# `no-doc-change` label on the PR (CI), or `--skip-doc-map` locally.
+#
+# Globs: fnmatch on repo-relative paths, `*` also matches `/`.
+# Keep the docs list short and specific: "any doc changed" proves nothing.
+
+[[rule]]
+name = "turn hooks: presence, drain, sign-off, listen window"
+paths = ["hooks/*"]
+docs = ["docs/arc42/06-runtime-view.md"]
+
+[[rule]]
+name = "host session hooks: lifecycle, registration"
+paths = ["adapters/corral/*", "adapters/cursor/*"]
+docs = ["docs/arc42/06-runtime-view.md", "docs/arc42/07-deployment-view.md"]
+
+[[rule]]
+name = "shell CLI"
+paths = ["bin/*"]
+docs = [
+  "docs/arc42/05-building-block-view.md",
+  "docs/arc42/06-runtime-view.md",
+  "docs/arc42/07-deployment-view.md",
+]
+
+[[rule]]
+name = "MCP server: tools, inbox, instructions"
+paths = ["mcp/src/*"]
+docs = [
+  "docs/arc42/03-context-and-scope.md",
+  "docs/arc42/06-runtime-view.md",
+  "docs/protocol.md",
+]
+
+[[rule]]
+name = "version bump"
+paths = [".claude-plugin/plugin.json"]
+docs = ["CHANGELOG.md"]
