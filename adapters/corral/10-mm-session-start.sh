@@ -10,8 +10,18 @@
 set -euo pipefail
 
 BIN="$(cd "$(dirname "$0")/../../bin" && pwd)"
+# shellcheck source=../../bin/mm-agent-lib.sh
+source "$BIN/mm-agent-lib.sh"
 
 log() { echo "mm-bus: $*" >&2; }
+
+# --- wanted at all? ----------------------------------------------------------
+# Decided before the secret is read: a session that will not register has no
+# business touching it.
+if ! why="$(mm_registration_wanted)"; then
+  log "no bot for this session: ${why}"
+  exit 0
+fi
 
 # --- secret, gopass preferred ------------------------------------------------
 # gopass first: the secret then lives in neither a shell env nor a config file.

@@ -6,6 +6,11 @@ ROOT="${MM_AGENT_BUS_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 source "${ROOT}/bin/mm-agent-lib.sh"
 
 input="$(cat 2>/dev/null || true)"
+if ! why="$(mm_registration_wanted)"; then
+  echo "skipping Mattermost session start: ${why}" >&2
+  echo '{"continue":true}'
+  exit 0
+fi
 if [[ -z "${MM_REG_SECRET:-}" ]]; then
   echo "MM_REG_SECRET unset; skipping Mattermost session start" >&2
   echo '{"continue":true}'

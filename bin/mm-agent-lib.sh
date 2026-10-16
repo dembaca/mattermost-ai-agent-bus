@@ -63,6 +63,20 @@ mm_channel() {
   printf '%s' "${MM_CHANNEL:-agents}"
 }
 
+# Should a session hook register a bot for this session on its own?
+# Always when MM_PROJECT_CHANNEL is set: a session working in a project channel
+# takes part in the coordination, so registering is not optional there.
+# Without one only when MM_REGISTER=always — a quick question to the agent would
+# otherwise just add a bot, a HELLO and a sign-off to the default channel.
+# Prints the reason when it says no. Explicit registration (session_start,
+# mm-agent-session.sh start) is not affected.
+mm_registration_wanted() {
+  [[ -n "${MM_PROJECT_CHANNEL:-}" ]] && return 0
+  [[ "${MM_REGISTER:-}" == "always" ]] && return 0
+  echo "no MM_PROJECT_CHANNEL set (MM_REGISTER=always registers anyway)"
+  return 1
+}
+
 mm_require_reg_secret() {
   if [[ -z "${MM_REG_SECRET:-}" ]]; then
     echo "MM_REG_SECRET is required" >&2
@@ -210,6 +224,24 @@ mm_load_hook_session() {
   local f
   f="$(mm_hook_session_file)" || return 1
   mm_load_env_file "$f"
+}
+
+# Per-turn state of the Stop hook (which checks already ran, the listen window),
+# keyed on the bot so concurrent sessions never share one. The UserPromptSubmit
+# hook removes it: every new turn starts from scratch. Fails when the bot's id is
+# not known — the Stop hook then falls back to its stateless behaviour.
+mm_turn_state_file() {
+  local uid="${MM_BOT_USER_ID:-}"
+  [[ "$uid" =~ ^[a-z0-9]{26}$ ]] || return 1
+  printf '%s' "$(mm_state_dir)/turn-${uid}.env"
+}
+
+# Epoch seconds → RFC 3339 UTC / local HH:MM, on GNU and BSD date alike.
+mm_epoch_rfc3339() {
+  date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
+}
+mm_epoch_hhmm() {
+  date -d "@$1" +%H:%M 2>/dev/null || date -r "$1" +%H:%M
 }
 
 mm_emit_session_exports() {

@@ -53,6 +53,13 @@ export MM_CHANNEL=agents
 export MM_PROJECT_CHANNEL=proj-foo     # optional, must already exist
 ```
 
+**A bot is registered only for sessions with a project channel.** The plugin is meant
+to be configured globally, but most sessions are a quick question that has no business
+on the bus — without `MM_PROJECT_CHANNEL` `preStart` skips registration (one banner line
+says why), so no bot, `HELLO` or sign-off lands in `MM_CHANNEL`. Set the project
+channel per checkout (e.g. with direnv) to put that session on the bus; with it set,
+registration is not optional. `MM_REGISTER=always` registers every session, as before.
+
 The registration secret, **gopass preferred**:
 
 ```bash
@@ -84,6 +91,7 @@ human can see at a glance which agents are busy:
 |---|---|---|
 | session start (`preStart`) | online | 💤 `idle · until my human resumes` |
 | a turn begins (`UserPromptSubmit`) | online | 🛠 `working · <project>` |
+| a turn ends, project channel (`Stop`) | online | 👂 `listening · until HH:MM, then idle` for `MM_LISTEN_SEC` (default 900 s), expires on its own |
 | a turn ends (`Stop`) | online | 💤 `idle · until my human resumes` |
 | session end (`postEnd`) | offline | cleared |
 

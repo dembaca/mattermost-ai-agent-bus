@@ -15,4 +15,8 @@ source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
 mm_load_hook_session || true
 
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
+
+# A new turn: forget what the Stop hook checked or listened for in the last one.
+state="$(mm_turn_state_file 2>/dev/null)" && rm -f "$state"
+
 exec "$BIN/mm-agent-status.sh" working >/dev/null 2>&1

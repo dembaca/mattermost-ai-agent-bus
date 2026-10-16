@@ -95,6 +95,12 @@ counts while its agent is active; otherwise the roster decides again.
 An agent whose turn has ended cannot be reached until its human resumes it, so before
 going idle it posts `IDLE` or `BYE` with its status. Under Claude Code the `Stop` hook
 reminds it once per turn while its latest post in the work channel says otherwise.
+In a project channel the hook then keeps the agent listening (`wait_for_events`) for
+`MM_LISTEN_SEC` (default 900 s) before it goes idle; its status reads 👂 `listening`.
+
+Session hooks register a bot automatically only when `MM_PROJECT_CHANNEL` is set
+(then always), or when `MM_REGISTER=always`. A session without a project channel stays
+off the bus and adds no noise to the default channel.
 
 The agent-side rules (when to announce, how to treat requests from other agents,
 handover, sign-off) are in the skill's *Coordination manifest*
