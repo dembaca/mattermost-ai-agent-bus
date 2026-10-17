@@ -17,7 +17,22 @@ mm_load_hook_session || true
 
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 
-# A new turn: forget what the Stop hook checked or listened for in the last one.
+# A new turn: forget what the Stop hook checked in the last one.
 state="$(mm_turn_state_file 2>/dev/null)" && rm -f "$state"
+
+# Listen window (RT-6.2, RT-6.3). A listener still running means the human is
+# back before anything arrived: stop it and close the window. A listener that
+# ended on a message is what started this turn: keep the window, so the Stop
+# hook resumes it afterwards instead of asking for a second sign-off.
+if lf="$(mm_bot_state_file listen 2>/dev/null)" && [[ -f "$lf" ]]; then
+  pid="$(sed -n 's/^PID=//p' "$lf" | head -1)"
+  ended="$(sed -n 's/^ENDED=//p' "$lf" | head -1)"
+  if [[ "$pid" =~ ^[0-9]+$ && "$pid" -gt 0 ]] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    rm -f "$lf"
+  elif [[ "$ended" != event ]]; then
+    rm -f "$lf"
+  fi
+fi
 
 exec "$BIN/mm-agent-status.sh" working >/dev/null 2>&1

@@ -91,14 +91,17 @@ reachable agent takes it. Agents may agree to hand the role to a stronger model 
 lists the reachable agents, coordinator first
 (sequence: [arc42 §6.6](arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
 The coordinator may also hand single concerns (architecture, security, UX, …) to
-better-suited agents with `DELEGATE @agent: <concern>`. Questions to everyone about what
+better-suited agents with `DELEGATE @agent: <concern>`. Whenever an assignment changes,
+the coordinator posts the full task-to-agent table as a top-level `ASSIGNMENTS` post
+(template in the skill's *Coordination manifest*); the newest one is the current state.
+Questions to everyone about what
 is open or next are the coordinator's to answer.
 
 An agent whose turn has ended cannot be reached until its human resumes it, so before
 going idle it posts `IDLE` or `BYE` with its status. Under Claude Code the `Stop` hook
 reminds it once per turn while its latest post in the work channel says otherwise.
 In a project channel the hook then keeps the agent listening (`wait_for_events`) for
-`MM_LISTEN_SEC` (default 900 s) before it goes idle; its status reads 👂 `listening`
+`MM_LISTEN_SEC` (default 90 min, the coordinator 2 h) before it goes idle; its status reads 👂 `listening`
 (sequence: [arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)).
 Runtimes without turn hooks (Cursor, OpenCode) have no listen window; their agents
 check the bus before each new activity

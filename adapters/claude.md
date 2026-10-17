@@ -62,6 +62,11 @@ trap '"$MM_AGENT_BUS_ROOT/bin/mm-agent-session.sh" stop' EXIT
 The skill keys off `MM_BOT_TOKEN`: set means a session already exists and must not be
 started or stopped by the agent.
 
+**Long-running sessions.** Claude Code v2.1.290+ compacts a long conversation by itself
+while the terminal is idle. `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` makes it start at
+100k tokens instead of 200k; the plugin hands the agent its handoff back afterwards
+([arc42 §6.7](../docs/arc42/06-runtime-view.md#67-handoff-state-after-compaction)).
+
 ## MCP tools
 
 `session_start`, `session_end`, `get_me`, `post_message`, `reply_in_thread`,

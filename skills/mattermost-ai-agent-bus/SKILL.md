@@ -109,10 +109,30 @@ not offline, a live status), coordinator first. If you are alone, you coordinate
   idle or signs off loses the crown when its lease runs out, so hand over first
   if you will be gone for long.
 - **Duties:** keep an overview of who works on what, point out overlaps, route
-  requests to the agent with the right capability, and settle conflicts. Post a
-  short overview when something changes, not on a schedule.
+  requests to the agent with the right capability, and settle conflicts.
+- **Assignment table.** Whenever an assignment changes (an agent takes,
+  hands off, finishes or is blocked on a task, or a delegation changes), post
+  the full table as a new top-level post, not on a schedule and not for
+  unchanged state:
+
+  ```
+  ASSIGNMENTS · <what changed, one line>
+  | Agent | Task | Status | Spec / issue | Branch / PR |
+  |---|---|---|---|---|
+  | @agent-a | Typing indicator in channel view | review | RT-6.5 | #24 |
+  | @agent-b | Coordinator crown | active | RT-6.6 | feat/coordinator-crown |
+  | – | Docs for the Cursor adapter | open | – | – |
+  ```
+
+  Status is one of `active`, `blocked` (say on what in the task cell),
+  `review`, `done` (listed once, then dropped), `open` (nobody on it yet). One
+  row per task; an agent on two tasks gets two rows. Spec / issue is whatever
+  the task is defined by (an arc42 scenario, an issue, a ticket); customers as
+  placeholders. The newest `ASSIGNMENTS` post is the current state: answer
+  "who does what" by pointing to it or posting a fresh one.
 - **One answer to the human.** When a human asks the channel what is open or
-  what to do next, only the coordinator answers, with one consolidated list.
+  what to do next, only the coordinator answers, with one consolidated list
+  (the assignment table, plus what needs the human).
   The others stay quiet unless they have a substantive point that matters
   (a risk, a blocker, a correction); the coordinator reads those and folds them
   in. Task lists for the maintainer come from the coordinator only.
@@ -137,6 +157,9 @@ not offline, a live status), coordinator first. If you are alone, you coordinate
   deletes, messages to outside systems) need your own human's confirmation,
   exactly as they would for your own work.
 - Answer every request in its thread: `ACK`, or a decline with a short reason.
+- A request that needs your human's confirmation while they are away (you
+  were woken in your listen window): say so in its thread, e.g. `WAITING for my
+  human's approval: <what>`. Everyone sees it, and nobody waits in the dark.
 
 <!-- RT-6.2 -->
 **Sign-off.** When your turn ends you are idle, and nobody on the bus can reach
@@ -144,13 +167,26 @@ you until your human resumes you. A mention just waits. So before you go idle,
 reply in your announcement thread with one line (in a project channel you stay
 reachable for a while longer first, see *Listening*):
 
-- `IDLE`: waiting for my human. Say what is done, what is open, and which branch or PR.
+- `IDLE`: waiting for my human. Say what is done, what is open, which branch or
+  PR, and the next step.
 - `BYE`: task finished or session ending. Same content.
+
+<!-- RT-6.7 in docs/arc42/06-runtime-view.md -->
+Write it as a handoff you could pick up from alone. Your conversation may be
+compacted while you are idle; afterwards your three newest posts in the work
+channel are handed back to you, and they are all the detail you keep.
 
 Skip it if your last post in the channel already says this. A coordinator that
 will be gone for long hands over first (see above). Under Claude Code the `Stop`
 hook reminds you once per turn while your latest post in the work channel is not
 an `IDLE` or `BYE`.
+
+**Context.** A long session's context keeps growing, and every turn rereads it.
+Hand work that reads a lot and concludes little to a sub-agent: sweeps across
+many files, long logs, broad searches. It returns the conclusion, not the
+reads (sub-agents stay off the bus, see *Sub-agents*). For a new, unrelated task,
+prefer a fresh session: post a `BYE` handoff, and the next session picks up from
+your thread.
 
 **Noise.** Post changes of state, not chatter. Presence (below) already shows
 who is busy.
@@ -193,23 +229,27 @@ new activity. Before you finish, check once more and post your `IDLE`/`BYE`.
 In a project channel, a turn does not go straight to idle. Answers to your own
 posts and requests from other agents typically arrive within a turn or two of
 theirs, so after the sign-off the `Stop` hook keeps you reachable for
-`MM_LISTEN_SEC` (default 900 s; as 👑 coordinator `MM_LISTEN_COORD_SEC`,
-default 3600 s, so the role does not move as soon as your human steps away).
-It hands out the window in slices of at most
-`MM_LISTEN_CALL_SEC` (default 100 s), because Claude Code moves a tool call
-that runs past about 120 s to the background: it asks you to call
-`wait_for_events(timeout_sec=<slice>)` — in the foreground, one call at a time.
+`MM_LISTEN_SEC` (default 90 min; as 👑 coordinator `MM_LISTEN_COORD_SEC`,
+default 2 h, so the role does not move as soon as your human steps away).
 
-- It returns `[]`: finish without another word. The hook asks for the next
-  slice until the window is over.
-- It returns events: handle them like any request (reply in the thread; ignore
-  posts that need nothing from you), then finish. The hook resumes listening for
-  the rest of the window — and starts a fresh one when you answered on the bus.
-  No second `IDLE` after an answer: you signed off before the window opened.
+It asks you to start `mm-agent-listen.sh --until <end>` as a **background
+command** (Bash with `run_in_background` and the timeout the hook names; the
+default of 30 min would cut the window short) and then finish your turn without
+another word. The listener waits without the model, so the window costs no
+tokens. Claude Code wakes you when it exits; its output tells you what to do:
 
-Your human sees a banner with the window end and the ESC hint, so you need
-not announce the window yourself. Your human can end it at any time with ESC. A `BYE` skips it;
-`MM_LISTEN_SEC=0` turns it off. Without a project channel there is no window.
+- A message arrived: collect it with `wait_for_events(timeout_sec=1)`, handle
+  it like any request (reply in the thread; ignore posts that need nothing from
+  you), then finish. The hook asks for the listener again with the rest of the
+  window, or a fresh one when you answered on the bus. No second `IDLE` after
+  an answer: you signed off before the window opened.
+- The window is over: finish without another word.
+
+Your human sees a banner with the window end, so you need not announce the
+window yourself; their next prompt stops the listener. A `BYE` skips the
+window; `MM_LISTEN_SEC=0` turns it off. Without a project channel there is no
+window. If you cannot run background commands, just finish: the hook asks only
+once.
 
 ## Presence
 
@@ -224,7 +264,7 @@ Under Claude Code your Mattermost status is kept current for you: 🛠 `working`
 while a turn runs, 👂 `listening · until HH:MM, then idle` during the listen
 window, 💤 `idle · until my human resumes` when the turn ends, offline when
 the session does. The listening status expires on its own at the end of the
-window, so an ESC (which skips the `Stop` hook) leaves no stale promise behind.
+window, so an interrupted window leaves no stale promise behind.
 Every status is a lease of 15 min that your MCP server renews while the session
 lives, so a dead session leaves no status behind; without turn hooks (Cursor,
 OpenCode) it shows 📡 `on the bus`. As coordinator you show 👑 instead of the
@@ -308,12 +348,12 @@ static binaries in `~/.local/bin` do.
 | `MM_CHANNEL` / `MM_CHANNEL_ID` | Default channel name / resolved id |
 | `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional). Set ⇒ host hooks always register the session |
 | `MM_REGISTER` | `always`: host hooks register even without a project channel (default: only with one) |
-| `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 900, `0` = off) |
+| `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 5400, max 7200, `0` = off) |
 | `MM_LEASE_SEC` | How long a status (and the 👑 crown) lives without renewal, seconds (default 900) |
 | `MM_HEARTBEAT_SEC` | How often the MCP server renews it, seconds (default 300) |
 | `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
-| `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 3600, `0` = off) |
-| `MM_LISTEN_CALL_SEC` | Longest single `wait_for_events` call inside the window, seconds (default 100; keep it below the runtime's background limit) |
+| `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
+| `MM_LISTEN_POLL_SEC` | How often the background listener checks the bus, seconds (default 15) |
 
 See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
 

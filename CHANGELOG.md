@@ -3,6 +3,64 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.12.0
+
+### Added
+
+- **Assignment table.** Whenever an assignment changes, the coordinator posts
+  the full task-to-agent table as a top-level `ASSIGNMENTS` post: agent, task,
+  status (`active`, `blocked`, `review`, `done`, `open`), spec or issue, branch
+  or PR. The newest one is the current state, and it is the answer to "who does
+  what". Skill and `docs/protocol.md`.
+
+## 0.11.0
+
+### Added
+
+- **Handoff state survives compaction.** A new `SessionStart` hook (matcher
+  `compact`) hands the agent its three newest own posts in the work channel
+  and its `HELLO` thread id right after the conversation was compacted.
+  Spec: arc42 RT-6.7.
+- The sign-off asks for a handoff: done, open, branch/PR and the next step,
+  written so that the agent could pick up from it alone.
+- Skill: hand reading-heavy work to sub-agents; start a fresh session for a new,
+  unrelated task.
+
+### Recommended setup
+
+- Claude Code v2.1.290 or later compacts long conversations by itself while
+  the terminal is idle (`idleCompaction`, on by default). Set
+  `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` (the minimum; default 200000)
+  to compact earlier.
+
+## 0.10.0
+
+### Changed
+
+- **The listen window waits without the model.** Instead of `wait_for_events`
+  in 100 s slices — one model call per slice, each rereading the whole
+  context — the `Stop` hook asks the agent to start `bin/mm-agent-listen.sh`
+  as a background command and finish. The listener polls the bus over REST
+  and exits on a mention, DM or new post in the work channel, or at the end
+  of the window; Claude Code then wakes the agent. One model call per message
+  instead of one per slice.
+- The window lives in its own state file, so a turn woken by the listener
+  keeps it. The next prompt from the human stops a running listener (RT-6.3,
+  replaces ESC).
+- Asked once per window: an agent that cannot run background commands goes
+  idle instead of being asked again.
+- **Longer windows**, since waiting is free now: `MM_LISTEN_SEC` default
+  5400 s (90 min, was 900 s), `MM_LISTEN_COORD_SEC` default 7200 s (2 h, was
+  3600 s); both capped at 7200 s, Claude Code's limit for a background
+  command. The hook names the timeout to pass, since the runtime's default
+  (30 min) would cut the window short.
+- Skill: a request that needs the human's approval while they are away gets
+  a `WAITING for my human's approval` reply in its thread.
+
+### Removed
+
+- `MM_LISTEN_CALL_SEC`. New: `MM_LISTEN_POLL_SEC` (default 15 s).
+
 ## 0.9.0
 
 ### Added

@@ -3,6 +3,7 @@ RT-6.4 bus unavailable (docs/arc42/06-runtime-view.md)."""
 
 from __future__ import annotations
 
+import subprocess
 import time
 
 from conftest import ME, PROJECT
@@ -19,10 +20,25 @@ def turn_state(run) -> dict[str, int]:
     return {k: int(v) for k, v in (l.split("=") for l in f.read_text().split())}
 
 
-def set_window(run, since: int, until: int) -> None:
-    f = run.state_dir / f"turn-{ME}.env"
-    s = turn_state(run) | {"LISTEN_SINCE": since, "LISTEN_UNTIL": until}
-    f.write_text("".join(f"{k}={v}\n" for k, v in s.items()))
+LISTEN = "bin/mm-agent-listen.sh"
+
+
+def window(run) -> dict[str, str]:
+    f = run.state_dir / f"listen-{ME}.env"
+    if not f.exists():
+        return {}
+    return dict(l.split("=", 1) for l in f.read_text().splitlines())
+
+
+def set_window(run, **values) -> None:
+    f = run.state_dir / f"listen-{ME}.env"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    w = window(run) | {k: str(v) for k, v in values.items()}
+    f.write_text("".join(f"{k}={v}\n" for k, v in w.items()))
+
+
+def until_in(reason: str) -> int:
+    return int(reason.split("--until ", 1)[1].split("`", 1)[0])
 
 
 # --- RT-6.2 -------------------------------------------------------------------
@@ -50,25 +66,48 @@ def test_no_signoff_without_own_post(mm, run):
 
 
 def test_listen_window_opens_in_project_channel(mm, run):
-    """RT-6.2 step 3: after the sign-off, a project channel gets a listen window."""
+    """RT-6.2 step 3: after the sign-off the agent is asked to start the
+    background listener for the window; waiting costs no model calls."""
     mm.own_post("IDLE done x", 1000)
     r = run(STOP, **IN_PROJECT)
-    assert r.blocked and "timeout_sec=100" in r.reason
-    assert any(f"{s} s left" in r.reason for s in range(895, 901))
+    assert r.blocked and "mm-agent-listen.sh" in r.reason and "run_in_background" in r.reason
+    # The runtime's 30 min default would cut the window short.
+    assert "timeout 5460000" in r.reason
+    assert int(until_in(r.reason) - time.time()) in range(5390, 5401)
     status = mm.custom_status()
     assert status["emoji"] == "ear" and status["duration"] == "date_and_time"
-    assert status["expires_at"].endswith("Z")
+
+
+def test_running_listener_lets_the_turn_end(mm, run):
+    """RT-6.2 step 4: with a listener waiting, the stop goes through and stays 👂."""
+    mm.own_post("IDLE done x", 1000)
+    run(STOP, **IN_PROJECT)
+    sleeper = subprocess.Popen(["sleep", "30"])
+    try:
+        set_window(run, PID=sleeper.pid, STARTED=int(time.time()) + 1)
+        writes = len(mm.writes)
+        assert run(STOP, **IN_PROJECT).passed
+        assert not any(b.get("emoji") == "zzz" for _, _, b in mm.writes[writes:])
+    finally:
+        sleeper.kill()
+
+
+def test_listener_never_started_goes_idle(mm, run):
+    """RT-6.2 error handling: asked once, no listener → idle instead of asking forever."""
+    mm.own_post("IDLE done x", 1000)
+    assert run(STOP, **IN_PROJECT).blocked
+    assert run(STOP, **IN_PROJECT).passed
+    assert mm.custom_status()["emoji"] == "zzz" and window(run) == {}
 
 
 def test_listen_window_resumes_with_rest(mm, run):
-    """RT-6.2 step 4: events handled, the window resumes with the remaining time."""
+    """RT-6.2 step 5: woken by a message and done, the window resumes with its rest."""
     mm.own_post("IDLE done x", 1000)
     run(STOP, **IN_PROJECT)
     now = int(time.time())
-    set_window(run, now - 100, now + 300)
+    set_window(run, SINCE=now - 100, UNTIL=now + 300, STARTED=now, PID=0, ENDED="event")
     r = run(STOP, **IN_PROJECT)
-    assert r.blocked and "timeout_sec=100" in r.reason
-    assert any(f"{s} s left" in r.reason for s in range(295, 301))
+    assert r.blocked and until_in(r.reason) == now + 300
 
 
 def test_drain_shows_a_banner(mm, run):
@@ -78,61 +117,46 @@ def test_drain_shows_a_banner(mm, run):
 
 
 def test_signoff_and_listen_show_a_banner(mm, run):
-    """RT-6.2 steps 2-3: the listen banner names the window end and ESC."""
+    """RT-6.2 steps 2-3: the listen banner names the window end."""
     mm.own_post("HELLO working on x")
     assert "Signing off" in run(STOP).banner
     mm.own_post("IDLE done x")
     r = run(STOP, **IN_PROJECT)
-    until = time.strftime("%H:%M", time.localtime(turn_state(run)["LISTEN_UNTIL"]))
+    until = time.strftime("%H:%M", time.localtime(until_in(r.reason)))
     assert r.banner.startswith("👂") and f"until {until}" in r.banner
-    assert "15 min left" in r.banner and "ESC" in r.banner
-
-
-def test_listen_slices_stay_below_background_limit(mm, run):
-    """RT-6.2 step 3: each call stays under the runtime's ~120 s background
-    limit; the last slice is the rest of the window."""
-    mm.own_post("IDLE done x", 1000)
-    run(STOP, **IN_PROJECT)
-    now = int(time.time())
-    set_window(run, now - 100, now + 40)
-    r = run(STOP, **IN_PROJECT)
-    assert r.blocked
-    assert any(f"timeout_sec={s}" in r.reason for s in range(35, 41))
-    set_window(run, now - 100, now + 900)
-    r = run(STOP, MM_LISTEN_CALL_SEC="50", **IN_PROJECT)
-    assert r.blocked and "timeout_sec=50" in r.reason
+    assert "90 min" in r.banner and "next prompt" in r.banner
 
 
 def test_own_answer_opens_fresh_window_without_second_signoff(mm, run):
-    """RT-6.2 step 4: an answer on the bus restarts the window; no second IDLE."""
+    """RT-6.2 step 5: an answer on the bus restarts the window; no second IDLE."""
     mm.own_post("IDLE done x", 1000)
     run(STOP, MM_LISTEN_SEC="60", **IN_PROJECT)
     now = int(time.time())
-    set_window(run, now - 100, now + 10)
+    set_window(run, SINCE=now - 100, UNTIL=now + 10, STARTED=now, ENDED="event")
     mm.own_post("ACK will do")
     r = run(STOP, MM_LISTEN_SEC="60", **IN_PROJECT)
-    assert r.blocked and "timeout_sec=60" in r.reason
+    assert r.blocked and until_in(r.reason) - now in range(58, 62)
 
 
 def test_coordinator_listens_longer(mm, run):
-    """RT-6.2 step 3, RT-6.6: the 👑 holder gets MM_LISTEN_COORD_SEC (default 3600)."""
+    """RT-6.2 step 3, RT-6.6: the 👑 holder gets MM_LISTEN_COORD_SEC (default 7200)."""
     d = run.state_dir
     d.mkdir(parents=True, exist_ok=True)
     (d / f"coord-{ME}.env").write_text(f"CROWN_UNTIL={int(time.time()) + 600}\n")
     mm.own_post("IDLE done x", 1000)
     r = run(STOP, **IN_PROJECT)
-    assert r.blocked and any(f"{s} s left" in r.reason for s in range(3595, 3601))
-    assert "60 min left" in r.banner
+    assert r.blocked and int(until_in(r.reason) - time.time()) in range(7190, 7201)
+    assert "120 min" in r.banner and "timeout 7200000" in r.reason
 
 
 def test_window_over_goes_idle(mm, run):
-    """RT-6.2 step 5: window expired → 💤 idle, turn state removed."""
+    """RT-6.2 step 6: window over → 💤 idle, turn and window state removed."""
     mm.own_post("IDLE done x", 1000)
     run(STOP, **IN_PROJECT)
-    set_window(run, 1, 2)
+    set_window(run, SINCE=1, UNTIL=2, STARTED=int(time.time()), ENDED="over")
     assert run(STOP, **IN_PROJECT).passed
     assert mm.custom_status()["emoji"] == "zzz"
-    assert turn_state(run) == {}
+    assert turn_state(run) == {} and window(run) == {}
 
 
 def test_no_window_after_bye_or_when_off_or_without_project(mm, run):
@@ -150,25 +174,52 @@ def test_stateless_fallback_without_bot_id(mm, run):
     assert r.passed
 
 
+def test_listener_wakes_on_a_dm(mm, run):
+    """RT-6.2 step 4: the listener exits on a message and says what to do."""
+    mm.unread_dm(1)
+    until = int(time.time()) + 30
+    r = run(LISTEN, "--until", str(until), MM_LISTEN_POLL_SEC="1", **IN_PROJECT)
+    assert r.code == 0 and "wait_for_events(timeout_sec=1)" in r.stdout
+    assert window(run)["ENDED"] == "event" and window(run)["UNTIL"] == str(until)
+
+
+def test_listener_ends_with_the_window(mm, run):
+    r = run(LISTEN, "--until", str(int(time.time()) + 1), MM_LISTEN_POLL_SEC="1", **IN_PROJECT)
+    assert r.code == 0 and "nothing new" in r.stdout
+    assert window(run)["ENDED"] == "over"
+
+
 # --- RT-6.3 -------------------------------------------------------------------
 
-def test_next_prompt_clears_turn_state(mm, run):
-    """RT-6.3 step 3: after ESC the next prompt sets working and starts fresh."""
+def test_next_prompt_stops_the_listener(mm, run):
+    """RT-6.3 steps 1-2: the human is back; the prompt stops the listener and the window."""
     mm.own_post("IDLE done x", 1000)
     run(STOP, **IN_PROJECT)
-    assert turn_state(run)
+    sleeper = subprocess.Popen(["sleep", "30"])
+    set_window(run, PID=sleeper.pid, STARTED=int(time.time()) + 1)
     assert run(PROMPT).code == 0
-    assert turn_state(run) == {}
+    assert sleeper.wait(timeout=5) != 0
+    assert window(run) == {} and turn_state(run) == {}
     assert mm.custom_status()["emoji"] == "hammer_and_wrench"
 
 
+def test_turn_woken_by_a_message_keeps_the_window(mm, run):
+    """RT-6.3: a turn the listener started keeps the window for the Stop hook."""
+    set_window(run, UNTIL=int(time.time()) + 300, PID=0, ENDED="event")
+    assert run(PROMPT).code == 0
+    assert window(run)["ENDED"] == "event"
+
+
 def test_listening_status_expires_with_window(mm, run):
-    """RT-6.3 step 2: the 👂 status carries the window end as its expiry."""
+    """RT-6.3 step 3, RT-6.6: the 👂 status ends with the window at the latest,
+    and within one lease when nobody renews it."""
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
     mm.own_post("IDLE done x", 1000)
-    run(STOP, **IN_PROJECT)
-    until = turn_state(run)["LISTEN_UNTIL"]
-    expires = mm.custom_status()["expires_at"]
-    assert time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until)) == expires
+    r = run(STOP, MM_LISTEN_SEC="300", **IN_PROJECT)
+    assert time.strftime(fmt, time.gmtime(until_in(r.reason))) == mm.custom_status()["expires_at"]
+    (run.state_dir / f"listen-{ME}.env").unlink()   # next turn: a fresh default window
+    r = run(STOP, **IN_PROJECT)
+    assert mm.custom_status()["expires_at"] < time.strftime(fmt, time.gmtime(until_in(r.reason)))
 
 
 # --- RT-6.4 -------------------------------------------------------------------
