@@ -57,7 +57,7 @@ if [[ "$STATE" == renew ]]; then
   STATE="$(read_env "$PRES" STATE)"
   LABEL="$(read_env "$PRES" LABEL)"
   [[ -n "$STATE" ]] || STATE=bus
-  # A listen window that ran out without a Stop hook (ESC) is over.
+  # A listen window that ran out without a Stop hook (human took over, session gone) is over.
   if [[ "$STATE" == listening ]] && ! [[ "$LABEL" =~ ^[0-9]+$ && "$LABEL" -gt "$NOW" ]]; then
     STATE=idle LABEL=""
   fi
@@ -75,7 +75,7 @@ case "$STATE" in
     [[ "$LABEL" =~ ^[0-9]+$ ]] || { echo "usage: $0 listening UNTIL_EPOCH" >&2; exit 2; }
     PRESENCE=online; EMOJI=ear
     TEXT="listening · until $(mm_epoch_hhmm "$LABEL"), then idle"
-    # The window may end without the Stop hook running (ESC), so the status
+    # The window may end without the Stop hook running (a new prompt, a gone session), so the status
     # ends with it at the latest.
     (( LABEL < UNTIL )) && UNTIL="$LABEL"
     ;;

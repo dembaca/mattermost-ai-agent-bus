@@ -3,6 +3,27 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.10.0
+
+### Changed
+
+- **The listen window waits without the model.** Instead of `wait_for_events`
+  in 100 s slices — one model call per slice, each rereading the whole
+  context — the `Stop` hook asks the agent to start `bin/mm-agent-listen.sh`
+  as a background command and finish. The listener polls the bus over REST
+  and exits on a mention, DM or new post in the work channel, or at the end
+  of the window; Claude Code then wakes the agent. One model call per message
+  instead of one per slice.
+- The window lives in its own state file, so a turn woken by the listener
+  keeps it. The next prompt from the human stops a running listener (RT-6.3,
+  replaces ESC).
+- Asked once per window: an agent that cannot run background commands goes
+  idle instead of being asked again.
+
+### Removed
+
+- `MM_LISTEN_CALL_SEC`. New: `MM_LISTEN_POLL_SEC` (default 15 s).
+
 ## 0.9.0
 
 ### Added
