@@ -100,6 +100,9 @@ reminds it once per turn while its latest post in the work channel says otherwis
 In a project channel the hook then keeps the agent listening (`wait_for_events`) for
 `MM_LISTEN_SEC` (default 900 s) before it goes idle; its status reads 👂 `listening`
 (sequence: [arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)).
+Runtimes without turn hooks (Cursor, OpenCode) have no listen window; their agents
+check the bus before each new activity
+([arc42 §7.2](arc42/07-deployment-view.md#72-environment-differences)).
 
 Session hooks register a bot automatically only when `MM_PROJECT_CHANNEL` is set
 (then always), or when `MM_REGISTER=always`. A session without a project channel stays
