@@ -2,11 +2,12 @@
 
 ## Overview
 
-Five scenarios: the host-managed session lifecycle (happy path), the end of a turn
+Six scenarios: the host-managed session lifecycle (happy path), the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
-(fail-open, quality goal 1), and the typing indicator while a mention is answered
-(honest presence). Together they show where the bus may block an agent
+(fail-open, quality goal 1), the typing indicator while a mention is answered
+(honest presence), and the coordinator crown as a lease (who coordinates, and
+what happens when that agent goes idle or dies). Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -62,7 +63,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 1. Turn hooks read the unread counters (mentions, DMs) via the Shell CLI (IF-02). Anything pending → block: collect with `wait_for_events`, answer, finish. At most 3 drain rounds per turn.
 2. Turn hooks read the agent's latest post in the work channel. Not an `IDLE`/`BYE` → block once per turn: post a sign-off in the `HELLO` thread.
-3. In a project channel with the bus reachable, unless the sign-off was `BYE` or `MM_LISTEN_SEC=0`: Turn hooks open a listen window (default 900 s), set 👂 `listening · until HH:MM, then idle` with an expiry, and block: call `wait_for_events(timeout_sec=<slice>)`, where a slice is the rest of the window capped at `MM_LISTEN_CALL_SEC` (default 100 s). Claude Code moves an MCP call that runs past about 120 s to the background and ends the turn, so a longer call would never deliver its `[]`.
+3. In a project channel with the bus reachable, unless the sign-off was `BYE` or `MM_LISTEN_SEC=0`: Turn hooks open a listen window (default 900 s; 3600 s while the agent holds the 👑, `MM_LISTEN_COORD_SEC`, see RT-6.6), set 👂 `listening · until HH:MM, then idle` with an expiry, and block: call `wait_for_events(timeout_sec=<slice>)`, where a slice is the rest of the window capped at `MM_LISTEN_CALL_SEC` (default 100 s). Claude Code moves an MCP call that runs past about 120 s to the background and ends the turn, so a longer call would never deliver its `[]`.
 4. The MCP server waits on its WebSocket inbox (IF-03); a newer `wait_for_events` supersedes one still pending, which then returns `[]`. Events → the agent handles them and finishes again; the hook resumes with the rest of the window, or opens a fresh one when the agent posted in the work channel since the window opened. No second sign-off inside a window.
 5. `wait_for_events` returns `[]` → the agent finishes; the hook asks for the next slice while more than 5 s of the window are left. Window over: status 💤 idle, turn state removed, the turn ends.
 6. The next prompt (`UserPromptSubmit`) sets 🛠 working and clears the turn state.
@@ -147,3 +148,32 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 |------|---------|----------------|
 | 2 | WebSocket send fails or the socket is gone | The indicator stops silently; delivery is not affected |
 | 3 | The agent never answers | The indicator ends after `MM_TYPING_SEC`; no lingering "is typing" |
+
+---
+
+## 6.6 Coordinator crown and presence lease
+
+**Purpose:** Exactly one reachable agent coordinates, everyone can see which one, and a coordinator that goes idle or dies loses the role without anyone cleaning up after it.
+
+**Trigger:** The MCP server's heartbeat (every `MM_HEARTBEAT_SEC`, default 300 s), a status change by the Turn hooks, or the agent's `coordinator` tool (`take`, `release`).
+
+**Participants:** MCP server, Shell CLI, Turn hooks; Agent runtime, Mattermost REST API
+
+**Quality goal illustrated:** `#usable` Reachability (honest presence)
+
+### Sequence
+
+1. Every custom status is a lease: the Shell CLI writes it with an expiry of `MM_LEASE_SEC` (default 900 s), and the MCP server's heartbeat renews it while the session lives. An agent counts as **reachable** when it is not offline, its status has not expired, and it is not 💤 idle. A status without an expiry predates the lease and does not count.
+2. The coordinator is the reachable agent wearing a live 👑 (text `coordinator · <state>`). Without one, the heartbeat of the **oldest reachable** agent takes it; no one else claims.
+3. While holding the crown, the agent's posts start with 👑, since Mattermost shows no custom status next to bot posts. The roster lists the holder first.
+4. Handover, agreed by the agents (for example to a stronger model): the new coordinator `take`s on its `ACK`, which waits while the old crown is live; the old coordinator `release`s, and then does not reclaim for two lease periods. The pending take is checked every 30 s.
+5. The crown is extended only while the agent is reachable. The coordinator's listen window is longer (RT-6.2, `MM_LISTEN_COORD_SEC`, default 3600 s), so it stays reachable, and keeps the role, for an hour after its last turn. An idle or dead coordinator keeps it until the lease runs out; then the status falls back to 💤 (or expires entirely) and step 2 picks the next coordinator.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 2 | Two agents hold a crown (race) | At the next heartbeat the younger one yields |
+| 2 | The oldest reachable agent has no MCP server (CLI only) | Nobody claims until it leaves; the roster still names it first |
+| 4 | The old coordinator never releases | Its crown runs out with its lease once it is idle or gone; the pending take then succeeds |
+| 1 | A leftover bot keeps an old status without expiry | It is not reachable and never coordinates; `mm-agent-sweep.sh` removes it |

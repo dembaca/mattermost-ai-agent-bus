@@ -6,7 +6,8 @@
 #   1. drain   — unread mentions/DMs are waiting: collect them via wait_for_events.
 #   2. sign-off — the latest own post in the work channel is not IDLE/BYE: post one.
 #   3. listen  — in a project channel, keep answering the bus for MM_LISTEN_SEC
-#                (default 900) by blocking in wait_for_events, before going idle;
+#                (default 900; the 👑 coordinator MM_LISTEN_COORD_SEC, default
+#                3600) by blocking in wait_for_events, before going idle;
 #                one call per MM_LISTEN_CALL_SEC slice (default 100).
 # Only when all three let go does the status flip to 💤 idle.
 # Spec: RT-6.2, RT-6.3, RT-6.4 in docs/arc42/06-runtime-view.md.
@@ -30,6 +31,8 @@ BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 MAX_DRAIN=3
 LISTEN_SEC="${MM_LISTEN_SEC:-900}"
 [[ "$LISTEN_SEC" =~ ^[0-9]+$ ]] || LISTEN_SEC=900
+LISTEN_COORD_SEC="${MM_LISTEN_COORD_SEC:-3600}"
+[[ "$LISTEN_COORD_SEC" =~ ^[0-9]+$ ]] || LISTEN_COORD_SEC=3600
 # Longest single wait_for_events call the window asks for. Claude Code moves an
 # MCP call that runs longer than about 120 s to the background and ends the
 # turn; the hook would never see the [] it waits for and fire again, stacking a
@@ -142,6 +145,14 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
 fi
 
 # --- 3. listen --------------------------------------------------------------
+# The coordinator listens longer (RT-6.6): while it listens it stays reachable
+# and keeps the crown, so the role does not move the moment its human steps
+# away. Members keep the short window; every round of listening costs a model
+# call that rereads the whole context.
+crown_until="$(sed -n 's/^CROWN_UNTIL=//p' "$(mm_bot_state_file coord 2>/dev/null)" 2>/dev/null | head -1)"
+if [[ "$crown_until" =~ ^[0-9]+$ ]] && (( crown_until > $(date +%s) )); then
+  LISTEN_SEC="$LISTEN_COORD_SEC"
+fi
 # A request or a reply to the agent's own post typically arrives within a turn
 # or two of the others, so in a project channel stay reachable for a while
 # before going fully idle. Needs the turn state (to know when the window ends),

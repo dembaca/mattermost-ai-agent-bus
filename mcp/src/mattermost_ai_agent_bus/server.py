@@ -2,20 +2,42 @@
 
 from __future__ import annotations
 
+import asyncio
 import atexit
 import json
 import logging
 import os
 import signal
 import sys
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from . import lease
 from .client import MattermostClient
 from .websocket_inbox import WebSocketInbox
 
 log = logging.getLogger(__name__)
+
+
+async def _bus_client() -> MattermostClient | None:
+    try:
+        return _get_client()
+    except RuntimeError:  # no bus configured
+        return None
+
+
+@asynccontextmanager
+async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
+    # The session's heartbeat: renews its status lease and the crown (RT-6.6).
+    task = asyncio.create_task(lease.heartbeat(_bus_client))
+    try:
+        yield {}
+    finally:
+        task.cancel()
+
 
 mcp = MCPServer(
     "mattermost-ai-agent-bus",
@@ -27,11 +49,14 @@ mcp = MCPServer(
         "session_end when done; without it, stay off the bus unless your human asks. "
         "session_start joins MM_PROJECT_CHANNEL and appends a session suffix to the name. "
         "Posts go to MM_PROJECT_CHANNEL when set, else MM_CHANNEL; wait_for_events "
-        "covers mentions/DMs and both channels. Check wait_for_events(timeout_sec=1) "
+        "covers mentions/DMs and both channels. The coordinator is the agent wearing "
+        "the 👑 status (see the coordinator tool); questions to everyone about what is "
+        "open or next are its to answer. Check wait_for_events(timeout_sec=1) "
         "at the start of each turn and before each new activity, not only at the end: "
         "without turn hooks (Cursor, OpenCode) nothing else delivers messages to you. "
         "Never create channels or teams."
     ),
+    lifespan=_lifespan,
 )
 
 _client: MattermostClient | None = None
@@ -58,6 +83,13 @@ def _get_inbox() -> WebSocketInbox:
     if _inbox is None or _inbox.client is not client:
         _inbox = WebSocketInbox(client=client, typing_sec=_typing_sec())
     return _inbox
+
+
+async def _my_id(client: MattermostClient) -> str:
+    try:
+        return await lease._user_id(client)
+    except Exception:  # noqa: BLE001 — the crown prefix is cosmetic
+        return ""
 
 
 def _done_typing() -> None:
@@ -124,10 +156,14 @@ async def get_me() -> str:
 async def post_message(
     message: str, channel_id: str = "", root_id: str = ""
 ) -> str:
-    """Create a post. Uses default MM_CHANNEL when channel_id is empty."""
+    """Create a post. Uses default MM_CHANNEL when channel_id is empty.
+
+    While you hold the coordinator crown the post starts with 👑.
+    """
     _done_typing()
-    post = await _get_client().post(
-        message,
+    client = _get_client()
+    post = await client.post(
+        lease.with_crown(message, await _my_id(client)),
         channel_id=channel_id or None,
         root_id=root_id or None,
     )
@@ -138,14 +174,34 @@ async def post_message(
 async def reply_in_thread(
     root_id: str, message: str, channel_id: str = ""
 ) -> str:
-    """Reply in a thread (sets root_id on the new post)."""
+    """Reply in a thread (sets root_id on the new post).
+
+    While you hold the coordinator crown the reply starts with 👑.
+    """
     _done_typing()
-    post = await _get_client().post(
-        message,
+    client = _get_client()
+    post = await client.post(
+        lease.with_crown(message, await _my_id(client)),
         channel_id=channel_id or None,
         root_id=root_id,
     )
     return _dump(post)
+
+
+@mcp.tool()
+async def coordinator(action: str = "who") -> str:
+    """The coordinator role, held as a 👑 status lease (RT-6.6).
+
+    action: "who" (current coordinator), "take" (on your ACK to a HANDOVER;
+    waits until the holder releases or its lease runs out), "release" (right
+    after the agent you handed over to ACKed). Without a crown anywhere, the
+    oldest reachable agent takes it on its own; an idle coordinator loses it
+    when its lease runs out.
+    """
+    if action not in ("who", "take", "release"):
+        raise ValueError('action must be "who", "take" or "release"')
+    out = await lease.run(_get_client(), action)
+    return _dump({"action": action, "result": out or "(no coordinator)"})
 
 
 @mcp.tool()

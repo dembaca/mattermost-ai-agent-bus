@@ -30,7 +30,24 @@ class FakeMattermost:
     members: list[dict] = field(default_factory=list)
     channels: list[dict] = field(default_factory=list)
     writes: list[tuple[str, str, dict]] = field(default_factory=list)
+    users: list[dict] = field(default_factory=list)  # channel members (roster)
+    presence: dict[str, str] = field(default_factory=dict)
     url: str = ""
+
+    def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
+              expires_in: int | None = 600, presence: str = "online") -> None:
+        """A bot in the work channel; expires_in=None: a status without expiry."""
+        status: dict = {}
+        if emoji:
+            status = {"emoji": emoji, "text": emoji}
+            if expires_in is not None:
+                status |= {"duration": "date_and_time",
+                           "expires_at": time.strftime(
+                               "%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + expires_in))}
+        self.users = [u for u in self.users if u["id"] != uid] + [{
+            "id": uid, "username": username, "create_at": create_at, "delete_at": 0,
+            "props": {"customStatus": json.dumps(status)} if status else {}}]
+        self.presence[uid] = presence
 
     def own_post(self, message: str, create_at_ms: int | None = None) -> None:
         at = create_at_ms if create_at_ms is not None else int(time.time() * 1000)
@@ -77,6 +94,8 @@ def _handler(fake: FakeMattermost):
                 return self._send(fake.members)
             if p == "/api/v4/users/me/channels":
                 return self._send(fake.channels)
+            if p == "/api/v4/users":
+                return self._send(fake.users)
             return self._send({}, 404)
 
         def _write(self):
@@ -85,6 +104,9 @@ def _handler(fake: FakeMattermost):
             body = json.loads(raw) if raw else {}
             p = self.path.split("?")[0]
             fake.writes.append((self.command, p, body))
+            if p == "/api/v4/users/status/ids":
+                return self._send([{"user_id": u, "status": fake.presence.get(u, "offline")}
+                                   for u in body])
             if p == "/register/v1/agents" and self.command == "POST":
                 return self._send({"username": f"agent-{body['name']}",
                                    "bot_token": "bot-token-for-tests", "user_id": ME})
@@ -140,11 +162,11 @@ class Result:
 
 @pytest.fixture
 def run(mm, tmp_path):
-    """run(script, stdin=..., **env) → Result. Bot session env is set by default;
+    """run(script, *args, stdin=..., **env) → Result. Bot session env is set by default;
     pass key=None to drop a variable."""
     state = tmp_path / "state"
 
-    def _run(script: str, stdin: str = "{}", **env) -> Result:
+    def _run(script: str, *args: str, stdin: str = "{}", **env) -> Result:
         base = {
             "PATH": os.environ["PATH"],
             "HOME": str(tmp_path),
@@ -159,7 +181,7 @@ def run(mm, tmp_path):
         for k, v in env.items():
             if v is None:
                 base.pop(k, None)
-        p = subprocess.run(["bash", str(ROOT / script)], input=stdin, env=base,
+        p = subprocess.run(["bash", str(ROOT / script), *args], input=stdin, env=base,
                            capture_output=True, text=True, timeout=30)
         return Result(p.returncode, p.stdout, p.stderr)
 
