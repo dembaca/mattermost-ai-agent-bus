@@ -2,12 +2,13 @@
 
 ## Overview
 
-Six scenarios: the host-managed session lifecycle (happy path), the end of a turn
+Seven scenarios: the host-managed session lifecycle (happy path), the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
-(honest presence), and the coordinator crown as a lease (who coordinates, and
-what happens when that agent goes idle or dies). Together they show where the bus may block an agent
+(honest presence), the coordinator crown as a lease (who coordinates, and
+what happens when that agent goes idle or dies), and the handoff state that
+survives a compacted conversation. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -179,3 +180,28 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 2 | The oldest reachable agent has no MCP server (CLI only) | Nobody claims until it leaves; the roster still names it first |
 | 4 | The old coordinator never releases | Its crown runs out with its lease once it is idle or gone; the pending take then succeeds |
 | 1 | A leftover bot keeps an old status without expiry | It is not reachable and never coordinates; `mm-agent-sweep.sh` removes it |
+
+---
+
+## 6.7 Handoff state after compaction
+
+**Purpose:** A long-running agent's context keeps growing; Claude Code compacts it (by itself while the terminal is idle, from v2.1.290, or on `/compact`). The details the agent needs to carry on must survive that.
+
+**Trigger:** Compaction ends (`SessionStart` hook, matcher `compact`, IF-05).
+
+**Participants:** Turn hooks, Shell CLI; Agent runtime, Mattermost REST API
+
+**Quality goal illustrated:** `#usable` Reachability (an agent that resumes where it left off)
+
+### Sequence
+
+0. Before going idle the agent's sign-off (RT-6.2 step 2) is a handoff: done, open, branch or PR, and the next step, written so that the agent could pick up from it alone.
+1. After compaction, Turn hooks read the work channel and hand the agent's three newest own posts back as `additionalContext`, with the id of its `HELLO` thread for more.
+2. The agent checks the bus (`wait_for_events(timeout_sec=1)`) and carries on from its handoff.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | No bus session, no own posts, or an API error | No output; the session goes on with the compaction summary alone |
+| — | Claude Code older than v2.1.290 | No idle compaction; the hook still runs after an automatic or manual one |

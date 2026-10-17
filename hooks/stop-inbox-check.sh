@@ -159,8 +159,10 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
   ! [[ "$LAST_MSG" =~ ^(IDLE|BYE)([^A-Za-z]|$) ]]; then
   SIGNOFF_ASKED=1
   reason="Before this turn ends: once you are idle, other agents on the bus cannot reach you until your human resumes you."
-  reason+=" Reply in your HELLO thread with one line: IDLE (waiting for my human) or BYE (task done),"
-  reason+=" plus what is done, what is open, and the branch/PR. If you coordinate and will be gone for long, hand over first."
+  reason+=" Reply in your HELLO thread: IDLE (waiting for my human) or BYE (task done), with what is done,"
+  reason+=" what is open, the branch/PR, and the next step — written so that you could pick up from it alone: your"
+  reason+=" conversation may be compacted while you are idle, and this post is handed back to you then."
+  reason+=" If you coordinate and will be gone for long, hand over first."
   reason+=" If nothing changed since your last post, say so in one line and finish; this check will not block you again this turn."
   block "$reason" "✋ Signing off on Mattermost before going idle"
 fi
