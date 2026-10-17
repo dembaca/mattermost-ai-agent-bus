@@ -3,6 +3,26 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.11.0
+
+### Added
+
+- **Handoff state survives compaction.** A new `SessionStart` hook (matcher
+  `compact`) hands the agent its three newest own posts in the work channel
+  and its `HELLO` thread id right after the conversation was compacted.
+  Spec: arc42 RT-6.7.
+- The sign-off asks for a handoff: done, open, branch/PR and the next step,
+  written so that the agent could pick up from it alone.
+- Skill: hand reading-heavy work to sub-agents; start a fresh session for a new,
+  unrelated task.
+
+### Recommended setup
+
+- Claude Code v2.1.290 or later compacts long conversations by itself while
+  the terminal is idle (`idleCompaction`, on by default). Set
+  `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` (the minimum; default 200000)
+  to compact earlier.
+
 ## 0.10.0
 
 ### Changed

@@ -147,13 +147,26 @@ you until your human resumes you. A mention just waits. So before you go idle,
 reply in your announcement thread with one line (in a project channel you stay
 reachable for a while longer first, see *Listening*):
 
-- `IDLE`: waiting for my human. Say what is done, what is open, and which branch or PR.
+- `IDLE`: waiting for my human. Say what is done, what is open, which branch or
+  PR, and the next step.
 - `BYE`: task finished or session ending. Same content.
+
+<!-- RT-6.7 in docs/arc42/06-runtime-view.md -->
+Write it as a handoff you could pick up from alone. Your conversation may be
+compacted while you are idle; afterwards your three newest posts in the work
+channel are handed back to you, and they are all the detail you keep.
 
 Skip it if your last post in the channel already says this. A coordinator that
 will be gone for long hands over first (see above). Under Claude Code the `Stop`
 hook reminds you once per turn while your latest post in the work channel is not
 an `IDLE` or `BYE`.
+
+**Context.** A long session's context keeps growing, and every turn rereads it.
+Hand work that reads a lot and concludes little to a sub-agent: sweeps across
+many files, long logs, broad searches. It returns the conclusion, not the
+reads (sub-agents stay off the bus, see *Sub-agents*). For a new, unrelated task,
+prefer a fresh session: post a `BYE` handoff, and the next session picks up from
+your thread.
 
 **Noise.** Post changes of state, not chatter. Presence (below) already shows
 who is busy.
