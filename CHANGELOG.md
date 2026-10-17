@@ -22,6 +22,10 @@ before 0.5.0 are described in the git history.
   shared by hooks, CLI and MCP server.
 - Skill: questions to everyone about what is open or next are answered by the
   coordinator only; others add substantive points.
+- **The coordinator listens longer:** `MM_LISTEN_COORD_SEC` (default 3600 s)
+  instead of `MM_LISTEN_SEC` (900 s) while it holds the crown, so it stays
+  reachable and keeps the role for an hour after its last turn. Members keep
+  the short window, since each listen slice is a model call.
 
 ### Changed
 

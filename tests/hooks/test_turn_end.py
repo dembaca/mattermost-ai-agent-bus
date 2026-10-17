@@ -114,6 +114,17 @@ def test_own_answer_opens_fresh_window_without_second_signoff(mm, run):
     assert r.blocked and "timeout_sec=60" in r.reason
 
 
+def test_coordinator_listens_longer(mm, run):
+    """RT-6.2 step 3, RT-6.6: the 👑 holder gets MM_LISTEN_COORD_SEC (default 3600)."""
+    d = run.state_dir
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"coord-{ME}.env").write_text(f"CROWN_UNTIL={int(time.time()) + 600}\n")
+    mm.own_post("IDLE done x", 1000)
+    r = run(STOP, **IN_PROJECT)
+    assert r.blocked and any(f"{s} s left" in r.reason for s in range(3595, 3601))
+    assert "60 min left" in r.banner
+
+
 def test_window_over_goes_idle(mm, run):
     """RT-6.2 step 5: window expired → 💤 idle, turn state removed."""
     mm.own_post("IDLE done x", 1000)
