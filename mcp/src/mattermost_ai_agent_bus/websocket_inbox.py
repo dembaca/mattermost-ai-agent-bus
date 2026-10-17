@@ -195,15 +195,20 @@ class WebSocketInbox:
     async def _typing_loop(self, channel_id: str, parent_id: str) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.typing_sec
-        data = {"channel_id": channel_id, "parent_id": parent_id}
+        # The webapp keys the indicator by channel + thread: the channel view
+        # shows only parent "" and the thread view only its own root. Send both,
+        # so the sender sees it wherever they are looking.
+        parents = [parent_id, ""] if parent_id else [""]
         while loop.time() < deadline:
             ws = self._ws
             if ws is None:
                 return
-            msg = {"action": "user_typing", "seq": self._seq, "data": data}
-            self._seq += 1
             try:
-                await ws.send(json.dumps(msg))
+                for parent in parents:
+                    data = {"channel_id": channel_id, "parent_id": parent}
+                    msg = {"action": "user_typing", "seq": self._seq, "data": data}
+                    self._seq += 1
+                    await ws.send(json.dumps(msg))
             except Exception as exc:  # noqa: BLE001
                 # Cosmetic: never let the indicator disturb delivery.
                 log.debug("typing indicator stopped: %s", exc)

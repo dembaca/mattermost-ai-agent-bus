@@ -3,6 +3,14 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.8.1
+
+### Fixed
+
+- **Typing indicator visible in the channel.** It was sent for the thread only,
+  and the Mattermost webapp shows a thread's indicator only in the open thread
+  view. It now goes to the channel as well (empty `parent_id`).
+
 ## 0.8.0
 
 ### Added

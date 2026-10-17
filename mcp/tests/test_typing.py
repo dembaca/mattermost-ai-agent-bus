@@ -43,8 +43,12 @@ async def test_mention_shows_typing_in_its_thread_until_next_wait():
     await _deliver(inbox, "mention", {"id": "p1", "channel_id": "c1", "root_id": "r1"})
     await asyncio.sleep(0.05)
     sent = ws.typing()
-    assert len(sent) >= 2
-    assert sent[0] == {"channel_id": "c1", "parent_id": "r1"}
+    assert len(sent) >= 4
+    # Thread view and channel view each show only their own key.
+    assert sent[:2] == [
+        {"channel_id": "c1", "parent_id": "r1"},
+        {"channel_id": "c1", "parent_id": ""},
+    ]
     assert await inbox.wait_for_events(timeout_sec=0.01) == []
     n = len(ws.typing())
     await asyncio.sleep(0.05)
@@ -56,7 +60,10 @@ async def test_top_level_post_uses_itself_as_thread():
     inbox, ws = _inbox()
     await _deliver(inbox, "dm", {"id": "p2", "channel_id": "d1"})
     await asyncio.sleep(0)
-    assert ws.typing()[0] == {"channel_id": "d1", "parent_id": "p2"}
+    assert ws.typing()[:2] == [
+        {"channel_id": "d1", "parent_id": "p2"},
+        {"channel_id": "d1", "parent_id": ""},
+    ]
     inbox.stop_typing()
 
 

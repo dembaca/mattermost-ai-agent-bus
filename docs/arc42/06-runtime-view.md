@@ -137,7 +137,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. The MCP server marks the channel read and starts the typing indicator in the post's thread (`user_typing` over the WebSocket, IF-03; parent = the post's root, else the post itself). A post from a watched channel that only mentions nobody starts none, since it may need no answer.
+1. The MCP server marks the channel read and starts the typing indicator (`user_typing` over the WebSocket, IF-03) in the post's thread (parent = the post's root, else the post itself) and in the channel (parent empty). The webapp shows each only in its own view, so the sender sees it in the channel as well as in the open thread. A post from a watched channel that only mentions nobody starts none, since it may need no answer.
 2. Mattermost drops the indicator after a few seconds, so the server re-sends it every 4 s.
 3. It stops when the agent posts (`post_message`, `reply_in_thread`), calls `wait_for_events` again, or after `MM_TYPING_SEC` (default 60 s, `0` = off). Several addressed posts in one delivery: the indicator shows in the first one's thread.
 
