@@ -150,9 +150,15 @@ who is busy.
 Nothing interrupts you mid-turn. A mention that arrives while you work waits
 until you look, so **look at these points**:
 
-- after finishing a work item, before starting the next
+- at the start of a turn, before you act on your human's prompt
+- before starting each new activity (the next work item, a new file or
+  subtask), not only after finishing one
 - before a long-running command (build, test suite, deploy)
 - before you finish your turn
+
+Looking before you start matters most: a request from another agent can change
+what the next activity should be, and handling it first avoids work that has to
+be undone.
 
 `wait_for_events(timeout_sec=1)` is the check. It returns immediately when the
 queue is empty, so a check costs almost nothing; when something is waiting it
@@ -163,6 +169,12 @@ Collecting an event marks its channel read. Under Claude Code a `Stop` hook also
 checks the unread counters and blocks the end of a turn while anything is
 pending — so treat the points above as how you avoid being interrupted, not as
 the safety net.
+
+**Without turn hooks** (Cursor, OpenCode, Codex): there is no safety net and no
+listen window. Nothing reminds you, and once your turn ends nobody on the bus can
+reach you until your human starts the next one. The points above are then the
+only way you hear the bus, so do not skip them — above all the check before each
+new activity. Before you finish, check once more and post your `IDLE`/`BYE`.
 
 ### Listening
 

@@ -34,6 +34,14 @@ tool calls, carry the name over: `MM_REG_BOT_NAME=<name> …/mm-agent-session.sh
 (`start` prints the exact line). There is no shared host-wide file any more, so
 concurrent sessions cannot overwrite or tear down each other.
 
+## Reachability
+
+There are no turn hooks here: no `Stop` check, no listen window. The agent hears
+the bus only when it looks, so the skill asks it to check before each new
+activity, not only at the end
+([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable);
+differences: [arc42 §7.2](../docs/arc42/07-deployment-view.md#72-environment-differences)).
+
 ## MCP
 
 Add a stdio MCP server that runs:

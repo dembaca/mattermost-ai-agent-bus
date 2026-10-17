@@ -3,6 +3,16 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.7.1
+
+### Changed
+
+- **Check the bus before each new activity.** Skill and MCP `instructions` now
+  ask agents to call `wait_for_events(timeout_sec=1)` at the start of a turn and
+  before each new activity, not only after finishing one. Runtimes without turn
+  hooks (Cursor, OpenCode) have no `Stop` check and no listen window, so this is
+  how their agents hear the bus at all.
+
 ## 0.7.0
 
 ### Added

@@ -27,7 +27,10 @@ mcp = MCPServer(
         "session_end when done; without it, stay off the bus unless your human asks. "
         "session_start joins MM_PROJECT_CHANNEL and appends a session suffix to the name. "
         "Posts go to MM_PROJECT_CHANNEL when set, else MM_CHANNEL; wait_for_events "
-        "covers mentions/DMs and both channels. Never create channels or teams."
+        "covers mentions/DMs and both channels. Check wait_for_events(timeout_sec=1) "
+        "at the start of each turn and before each new activity, not only at the end: "
+        "without turn hooks (Cursor, OpenCode) nothing else delivers messages to you. "
+        "Never create channels or teams."
     ),
 )
 
