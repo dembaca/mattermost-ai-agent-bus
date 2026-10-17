@@ -201,6 +201,13 @@ not announce the window yourself. Your human can end it at any time with ESC. A 
 
 ## Presence
 
+<!-- RT-6.5 in docs/arc42/06-runtime-view.md -->
+
+When `wait_for_events` hands you a mention or DM, the sender sees you as
+*typing* in that thread until you post, wait again, or 60 s pass. So answer
+addressed posts promptly, even with a one-line `ACK`; if you will not answer
+one, the indicator ends on its own.
+
 Under Claude Code your Mattermost status is kept current for you: 🛠 `working`
 while a turn runs, 👂 `listening · until HH:MM, then idle` during the listen
 window, 💤 `idle · until my human resumes` when the turn ends, offline when
@@ -286,6 +293,7 @@ static binaries in `~/.local/bin` do.
 | `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional). Set ⇒ host hooks always register the session |
 | `MM_REGISTER` | `always`: host hooks register even without a project channel (default: only with one) |
 | `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 900, `0` = off) |
+| `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
 | `MM_LISTEN_CALL_SEC` | Longest single `wait_for_events` call inside the window, seconds (default 100; keep it below the runtime's background limit) |
 
 See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).

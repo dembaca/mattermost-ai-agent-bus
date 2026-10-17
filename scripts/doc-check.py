@@ -11,7 +11,7 @@ docs against each other. This checks what it cannot see:
   doc-map    a changed code path has its doc changed too (docs/doc-map.toml)
   blocks     Section 6 participants are building blocks from Section 5
   rt-ids     every RT-6.x referenced anywhere exists as a Section 6 scenario,
-             and every scenario is referenced by at least one test in tests/
+             and every scenario is referenced by at least one test in tests/ or mcp/tests/
   changelog  the plugin version has an entry in CHANGELOG.md
 
 Exit 0 when clean, 1 on any error. Stdlib only.
@@ -136,11 +136,11 @@ def check_rt_ids() -> None:
             for ref in RT_REF.findall(line):
                 if ref not in defined:
                     error(f, n, f"RT-{ref} is not a scenario in {SEC6.relative_to(ROOT)}")
-                elif f.startswith("tests/"):
+                elif f.startswith(("tests/", "mcp/tests/")):
                     tested.add(ref)
     for ref, n in defined.items():
         if ref not in tested:
-            error(SEC6, n, f"scenario RT-{ref} has no test referencing it in tests/")
+            error(SEC6, n, f"scenario RT-{ref} has no test referencing it in tests/ or mcp/tests/")
 
 
 # --- changelog ------------------------------------------------------------------

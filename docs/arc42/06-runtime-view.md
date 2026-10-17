@@ -2,14 +2,15 @@
 
 ## Overview
 
-Four scenarios: the host-managed session lifecycle (happy path), the end of a turn
+Five scenarios: the host-managed session lifecycle (happy path), the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
-window ended by the human (recovery), and the bus failing underneath a session
-(fail-open, quality goal 1). Together they show where the bus may block an agent
+window ended by the human (recovery), the bus failing underneath a session
+(fail-open, quality goal 1), and the typing indicator while a mention is answered
+(honest presence). Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
-`tests/hooks/`, from `SKILL.md` and from the code that implements it.
+`tests/hooks/` or `mcp/tests/`, from `SKILL.md` and from the code that implements it.
 `scripts/doc-check.py` fails when a reference points nowhere or a scenario has
 no test.
 
@@ -121,3 +122,28 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | Step | Failure | System Response |
 |------|---------|----------------|
 | 1 | Hook exceeds its timeout | Runtime kills the hook (Stop 10 s, UserPromptSubmit 5 s) and continues |
+
+---
+
+## 6.5 Typing indicator while a mention is answered
+
+**Purpose:** Whoever addressed an agent sees that it is on it, as with a human who starts typing.
+
+**Trigger:** `wait_for_events` delivers a mention or DM.
+
+**Participants:** MCP server; Agent runtime, Mattermost WebSocket
+
+**Quality goal illustrated:** `#usable` Reachability (honest presence)
+
+### Sequence
+
+1. The MCP server marks the channel read and starts the typing indicator in the post's thread (`user_typing` over the WebSocket, IF-03; parent = the post's root, else the post itself). A post from a watched channel that only mentions nobody starts none, since it may need no answer.
+2. Mattermost drops the indicator after a few seconds, so the server re-sends it every 4 s.
+3. It stops when the agent posts (`post_message`, `reply_in_thread`), calls `wait_for_events` again, or after `MM_TYPING_SEC` (default 60 s, `0` = off). Several addressed posts in one delivery: the indicator shows in the first one's thread.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 2 | WebSocket send fails or the socket is gone | The indicator stops silently; delivery is not affected |
+| 3 | The agent never answers | The indicator ends after `MM_TYPING_SEC`; no lingering "is typing" |

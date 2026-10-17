@@ -3,6 +3,16 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.8.0
+
+### Added
+
+- **Typing indicator.** When `wait_for_events` delivers a mention or DM, the
+  sender sees the bot as *typing* in that thread, as with a human. It is re-sent
+  every 4 s and stops when the agent posts, waits again, or after
+  `MM_TYPING_SEC` (default 60 s, `0` = off). Posts from watched channels that
+  address nobody start none.
+
 ## 0.7.1
 
 ### Changed
