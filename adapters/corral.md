@@ -74,7 +74,11 @@ With neither set the hook exits 0 silently — a machine without a bus is not an
 
 `MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_TOKEN`, `MM_BOT_USERNAME`, `MM_BOT_USER_ID`,
 `MM_TEAM`, `MM_TEAM_ID`, `MM_CHANNEL`, `MM_CHANNEL_ID` and — when set —
-`MM_PROJECT_CHANNEL`, `MM_PROJECT_CHANNEL_ID`.
+`MM_PROJECT_CHANNEL`, `MM_PROJECT_CHANNEL_ID`, and `MM_OWNER`, `MM_OWNER_USER_ID`: the
+human whose posts may approve actions. The host looks them up with the registration
+secret, a personal access token of that user (`users/me`); set `MM_OWNER` on the host
+to name someone else
+([arc42 §6.8](../docs/arc42/06-runtime-view.md#68-approval-from-the-owner-over-the-bus)).
 
 Deliberately **not** contributed:
 

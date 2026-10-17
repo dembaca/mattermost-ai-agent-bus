@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.13.0
+
+### Added
+
+- **Approvals over the bus.** The session's own human may confirm a pending
+  action on Mattermost: a DM or a reply in the request's thread that names the
+  action (`APPROVE: …`). The MCP server marks such events `from_owner` after
+  checking the author id, which no post can fake; everything else stays data.
+  Runtime permission prompts and sandbox, secret or permission changes stay
+  terminal-only. Spec: arc42 RT-6.8.
+- **The owner is found automatically:** the user the registration PAT belongs
+  to, looked up on the host (corral) or by the MCP server (`users/me` with the
+  PAT). `MM_OWNER` (a username) overrides it.
+
 ## 0.12.0
 
 ### Added
