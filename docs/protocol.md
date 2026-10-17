@@ -123,6 +123,10 @@ The MCP `wait_for_events` tool (and `classify_post`) marks a post as relevant wh
 
 Own posts from the bot are ignored.
 
+A delivered mention or DM shows the bot as typing in that thread until it posts,
+waits again, or `MM_TYPING_SEC` (default 60 s) runs out
+([arc42 §6.5](arc42/06-runtime-view.md#65-typing-indicator-while-a-mention-is-answered)).
+
 ## Polling vs WebSocket
 
 - **CLI poll** (`mm-agent-poll.sh`) — REST `channels/{id}/posts?since=` JSON lines.

@@ -88,6 +88,12 @@ class WebSocketInbox:
     _getter: asyncio.Future[ClassifiedEvent] | None = field(
         default=None, repr=False, init=False
     )
+    # Typing indicator (RT-6.5): after a mention or DM is delivered, show the bot
+    # as typing in that thread until it answers, waits again, or typing_sec ends.
+    # Mattermost drops the indicator after a few seconds, so it is re-sent.
+    typing_sec: float = 60.0
+    typing_interval: float = 4.0
+    _typing: asyncio.Task[None] | None = field(default=None, repr=False, init=False)
 
     async def ensure_identity(self) -> None:
         me = await self.client.get_me()
@@ -174,7 +180,38 @@ class WebSocketInbox:
                 self._seen_ids.add(post["id"])
                 await self._queue.put(ClassifiedEvent(kind=kind, post=post))
 
+    def start_typing(self, channel_id: str, parent_id: str = "") -> None:
+        """Show the bot as typing in channel_id (thread parent_id) for a while."""
+        self.stop_typing()
+        if self.typing_sec <= 0 or not channel_id or self._ws is None:
+            return
+        self._typing = asyncio.create_task(self._typing_loop(channel_id, parent_id))
+
+    def stop_typing(self) -> None:
+        if self._typing is not None and not self._typing.done():
+            self._typing.cancel()
+        self._typing = None
+
+    async def _typing_loop(self, channel_id: str, parent_id: str) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.typing_sec
+        data = {"channel_id": channel_id, "parent_id": parent_id}
+        while loop.time() < deadline:
+            ws = self._ws
+            if ws is None:
+                return
+            msg = {"action": "user_typing", "seq": self._seq, "data": data}
+            self._seq += 1
+            try:
+                await ws.send(json.dumps(msg))
+            except Exception as exc:  # noqa: BLE001
+                # Cosmetic: never let the indicator disturb delivery.
+                log.debug("typing indicator stopped: %s", exc)
+                return
+            await asyncio.sleep(self.typing_interval)
+
     async def close(self) -> None:
+        self.stop_typing()
         if self._reader:
             self._reader.cancel()
             try:
@@ -256,7 +293,10 @@ class WebSocketInbox:
         """Block until at least one classified event or timeout.
 
         A newer call supersedes one still waiting: the older returns [].
+        A delivered mention or DM starts the typing indicator in its thread.
         """
+        # Waiting again means the agent is done with what it was given.
+        self.stop_typing()
         if self._ws is None:
             await self.connect()
         if self._getter is not None and not self._getter.done():
@@ -278,6 +318,14 @@ class WebSocketInbox:
             except asyncio.QueueEmpty:
                 break
         await self._mark_delivered_read(events)
+        # Posts from watched channels often need no answer, so only a mention or
+        # DM, which does, promises one.
+        addressed = next((e for e in events if e.kind in ("mention", "dm")), None)
+        if addressed is not None:
+            post = addressed.post
+            self.start_typing(
+                post.get("channel_id", ""), post.get("root_id") or post.get("id", "")
+            )
         return events
 
     async def _mark_delivered_read(self, events: list[ClassifiedEvent]) -> None:

@@ -13,7 +13,8 @@ is not done until the docs say what the code now does:
   description are read by agents at runtime. Update them with the behaviour.
 - **Scenario ids.** Section 6 scenarios are `RT-6.x` (their section number).
   Reference the id from the code that implements a scenario, from `SKILL.md`,
-  and from at least one test in `tests/hooks/`. A new scenario needs a test.
+  and from at least one test in `tests/hooks/` (hook behaviour) or `mcp/tests/`
+  (MCP server behaviour). A new scenario needs a test.
 - **Describe once, link elsewhere.** README, adapter docs and `docs/protocol.md`
   link to the arc42 section instead of restating behaviour.
 - **Version bump → CHANGELOG.md entry** for that version.

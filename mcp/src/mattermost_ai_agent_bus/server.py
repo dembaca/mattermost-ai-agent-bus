@@ -45,12 +45,25 @@ def _get_client() -> MattermostClient:
     return _client
 
 
+def _typing_sec() -> float:
+    try:
+        return max(0.0, float(os.environ.get("MM_TYPING_SEC", "60")))
+    except ValueError:
+        return 60.0
+
+
 def _get_inbox() -> WebSocketInbox:
     global _inbox
     client = _get_client()
     if _inbox is None or _inbox.client is not client:
-        _inbox = WebSocketInbox(client=client)
+        _inbox = WebSocketInbox(client=client, typing_sec=_typing_sec())
     return _inbox
+
+
+def _done_typing() -> None:
+    """A post is the answer the typing indicator promised (RT-6.5)."""
+    if _inbox is not None:
+        _inbox.stop_typing()
 
 
 def _dump(obj: Any) -> str:
@@ -112,6 +125,7 @@ async def post_message(
     message: str, channel_id: str = "", root_id: str = ""
 ) -> str:
     """Create a post. Uses default MM_CHANNEL when channel_id is empty."""
+    _done_typing()
     post = await _get_client().post(
         message,
         channel_id=channel_id or None,
@@ -125,6 +139,7 @@ async def reply_in_thread(
     root_id: str, message: str, channel_id: str = ""
 ) -> str:
     """Reply in a thread (sets root_id on the new post)."""
+    _done_typing()
     post = await _get_client().post(
         message,
         channel_id=channel_id or None,
@@ -160,7 +175,9 @@ async def wait_for_events(
     """Wait for inbox events: mentions, DMs, or watched-channel posts.
 
     Connects the Mattermost WebSocket if needed. Returns JSON list of
-    {kind, post, channel} (empty list on timeout). Keep timeout_sec below the
+    {kind, post, channel} (empty list on timeout). A delivered mention or DM
+    shows you as typing in its thread until you post, wait again, or
+    MM_TYPING_SEC (default 60) runs out. Keep timeout_sec below the
     runtime's background limit (Claude Code: ~120 s) and call it in the
     foreground; a newer call supersedes one still pending, which returns [].
     """
