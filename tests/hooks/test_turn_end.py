@@ -71,7 +71,9 @@ def test_listen_window_opens_in_project_channel(mm, run):
     mm.own_post("IDLE done x", 1000)
     r = run(STOP, **IN_PROJECT)
     assert r.blocked and "mm-agent-listen.sh" in r.reason and "run_in_background" in r.reason
-    assert int(until_in(r.reason) - time.time()) in range(890, 901)
+    # The runtime's 30 min default would cut the window short.
+    assert "timeout 5460000" in r.reason
+    assert int(until_in(r.reason) - time.time()) in range(5390, 5401)
     status = mm.custom_status()
     assert status["emoji"] == "ear" and status["duration"] == "date_and_time"
 
@@ -122,7 +124,7 @@ def test_signoff_and_listen_show_a_banner(mm, run):
     r = run(STOP, **IN_PROJECT)
     until = time.strftime("%H:%M", time.localtime(until_in(r.reason)))
     assert r.banner.startswith("👂") and f"until {until}" in r.banner
-    assert "15 min" in r.banner and "next prompt" in r.banner
+    assert "90 min" in r.banner and "next prompt" in r.banner
 
 
 def test_own_answer_opens_fresh_window_without_second_signoff(mm, run):
@@ -137,14 +139,14 @@ def test_own_answer_opens_fresh_window_without_second_signoff(mm, run):
 
 
 def test_coordinator_listens_longer(mm, run):
-    """RT-6.2 step 3, RT-6.6: the 👑 holder gets MM_LISTEN_COORD_SEC (default 3600)."""
+    """RT-6.2 step 3, RT-6.6: the 👑 holder gets MM_LISTEN_COORD_SEC (default 7200)."""
     d = run.state_dir
     d.mkdir(parents=True, exist_ok=True)
     (d / f"coord-{ME}.env").write_text(f"CROWN_UNTIL={int(time.time()) + 600}\n")
     mm.own_post("IDLE done x", 1000)
     r = run(STOP, **IN_PROJECT)
-    assert r.blocked and int(until_in(r.reason) - time.time()) in range(3590, 3601)
-    assert "60 min" in r.banner
+    assert r.blocked and int(until_in(r.reason) - time.time()) in range(7190, 7201)
+    assert "120 min" in r.banner and "timeout 7200000" in r.reason
 
 
 def test_window_over_goes_idle(mm, run):
@@ -209,11 +211,15 @@ def test_turn_woken_by_a_message_keeps_the_window(mm, run):
 
 
 def test_listening_status_expires_with_window(mm, run):
-    """RT-6.3 step 3: the 👂 status ends with the window at the latest."""
+    """RT-6.3 step 3, RT-6.6: the 👂 status ends with the window at the latest,
+    and within one lease when nobody renews it."""
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
     mm.own_post("IDLE done x", 1000)
+    r = run(STOP, MM_LISTEN_SEC="300", **IN_PROJECT)
+    assert time.strftime(fmt, time.gmtime(until_in(r.reason))) == mm.custom_status()["expires_at"]
+    (run.state_dir / f"listen-{ME}.env").unlink()   # next turn: a fresh default window
     r = run(STOP, **IN_PROJECT)
-    expires = mm.custom_status()["expires_at"]
-    assert time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(until_in(r.reason))) == expires
+    assert mm.custom_status()["expires_at"] < time.strftime(fmt, time.gmtime(until_in(r.reason)))
 
 
 # --- RT-6.4 -------------------------------------------------------------------

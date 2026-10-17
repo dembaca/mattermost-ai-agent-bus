@@ -6,8 +6,8 @@
 #   1. drain   — unread mentions/DMs are waiting: collect them via wait_for_events.
 #   2. sign-off — the latest own post in the work channel is not IDLE/BYE: post one.
 #   3. listen  — in a project channel, stay reachable for MM_LISTEN_SEC
-#                (default 900; the 👑 coordinator MM_LISTEN_COORD_SEC, default
-#                3600): the agent starts bin/mm-agent-listen.sh in the
+#                (default 5400; the 👑 coordinator MM_LISTEN_COORD_SEC, default
+#                7200): the agent starts bin/mm-agent-listen.sh in the
 #                background and ends its turn; the runtime wakes it when a
 #                message arrives. Waiting costs no model calls.
 # Only when all three let go does the status flip to 💤 idle.
@@ -30,10 +30,15 @@ BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 # Drain rounds per turn before a counter that wait_for_events cannot clear is
 # treated as stale. Bounds the hook against looping forever.
 MAX_DRAIN=3
-LISTEN_SEC="${MM_LISTEN_SEC:-900}"
-[[ "$LISTEN_SEC" =~ ^[0-9]+$ ]] || LISTEN_SEC=900
-LISTEN_COORD_SEC="${MM_LISTEN_COORD_SEC:-3600}"
-[[ "$LISTEN_COORD_SEC" =~ ^[0-9]+$ ]] || LISTEN_COORD_SEC=3600
+# Waiting costs no model calls (bin/mm-agent-listen.sh), so the window is long.
+# Claude Code stops a background command after 2 h at most, which caps it.
+MAX_BG_SEC=7200
+LISTEN_SEC="${MM_LISTEN_SEC:-5400}"
+[[ "$LISTEN_SEC" =~ ^[0-9]+$ ]] || LISTEN_SEC=5400
+LISTEN_COORD_SEC="${MM_LISTEN_COORD_SEC:-7200}"
+[[ "$LISTEN_COORD_SEC" =~ ^[0-9]+$ ]] || LISTEN_COORD_SEC=7200
+(( LISTEN_SEC > MAX_BG_SEC )) && LISTEN_SEC=$MAX_BG_SEC
+(( LISTEN_COORD_SEC > MAX_BG_SEC )) && LISTEN_COORD_SEC=$MAX_BG_SEC
 
 input="$(cat 2>/dev/null || true)"
 
@@ -163,8 +168,7 @@ fi
 # --- 3. listen --------------------------------------------------------------
 # The coordinator listens longer (RT-6.6): while it listens it stays reachable
 # and keeps the crown, so the role does not move the moment its human steps
-# away. Members keep the short window; every round of listening costs a model
-# call that rereads the whole context.
+# away.
 crown_until="$(sed -n 's/^CROWN_UNTIL=//p' "$(mm_bot_state_file coord 2>/dev/null)" 2>/dev/null | head -1)"
 if [[ "$crown_until" =~ ^[0-9]+$ ]] && (( crown_until > $(date +%s) )); then
   LISTEN_SEC="$LISTEN_COORD_SEC"
@@ -196,8 +200,11 @@ if [[ -n "$LF" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] &&
     LISTEN_ASKED="$now"
     save_listen
     "$BIN/mm-agent-status.sh" listening "$LISTEN_UNTIL" >/dev/null 2>&1 || true
+    # The runtime's default limit for a background command (30 min) would
+    # cut the window short, so the hook names the timeout to pass.
+    bg_ms=$(( (remaining + 60 < MAX_BG_SEC ? remaining + 60 : MAX_BG_SEC) * 1000 ))
     reason="Stay reachable on the bus before going idle: run \`\"$BIN/mm-agent-listen.sh\" --until ${LISTEN_UNTIL}\`"
-    reason+=" as a background command (Bash with run_in_background), then finish your turn without another word."
+    reason+=" as a background command (Bash with run_in_background and timeout ${bg_ms}), then finish your turn without another word."
     reason+=" It waits without using the model and wakes you when a message arrives; its output says what to do."
     reason+=" If you cannot run background commands, just finish; this check will not ask again."
     block "$reason" "👂 Listening on Mattermost until $(mm_epoch_hhmm "$LISTEN_UNTIL") in the background ($(( (remaining + 59) / 60 )) min) · your next prompt ends it"

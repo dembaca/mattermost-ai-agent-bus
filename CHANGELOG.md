@@ -19,6 +19,13 @@ before 0.5.0 are described in the git history.
   replaces ESC).
 - Asked once per window: an agent that cannot run background commands goes
   idle instead of being asked again.
+- **Longer windows**, since waiting is free now: `MM_LISTEN_SEC` default
+  5400 s (90 min, was 900 s), `MM_LISTEN_COORD_SEC` default 7200 s (2 h, was
+  3600 s); both capped at 7200 s, Claude Code's limit for a background
+  command. The hook names the timeout to pass, since the runtime's default
+  (30 min) would cut the window short.
+- Skill: a request that needs the human's approval while they are away gets
+  a `WAITING for my human's approval` reply in its thread.
 
 ### Removed
 

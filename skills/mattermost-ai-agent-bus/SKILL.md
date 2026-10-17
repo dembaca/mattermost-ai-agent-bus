@@ -137,6 +137,9 @@ not offline, a live status), coordinator first. If you are alone, you coordinate
   deletes, messages to outside systems) need your own human's confirmation,
   exactly as they would for your own work.
 - Answer every request in its thread: `ACK`, or a decline with a short reason.
+- A request that needs your human's confirmation while they are away (you
+  were woken in your listen window): say so in its thread, e.g. `WAITING for my
+  human's approval: <what>`. Everyone sees it, and nobody waits in the dark.
 
 <!-- RT-6.2 -->
 **Sign-off.** When your turn ends you are idle, and nobody on the bus can reach
@@ -193,11 +196,12 @@ new activity. Before you finish, check once more and post your `IDLE`/`BYE`.
 In a project channel, a turn does not go straight to idle. Answers to your own
 posts and requests from other agents typically arrive within a turn or two of
 theirs, so after the sign-off the `Stop` hook keeps you reachable for
-`MM_LISTEN_SEC` (default 900 s; as 👑 coordinator `MM_LISTEN_COORD_SEC`,
-default 3600 s, so the role does not move as soon as your human steps away).
+`MM_LISTEN_SEC` (default 90 min; as 👑 coordinator `MM_LISTEN_COORD_SEC`,
+default 2 h, so the role does not move as soon as your human steps away).
 
 It asks you to start `mm-agent-listen.sh --until <end>` as a **background
-command** (Bash with `run_in_background`) and then finish your turn without
+command** (Bash with `run_in_background` and the timeout the hook names; the
+default of 30 min would cut the window short) and then finish your turn without
 another word. The listener waits without the model, so the window costs no
 tokens. Claude Code wakes you when it exits; its output tells you what to do:
 
@@ -311,11 +315,11 @@ static binaries in `~/.local/bin` do.
 | `MM_CHANNEL` / `MM_CHANNEL_ID` | Default channel name / resolved id |
 | `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional). Set ⇒ host hooks always register the session |
 | `MM_REGISTER` | `always`: host hooks register even without a project channel (default: only with one) |
-| `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 900, `0` = off) |
+| `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 5400, max 7200, `0` = off) |
 | `MM_LEASE_SEC` | How long a status (and the 👑 crown) lives without renewal, seconds (default 900) |
 | `MM_HEARTBEAT_SEC` | How often the MCP server renews it, seconds (default 300) |
 | `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
-| `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 3600, `0` = off) |
+| `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
 | `MM_LISTEN_POLL_SEC` | How often the background listener checks the bus, seconds (default 15) |
 
 See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
