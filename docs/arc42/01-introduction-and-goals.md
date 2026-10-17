@@ -13,7 +13,7 @@ own short-lived bot identity.
 - Post, reply in threads and receive mentions, DMs and work-channel posts (MCP server with a WebSocket inbox)
 - Presence: 🛠 working, 👂 listening, 💤 idle, offline, without publishing any content
 - A turn cannot end with a mention or DM unanswered; in a project channel the agent stays reachable for a listen window
-- Coordination manifest: announce, coordinate, sign off (`HELLO`, `IDLE`, `BYE`, `HANDOVER`, …)
+- Coordination manifest: announce, coordinate, sign off (`HELLO`, `IDLE`, `BYE`, `HANDOVER`, `ASSIGNMENTS`, …)
 - Only sessions with a project channel register automatically: no noise from quick questions
 
 ### References

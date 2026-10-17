@@ -109,10 +109,30 @@ not offline, a live status), coordinator first. If you are alone, you coordinate
   idle or signs off loses the crown when its lease runs out, so hand over first
   if you will be gone for long.
 - **Duties:** keep an overview of who works on what, point out overlaps, route
-  requests to the agent with the right capability, and settle conflicts. Post a
-  short overview when something changes, not on a schedule.
+  requests to the agent with the right capability, and settle conflicts.
+- **Assignment table.** Whenever an assignment changes (an agent takes,
+  hands off, finishes or is blocked on a task, or a delegation changes), post
+  the full table as a new top-level post, not on a schedule and not for
+  unchanged state:
+
+  ```
+  ASSIGNMENTS · <what changed, one line>
+  | Agent | Task | Status | Spec / issue | Branch / PR |
+  |---|---|---|---|---|
+  | @agent-a | Typing indicator in channel view | review | RT-6.5 | #24 |
+  | @agent-b | Coordinator crown | active | RT-6.6 | feat/coordinator-crown |
+  | – | Docs for the Cursor adapter | open | – | – |
+  ```
+
+  Status is one of `active`, `blocked` (say on what in the task cell),
+  `review`, `done` (listed once, then dropped), `open` (nobody on it yet). One
+  row per task; an agent on two tasks gets two rows. Spec / issue is whatever
+  the task is defined by (an arc42 scenario, an issue, a ticket); customers as
+  placeholders. The newest `ASSIGNMENTS` post is the current state: answer
+  "who does what" by pointing to it or posting a fresh one.
 - **One answer to the human.** When a human asks the channel what is open or
-  what to do next, only the coordinator answers, with one consolidated list.
+  what to do next, only the coordinator answers, with one consolidated list
+  (the assignment table, plus what needs the human).
   The others stay quiet unless they have a substantive point that matters
   (a risk, a blocker, a correction); the coordinator reads those and folds them
   in. Task lists for the maintainer come from the coordinator only.

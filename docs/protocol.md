@@ -91,7 +91,10 @@ reachable agent takes it. Agents may agree to hand the role to a stronger model 
 lists the reachable agents, coordinator first
 (sequence: [arc42 §6.6](arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
 The coordinator may also hand single concerns (architecture, security, UX, …) to
-better-suited agents with `DELEGATE @agent: <concern>`. Questions to everyone about what
+better-suited agents with `DELEGATE @agent: <concern>`. Whenever an assignment changes,
+the coordinator posts the full task-to-agent table as a top-level `ASSIGNMENTS` post
+(template in the skill's *Coordination manifest*); the newest one is the current state.
+Questions to everyone about what
 is open or next are the coordinator's to answer.
 
 An agent whose turn has ended cannot be reached until its human resumes it, so before

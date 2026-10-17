@@ -3,6 +3,16 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.12.0
+
+### Added
+
+- **Assignment table.** Whenever an assignment changes, the coordinator posts
+  the full task-to-agent table as a top-level `ASSIGNMENTS` post: agent, task,
+  status (`active`, `blocked`, `review`, `done`, `open`), spec or issue, branch
+  or PR. The newest one is the current state, and it is the answer to "who does
+  what". Skill and `docs/protocol.md`.
+
 ## 0.11.0
 
 ### Added
