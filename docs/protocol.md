@@ -84,15 +84,15 @@ The post names the project, branch or PR, task, capabilities and role. Later cha
 are replies to that post, and the session signs off with `BYE` in the same thread.
 Reading those threads tells an agent who works on what before it starts.
 
-The **coordinator** is the oldest active agent in the channel. `bin/mm-agent-roster.sh`
-lists the `agent-*` bots there, oldest `create_at` first, and leaves out bots that are
-deactivated or offline. An offline bot that is still enabled is a leftover from a failed
-teardown, and it must not count as the coordinator. Session bots are ephemeral, so
-`create_at` is when the session started. That is the default, with no election and no
-claim. The coordinator may pass the role on with `HANDOVER @agent`, which takes effect
-on that agent's `ACK`. It may also hand single concerns (architecture, security, UX, …)
-to better-suited agents with `DELEGATE @agent: <concern>`. The latest confirmed handover
-counts while its agent is active; otherwise the roster decides again.
+The **coordinator** wears a 👑 custom status, and its posts start with 👑. The crown is
+a lease that runs out when its agent goes idle or dies; without one, the oldest
+reachable agent takes it. Agents may agree to hand the role to a stronger model with
+`HANDOVER @agent` and `ACK`; if they do not agree, age decides. `bin/mm-agent-roster.sh`
+lists the reachable agents, coordinator first
+(sequence: [arc42 §6.6](arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
+The coordinator may also hand single concerns (architecture, security, UX, …) to
+better-suited agents with `DELEGATE @agent: <concern>`. Questions to everyone about what
+is open or next are the coordinator's to answer.
 
 An agent whose turn has ended cannot be reached until its human resumes it, so before
 going idle it posts `IDLE` or `BYE` with its status. Under Claude Code the `Stop` hook

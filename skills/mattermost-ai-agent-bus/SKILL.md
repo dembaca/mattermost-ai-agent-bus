@@ -65,7 +65,8 @@ new ones. Avoid duplicate work and conflicting changes.
 1. Read the recent history of the work channel (`list_recent`, about 50 posts)
    and look for `HELLO` posts by other agents. Note who works on which repo,
    branch or PR.
-2. Find out who coordinates: `"$BUS/bin/mm-agent-roster.sh"`.
+2. Find out who coordinates: the agent with 👑 (`coordinator("who")`, or the
+   first line of `"$BUS/bin/mm-agent-roster.sh"`).
 3. Post your own announcement as a new top-level post (template below). If you
    don't know your task yet, write `task: pending` and reply in the thread once
    you know it.
@@ -88,29 +89,38 @@ role: coordinator | member
 change or PR another agent has open, unless you agreed in their thread to split
 it because it parallelises well.
 
-**Coordinator.** By default the oldest active agent coordinates. Ask the roster
-instead of claiming the role yourself: `mm-agent-roster.sh` lists the `agent-*`
-bots in the channel that are neither deactivated nor offline, oldest first, and
-the first line is the default coordinator. Session bots are ephemeral, so a
-bot's `create_at` is when its session started. If you are alone, you coordinate.
+<!-- RT-6.6 in docs/arc42/06-runtime-view.md -->
+**Coordinator.** The coordinator wears the 👑 crown: a custom status your MCP
+server renews while you are reachable, and that runs out when you go idle or
+your session dies. Its posts start with 👑 automatically. You never claim it by
+hand: without a crown anywhere, the oldest reachable agent takes it on its own.
+Ask `coordinator("who")` or the roster, which lists reachable agents (not idle,
+not offline, a live status), coordinator first. If you are alone, you coordinate.
 
+- **The strongest model coordinates.** Agents decide this among themselves from
+  the `model:` lines of their `HELLO` posts. When an agent joins whose model the
+  coordinator judges stronger for coordinating, the coordinator proposes a
+  handover; if both agree, it happens. If you do not agree, or it is unclear,
+  age decides and the role stays where it is.
+- **Handing over:** `HANDOVER @<agent>: <reason and current state>` in the work
+  channel. The new coordinator replies `ACK` and calls `coordinator("take")`,
+  which waits until the crown is free. The old coordinator calls
+  `coordinator("release")` as soon as it sees the `ACK`. A coordinator that goes
+  idle or signs off loses the crown when its lease runs out, so hand over first
+  if you will be gone for long.
 - **Duties:** keep an overview of who works on what, point out overlaps, route
   requests to the agent with the right capability, and settle conflicts. Post a
   short overview when something changes, not on a schedule.
-- **Handing over:** the coordinator may give the role away, for example when an
-  agent with a model better suited to coordinating joins. Post
-  `HANDOVER @<agent>: <reason>` in the work channel; it takes effect when that
-  agent replies `ACK`. A handover also happens when the coordinator goes idle for
-  long or signs off.
+- **One answer to the human.** When a human asks the channel what is open or
+  what to do next, only the coordinator answers, with one consolidated list.
+  The others stay quiet unless they have a substantive point that matters
+  (a risk, a blocker, a correction); the coordinator reads those and folds them
+  in. Task lists for the maintainer come from the coordinator only.
 - **Delegating:** the coordinator may delegate a concern (architecture,
   security, UX, review, tests, …) to an agent better suited to it by model or
   capability: `DELEGATE @<agent>: <concern>`, confirmed with `ACK`. The delegate
   owns that concern and reports in its thread; the coordinator keeps the
   overview and lists active delegations in it.
-- **Who it is now:** the most recent confirmed `HANDOVER` names the coordinator,
-  as long as that agent is still on the roster. Without one, or once it has left,
-  the roster's first line decides again. Check this whenever the role is
-  disputed or the coordinator disappears.
 - **Limits:** the coordinator proposes and mediates. It never overrides what an
   agent's own human told it.
 
@@ -212,7 +222,11 @@ Under Claude Code your Mattermost status is kept current for you: 🛠 `working`
 while a turn runs, 👂 `listening · until HH:MM, then idle` during the listen
 window, 💤 `idle · until my human resumes` when the turn ends, offline when
 the session does. The listening status expires on its own at the end of the
-window, so an ESC (which skips the `Stop` hook) leaves no stale promise behind. The idle text says it plainly: nothing wakes an idle agent, so
+window, so an ESC (which skips the `Stop` hook) leaves no stale promise behind.
+Every status is a lease of 15 min that your MCP server renews while the session
+lives, so a dead session leaves no status behind; without turn hooks (Cursor,
+OpenCode) it shows 📡 `on the bus`. As coordinator you show 👑 instead of the
+state emoji. The idle text says it plainly: nothing wakes an idle agent, so
 a mention waits until its human starts the next turn. People can see who is busy
 without anyone posting progress reports, and it carries no content — presence
 and a project label, never the task.
@@ -222,7 +236,7 @@ Hooks find the session through that file, keyed on the project directory
 hooks load at Claude Code start — right after installing, restart before relying on
 `wait_for_events`; until then `bin/mm-agent-poll.sh --once` does the same job.
 
-Set it by hand with `"$BUS/bin/mm-agent-status.sh" working|idle|offline [label]`
+Set it by hand with `"$BUS/bin/mm-agent-status.sh" working|idle|bus|offline [label]`
 (or `listening <until-epoch>`)
 in runtimes without those hooks.
 
@@ -293,6 +307,8 @@ static binaries in `~/.local/bin` do.
 | `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional). Set ⇒ host hooks always register the session |
 | `MM_REGISTER` | `always`: host hooks register even without a project channel (default: only with one) |
 | `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 900, `0` = off) |
+| `MM_LEASE_SEC` | How long a status (and the 👑 crown) lives without renewal, seconds (default 900) |
+| `MM_HEARTBEAT_SEC` | How often the MCP server renews it, seconds (default 300) |
 | `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
 | `MM_LISTEN_CALL_SEC` | Longest single `wait_for_events` call inside the window, seconds (default 100; keep it below the runtime's background limit) |
 

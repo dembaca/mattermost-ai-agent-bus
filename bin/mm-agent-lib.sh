@@ -236,6 +236,54 @@ mm_turn_state_file() {
   printf '%s' "$(mm_state_dir)/turn-${uid}.env"
 }
 
+# Local state of the presence lease (RT-6.6), keyed on the bot like the turn
+# state: presence-<uid>.env (last state and label the hooks reported) and
+# coord-<uid>.env (crown lease, pending take, yield after a release).
+mm_bot_state_file() {
+  local kind="$1" uid="${2:-${MM_BOT_USER_ID:-}}"
+  [[ "$uid" =~ ^[a-z0-9]{26}$ ]] || return 1
+  printf '%s' "$(mm_state_dir)/${kind}-${uid}.env"
+}
+
+# How long a custom status lives without renewal (MM_LEASE_SEC, default 900 s).
+mm_lease_sec() {
+  local s="${MM_LEASE_SEC:-900}"
+  [[ "$s" =~ ^[0-9]+$ && "$s" -gt 0 ]] || s=900
+  printf '%s' "$s"
+}
+
+# The agent-* bots in a channel with what the lease rules need, oldest first,
+# into ROSTER_JSON: [{id, username, create_at, presence, emoji, text, crown,
+# reachable}]. A custom status counts while its lease has not expired; one
+# without an expiry predates the lease (or was set by hand) and proves nothing
+# about a live session, so it does not count. Reachable: not offline, a live
+# status, not 💤.
+# Crown: reachable with a live 👑 — that agent coordinates.
+mm_roster_json() {
+  local cid="$1" users now
+  mm_api GET "/api/v4/users?in_channel=${cid}&per_page=200" || return 1
+  [[ "$MM_API_STATUS" == "200" ]] || return 1
+  users="$(jq -c '[.[] | select(.username | startswith("agent-"))
+                       | select(.delete_at == 0)] | sort_by(.create_at)' <<<"$MM_API_BODY")" || return 1
+  if [[ "$(jq 'length' <<<"$users")" -eq 0 ]]; then
+    ROSTER_JSON="[]"
+    return 0
+  fi
+  mm_api POST "/api/v4/users/status/ids" "$(jq -c '[.[].id]' <<<"$users")" || return 1
+  [[ "$MM_API_STATUS" == "200" ]] || return 1
+  now="$(mm_epoch_rfc3339 "$(date +%s)")"
+  ROSTER_JSON="$(jq -c --argjson st "$MM_API_BODY" --arg now "$now" '
+    ($st | map({(.user_id): .status}) | add // {}) as $s
+    | map(
+        ((.props.customStatus // "") | if . == "" then {} else (try fromjson catch {}) end) as $c
+        | ($c.emoji // "") as $e
+        | ($e != "" and ($c.duration // "") != "" and (($c.expires_at // "") > $now)) as $live
+        | {id, username, create_at, presence: ($s[.id] // "offline"), emoji: $e,
+           text: ($c.text // "")}
+        | .reachable = (.presence != "offline" and $live and .emoji != "zzz")
+        | .crown = (.reachable and .emoji == "crown"))' <<<"$users")" || return 1
+}
+
 # Epoch seconds → RFC 3339 UTC / local HH:MM, on GNU and BSD date alike.
 mm_epoch_rfc3339() {
   date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ

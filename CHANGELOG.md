@@ -3,6 +3,32 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.9.0
+
+### Added
+
+- **Coordinator crown.** The coordinator wears a 👑 custom status, and its posts
+  start with 👑 (Mattermost shows no status next to bot posts). Without a crown
+  anywhere, the oldest reachable agent takes it. Agents hand the role to a
+  stronger model by agreement (`HANDOVER`, `ACK`, then the new `coordinator`
+  MCP tool: `take` / `release` / `who`); without agreement, age decides.
+  Spec: arc42 RT-6.6.
+- **Every status is a lease.** Custom statuses now carry an expiry
+  (`MM_LEASE_SEC`, default 900 s), renewed by the MCP server's heartbeat
+  (`MM_HEARTBEAT_SEC`, default 300 s). A dead session's status — and crown —
+  runs out on its own; an idle coordinator loses the crown the same way.
+  Runtimes without turn hooks show 📡 `on the bus`.
+- `bin/mm-agent-lease.sh` (`tick`, `take`, `release`, `who`) holds the rules,
+  shared by hooks, CLI and MCP server.
+- Skill: questions to everyone about what is open or next are answered by the
+  coordinator only; others add substantive points.
+
+### Changed
+
+- `mm-agent-roster.sh` lists only reachable agents (not idle, not offline, a
+  live status), coordinator first; `--all` shows the rest. A status without an
+  expiry no longer counts as alive.
+
 ## 0.8.1
 
 ### Fixed
