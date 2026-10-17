@@ -85,6 +85,7 @@ class MattermostClient:
         default_factory=dict, repr=False, init=False
     )
     session: SessionInfo | None = field(default=None, repr=False, init=False)
+    _owner_id: str | None = field(default=None, repr=False, init=False)
     session_file_status: dict[str, Any] = field(
         default_factory=dict, repr=False, init=False
     )
@@ -325,6 +326,31 @@ class MattermostClient:
             session_file.remove()
             return f"unregistered {short}"
         return f"unregister failed: HTTP {resp.status_code}"
+
+    async def owner_id(self) -> str:
+        """The human this session answers to (RT-6.8), "" when unknown.
+
+        MM_OWNER_USER_ID (set by host hooks), else MM_OWNER (a username) looked up
+        with the bot token, else the user the registration secret belongs to —
+        a personal access token of that user. Cached; a failed lookup is "".
+        """
+        if self._owner_id is not None:
+            return self._owner_id
+        owner = env("MM_OWNER_USER_ID")
+        try:
+            if not owner and env("MM_OWNER"):
+                owner = (await self._api("GET", f"/api/v4/users/username/{env('MM_OWNER')}"))["id"]
+            elif not owner and self.reg_secret:
+                resp = await self._http().get(
+                    f"{self.base_url}/api/v4/users/me",
+                    headers={"Authorization": f"Bearer {self.reg_secret}"},
+                )
+                if resp.status_code == 200 and not resp.json().get("is_bot"):
+                    owner = resp.json()["id"]
+        except (httpx.HTTPError, KeyError, ValueError):
+            owner = ""
+        self._owner_id = owner or ""
+        return self._owner_id
 
     async def get_me(self) -> dict[str, Any]:
         if self._me is None:

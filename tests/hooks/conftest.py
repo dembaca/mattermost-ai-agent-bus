@@ -22,6 +22,8 @@ ME = "a" * 26
 TEAM = "t" * 26
 CHANNEL = "c" * 26
 PROJECT = "p" * 26
+OWNER = "h" * 26          # the human the registration PAT belongs to
+PAT = "pat-for-tests"
 
 
 @dataclass
@@ -81,7 +83,11 @@ def _handler(fake: FakeMattermost):
         def do_GET(self):
             p = self.path.split("?")[0]
             if p == "/api/v4/users/me":
-                return self._send({"id": ME, "username": "agent-test"})
+                if self.headers.get("Authorization") == f"Bearer {PAT}":
+                    return self._send({"id": OWNER, "username": "dembaca", "is_bot": False})
+                if self.headers.get("Authorization") != "Bearer bot-token-for-tests":
+                    return self._send({"message": "invalid token"}, 401)
+                return self._send({"id": ME, "username": "agent-test", "is_bot": True})
             if p.startswith("/api/v4/teams/name/"):
                 return self._send({"id": TEAM})
             if p.startswith(f"/api/v4/teams/{TEAM}/channels/name/"):

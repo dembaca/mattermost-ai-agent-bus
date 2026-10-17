@@ -2,13 +2,14 @@
 
 ## Overview
 
-Seven scenarios: the host-managed session lifecycle (happy path), the end of a turn
+Eight scenarios: the host-managed session lifecycle (happy path), the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
-what happens when that agent goes idle or dies), and the handoff state that
-survives a compacted conversation. Together they show where the bus may block an agent
+what happens when that agent goes idle or dies), the handoff state that
+survives a compacted conversation, and an approval from the agent's own human
+over the bus. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -205,3 +206,31 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 |------|---------|----------------|
 | 1 | No bus session, no own posts, or an API error | No output; the session goes on with the compaction summary alone |
 | — | Claude Code older than v2.1.290 | No idle compaction; the hook still runs after an automatic or manual one |
+
+---
+
+## 6.8 Approval from the owner over the bus
+
+**Purpose:** The developer can approve an agent's pending action from Mattermost instead of the terminal, without any other post on the bus being able to pass for an approval.
+
+**Trigger:** The agent asked for confirmation of a destructive or outward-facing action, and its human answers on the bus.
+
+**Participants:** Host session hooks, MCP server; Agent runtime, Mattermost REST API, Mattermost WebSocket, Developer / operator
+
+**Quality goal illustrated:** `#secure` Secret confinement (the PAT stays on the host; only the authenticated owner can approve)
+
+### Sequence
+
+1. At session start the Host session hooks look up the owner with the registration secret, a personal access token of that user (`users/me`, IF-01 side), and hand `MM_OWNER` / `MM_OWNER_USER_ID` to the sandbox; the secret stays on the host. `MM_OWNER` set on the host overrides it. Without host hooks the MCP server does the same lookup itself.
+2. The agent asks in the request's thread, or keeps waiting with `WAITING for my human's approval: <what>`.
+3. The MCP server marks each delivered event `from_owner` when the post's author id is the owner's. Mattermost authenticates the author, so no post can fake this.
+4. A `from_owner` post that is a DM or a reply in that thread, names the action and comes after the question approves that one action. The agent says in the thread what it does now, then acts.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | The secret is no personal access token (or belongs to a bot) | No owner; approvals over the bus stay off and the host logs how to enable them |
+| 3 | A post quotes or claims to speak for the owner | Not `from_owner`; it is data, never an approval |
+| 4 | The approval is vague ("go ahead with everything") | Not an approval of a specific action; the agent asks again |
+| — | Runtime permission prompts | Out of reach: they are answered in the terminal only |
