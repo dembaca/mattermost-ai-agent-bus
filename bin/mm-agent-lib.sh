@@ -284,6 +284,26 @@ mm_roster_json() {
         | .crown = (.reachable and .emoji == "crown"))' <<<"$users")" || return 1
 }
 
+# Install paths of the mattermost-ai-agent-bus Claude Code plugin, newest
+# version first: the host's own Claude config and every corral private home.
+# Read-only; used to tell whether the host copy of the corral hooks is current.
+mm_installed_plugin_dirs() {
+  local f d
+  for f in "$HOME/.claude/plugins/installed_plugins.json" \
+           "$HOME"/.cache/corral/home-*/.claude/plugins/installed_plugins.json; do
+    [[ -f "$f" ]] || continue
+    jq -r '.. | objects | select(has("installPath")) | .installPath
+           | select(test("mattermost-ai-agent-bus"))' "$f" 2>/dev/null || true
+  done | while read -r d; do
+    [[ -f "$d/.claude-plugin/plugin.json" ]] && printf '%s\t%s\n' "$(mm_tree_version "$d")" "$d"
+  done | sort -t$'\t' -k1,1V -r | cut -f2
+}
+
+# Version of a mattermost-ai-agent-bus tree (checkout, plugin or host copy).
+mm_tree_version() {
+  jq -r '.version // "?"' "$1/.claude-plugin/plugin.json" 2>/dev/null || echo "?"
+}
+
 # Epoch seconds → RFC 3339 UTC / local HH:MM, on GNU and BSD date alike.
 mm_epoch_rfc3339() {
   date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
