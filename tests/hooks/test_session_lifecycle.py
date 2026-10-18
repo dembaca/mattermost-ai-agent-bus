@@ -49,6 +49,7 @@ def test_owner_is_the_user_the_registration_pat_belongs_to(mm, run):
     assert env["MM_OWNER"] == "dembaca" and env["MM_OWNER_USER_ID"] == OWNER
     assert PAT not in r.stdout
     assert "@dembaca" in json.loads(r.stdout)["agentNotes"][0]
+    assert "owner @dembaca" in json.loads(r.stdout)["status"][0]
 
 
 def test_owner_override_and_no_pat(mm, run):
@@ -56,6 +57,7 @@ def test_owner_override_and_no_pat(mm, run):
     r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
     env = json.loads(r.stdout)["env"]
     assert "MM_OWNER" not in env and "approvals over the bus stay off" in r.stderr
+    assert "owner none" in json.loads(r.stdout)["status"][0]
     r = run(START, MM_REG_SECRET="test-secret", MM_OWNER="someone",
             MM_PROJECT_CHANNEL="proj-x", **HOST)
     assert json.loads(r.stdout)["env"]["MM_OWNER"] == "someone"

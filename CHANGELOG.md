@@ -3,6 +3,40 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.15.0
+
+### Security
+
+- **corral host hooks no longer run from sandbox-writable code.** They run on
+  the host with the registration secret, but corral approves only the `exec`
+  file by content, not the `bin/` scripts it sources and starts. Run from the
+  plugin directory (the sandbox's private home) or a checkout a session works
+  in, any agent could put code on the host. New
+  `bin/mm-agent-host-install.sh`, run on the host, copies the hooks and `bin/`
+  from the installed plugin to `~/.local/share/mm-agent-bus/current/`; point
+  corral's `exec` there and rerun it after each plugin update. `--check`
+  compares versions.
+- The start hook warns when it runs from the plugin directory or the session's
+  workdir, and when the host copy is older than the installed plugin.
+
+**Action needed:** run the installer on the host and update the `exec` paths
+in `~/.config/corral/config.yml` (see `adapters/corral.md`).
+
+## 0.14.1
+
+### Added
+
+- **`bus_info` MCP tool:** plugin version (the MCP server reports the same in
+  its server info and instructions), bot, owner with the source it came from,
+  work channel, crown. Owner `none` means approvals over the bus are off.
+- The corral start banner shows `owner @<name>` or `owner none`.
+
+### Fixed (docs)
+
+- `adapters/corral.md`: point the hooks' `exec` at a checkout that stays on a
+  released state. A development checkout on another branch handed sessions an
+  older hook, so `from_owner` stayed `false`.
+
 ## 0.14.0
 
 ### Added
