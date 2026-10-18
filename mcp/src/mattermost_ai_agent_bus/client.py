@@ -84,6 +84,10 @@ class MattermostClient:
     _channel_ids: dict[str, str] = field(
         default_factory=dict, repr=False, init=False
     )
+    _channels: dict[str, dict[str, Any]] = field(
+        default_factory=dict, repr=False, init=False
+    )
+    _usernames: dict[str, str] = field(default_factory=dict, repr=False, init=False)
     session: SessionInfo | None = field(default=None, repr=False, init=False)
     _trusted: dict[str, str] | None = field(default=None, repr=False, init=False)
     trusted_source: str = field(default="", repr=False, init=False)
@@ -412,7 +416,17 @@ class MattermostClient:
         return cid
 
     async def get_channel(self, channel_id: str) -> dict[str, Any]:
-        return await self._api("GET", f"/api/v4/channels/{channel_id}")
+        if channel_id not in self._channels:
+            self._channels[channel_id] = await self._api("GET", f"/api/v4/channels/{channel_id}")
+        return self._channels[channel_id]
+
+    async def usernames(self, user_ids: set[str]) -> dict[str, str]:
+        """{user_id: username}, cached; one request for all unknown ids."""
+        missing = sorted(set(user_ids) - set(self._usernames))
+        if missing:
+            for u in await self._api("POST", "/api/v4/users/ids", json=missing):
+                self._usernames[u["id"]] = u.get("username", "")
+        return {i: self._usernames[i] for i in user_ids if i in self._usernames}
 
     async def unread_channels(self) -> list[dict[str, Any]]:
         """Channels with something pending, each with the watermark to read from.

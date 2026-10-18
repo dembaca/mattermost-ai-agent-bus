@@ -5,9 +5,14 @@
 #
 # Started by the agent as a background command when its Stop hook asks for it.
 # Claude Code wakes the agent when a background command exits, so this script
-# waits, costing no tokens, and exits as soon as something arrives:
-#   - an unread mention or DM, or
-#   - a new post by someone else in the work channel.
+# waits, costing no tokens, and exits as soon as something is for this agent:
+#   - an unread mention or DM, or @channel / @all / @here,
+#   - a reply in a thread the agent posted in,
+#   - a post by a trusted human (MM_TRUSTED_HUMAN_USER_IDS),
+#   - any new post, while the agent holds the 👑 (the coordinator sees all).
+# Other posts wake it only for a digest, once the oldest of them is
+# MM_LISTEN_DIGEST_SEC (default 1800 s) old: every wake-up is a full model turn,
+# and a busy channel would otherwise wake every member for every post.
 # Its last line tells the woken agent what to do. It only looks; collecting a
 # message (and marking it read) stays with the MCP tool wait_for_events.
 #
@@ -48,6 +53,24 @@ CID="$(mm_work_channel_id 2>/dev/null)" || CID=""
 
 POLL="${MM_LISTEN_POLL_SEC:-15}"
 [[ "$POLL" =~ ^[0-9]+$ && "$POLL" -gt 0 ]] || POLL=15
+DIGEST="${MM_LISTEN_DIGEST_SEC:-1800}"
+[[ "$DIGEST" =~ ^[0-9]+$ ]] || DIGEST=1800
+TRUSTED_IDS="${MM_TRUSTED_HUMAN_USER_IDS:-${MM_OWNER_USER_ID:-}}"
+COORD="$(mm_bot_state_file coord "$ME" 2>/dev/null)" || COORD=""
+
+# Who am I to a post: the username (for @mentions in the text) and the threads
+# this agent posted in, read once — the agent is idle while this runs.
+MY_NAME="${MM_BOT_USERNAME:-}"
+if [[ -z "$MY_NAME" ]] && mm_api GET "/api/v4/users/me" && [[ "$MM_API_STATUS" == "200" ]]; then
+  MY_NAME="$(jq -r '.username // empty' <<<"$MM_API_BODY")"
+fi
+MY_THREADS="[]"
+if [[ -n "$CID" ]] && mm_api GET "/api/v4/channels/${CID}/posts?per_page=200" &&
+  [[ "$MM_API_STATUS" == "200" ]]; then
+  MY_THREADS="$(jq -c --arg me "$ME" '[.posts // {} | .[] | select(.user_id == $me)
+                  | if (.root_id // "") == "" then .id else .root_id end] | unique' \
+    <<<"$MM_API_BODY" 2>/dev/null || echo "[]")"
+fi
 
 get() { [[ -f "$LF" ]] && sed -n "s/^$1=//p" "$LF" | head -1; }
 SINCE="$(get SINCE)"; [[ "$SINCE" =~ ^[0-9]+$ ]] || SINCE="$(date +%s)"
@@ -76,13 +99,33 @@ while (( $(date +%s) < UNTIL )); do
   fi
   if [[ -n "$CID" ]] && mm_api GET "/api/v4/channels/${CID}/posts?since=${since_ms}" &&
     [[ "$MM_API_STATUS" == "200" ]]; then
-    # ?since= also returns posts edited since then; count only new ones.
-    n="$(jq --arg me "$ME" --argjson t "$since_ms" '[.posts // {} | .[]
-          | select(.user_id != $me and (.type // "") == "" and .create_at >= $t)] | length' \
-      <<<"$MM_API_BODY" 2>/dev/null || echo 0)"
-    if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 0 )); then
+    coordinator=false
+    c_until="$(sed -n 's/^CROWN_UNTIL=//p' "$COORD" 2>/dev/null | head -1)"
+    [[ "$c_until" =~ ^[0-9]+$ ]] && (( c_until > $(date +%s) )) && coordinator=true
+    # ?since= also returns posts edited since then; look only at new ones.
+    read -r addressed others oldest < <(jq -r --arg me "$ME" --arg name "$MY_NAME" \
+        --argjson t "$since_ms" --argjson threads "$MY_THREADS" \
+        --arg trusted "$TRUSTED_IDS" --argjson coord "$coordinator" '
+      ($trusted | split(",") | map(select(. != ""))) as $tr
+      | [.posts // {} | .[] | select(.user_id != $me and (.type // "") == "" and .create_at >= $t)]
+      | map(. + {addressed: (
+            $coord
+            or ((.root_id // "") as $r | $r != "" and ($threads | index($r)) != null)
+            or (.user_id as $u | $tr | index($u)) != null
+            or ((.message // "") | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
+                | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))
+          )})
+      | "\(map(select(.addressed)) | length) \(map(select(.addressed | not)) | length) \(map(select(.addressed | not) | .create_at) | min // 0)"' \
+      <<<"$MM_API_BODY" 2>/dev/null || echo "0 0 0")
+    if [[ "${addressed:-0}" =~ ^[0-9]+$ ]] && (( addressed > 0 )); then
       ENDED_AS=event
-      echo "Mattermost: ${n} new post(s) in the work channel. Collect them with wait_for_events(timeout_sec=1); answer only what needs you, then finish your turn."
+      echo "Mattermost: ${addressed} new post(s) for you in the work channel. Collect them with wait_for_events(timeout_sec=1), answer in their threads, then finish your turn."
+      exit 0
+    fi
+    if [[ "${others:-0}" =~ ^[0-9]+$ ]] && (( others > 0 )) &&
+      (( $(date +%s) - ${oldest:-0} / 1000 >= DIGEST )); then
+      ENDED_AS=event
+      echo "Mattermost digest: ${others} post(s) in the work channel since $(mm_epoch_hhmm $(( oldest / 1000 ))), none addressed to you. Skim them with wait_for_events(timeout_sec=1); act only on what needs you, then finish your turn."
       exit 0
     fi
   fi

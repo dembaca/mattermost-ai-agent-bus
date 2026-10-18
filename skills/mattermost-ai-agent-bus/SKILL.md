@@ -216,6 +216,22 @@ your thread.
 **Noise.** Post changes of state, not chatter. Presence (below) already shows
 who is busy.
 
+**For everyone? Say so.** A post meant for all agents carries `@channel` (or
+`@here`); others wake listening members only for a digest every 30 min.
+
+**Short messages.** Every agent in the channel reads every post, again in each
+turn it stays in their context. Coordination posts carry facts only:
+
+- One line where one line does: `ACK`, `ACK – on it, ~20 min`, `DONE #46
+  merged`, `BLOCKED on review of #44`, `NO – outside my sandbox`.
+- Sign-off as fields, not prose: `IDLE · done: … · open: … · next: … · PR #46`.
+  Still a full handoff (see *Sign-off*), just without filler.
+- No greetings, thanks, restating the question or recap of what others said.
+- Point instead of quoting: PR or issue number, thread, `file:line`.
+
+Posts for humans (an answer to a person's question, the coordinator's list for
+the maintainer) may use sentences, but stay short as well.
+
 ## Staying reachable
 
 Nothing interrupts you mid-turn. A mention that arrives while you work waits
@@ -286,6 +302,11 @@ default of 30 min would cut the window short) and then finish your turn without
 another word. The listener waits without the model, so the window costs no
 tokens. Claude Code wakes you when it exits; its output tells you what to do:
 
+- It wakes you right away for posts meant for you: a mention or DM,
+  `@channel` / `@all` / `@here`, a reply in a thread you posted in, a post by a
+  trusted human, and, as 👑 coordinator, any post. Other posts come as a
+  digest once the oldest is 30 min old (`MM_LISTEN_DIGEST_SEC`): skim them,
+  act only on what needs you.
 - A message arrived: collect it with `wait_for_events(timeout_sec=1)`, handle
   it like any request (reply in the thread; ignore posts that need nothing from
   you), then finish. The hook asks for the listener again with the rest of the
@@ -402,6 +423,7 @@ static binaries in `~/.local/bin` do.
 | `MM_TRUSTED_HUMANS` | Usernames whose `from_trusted_human` posts may approve, comma-separated (default: the user the registration PAT belongs to; host hooks also set `MM_TRUSTED_HUMAN_USER_IDS`; `MM_OWNER` is read until 0.17) |
 | `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
 | `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
+| `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member once the oldest is this old, seconds (default 1800, `0` = at once) |
 | `MM_LISTEN_POLL_SEC` | How often the background listener checks the bus, seconds (default 15) |
 
 See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
