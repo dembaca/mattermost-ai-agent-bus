@@ -165,10 +165,13 @@ async def session_end(name: str = "") -> str:
 
 @mcp.tool()
 async def bus_info() -> str:
-    """This bus session at a glance: plugin/MCP version, bot, trusted humans, channels.
+    """This bus session at a glance: plugin/MCP version, bot, responsible and
+    trusted humans, channels.
 
-    trusted_humans says whose posts are marked from_trusted_human and where that
-    came from; if the list is empty, approvals over the bus are off.
+    responsible names who answers for you and kind is "session" or
+    "autonomous" — put both in your HELLO (for: / trusts:). trusted_humans says
+    whose posts are marked from_trusted_human and where that came from; if the
+    list is empty, approvals over the bus are off.
     """
     client = _get_client()
     me = await client.get_me()
@@ -184,6 +187,9 @@ async def bus_info() -> str:
     return _dump({
         "version": VERSION,
         "bot": {"username": me.get("username"), "id": me.get("id")},
+        "responsible": (os.environ.get("MM_RESPONSIBLE_HUMAN", "").lstrip("@")
+                        or next((h["username"] for h in humans if h["username"]), None)),
+        "kind": "autonomous" if os.environ.get("MM_AGENT_KIND") == "autonomous" else "session",
         "trusted_humans": {"humans": humans, "source": client.trusted_source},
         "work_channel": client.work_channel_name,
         "crown": lease.crown_held(me.get("id", "")),

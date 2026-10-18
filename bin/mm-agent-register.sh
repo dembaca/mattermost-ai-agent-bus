@@ -39,8 +39,16 @@ mm_validate_short_name "$NAME"
 CHAT_URL="$(mm_chat_url)"
 REG_URL="$(mm_register_url)"
 
+# Whom the agent answers to (RT-6.8) goes along with the registration: the
+# registrar, holding the admin token, can put it into the bot's profile, which
+# the bot cannot change. A registrar that does not know the fields ignores them.
+KIND="${MM_AGENT_KIND:-session}"; [[ "$KIND" == autonomous ]] || KIND=session
 RESP="$(mm_json_post "$REG_URL" "$MM_REG_SECRET" \
-  "$(jq -nc --arg n "$NAME" --arg d "$DISPLAY" '{name:$n, display_name:$d}')")"
+  "$(jq -nc --arg n "$NAME" --arg d "$DISPLAY" --arg r "$(mm_responsible_name)" \
+       --arg k "$KIND" --argjson t "$(mm_trusted_names | jq -R . | jq -sc .)" '
+     {name:$n, display_name:$d, kind:$k}
+     + (if $r != "" then {responsible:$r} else {} end)
+     + (if ($t | length) > 0 then {trusted:$t} else {} end)')")"
 
 USER_NAME="$(jq -r '.username // empty' <<<"$RESP")"
 BOT_TOKEN="$(jq -r '.bot_token // empty' <<<"$RESP")"

@@ -101,20 +101,22 @@ With neither set the hook exits 0 silently — a machine without a bus is not an
 `MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_TOKEN`, `MM_BOT_USERNAME`, `MM_BOT_USER_ID`,
 `MM_TEAM`, `MM_TEAM_ID`, `MM_CHANNEL`, `MM_CHANNEL_ID` and — when set —
 `MM_PROJECT_CHANNEL`, `MM_PROJECT_CHANNEL_ID`, and `MM_TRUSTED_HUMANS`,
-`MM_TRUSTED_HUMAN_USER_IDS`: the humans whose posts may approve actions. By default
-that is the user the registration secret belongs to, a personal access token
-(`users/me`, looked up on the host). In a team, or when the token belongs to another
-account, list the usernames on the host
+`MM_TRUSTED_HUMAN_USER_IDS`: the humans whose posts may approve actions. List their
+usernames on the host; without the list nobody is trusted, since `MM_REG_SECRET` is
+the registrar's shared secret and says nothing about who you are
 ([arc42 §6.8](../docs/arc42/06-runtime-view.md#68-approval-from-a-trusted-human-over-the-bus)):
 
 ```bash
 export MM_TRUSTED_HUMANS=you,teammate   # next to MM_REG_SECRET_GOPASS
 ```
 
-A separate admin account for the registration token (e.g. `you-admin`) is the
-typical case: without the list, that account is trusted, not the one you chat with,
-and your posts arrive with `from_trusted_human: false`. The start banner shows
-`trusted @you, @teammate` or `trusted none`. Every listed account becomes an
+`MM_RESPONSIBLE_HUMAN` names who answers for the agent (default: the first trusted
+human) and `MM_AGENT_KIND=autonomous` marks an agent nobody runs interactively. Both,
+with the trusted list, go along with the registration. A registrar that knows the
+fields writes `for @you · trusts @you, @teammate` into the bot's profile with its
+admin token; a bot cannot change its own profile. An older registrar ignores them,
+and only the agent's `HELLO` says so. The start banner shows
+`for @you, trusted @you, @teammate` or `trusted none (set MM_TRUSTED_HUMANS)`. Every listed account becomes an
 approval key for your sessions: protect them with 2FA. `MM_OWNER` (one name) is
 still read until 0.17.
 

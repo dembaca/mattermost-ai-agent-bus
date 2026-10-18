@@ -34,6 +34,7 @@ class FakeMattermost:
     writes: list[tuple[str, str, dict]] = field(default_factory=list)
     users: list[dict] = field(default_factory=list)  # channel members (roster)
     presence: dict[str, str] = field(default_factory=dict)
+    deny: set[str] = field(default_factory=set)  # write paths answered with 403
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -118,6 +119,8 @@ def _handler(fake: FakeMattermost):
             body = json.loads(raw) if raw else {}
             p = self.path.split("?")[0]
             fake.writes.append((self.command, p, body))
+            if p in fake.deny:
+                return self._send({"message": "no permission"}, 403)
             if p == "/api/v4/users/status/ids":
                 return self._send([{"user_id": u, "status": fake.presence.get(u, "offline")}
                                    for u in body])
