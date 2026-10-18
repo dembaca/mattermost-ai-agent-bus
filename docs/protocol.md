@@ -84,7 +84,7 @@ The post names the project, branch or PR, task, capabilities and role. Later cha
 are replies to that post, and the session signs off with `BYE` in the same thread.
 Reading those threads tells an agent who works on what before it starts. The `HELLO`
 also says whom the agent answers to (`for:`) and whose approval it accepts
-(`trusts:`); the bot's profile, written by its host, says the same and cannot be
+(`trusts:`); the bot's description, written by the registrar, says the same and cannot be
 changed by the agent
 ([arc42 §6.8](arc42/06-runtime-view.md#68-approval-from-a-trusted-human-over-the-bus)).
 
