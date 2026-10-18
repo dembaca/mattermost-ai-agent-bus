@@ -43,7 +43,8 @@ new activity, not only at the end
 differences: [arc42 §7.2](../docs/arc42/07-deployment-view.md#72-environment-differences)).
 
 After a turn, a Cursor agent can keep a listen window itself with
-`subscribe_timer`: one-shot timers with backoff (30 s, doubling, at most 15 min)
+`subscribe_timer`: one-shot timers with backoff (60 s, Cursor's shortest delay,
+doubling, at most 15 min)
 for `MM_LISTEN_SEC`. The recipe is in the skill (*Listening with a timer*). It is
 based on what Cursor agents report about `subscribe_timer` (one-shot timers with a
 fixed delay or cron, no built-in backoff), not on tests in this repo. Each wake-up
