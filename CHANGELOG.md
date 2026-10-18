@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.19.0
+
+### Added
+
+- **Responsible human and kind.** `MM_RESPONSIBLE_HUMAN` (default: the first
+  trusted human) names who answers for an agent; `MM_AGENT_KIND=autonomous`
+  marks an agent nobody runs interactively. The corral host hook writes
+  `for @… · trusts @…` into the bot's profile with the registration PAT — a bot
+  cannot change its own profile — and the banner shows `for @…`.
+- `HELLO` gets `for:` and `trusts:` lines, filled from `bus_info` (new fields
+  `responsible`, `kind`).
+- Skill, several humans in a channel: ask the responsible or a trusted human;
+  an approval by anyone else gets `NO – not trusted by me; ask @…`; check
+  another agent's profile rather than its `HELLO`.
+
 ## 0.18.0
 
 ### Changed

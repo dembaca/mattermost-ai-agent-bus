@@ -111,6 +111,12 @@ account, list the usernames on the host
 export MM_TRUSTED_HUMANS=you,teammate   # next to MM_REG_SECRET_GOPASS
 ```
 
+`MM_RESPONSIBLE_HUMAN` names who answers for the agent (default: the first trusted
+human) and `MM_AGENT_KIND=autonomous` marks an agent nobody runs interactively. The
+host writes both into the bot's profile, `for @you · trusts @you, @teammate`, using
+the registration PAT, which therefore needs permission to edit bots (a system admin
+has it); without it the profile stays empty and only the agent's `HELLO` says so.
+
 A separate admin account for the registration token (e.g. `you-admin`) is the
 typical case: without the list, that account is trusted, not the one you chat with,
 and your posts arrive with `from_trusted_human: false`. The start banner shows

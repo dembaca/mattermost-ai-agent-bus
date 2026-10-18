@@ -73,3 +73,31 @@ def test_no_pat_no_trusted_human_and_old_owner_var(mm, run):
     r = run(START, MM_REG_SECRET="test-secret", MM_OWNER="dembaca",
             MM_PROJECT_CHANNEL="proj-x", **HOST)
     assert json.loads(r.stdout)["env"]["MM_TRUSTED_HUMANS"] == "dembaca"
+
+
+def test_profile_says_whom_the_agent_answers_to(mm, run):
+    """RT-6.8 step 1: responsible and trusted humans go into the bot's profile,
+    written with the PAT — a bot cannot change its own profile."""
+    from conftest import ME, PAT
+    r = run(START, MM_REG_SECRET=PAT, MM_PROJECT_CHANNEL="proj-x",
+            MM_TRUSTED_HUMANS="dembaca,kollegin", **HOST)
+    env = json.loads(r.stdout)["env"]
+    assert env["MM_RESPONSIBLE_HUMAN"] == "dembaca" and env["MM_AGENT_KIND"] == "session"
+    patch = [b for m, p, b in mm.writes if p == f"/api/v4/users/{ME}/patch"]
+    assert patch == [{"position": "for @dembaca · trusts @dembaca, @kollegin"}]
+    assert "for @dembaca" in json.loads(r.stdout)["status"][0]
+
+
+def test_autonomous_agent_and_profile_without_permission(mm, run):
+    """RT-6.8 error handling: an autonomous agent says so; a PAT that may not
+    edit bots leaves the profile alone and the session goes on."""
+    from conftest import ME, PAT
+    mm.deny.add(f"/api/v4/users/{ME}/patch")
+    r = run(START, MM_REG_SECRET=PAT, MM_PROJECT_CHANNEL="proj-x",
+            MM_RESPONSIBLE_HUMAN="@ops-team", MM_AGENT_KIND="autonomous", **HOST)
+    assert r.code == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["env"]["MM_RESPONSIBLE_HUMAN"] == "ops-team"
+    assert out["env"]["MM_AGENT_KIND"] == "autonomous"
+    assert "autonomous" in out["agentNotes"][0]
+    assert "could not write the bot profile" in r.stderr

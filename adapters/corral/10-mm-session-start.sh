@@ -180,6 +180,29 @@ elif [[ -n "${MM_REG_SECRET:-}" ]]; then
   fi
 fi
 
+# --- responsible human, profile ---------------------------------------------
+# Who answers for this agent (RT-6.8): MM_RESPONSIBLE_HUMAN, else the first
+# trusted human. MM_AGENT_KIND=autonomous marks an agent nobody runs
+# interactively. Written to the bot's profile (`position`) with the registration
+# PAT: a bot cannot edit its own profile, so other agents and people can rely
+# on it more than on what the agent says about itself in its HELLO.
+RESPONSIBLE="${MM_RESPONSIBLE_HUMAN:-${TRUSTED%%,*}}"
+RESPONSIBLE="${RESPONSIBLE#@}"
+KIND="${MM_AGENT_KIND:-session}"
+[[ "$KIND" == autonomous ]] || KIND=session
+position="${RESPONSIBLE:+for @${RESPONSIBLE}}"
+[[ "$KIND" == autonomous ]] && position+="${position:+ · }autonomous"
+[[ -n "$TRUSTED" ]] && position+="${position:+ · }trusts @${TRUSTED//,/, @}"
+position="${position:0:128}"
+if [[ -n "$position" && -n "${MM_REG_SECRET:-}" ]]; then
+  if ! (MM_BOT_TOKEN="$MM_REG_SECRET"
+        mm_api PUT "/api/v4/users/${MM_BOT_USER_ID}/patch" \
+          "$(jq -nc --arg p "$position" '{position: $p}')" &&
+        [[ "$MM_API_STATUS" == "200" ]]); then
+    log "could not write the bot profile (the registration PAT needs to manage bots) — HELLO only"
+  fi
+fi
+
 # --- contribution ------------------------------------------------------------
 trusted_shown="none (approvals over the bus off)"
 [[ -n "$TRUSTED" ]] && trusted_shown="@${TRUSTED//,/, @}"
@@ -195,6 +218,8 @@ else
   note+=" Home channel: ~${MM_CHANNEL}."
 fi
 note+=" The session is managed by the host — do not register or unregister."
+[[ -n "$RESPONSIBLE" ]] && note+=" Responsible for you: @${RESPONSIBLE}."
+[[ "$KIND" == autonomous ]] && note+=" You run as an autonomous agent."
 [[ -n "$TRUSTED" ]] && note+=" Trusted humans on the bus: @${TRUSTED//,/, @}. Their posts arrive marked from_trusted_human and may approve actions (see the skill)."
 
 jq -nc \
@@ -210,9 +235,11 @@ jq -nc \
   --arg proj "${MM_PROJECT_CHANNEL:-}" \
   --arg projid "${MM_PROJECT_CHANNEL_ID:-}" \
   --arg trusted "$TRUSTED" \
+  --arg responsible "$RESPONSIBLE" \
+  --arg kind "$KIND" \
   --arg trustedids "$TRUSTED_IDS" \
   --arg note "$note" \
-  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}, trusted ${trusted_shown}" \
+  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}, ${RESPONSIBLE:+for @${RESPONSIBLE}, }trusted ${trusted_shown}" \
   '{
      corralContributionVersion: 1,
      env: ({
@@ -226,6 +253,8 @@ jq -nc \
        MM_CHANNEL_ID: $chanid,
      }
      + (if $reg  != "" then {MM_REGISTER_URL: $reg} else {} end)
+     + {MM_AGENT_KIND: $kind}
+     + (if $responsible != "" then {MM_RESPONSIBLE_HUMAN: $responsible} else {} end)
      + (if $trusted != "" then {MM_TRUSTED_HUMANS: $trusted,
                                MM_TRUSTED_HUMAN_USER_IDS: $trustedids} else {} end)
      + (if $proj != "" then {MM_PROJECT_CHANNEL: $proj,

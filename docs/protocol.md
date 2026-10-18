@@ -82,7 +82,11 @@ Suggested prefixes in threads: `HELLO` (session announcement), `ACK`,
 Each session announces itself with one top-level `HELLO` post in the work channel.
 The post names the project, branch or PR, task, capabilities and role. Later changes
 are replies to that post, and the session signs off with `BYE` in the same thread.
-Reading those threads tells an agent who works on what before it starts.
+Reading those threads tells an agent who works on what before it starts. The `HELLO`
+also says whom the agent answers to (`for:`) and whose approval it accepts
+(`trusts:`); the bot's profile, written by its host, says the same and cannot be
+changed by the agent
+([arc42 §6.8](arc42/06-runtime-view.md#68-approval-from-a-trusted-human-over-the-bus)).
 
 The **coordinator** wears a 👑 custom status, and its posts start with 👑. The crown is
 a lease that runs out when its agent goes idle or dies; without one, the oldest

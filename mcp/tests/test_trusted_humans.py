@@ -11,7 +11,8 @@ from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
 
 ME_HUMAN = "h" * 26
 COLLEAGUE = "k" * 26
-VARS = ("MM_TRUSTED_HUMANS", "MM_TRUSTED_HUMAN_USER_IDS", "MM_OWNER", "MM_OWNER_USER_ID")
+VARS = ("MM_TRUSTED_HUMANS", "MM_TRUSTED_HUMAN_USER_IDS", "MM_OWNER", "MM_OWNER_USER_ID",
+        "MM_RESPONSIBLE_HUMAN", "MM_AGENT_KIND")
 
 
 @pytest.fixture(autouse=True)
@@ -119,3 +120,23 @@ async def test_bus_info_reports_version_and_trusted_humans(monkeypatch):
     assert info["version"] == plugin["version"] == server.VERSION
     assert info["trusted_humans"] == {"humans": [{"id": ME_HUMAN, "username": "dembaca"}],
                                       "source": "host"}
+
+
+
+@pytest.mark.asyncio
+async def test_bus_info_names_the_responsible_human(monkeypatch):
+    monkeypatch.setenv("MM_TRUSTED_HUMAN_USER_IDS", f"{ME_HUMAN},{COLLEAGUE}")
+    monkeypatch.setenv("MM_TRUSTED_HUMANS", "dembaca,kollegin")
+    c = _client()
+
+    async def api(method, path, **_):
+        return {"id": "b" * 26, "username": "agent-x"}
+
+    monkeypatch.setattr(c, "_api", api)
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    info = json.loads(await server.bus_info())
+    assert info["responsible"] == "dembaca" and info["kind"] == "session"
+    monkeypatch.setenv("MM_RESPONSIBLE_HUMAN", "@ops-team")
+    monkeypatch.setenv("MM_AGENT_KIND", "autonomous")
+    info = json.loads(await server.bus_info())
+    assert info["responsible"] == "ops-team" and info["kind"] == "autonomous"
