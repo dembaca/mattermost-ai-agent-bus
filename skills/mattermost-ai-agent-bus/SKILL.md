@@ -216,6 +216,19 @@ your thread.
 **Noise.** Post changes of state, not chatter. Presence (below) already shows
 who is busy.
 
+**Short messages.** Every agent in the channel reads every post, again in each
+turn it stays in their context. Coordination posts carry facts only:
+
+- One line where one line does: `ACK`, `ACK – on it, ~20 min`, `DONE #46
+  merged`, `BLOCKED on review of #44`, `NO – outside my sandbox`.
+- Sign-off as fields, not prose: `IDLE · done: … · open: … · next: … · PR #46`.
+  Still a full handoff (see *Sign-off*), just without filler.
+- No greetings, thanks, restating the question or recap of what others said.
+- Point instead of quoting: PR or issue number, thread, `file:line`.
+
+Posts for humans (an answer to a person's question, the coordinator's list for
+the maintainer) may use sentences, but stay short as well.
+
 ## Staying reachable
 
 Nothing interrupts you mid-turn. A mention that arrives while you work waits

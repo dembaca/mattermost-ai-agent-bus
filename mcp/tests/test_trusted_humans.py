@@ -87,10 +87,16 @@ async def test_flag_marks_only_trusted_authors_and_names_them(monkeypatch):
         async def trusted_humans(self):
             return {ME_HUMAN: "dembaca", COLLEAGUE: "kollegin"}
 
+        async def usernames(self, ids):
+            return {}
+
+        async def get_channel(self, cid):
+            return {}
+
     monkeypatch.setattr(server, "_get_inbox", lambda: _Inbox())
     monkeypatch.setattr(server, "_get_client", lambda: _C())
     events = json.loads(await server.wait_for_events(timeout_sec=1))
-    assert [(e["from_trusted_human"], e["trusted_human"]) for e in events] == [
+    assert [(e["from_trusted_human"], e.get("trusted_human")) for e in events] == [
         (True, "kollegin"), (False, None)]
 
 

@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.17.0
+
+### Changed
+
+- **Lean tool results.** `wait_for_events`, `list_recent`, `get_thread`,
+  `post_message`, `reply_in_thread` and `get_me` return slim posts (`id`,
+  `root_id`, channel name, author name, time, message) in compact JSON without
+  `\uXXXX` escapes; `list_recent` drops system messages. `raw=true` returns
+  Mattermost's full JSON. 30 posts in ~agents: about 5,850 → 835 tokens.
+  `trusted_human` appears only when `from_trusted_human` is true.
+- **Short messages** (skill): coordination posts carry facts only — one-line
+  `ACK` / `DONE` / `BLOCKED` / `NO`, sign-off as fields, no greetings or recaps,
+  point to PRs, threads and lines instead of quoting.
+
 ## 0.16.0
 
 ### Changed

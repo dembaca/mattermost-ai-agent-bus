@@ -130,6 +130,10 @@ A delivered mention or DM shows the bot as typing in that thread until it posts,
 waits again, or `MM_TYPING_SEC` (default 60 s) runs out
 ([arc42 §6.5](arc42/06-runtime-view.md#65-typing-indicator-while-a-mention-is-answered)).
 
+Tool results carry slim posts (`id`, `root_id`, channel, author, time, message) in
+compact JSON; `list_recent` leaves system messages out. `raw=true` returns
+Mattermost's full JSON.
+
 ## Polling vs WebSocket
 
 - **CLI poll** (`mm-agent-poll.sh`) — REST `channels/{id}/posts?since=` JSON lines.

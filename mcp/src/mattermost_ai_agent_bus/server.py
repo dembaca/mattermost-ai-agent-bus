@@ -16,7 +16,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import lease
+from . import lease, slim
 from .client import MattermostClient
 from .websocket_inbox import WebSocketInbox
 
@@ -115,7 +115,9 @@ def _done_typing() -> None:
 
 
 def _dump(obj: Any) -> str:
-    return json.dumps(obj, indent=2, default=str)
+    # Compact: indentation and \uXXXX escapes cost tokens in every turn the
+    # result stays in context.
+    return json.dumps(obj, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
 @mcp.tool()
@@ -189,10 +191,10 @@ async def bus_info() -> str:
 
 
 @mcp.tool()
-async def get_me() -> str:
-    """Return the current bot user (users/me)."""
+async def get_me(raw: bool = False) -> str:
+    """Return the current bot user: id and username (raw=true: users/me as is)."""
     me = await _get_client().get_me()
-    return _dump(me)
+    return _dump(me if raw else {"id": me.get("id"), "username": me.get("username")})
 
 
 @mcp.tool()
@@ -210,7 +212,7 @@ async def post_message(
         channel_id=channel_id or None,
         root_id=root_id or None,
     )
-    return _dump(post)
+    return _dump(await slim.post(client, post))
 
 
 @mcp.tool()
@@ -228,7 +230,7 @@ async def reply_in_thread(
         channel_id=channel_id or None,
         root_id=root_id,
     )
-    return _dump(post)
+    return _dump(await slim.post(client, post))
 
 
 @mcp.tool()
@@ -248,34 +250,47 @@ async def coordinator(action: str = "who") -> str:
 
 
 @mcp.tool()
-async def get_thread(post_id: str) -> str:
-    """Fetch a thread (root + replies) for post_id."""
-    data = await _get_client().thread(post_id)
-    return _dump(data)
+async def get_thread(post_id: str, raw: bool = False) -> str:
+    """Fetch a thread (root + replies, oldest first) for post_id.
+
+    Slim posts {id, root_id, channel, author, at, message}; raw=true for the
+    full Mattermost JSON.
+    """
+    client = _get_client()
+    data = await client.thread(post_id)
+    if raw:
+        return _dump(data)
+    return _dump({"root_id": data["root_id"], "posts": await slim.posts(client, data["posts"])})
 
 
 @mcp.tool()
 async def list_recent(
-    channel_id: str = "", per_page: int = 20, since_ms: int = 0
+    channel_id: str = "", per_page: int = 20, since_ms: int = 0, raw: bool = False
 ) -> str:
-    """List recent posts in a channel (oldest→newest)."""
-    posts = await _get_client().list_recent(
+    """List recent posts in a channel (oldest→newest).
+
+    Slim posts {id, root_id, channel, author, at, message, replies}, system
+    messages ("… added to the channel") left out; raw=true for everything.
+    """
+    client = _get_client()
+    posts = await client.list_recent(
         channel_id=channel_id or None,
         per_page=per_page,
         since_ms=since_ms or None,
     )
-    return _dump(posts)
+    return _dump(posts if raw else await slim.posts(client, posts, drop_system=True))
 
 
 @mcp.tool()
 async def wait_for_events(
-    timeout_sec: float = 60.0, max_events: int = 10
+    timeout_sec: float = 60.0, max_events: int = 10, raw: bool = False
 ) -> str:
     """Wait for inbox events: mentions, DMs, or watched-channel posts.
 
     Connects the Mattermost WebSocket if needed. Returns JSON list of
-    {kind, from_trusted_human, trusted_human, post, channel} (empty list on
-    timeout). from_trusted_human is true only for posts by a trusted human
+    {kind, from_trusted_human, trusted_human (only when true), post} with a
+    slim post {id, root_id, channel, author, at, message} (empty list on
+    timeout; raw=true for the full post and channel JSON). from_trusted_human is true only for posts by a trusted human
     (MM_TRUSTED_HUMANS), verified by the server; only those can approve an
     action (see the skill). A delivered mention or DM
     shows you as typing in its thread until you post, wait again, or
@@ -287,19 +302,22 @@ async def wait_for_events(
     events = await inbox.wait_for_events(
         timeout_sec=timeout_sec, max_events=max_events
     )
-    trusted = await _get_client().trusted_humans() if events else {}
+    client = _get_client()
+    trusted = await client.trusted_humans() if events else {}
+    lean = [] if raw or not events else await slim.posts(client, [e.post for e in events])
     payload = []
-    for e in events:
+    for i, e in enumerate(events):
         author = e.post.get("user_id", "")
-        payload.append({
-            "kind": e.kind,
-            # Server-verified (RT-6.8): Mattermost authenticates the author, so
-            # this, not anything a message says about itself, names a trusted human.
-            "from_trusted_human": author in trusted,
-            "trusted_human": trusted.get(author) if author in trusted else None,
-            "post": e.post,
-            "channel": e.channel,
-        })
+        # Server-verified (RT-6.8): Mattermost authenticates the author, so
+        # this, not anything a message says about itself, names a trusted human.
+        item: dict[str, Any] = {"kind": e.kind, "from_trusted_human": author in trusted}
+        if author in trusted:
+            item["trusted_human"] = trusted[author]
+        if raw:
+            item |= {"post": e.post, "channel": e.channel}
+        else:
+            item["post"] = lean[i]
+        payload.append(item)
     return _dump(payload)
 
 
