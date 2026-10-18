@@ -183,6 +183,61 @@ def test_listener_wakes_on_a_dm(mm, run):
     assert window(run)["ENDED"] == "event" and window(run)["UNTIL"] == str(until)
 
 
+OTHER = "z" * 26
+
+
+def other_post(mm, message, root_id="", user_id=OTHER, age_s=0):
+    mm.posts.insert(0, {"id": f"o{len(mm.posts)}", "user_id": user_id, "root_id": root_id,
+                        "create_at": int((time.time() - age_s) * 1000) + 2000,
+                        "message": message, "type": ""})
+
+
+def listen(run, **env):
+    return run(LISTEN, "--until", str(int(time.time()) + 4), MM_LISTEN_POLL_SEC="1",
+               MM_BOT_USERNAME="agent-test", **IN_PROJECT, **env)
+
+
+def test_listener_ignores_posts_not_for_it(mm, run):
+    """RT-6.2 step 4: a post for nobody in particular does not wake a member."""
+    other_post(mm, "general chatter about lunch")
+    r = listen(run)
+    assert "nothing new" in r.stdout
+
+
+def test_listener_wakes_when_addressed(mm, run):
+    """RT-6.2 step 4: @name, @channel, a reply in its thread or a trusted human wake it."""
+    mm.own_post("HELLO @agent-test", 1000)
+    my_root = mm.posts[0]["id"]
+    cases = [
+        ({"message": "hey @Agent-Test, can you look?"}, {}),
+        ({"message": "@channel deploy freeze at 5"}, {}),
+        ({"message": "answer", "root_id": my_root}, {}),
+        ({"message": "fyi", "user_id": "h" * 26}, {"MM_TRUSTED_HUMAN_USER_IDS": "h" * 26}),
+    ]
+    for post, env in cases:
+        mm.posts = [p for p in mm.posts if p["user_id"] == mm.posts[-1]["user_id"]]
+        other_post(mm, **post)
+        r = listen(run, **env)
+        assert "for you" in r.stdout, post
+
+
+def test_coordinator_wakes_for_every_post(mm, run):
+    """RT-6.2 step 4, RT-6.6: the 👑 holder sees the whole channel."""
+    d = run.state_dir
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"coord-{ME}.env").write_text(f"CROWN_UNTIL={int(time.time()) + 600}\n")
+    other_post(mm, "general chatter about lunch")
+    assert "for you" in listen(run).stdout
+
+
+def test_listener_digest_for_the_rest(mm, run):
+    """RT-6.2 step 4: unaddressed posts wake it once the oldest is MM_LISTEN_DIGEST_SEC old."""
+    other_post(mm, "status of the build", age_s=0)
+    r = listen(run, MM_LISTEN_DIGEST_SEC="1")
+    assert "digest" in r.stdout and "none addressed to you" in r.stdout
+    assert window(run)["ENDED"] == "event"
+
+
 def test_listener_ends_with_the_window(mm, run):
     r = run(LISTEN, "--until", str(int(time.time()) + 1), MM_LISTEN_POLL_SEC="1", **IN_PROJECT)
     assert r.code == 0 and "nothing new" in r.stdout
