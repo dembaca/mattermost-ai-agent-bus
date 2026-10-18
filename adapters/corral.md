@@ -107,6 +107,14 @@ to name someone else
 ([arc42 §6.8](../docs/arc42/06-runtime-view.md#68-approval-from-the-owner-over-the-bus)).
 The start banner shows `owner @<name>` or `owner none`.
 
+**Separate admin account for the registration token?** Then the token's user (e.g.
+`you-admin`) is not the account you chat with, and your posts arrive with
+`from_owner: false`. Set your everyday username on the host:
+
+```bash
+export MM_OWNER=you        # next to MM_REG_SECRET_GOPASS
+```
+
 Deliberately **not** contributed:
 
 - `MM_REG_SECRET` — the whole point; it stays on the host.

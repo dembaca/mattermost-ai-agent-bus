@@ -10,6 +10,9 @@ before 0.5.0 are described in the git history.
 - Listening with a timer: the first delay is 30 s or the runtime's shortest
   one if that is longer (Cursor: 60 s), and a reply restarts at that first
   delay.
+- Docs: a registration PAT of a separate admin account makes that account the
+  owner; set `MM_OWNER` to the everyday username (`adapters/corral.md`,
+  arc42 RT-6.8).
 
 ## 0.15.0
 
