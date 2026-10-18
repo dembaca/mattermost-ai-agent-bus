@@ -19,6 +19,13 @@ def state(tmp_path, monkeypatch):
     return tmp_path
 
 
+def test_default_channel_and_off(monkeypatch, state):
+    assert stats.channel() == "agents-stats"
+    monkeypatch.setenv("MM_STATS_CHANNEL", "off")
+    stats.record("turn")
+    assert stats.channel() == "" and stats.summary("0.21.0", 1) is None
+
+
 def test_tool_results_and_posts_are_counted():
     text = server._out("list_recent", [{"id": "p1", "message": "hi"}])
     stats.record("post", chars=42)
@@ -33,11 +40,20 @@ def test_static_text_is_measured():
     assert server._static_chars() > 10000
 
 
-def test_post_goes_to_the_stats_channel_only_when_configured(monkeypatch, state):
+def test_post_goes_to_the_stats_channel(monkeypatch, state):
     client = MattermostClient(base_url="https://chat.example", token="bot", team_name="ai-agents")
     stats.record("turn")
     data = stats.summary("0.21.0", 1)
-    assert stats.post_sync(client, data) == "off"
+
+    def missing(request):
+        if request.url.path.endswith("/teams/name/ai-agents"):
+            return httpx.Response(200, json={"id": "t1"})
+        return httpx.Response(404, json={})
+
+    assert stats.post_sync(client, data, http=httpx.Client(
+        transport=httpx.MockTransport(missing))).startswith("no channel ~agents-stats")
+    assert not (state / "mm-agent-bus" / f"stats-{UID}.jsonl").exists()  # does not pile up
+    stats.record("turn")
 
     seen = []
 

@@ -27,6 +27,13 @@ if TYPE_CHECKING:
     from .client import MattermostClient
 
 _uid = ""
+DEFAULT_CHANNEL = "agents-stats"
+
+
+def channel() -> str:
+    """MM_STATS_CHANNEL, default agents-stats; "" when switched off."""
+    name = os.environ.get("MM_STATS_CHANNEL", DEFAULT_CHANNEL).strip().lstrip("~")
+    return "" if name.lower() in ("", "off", "none", "0", "false") else name
 
 
 def set_user(uid: str) -> None:
@@ -44,7 +51,7 @@ def _path() -> Path | None:
 def record(kind: str, **values: Any) -> None:
     """Append one event. Never raises: a counter must not disturb a session."""
     f = _path()
-    if f is None:
+    if f is None or not channel():
         return
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -100,8 +107,12 @@ def summary(version: str, static: int) -> dict[str, Any] | None:
 
 
 def post_sync(client: MattermostClient, data: dict[str, Any], http: httpx.Client | None = None) -> str:
-    """Post the summary to MM_STATS_CHANNEL, synchronously (exit handler)."""
-    name = os.environ.get("MM_STATS_CHANNEL", "").strip().lstrip("~")
+    """Post the summary to the stats channel, synchronously (exit handler).
+
+    The counter file goes either way: on a server without the channel the
+    counts would only pile up.
+    """
+    name = channel()
     if not name or not client.token:
         return "off"
     headers = {"Authorization": f"Bearer {client.token}"}
@@ -112,6 +123,8 @@ def post_sync(client: MattermostClient, data: dict[str, Any], http: httpx.Client
         team.raise_for_status()
         ch = http.get(f"{client.base_url}/api/v4/teams/{team.json()['id']}/channels/name/{name}",
                       headers=headers)
+        if ch.status_code == 404:
+            return f"no channel ~{name}; nothing posted"
         ch.raise_for_status()
         cid = ch.json()["id"]
         me = os.environ.get("MM_BOT_USER_ID") or _uid
@@ -122,12 +135,12 @@ def post_sync(client: MattermostClient, data: dict[str, Any], http: httpx.Client
         resp = http.post(f"{client.base_url}/api/v4/posts", headers=headers,
                          json={"channel_id": cid, "message": msg})
         resp.raise_for_status()
-        f = _path()
-        if f is not None:
-            f.unlink(missing_ok=True)
         return "posted"
     except (httpx.HTTPError, KeyError, ValueError) as exc:
         return f"failed: {type(exc).__name__}"
     finally:
+        f = _path()
+        if f is not None:
+            f.unlink(missing_ok=True)
         if own:
             http.close()

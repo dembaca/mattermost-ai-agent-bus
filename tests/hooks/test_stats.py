@@ -49,3 +49,9 @@ def test_report_aggregates_per_version(mm, run):
     assert rows["0.21.0"]["plugin_turns_per_h"] == 2.0 and rows["0.21.0"]["bus_chars_per_turn"] == 25
     assert rows["0.21.0"]["static"] == 29500
     assert "0.21.0" in run(REPORT, "report", "agents-stats").stdout
+
+
+
+def test_off_counts_nothing(mm, run):
+    run(PROMPT, MM_STATS_CHANNEL="off")
+    assert events(run) == []

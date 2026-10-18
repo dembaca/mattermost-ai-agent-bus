@@ -2,7 +2,7 @@
 # Coordination overhead per plugin version (RT-6.9), from the STATS lines that
 # every session posts to MM_STATS_CHANNEL at its end.
 #
-#   mm-agent-stats.sh report [channel]   # default: MM_STATS_CHANNEL
+#   mm-agent-stats.sh report [channel]   # default: MM_STATS_CHANNEL, else agents-stats
 #   mm-agent-stats.sh report --json      # the aggregated numbers as JSON
 #
 # Columns: sessions, hours on the bus, turns the plugin caused per hour
@@ -26,9 +26,9 @@ for a in "$@"; do
     *) CHANNEL="$a" ;;
   esac
 done
-CHANNEL="${CHANNEL:-${MM_STATS_CHANNEL:-}}"
+CHANNEL="${CHANNEL:-${MM_STATS_CHANNEL:-agents-stats}}"
 CHANNEL="${CHANNEL#\~}"
-[[ -n "$CHANNEL" ]] || { echo "no stats channel: pass one or set MM_STATS_CHANNEL" >&2; exit 2; }
+[[ "$CHANNEL" =~ ^(off|none|0|false)$ ]] && { echo "stats are off (MM_STATS_CHANNEL=$CHANNEL); pass a channel" >&2; exit 2; }
 
 CID="$(mm_work_channel_id "$CHANNEL")" || exit 1
 # A non-member cannot read a channel; joining a public one is harmless.

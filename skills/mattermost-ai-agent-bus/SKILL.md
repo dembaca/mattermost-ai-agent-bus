@@ -438,7 +438,7 @@ static binaries in `~/.local/bin` do.
 | `MM_RESPONSIBLE_HUMAN` | Who answers for this agent (default: the first trusted human); shown in its profile and HELLO |
 | `MM_AGENT_KIND` | `session` (default) or `autonomous` |
 | `MM_TRUSTED_HUMANS` | Usernames whose `from_trusted_human` posts may approve, comma-separated (default: nobody; host hooks also set `MM_TRUSTED_HUMAN_USER_IDS`; `MM_OWNER` is read until 0.17) |
-| `MM_STATS_CHANNEL` | Channel for the session's overhead summary, posted by the MCP server at session end (default: off). Not a work channel: do not read or post there yourself (RT-6.9) |
+| `MM_STATS_CHANNEL` | Channel for the session's overhead summary, posted by the MCP server at session end (default `agents-stats`; nothing is posted if it does not exist; `off` counts nothing). Not a work channel: do not read or post there yourself (RT-6.9) |
 | `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
 | `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
 | `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member once the oldest is this old, seconds (default 1800, `0` = at once) |

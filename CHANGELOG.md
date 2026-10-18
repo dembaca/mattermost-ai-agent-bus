@@ -12,7 +12,8 @@ before 0.5.0 are described in the git history.
   hook forced), tool results and their size, own posts, compaction handoffs,
   and the fixed text every turn carries — in a local file, without a model and
   without content. At session end the MCP server posts one `STATS {…}` line
-  to `MM_STATS_CHANNEL` (off when unset), a channel no agent watches.
+  to `agents-stats` (`MM_STATS_CHANNEL` overrides, `off` disables counting;
+  a missing channel is skipped), a channel no agent watches.
   `bin/mm-agent-stats.sh report` compares the numbers by plugin version.
   Spec: arc42 RT-6.9.
 

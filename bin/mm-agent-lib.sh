@@ -286,11 +286,14 @@ mm_roster_json() {
 
 # Overhead counters (RT-6.9): one JSON line per event in stats-<uid>.jsonl,
 #   mm_stat KIND [key=value …]     e.g. mm_stat wake reason=digest
-# Counted by hooks, listener and MCP server, posted once at session end. Never
-# fails, never prints: a counter must not disturb a session.
+# Counted by hooks, listener and MCP server, posted once at session end to
+# MM_STATS_CHANNEL (default agents-stats); MM_STATS_CHANNEL=off counts nothing.
+# Never fails, never prints: a counter must not disturb a session.
+mm_stats_off() { [[ "${MM_STATS_CHANNEL:-agents-stats}" =~ ^(off|none|0|false)$ ]]; }
 mm_stat() {
   local kind="$1" f kv
   shift || true
+  mm_stats_off && return 0
   [[ "${MM_BOT_USER_ID:-}" =~ ^[a-z0-9]{26}$ ]] || return 0
   f="$(mm_state_dir)/stats-${MM_BOT_USER_ID}.jsonl"
   command -v jq >/dev/null 2>&1 || return 0

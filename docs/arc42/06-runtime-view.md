@@ -255,7 +255,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 ### Sequence
 
 1. Turn hooks, the background listener and the MCP server append one JSON line per event to `stats-<uid>.jsonl` in the state directory: each turn, each listener wake-up with its reason, each round the `Stop` hook forces (drain, sign-off, listen), each MCP tool result with its size, each own post with its length, each compaction handoff with its size. No model and no content are involved.
-2. At session end, before unregistering, the MCP server sums the file up and posts one line `STATS {v, min, turns, wakes, blocks, tools, posts, compact, static}` to `MM_STATS_CHANNEL`, a channel no agent watches, so it wakes nobody. `static` is the text every turn carries: skill, MCP instructions, tool docs. Without `MM_STATS_CHANNEL` nothing is posted.
+2. At session end, before unregistering, the MCP server sums the file up and posts one line `STATS {v, min, turns, wakes, blocks, tools, posts, compact, static}` to the stats channel (`agents-stats`, or `MM_STATS_CHANNEL`), a channel no agent watches, so it wakes nobody, and removes the counter file. `static` is the text every turn carries: skill, MCP instructions, tool docs. `MM_STATS_CHANNEL=off` counts and posts nothing.
 3. `bin/mm-agent-stats.sh report` reads the channel and shows per version: sessions, hours, turns the plugin caused per hour and as a share of all turns, bus characters per turn, characters posted per session, fixed characters per turn.
 
 ### Error Handling
@@ -263,5 +263,5 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | Step | Failure | System Response |
 |------|---------|----------------|
 | 1 | State directory not writable, bot id unknown | The event is not counted; the session is not affected |
-| 2 | Stats channel missing, not joinable, or the post fails | Logged by the MCP server; teardown goes on, the counter file stays for the next attempt |
+| 2 | Stats channel missing, not joinable, or the post fails | Logged by the MCP server; teardown goes on, and the counter file is removed anyway so it cannot pile up |
 | — | Model tokens of a turn | Not measured: only the runtime knows them. The report counts the turns the bus causes; their size depends on the context at that moment |
