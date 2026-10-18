@@ -17,6 +17,26 @@ source "$BIN/mm-agent-lib.sh"
 
 log() { echo "mm-bus: $*" >&2; }
 
+# --- where these hooks run from ----------------------------------------------
+# They run on the host with the registration secret, so the scripts they source
+# and start must be out of every sandbox's reach (arc42 §7.1). corral approves
+# only this file by content. Warn, do not refuse: refusing would silently take
+# the bus away.
+ROOT="$(cd "$BIN/.." && pwd)"
+case "$ROOT" in
+  */.cache/corral/home-*|*/.claude/plugins/*)
+    log "WARNING: hooks run from the plugin directory ${ROOT}, which any sandbox can change — install them with bin/mm-agent-host-install.sh" ;;
+esac
+if [[ -n "${CORRAL_WORKDIR:-}" && "$ROOT/" == "$(cd "$CORRAL_WORKDIR" 2>/dev/null && pwd)/"* ]]; then
+  log "WARNING: hooks run from this session's own workdir ${ROOT}, which the agent can change — install them with bin/mm-agent-host-install.sh"
+fi
+if command -v jq >/dev/null 2>&1 && newest="$(mm_installed_plugin_dirs | head -1)" && [[ -n "$newest" ]]; then
+  have="$(mm_tree_version "$ROOT")" want="$(mm_tree_version "$newest")"
+  if [[ "$have" != "$want" ]]; then
+    log "host hooks are ${have}, the installed plugin is ${want} — rerun mm-agent-host-install.sh"
+  fi
+fi
+
 # --- wanted at all? ----------------------------------------------------------
 # Decided before the secret is read: a session that will not register has no
 # business touching it.
@@ -176,7 +196,7 @@ jq -nc \
   --arg owner "$OWNER" \
   --arg ownerid "$OWNER_ID" \
   --arg note "$note" \
-  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}" \
+  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}, owner ${OWNER:+@}${OWNER:-none (approvals over the bus off)}" \
   '{
      corralContributionVersion: 1,
      env: ({

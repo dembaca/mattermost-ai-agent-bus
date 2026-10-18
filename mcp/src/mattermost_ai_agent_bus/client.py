@@ -86,6 +86,7 @@ class MattermostClient:
     )
     session: SessionInfo | None = field(default=None, repr=False, init=False)
     _owner_id: str | None = field(default=None, repr=False, init=False)
+    owner_source: str = field(default="", repr=False, init=False)
     session_file_status: dict[str, Any] = field(
         default_factory=dict, repr=False, init=False
     )
@@ -337,9 +338,11 @@ class MattermostClient:
         if self._owner_id is not None:
             return self._owner_id
         owner = env("MM_OWNER_USER_ID")
+        source = "MM_OWNER_USER_ID (host)" if owner else ""
         try:
             if not owner and env("MM_OWNER"):
                 owner = (await self._api("GET", f"/api/v4/users/username/{env('MM_OWNER')}"))["id"]
+                source = "MM_OWNER"
             elif not owner and self.reg_secret:
                 resp = await self._http().get(
                     f"{self.base_url}/api/v4/users/me",
@@ -347,9 +350,11 @@ class MattermostClient:
                 )
                 if resp.status_code == 200 and not resp.json().get("is_bot"):
                     owner = resp.json()["id"]
+                    source = "registration PAT"
         except (httpx.HTTPError, KeyError, ValueError):
             owner = ""
         self._owner_id = owner or ""
+        self.owner_source = source if owner else "none: no MM_OWNER_USER_ID, MM_OWNER or registration PAT"
         return self._owner_id
 
     async def get_me(self) -> dict[str, Any]:

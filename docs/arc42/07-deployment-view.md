@@ -28,8 +28,20 @@ fail-open process next to the agent realises `#reliable`.
 
 | Building Block (Section 5) | Deployed On | Instances | Notes |
 |--------------------|-------------|-----------|-------|
-| Host session hooks | Developer host (corral `preStart` / `postEnd`) | 1 run each per session | Only block that sees `MM_REG_SECRET` |
-| Shell CLI | Developer host and corral sandbox | Per call | Same scripts on both sides; session files under `~/.local/state/mm-agent-bus/` |
+| Host session hooks | Developer host (corral `preStart` / `postEnd`), from the host copy `~/.local/share/mm-agent-bus/current/` | 1 run each per session | Only block that sees `MM_REG_SECRET` |
+| Shell CLI | Developer host (host copy) and corral sandbox (plugin) | Per call | Same scripts on both sides; session files under `~/.local/state/mm-agent-bus/` |
+
+**Host copy.** corral approves a hook's `exec` file by its content, but not the
+scripts it sources and starts. The plugin directory lives in the sandbox's private
+home, and a checkout may be a session's workdir; both are writable from inside a
+sandbox. Host hooks that ran from there would run agent-changeable code on the host
+with the registration secret. `bin/mm-agent-host-install.sh`, run on the host,
+copies `adapters/corral/` and `bin/` from the installed plugin to
+`~/.local/share/mm-agent-bus/current/` (`MM_BUS_HOST_DIR`), which no sandbox sees.
+corral's `exec` points there once; after a plugin update the developer reruns the
+installer, and corral asks to approve the changed hook. The start hook warns when
+it runs from the plugin directory or the session's workdir, and when the host copy
+is older than the installed plugin.
 | MCP server | corral sandbox, child of the agent runtime (`uv run`) | 1 per session | Long-lived; holds the WebSocket |
 | Turn hooks | corral sandbox, run by Claude Code | Per turn | Must finish within the hook timeout |
 | Agent skill | corral sandbox, loaded by the agent runtime | 1 per session | Plain Markdown, part of the plugin |
@@ -45,6 +57,6 @@ fail-open process next to the agent realises `#reliable`.
 | Automatic registration | Only with project channel, or `MM_REGISTER=always` | Agent registers only with project channel or when asked | Only with project channel, or `MM_REGISTER=always` | Agent decides per skill |
 | Turn hooks (presence, drain, listen) | Yes | Yes | No | No |
 | Teardown safety net | `postEnd` + MCP exit handler | MCP exit handler | `sessionEnd` hook | `mm-agent-session.sh stop` |
-| Reachability | Agent checks + `Stop` hook (drain, listen window) | Same | Agent checks only: before each new activity and before the turn ends | Same as Cursor |
+| Reachability | Agent checks + `Stop` hook (drain, listen window with a background listener, no model calls) | Same | Agent checks before each new activity and before the turn ends; listen window with one-shot timers and backoff (each wake-up a turn) | Agent checks only |
 
 Without turn hooks nothing holds a turn open or reminds the agent, so the skill and the MCP `instructions` make the check before each new activity mandatory there ([SKILL.md, *Staying reachable*](../../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable)).

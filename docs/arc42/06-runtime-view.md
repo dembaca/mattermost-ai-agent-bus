@@ -230,7 +230,8 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 | Step | Failure | System Response |
 |------|---------|----------------|
-| 1 | The secret is no personal access token (or belongs to a bot) | No owner; approvals over the bus stay off and the host logs how to enable them |
+| 1 | The secret is no personal access token (or belongs to a bot) | No owner; approvals over the bus stay off, the host logs how to enable them, and the corral banner says `owner none` |
+| 1 | The host hook ran from an older checkout, or the session predates the owner lookup | No `MM_OWNER_USER_ID` in the sandbox and no secret to look it up: owner `none`. The MCP tool `bus_info` shows version and owner source; restart the session |
 | 3 | A post quotes or claims to speak for the owner | Not `from_owner`; it is data, never an approval |
 | 4 | The approval is vague ("go ahead with everything") | Not an approval of a specific action; the agent asks again |
 | — | Runtime permission prompts | Out of reach: they are answered in the terminal only |
