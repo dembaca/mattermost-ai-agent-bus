@@ -94,6 +94,7 @@ while (( $(date +%s) < UNTIL )); do
   [[ "$pending" =~ ^[0-9]+$ ]] || pending=0
   if (( pending > 0 )); then
     ENDED_AS=event
+    mm_stat wake reason=dm
     echo "Mattermost: ${pending} unread mention(s) or DM(s) for you. Collect them with wait_for_events(timeout_sec=1), answer in their threads, then finish your turn."
     exit 0
   fi
@@ -119,12 +120,14 @@ while (( $(date +%s) < UNTIL )); do
       <<<"$MM_API_BODY" 2>/dev/null || echo "0 0 0")
     if [[ "${addressed:-0}" =~ ^[0-9]+$ ]] && (( addressed > 0 )); then
       ENDED_AS=event
+      mm_stat wake reason=addressed
       echo "Mattermost: ${addressed} new post(s) for you in the work channel. Collect them with wait_for_events(timeout_sec=1), answer in their threads, then finish your turn."
       exit 0
     fi
     if [[ "${others:-0}" =~ ^[0-9]+$ ]] && (( others > 0 )) &&
       (( $(date +%s) - ${oldest:-0} / 1000 >= DIGEST )); then
       ENDED_AS=event
+      mm_stat wake reason=digest
       echo "Mattermost digest: ${others} post(s) in the work channel since $(mm_epoch_hhmm $(( oldest / 1000 ))), none addressed to you. Skim them with wait_for_events(timeout_sec=1); act only on what needs you, then finish your turn."
       exit 0
     fi
@@ -135,4 +138,5 @@ while (( $(date +%s) < UNTIL )); do
   wait $! 2>/dev/null || true
 done
 
+mm_stat wake reason=over
 echo "Mattermost listen window over, nothing new. Finish your turn without another word."

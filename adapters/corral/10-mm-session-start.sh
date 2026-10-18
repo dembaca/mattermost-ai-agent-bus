@@ -208,6 +208,7 @@ jq -nc \
   --arg projid "${MM_PROJECT_CHANNEL_ID:-}" \
   --arg trusted "$TRUSTED" \
   --arg responsible "$RESPONSIBLE" \
+  --arg stats "${MM_STATS_CHANNEL:-}" \
   --arg kind "$KIND" \
   --arg trustedids "$TRUSTED_IDS" \
   --arg note "$note" \
@@ -226,6 +227,7 @@ jq -nc \
      }
      + (if $reg  != "" then {MM_REGISTER_URL: $reg} else {} end)
      + {MM_AGENT_KIND: $kind}
+     + (if $stats != "" then {MM_STATS_CHANNEL: $stats} else {} end)
      + (if $responsible != "" then {MM_RESPONSIBLE_HUMAN: $responsible} else {} end)
      + (if $trusted != "" then {MM_TRUSTED_HUMANS: $trusted,
                                MM_TRUSTED_HUMAN_USER_IDS: $trustedids} else {} end)

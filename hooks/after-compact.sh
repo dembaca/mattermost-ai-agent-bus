@@ -41,5 +41,6 @@ context="$(jq -r --arg me "$MM_BOT_USER_ID" '
     end' <<<"$MM_API_BODY" 2>/dev/null)" || exit 0
 [[ -n "$context" ]] || exit 0
 
+mm_stat compact chars="${#context}"
 jq -nc --arg c "$context" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $c}}'
 exit 0

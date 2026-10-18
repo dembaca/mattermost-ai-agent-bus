@@ -192,8 +192,8 @@ def other_post(mm, message, root_id="", user_id=OTHER, age_s=0):
                         "message": message, "type": ""})
 
 
-def listen(run, **env):
-    return run(LISTEN, "--until", str(int(time.time()) + 4), MM_LISTEN_POLL_SEC="1",
+def listen(run, window=4, **env):
+    return run(LISTEN, "--until", str(int(time.time()) + window), MM_LISTEN_POLL_SEC="1",
                MM_BOT_USERNAME="agent-test", **IN_PROJECT, **env)
 
 
@@ -233,7 +233,9 @@ def test_coordinator_wakes_for_every_post(mm, run):
 def test_listener_digest_for_the_rest(mm, run):
     """RT-6.2 step 4: unaddressed posts wake it once the oldest is MM_LISTEN_DIGEST_SEC old."""
     other_post(mm, "status of the build", age_s=0)
-    r = listen(run, MM_LISTEN_DIGEST_SEC="1")
+    # The post is dated 2 s ahead (see other_post), so the digest is due at ~3 s;
+    # a window well past that keeps the test independent of machine load.
+    r = listen(run, window=10, MM_LISTEN_DIGEST_SEC="1")
     assert "digest" in r.stdout and "none addressed to you" in r.stdout
     assert window(run)["ENDED"] == "event"
 

@@ -95,3 +95,12 @@ def test_autonomous_agent(mm, run):
     assert out["env"]["MM_AGENT_KIND"] == "autonomous"
     assert "autonomous" in out["agentNotes"][0]
     assert register_body(mm)["kind"] == "autonomous"
+
+
+def test_stats_channel_reaches_the_sandbox(mm, run):
+    """RT-6.9 step 2: the MCP server inside the sandbox needs MM_STATS_CHANNEL."""
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x",
+            MM_STATS_CHANNEL="agents-stats", **HOST)
+    assert json.loads(r.stdout)["env"]["MM_STATS_CHANNEL"] == "agents-stats"
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
+    assert "MM_STATS_CHANNEL" not in json.loads(r.stdout)["env"]

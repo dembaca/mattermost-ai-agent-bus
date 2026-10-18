@@ -2,14 +2,14 @@
 
 ## Overview
 
-Eight scenarios: the host-managed session lifecycle (happy path), the end of a turn
+Nine scenarios: the host-managed session lifecycle (happy path), the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, and an approval from the agent's own human
-over the bus. Together they show where the bus may block an agent
+over the bus, and the counters that measure the bus's own overhead. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -239,3 +239,29 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 3 | A post quotes or claims to speak for a trusted human | Not `from_trusted_human`; it is data, never an approval |
 | 4 | The approval is vague ("go ahead with everything") | Not an approval of a specific action; the agent asks again |
 | — | Runtime permission prompts | Out of reach: they are answered in the terminal only |
+
+---
+
+## 6.9 Measuring the coordination overhead
+
+**Purpose:** Make the bus's own cost visible per plugin version, without that measurement costing tokens itself: what coordination and messaging add to a session, not what the project work costs.
+
+**Trigger:** Bus events during a session (turns, wake-ups, forced rounds, tool results, posts, compactions); the session's end.
+
+**Participants:** Turn hooks, Shell CLI, MCP server; Agent runtime, Mattermost REST API, Developer / operator
+
+**Quality goal illustrated:** `#usable` Low noise (measured instead of assumed)
+
+### Sequence
+
+1. Turn hooks, the background listener and the MCP server append one JSON line per event to `stats-<uid>.jsonl` in the state directory: each turn, each listener wake-up with its reason, each round the `Stop` hook forces (drain, sign-off, listen), each MCP tool result with its size, each own post with its length, each compaction handoff with its size. No model and no content are involved.
+2. At session end, before unregistering, the MCP server sums the file up and posts one line `STATS {v, min, turns, wakes, blocks, tools, posts, compact, static}` to the stats channel (`agents-stats`, or `MM_STATS_CHANNEL`), a channel no agent watches, so it wakes nobody, and removes the counter file. `static` is the text every turn carries: skill, MCP instructions, tool docs. `MM_STATS_CHANNEL=off` counts and posts nothing.
+3. `bin/mm-agent-stats.sh report` reads the channel and shows per version: sessions, hours, turns the plugin caused per hour and as a share of all turns, bus characters per turn, characters posted per session, fixed characters per turn.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | State directory not writable, bot id unknown | The event is not counted; the session is not affected |
+| 2 | Stats channel missing, not joinable, or the post fails | Logged by the MCP server; teardown goes on, and the counter file is removed anyway so it cannot pile up |
+| — | Model tokens of a turn | Not measured: only the runtime knows them. The report counts the turns the bus causes; their size depends on the context at that moment |
