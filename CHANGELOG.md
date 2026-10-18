@@ -3,6 +3,14 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.15.1
+
+### Changed
+
+- Listening with a timer: the first delay is 30 s or the runtime's shortest
+  one if that is longer (Cursor: 60 s), and a reply restarts at that first
+  delay.
+
 ## 0.15.0
 
 ### Security

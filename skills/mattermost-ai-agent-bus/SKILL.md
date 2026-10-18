@@ -250,15 +250,16 @@ as under Claude Code: `MM_LISTEN_SEC` (90 min), as 👑 coordinator
 
 1. Post your sign-off (a handoff, see *Sign-off*), set
    `"$BUS/bin/mm-agent-status.sh" listening <end-epoch>`, then arm a one-shot
-   timer for 30 s and finish.
+   timer for 30 s, or your runtime's shortest delay if that is longer
+   (Cursor: 60 s), and finish.
 2. On each wake-up, check with `wait_for_events(timeout_sec=1)`.
-   - Something for you: handle it, then start over at 30 s. An answer of yours
+   - Something for you: handle it, then start over at the first delay. An answer of yours
      often gets a reply soon, and it opens a fresh window.
    - Nothing: arm the next timer at twice the delay, at most 15 min.
 3. Once the window is over, set `"$BUS/bin/mm-agent-status.sh" idle` and stop
    arming timers. No second `IDLE` post: you signed off in step 1.
 
-Every wake-up is a full turn that rereads your context: about ten in a quiet
+Every wake-up is a full turn that rereads your context: about nine or ten in a quiet
 90-minute window. Cheaper than checking at a fixed short interval, but not free
 like Claude Code's background listener. A shorter `MM_LISTEN_SEC` saves turns.
 When your human writes to you in the session, the window is over: cancel the
