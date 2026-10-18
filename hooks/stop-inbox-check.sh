@@ -95,10 +95,11 @@ save_listen() {
     "$LISTEN_UNTIL" "$LISTEN_SINCE" "$LISTEN_ASKED" "$LISTEN_STARTED" >"$LF" 2>/dev/null || true
 }
 
-# block <reason for the agent> [banner for the human]. The reason goes to the
+# block <reason for the agent> [banner for the human] [stat kind]. The reason goes to the
 # model; the banner (systemMessage) is shown to the human in the terminal, so
 # they can tell at a glance why the turn has not ended yet.
 block() {
+  mm_stat block kind="${3:-other}"
   save_state
   jq -nc --arg r "$1" --arg m "${2:-}" \
     '{decision:"block", reason:$r} + (if $m == "" then {} else {systemMessage:$m} end)'
@@ -141,7 +142,7 @@ if [[ "$pending" -gt 0 && "$DRAINS" -lt "$MAX_DRAIN" ]]; then
     reason+=$'\n\nPending per channel:\n'"$detail"
   fi
   reason+=$'\n\nIf wait_for_events returns nothing, the counter is stale — say so and finish.'
-  block "$reason" "📨 Collecting ${pending} unread Mattermost message(s)"
+  block "$reason" "📨 Collecting ${pending} unread Mattermost message(s)" drain
 fi
 
 have_post=0
@@ -164,7 +165,7 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
   reason+=" conversation may be compacted while you are idle, and this post is handed back to you then."
   reason+=" If you coordinate and will be gone for long, hand over first."
   reason+=" If nothing changed since your last post, say so in one line and finish; this check will not block you again this turn."
-  block "$reason" "✋ Signing off on Mattermost before going idle"
+  block "$reason" "✋ Signing off on Mattermost before going idle" signoff
 fi
 
 # --- 3. listen --------------------------------------------------------------
@@ -209,7 +210,7 @@ if [[ -n "$LF" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] &&
     reason+=" as a background command (Bash with run_in_background and timeout ${bg_ms}), then finish your turn without another word."
     reason+=" It waits without using the model and wakes you when a message arrives; its output says what to do."
     reason+=" If you cannot run background commands, just finish; this check will not ask again."
-    block "$reason" "👂 Listening on Mattermost until $(mm_epoch_hhmm "$LISTEN_UNTIL") in the background ($(( (remaining + 59) / 60 )) min) · your next prompt ends it"
+    block "$reason" "👂 Listening on Mattermost until $(mm_epoch_hhmm "$LISTEN_UNTIL") in the background ($(( (remaining + 59) / 60 )) min) · your next prompt ends it" listen
   fi
 fi
 

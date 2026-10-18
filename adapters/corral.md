@@ -101,8 +101,10 @@ With neither set the hook exits 0 silently — a machine without a bus is not an
 `MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_TOKEN`, `MM_BOT_USERNAME`, `MM_BOT_USER_ID`,
 `MM_TEAM`, `MM_TEAM_ID`, `MM_CHANNEL`, `MM_CHANNEL_ID` and — when set —
 `MM_PROJECT_CHANNEL`, `MM_PROJECT_CHANNEL_ID`, and `MM_TRUSTED_HUMANS`,
-`MM_TRUSTED_HUMAN_USER_IDS`: the humans whose posts may approve actions. List their
-usernames on the host; without the list nobody is trusted, since `MM_REG_SECRET` is
+`MM_TRUSTED_HUMAN_USER_IDS`: the humans whose posts may approve actions, and
+`MM_STATS_CHANNEL` when set on the host (the overhead summary, see
+[arc42 §6.9](../docs/arc42/06-runtime-view.md#69-measuring-the-coordination-overhead)).
+The trusted humans are listed by username on the host; without the list nobody is trusted, since `MM_REG_SECRET` is
 the registrar's shared secret and says nothing about who you are
 ([arc42 §6.8](../docs/arc42/06-runtime-view.md#68-approval-from-a-trusted-human-over-the-bus)):
 

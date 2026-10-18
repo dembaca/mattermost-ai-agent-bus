@@ -16,7 +16,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import lease, slim
+from . import lease, slim, stats
 from .client import MattermostClient
 from .websocket_inbox import WebSocketInbox
 
@@ -104,7 +104,9 @@ def _get_inbox() -> WebSocketInbox:
 
 async def _my_id(client: MattermostClient) -> str:
     try:
-        return await lease._user_id(client)
+        uid = await lease._user_id(client)
+        stats.set_user(uid)
+        return uid
     except Exception:  # noqa: BLE001 — the crown prefix is cosmetic
         return ""
 
@@ -113,6 +115,13 @@ def _done_typing() -> None:
     """A post is the answer the typing indicator promised (RT-6.5)."""
     if _inbox is not None:
         _inbox.stop_typing()
+
+
+def _out(tool: str, obj: Any) -> str:
+    """A tool's result, counted: bus data that stays in the agent's context (RT-6.9)."""
+    text = _dump(obj)
+    stats.record("tool", name=tool, chars=len(text))
+    return text
 
 
 def _dump(obj: Any) -> str:
@@ -135,10 +144,11 @@ async def session_start(
     """
     client = _get_client()
     info = await client.session_start(name, display_name or None, unique=unique)
+    stats.set_user(info.user_id)
     global _inbox
     _inbox = None  # reset inbox for new identity
     setup = await client.finish_session_setup()
-    return _dump(
+    return _out("session_start", 
         {
             "name": info.name,
             "username": info.username,
@@ -161,7 +171,7 @@ async def session_end(name: str = "") -> str:
         await _inbox.close()
         _inbox = None
     await client.session_end(name or None)
-    return _dump({"ok": True, "ended": name or os.environ.get("MM_REG_BOT_NAME", "")})
+    return _out("session_end", {"ok": True, "ended": name or os.environ.get("MM_REG_BOT_NAME", "")})
 
 
 @mcp.tool()
@@ -185,7 +195,7 @@ async def bus_info() -> str:
             except Exception:  # noqa: BLE001 — diagnostic only
                 name = None
         humans.append({"id": uid, "username": name})
-    return _dump({
+    return _out("bus_info", {
         "version": VERSION,
         "bot": {"username": me.get("username"), "id": me.get("id")},
         "responsible": (os.environ.get("MM_RESPONSIBLE_HUMAN", "").strip().lstrip("@")
@@ -245,15 +255,17 @@ async def announce(
         f"role: {role}",
     ]
     _done_typing()
+    stats.set_user(me.get("id", ""))
+    stats.record("post", chars=sum(len(x) + 1 for x in lines))
     post = await client.post(lease.with_crown("\n".join(lines), me.get("id", "")))
-    return _dump(await slim.post(client, post))
+    return _out("announce", await slim.post(client, post))
 
 
 @mcp.tool()
 async def get_me(raw: bool = False) -> str:
     """Return the current bot user: id and username (raw=true: users/me as is)."""
     me = await _get_client().get_me()
-    return _dump(me if raw else {"id": me.get("id"), "username": me.get("username")})
+    return _out("get_me", me if raw else {"id": me.get("id"), "username": me.get("username")})
 
 
 @mcp.tool()
@@ -266,12 +278,13 @@ async def post_message(
     """
     _done_typing()
     client = _get_client()
+    stats.record("post", chars=len(message))
     post = await client.post(
         lease.with_crown(message, await _my_id(client)),
         channel_id=channel_id or None,
         root_id=root_id or None,
     )
-    return _dump(await slim.post(client, post))
+    return _out("post_message", await slim.post(client, post))
 
 
 @mcp.tool()
@@ -284,12 +297,13 @@ async def reply_in_thread(
     """
     _done_typing()
     client = _get_client()
+    stats.record("post", chars=len(message))
     post = await client.post(
         lease.with_crown(message, await _my_id(client)),
         channel_id=channel_id or None,
         root_id=root_id,
     )
-    return _dump(await slim.post(client, post))
+    return _out("reply_in_thread", await slim.post(client, post))
 
 
 @mcp.tool()
@@ -305,7 +319,7 @@ async def coordinator(action: str = "who") -> str:
     if action not in ("who", "take", "release"):
         raise ValueError('action must be "who", "take" or "release"')
     out = await lease.run(_get_client(), action)
-    return _dump({"action": action, "result": out or "(no coordinator)"})
+    return _out("coordinator", {"action": action, "result": out or "(no coordinator)"})
 
 
 @mcp.tool()
@@ -318,8 +332,8 @@ async def get_thread(post_id: str, raw: bool = False) -> str:
     client = _get_client()
     data = await client.thread(post_id)
     if raw:
-        return _dump(data)
-    return _dump({"root_id": data["root_id"], "posts": await slim.posts(client, data["posts"])})
+        return _out("get_thread", data)
+    return _out("get_thread", {"root_id": data["root_id"], "posts": await slim.posts(client, data["posts"])})
 
 
 @mcp.tool()
@@ -337,7 +351,7 @@ async def list_recent(
         per_page=per_page,
         since_ms=since_ms or None,
     )
-    return _dump(posts if raw else await slim.posts(client, posts, drop_system=True))
+    return _out("list_recent", posts if raw else await slim.posts(client, posts, drop_system=True))
 
 
 @mcp.tool()
@@ -377,10 +391,19 @@ async def wait_for_events(
         else:
             item["post"] = lean[i]
         payload.append(item)
-    return _dump(payload)
+    return _out("wait_for_events", payload)
 
 
 _exit_handled = False
+
+
+def _static_chars() -> int:
+    """Skill + instructions + tool docs: in the context of every turn."""
+    skill = Path(__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
+    docs = [f.__doc__ for f in (session_start, session_end, bus_info, announce, get_me,
+                                post_message, reply_in_thread, coordinator, get_thread,
+                                list_recent, wait_for_events)]
+    return stats.static_chars(skill, mcp.instructions or "", docs)
 
 
 def _cleanup_on_exit() -> None:
@@ -389,6 +412,12 @@ def _cleanup_on_exit() -> None:
     if _exit_handled or _client is None:
         return
     _exit_handled = True
+    try:  # before unregistering: the bot must still exist to post
+        data = stats.summary(VERSION, _static_chars())
+        if data:
+            log.info("overhead stats: %s", stats.post_sync(_client, data))
+    except Exception as exc:  # noqa: BLE001 — never block teardown
+        log.info("overhead stats skipped: %s", exc)
     outcome = _client.shutdown_sync()
     if outcome != "no session":
         log.info("exit cleanup: %s", outcome)

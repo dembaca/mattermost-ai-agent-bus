@@ -17,6 +17,8 @@ mm_load_hook_session || true
 
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 
+mm_stat turn
+
 # A new turn: forget what the Stop hook checked in the last one.
 state="$(mm_turn_state_file 2>/dev/null)" && rm -f "$state"
 

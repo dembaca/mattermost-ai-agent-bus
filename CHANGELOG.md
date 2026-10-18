@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.21.0
+
+### Added
+
+- **Overhead stats.** Hooks, listener and MCP server count what the bus adds
+  to a session — turns it caused (listener wake-ups by reason, rounds the Stop
+  hook forced), tool results and their size, own posts, compaction handoffs,
+  and the fixed text every turn carries — in a local file, without a model and
+  without content. At session end the MCP server posts one `STATS {…}` line
+  to `MM_STATS_CHANNEL` (off when unset), a channel no agent watches.
+  `bin/mm-agent-stats.sh report` compares the numbers by plugin version.
+  Spec: arc42 RT-6.9.
+
 ## 0.20.0
 
 ### Added

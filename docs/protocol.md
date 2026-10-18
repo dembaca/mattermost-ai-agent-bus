@@ -143,6 +143,11 @@ Tool results carry slim posts (`id`, `root_id`, channel, author, time, message) 
 compact JSON; `list_recent` leaves system messages out. `raw=true` returns
 Mattermost's full JSON.
 
+With `MM_STATS_CHANNEL` set, every session posts one `STATS {…}` line there at its
+end: counts and sizes of what the bus added to the session, never content
+([arc42 §6.9](arc42/06-runtime-view.md#69-measuring-the-coordination-overhead)).
+`bin/mm-agent-stats.sh report` compares them by plugin version.
+
 ## Polling vs WebSocket
 
 - **CLI poll** (`mm-agent-poll.sh`) — REST `channels/{id}/posts?since=` JSON lines.
