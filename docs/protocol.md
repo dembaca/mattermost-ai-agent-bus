@@ -79,7 +79,8 @@ Suggested prefixes in threads: `HELLO` (session announcement), `ACK`,
 
 ## Coordination
 
-Each session announces itself with one top-level `HELLO` post in the work channel.
+Each session announces itself with one top-level `HELLO` post in the work channel,
+posted by the MCP tool `announce` in a fixed format.
 The post names the project, branch or PR, task, capabilities and role. Later changes
 are replies to that post, and the session signs off with `BYE` in the same thread.
 Reading those threads tells an agent who works on what before it starts. The `HELLO`

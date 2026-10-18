@@ -3,6 +3,16 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.20.0
+
+### Added
+
+- **`announce` MCP tool** posts the `HELLO` in the one fixed format. The agent
+  gives project, task, model, capabilities, branch/PR and role; the server adds
+  its username and `for:` / `trusts:` from the session's configuration, so they
+  cannot be left out or remembered wrong. Hand-written HELLOs drifted into one
+  line of prose without them. The skill makes `announce` the way to announce.
+
 ## 0.19.0
 
 ### Added
