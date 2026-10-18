@@ -148,25 +148,41 @@ printf 'MM_SESSION_PID=%s\n' "$PPID" >>"$MM_AGENT_SESSION_FILE"
 # offline to anyone looking at the member list.
 "$BIN/mm-agent-status.sh" idle "$PROJECT_RAW" || true
 
-# --- owner -------------------------------------------------------------------
-# The human this session answers to (RT-6.8): their posts on the bus may carry
-# approvals. By default the user the registration secret belongs to — it is that
-# user's personal access token — looked up here on the host, so the secret never
-# enters the sandbox. MM_OWNER (a username) overrides it, for a secret that is
-# not that person's token. No owner found: approvals over the bus stay off.
-OWNER="${MM_OWNER:-}" OWNER_ID=""
-if [[ -z "$OWNER" && -n "${MM_REG_SECRET:-}" ]]; then
+# --- trusted humans ----------------------------------------------------------
+# The humans this session answers to on the bus (RT-6.8): their posts may carry
+# approvals. MM_TRUSTED_HUMANS lists usernames (comma-separated; MM_OWNER, one
+# name, is accepted until 0.17). Without a list, the user the registration secret
+# belongs to — a personal access token — looked up here on the host, so the
+# secret never enters the sandbox. None found: approvals over the bus stay off.
+TRUSTED="" TRUSTED_IDS=""
+names="${MM_TRUSTED_HUMANS:-${MM_OWNER:-}}"
+if [[ -n "$names" ]]; then
+  IFS=',' read -ra wanted <<<"$names"
+  for n in "${wanted[@]}"; do
+    n="${n//[[:space:]]/}"; n="${n#@}"
+    [[ -n "$n" ]] || continue
+    if mm_api GET "/api/v4/users/username/${n}" && [[ "$MM_API_STATUS" == "200" ]] &&
+      [[ "$(jq -r '.is_bot // false' <<<"$MM_API_BODY")" == false ]]; then
+      TRUSTED+="${TRUSTED:+,}${n}"
+      TRUSTED_IDS+="${TRUSTED_IDS:+,}$(jq -r '.id' <<<"$MM_API_BODY")"
+    else
+      log "trusted human '${n}' not found (or a bot) — left out"
+    fi
+  done
+elif [[ -n "${MM_REG_SECRET:-}" ]]; then
   if me="$(MM_BOT_TOKEN="$MM_REG_SECRET"; mm_api GET "/api/v4/users/me" &&
         [[ "$MM_API_STATUS" == "200" ]] && printf '%s' "$MM_API_BODY")" &&
     [[ "$(jq -r '.is_bot // false' <<<"$me" 2>/dev/null)" == false ]]; then
-    OWNER="$(jq -r '.username // empty' <<<"$me")"
-    OWNER_ID="$(jq -r '.id // empty' <<<"$me")"
+    TRUSTED="$(jq -r '.username // empty' <<<"$me")"
+    TRUSTED_IDS="$(jq -r '.id // empty' <<<"$me")"
   else
-    log "registration secret is no personal access token — approvals over the bus stay off (set MM_OWNER to enable)"
+    log "registration secret is no personal access token — approvals over the bus stay off (set MM_TRUSTED_HUMANS to enable)"
   fi
 fi
 
 # --- contribution ------------------------------------------------------------
+trusted_shown="none (approvals over the bus off)"
+[[ -n "$TRUSTED" ]] && trusted_shown="@${TRUSTED//,/, @}"
 # MM_REG_BOT_NAME is deliberately withheld. Not a secret — it is the username
 # without "agent-", and the registrar deletes a bot only with MM_REG_SECRET or
 # that bot's own token. Withholding it guards the host's lifecycle: without it
@@ -179,7 +195,7 @@ else
   note+=" Home channel: ~${MM_CHANNEL}."
 fi
 note+=" The session is managed by the host — do not register or unregister."
-[[ -n "$OWNER" ]] && note+=" Your human on the bus is @${OWNER}: their posts marked from_owner may approve actions (see the skill)."
+[[ -n "$TRUSTED" ]] && note+=" Trusted humans on the bus: @${TRUSTED//,/, @}. Their posts arrive marked from_trusted_human and may approve actions (see the skill)."
 
 jq -nc \
   --arg chat "$MM_CHAT_URL" \
@@ -193,10 +209,10 @@ jq -nc \
   --arg chanid "${MM_CHANNEL_ID:-}" \
   --arg proj "${MM_PROJECT_CHANNEL:-}" \
   --arg projid "${MM_PROJECT_CHANNEL_ID:-}" \
-  --arg owner "$OWNER" \
-  --arg ownerid "$OWNER_ID" \
+  --arg trusted "$TRUSTED" \
+  --arg trustedids "$TRUSTED_IDS" \
   --arg note "$note" \
-  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}, owner ${OWNER:+@}${OWNER:-none (approvals over the bus off)}" \
+  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}, trusted ${trusted_shown}" \
   '{
      corralContributionVersion: 1,
      env: ({
@@ -210,8 +226,8 @@ jq -nc \
        MM_CHANNEL_ID: $chanid,
      }
      + (if $reg  != "" then {MM_REGISTER_URL: $reg} else {} end)
-     + (if $owner != "" then {MM_OWNER: $owner} else {} end)
-     + (if $ownerid != "" then {MM_OWNER_USER_ID: $ownerid} else {} end)
+     + (if $trusted != "" then {MM_TRUSTED_HUMANS: $trusted,
+                               MM_TRUSTED_HUMAN_USER_IDS: $trustedids} else {} end)
      + (if $proj != "" then {MM_PROJECT_CHANNEL: $proj,
                              MM_PROJECT_CHANNEL_ID: $projid} else {} end)),
      agentNotes: [$note],

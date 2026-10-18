@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.16.0
+
+### Changed
+
+- **Owner → trusted humans, and a list.** `MM_TRUSTED_HUMANS=you[,teammate]`
+  names the humans whose posts may approve actions; without it, the user the
+  registration PAT belongs to, as before. Events carry `from_trusted_human`
+  (was `from_owner`) and `trusted_human` (who). Host hooks hand
+  `MM_TRUSTED_HUMANS` / `MM_TRUSTED_HUMAN_USER_IDS` to the sandbox, the banner
+  says `trusted @…`, `bus_info` lists them. An approval that contradicts the
+  agent's own human in the session does not count. Spec: arc42 RT-6.8.
+- `MM_OWNER` / `MM_OWNER_USER_ID` are still read until 0.17; switch to
+  `MM_TRUSTED_HUMANS`.
+
 ## 0.15.1
 
 ### Changed

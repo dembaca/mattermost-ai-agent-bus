@@ -85,8 +85,8 @@ class MattermostClient:
         default_factory=dict, repr=False, init=False
     )
     session: SessionInfo | None = field(default=None, repr=False, init=False)
-    _owner_id: str | None = field(default=None, repr=False, init=False)
-    owner_source: str = field(default="", repr=False, init=False)
+    _trusted: dict[str, str] | None = field(default=None, repr=False, init=False)
+    trusted_source: str = field(default="", repr=False, init=False)
     session_file_status: dict[str, Any] = field(
         default_factory=dict, repr=False, init=False
     )
@@ -328,34 +328,52 @@ class MattermostClient:
             return f"unregistered {short}"
         return f"unregister failed: HTTP {resp.status_code}"
 
-    async def owner_id(self) -> str:
-        """The human this session answers to (RT-6.8), "" when unknown.
+    async def trusted_humans(self) -> dict[str, str]:
+        """The humans whose posts may approve actions (RT-6.8): {user_id: username}.
 
-        MM_OWNER_USER_ID (set by host hooks), else MM_OWNER (a username) looked up
-        with the bot token, else the user the registration secret belongs to —
-        a personal access token of that user. Cached; a failed lookup is "".
+        MM_TRUSTED_HUMAN_USER_IDS with MM_TRUSTED_HUMANS (set by host hooks), else
+        the usernames in MM_TRUSTED_HUMANS looked up with the bot token, else the
+        user the registration secret belongs to — a personal access token. MM_OWNER
+        and MM_OWNER_USER_ID (one human) are read until 0.17. Cached; {} when none.
         """
-        if self._owner_id is not None:
-            return self._owner_id
-        owner = env("MM_OWNER_USER_ID")
-        source = "MM_OWNER_USER_ID (host)" if owner else ""
+        if self._trusted is not None:
+            return self._trusted
+
+        def names(var: str) -> list[str]:
+            return [n.strip().lstrip("@") for n in env(var).split(",") if n.strip()]
+
+        trusted: dict[str, str] = {}
+        source = ""
+        ids = names("MM_TRUSTED_HUMAN_USER_IDS") or names("MM_OWNER_USER_ID")
+        wanted = names("MM_TRUSTED_HUMANS") or names("MM_OWNER")
         try:
-            if not owner and env("MM_OWNER"):
-                owner = (await self._api("GET", f"/api/v4/users/username/{env('MM_OWNER')}"))["id"]
-                source = "MM_OWNER"
-            elif not owner and self.reg_secret:
+            if ids:
+                trusted = {i: (wanted[k] if k < len(wanted) else "") for k, i in enumerate(ids)}
+                source = "host"
+            elif wanted:
+                for n in wanted:
+                    try:
+                        u = await self._api("GET", f"/api/v4/users/username/{n}")
+                    except httpx.HTTPError:
+                        continue
+                    if not u.get("is_bot"):
+                        trusted[u["id"]] = n
+                source = "MM_TRUSTED_HUMANS"
+            elif self.reg_secret:
                 resp = await self._http().get(
                     f"{self.base_url}/api/v4/users/me",
                     headers={"Authorization": f"Bearer {self.reg_secret}"},
                 )
                 if resp.status_code == 200 and not resp.json().get("is_bot"):
-                    owner = resp.json()["id"]
+                    u = resp.json()
+                    trusted = {u["id"]: u.get("username", "")}
                     source = "registration PAT"
         except (httpx.HTTPError, KeyError, ValueError):
-            owner = ""
-        self._owner_id = owner or ""
-        self.owner_source = source if owner else "none: no MM_OWNER_USER_ID, MM_OWNER or registration PAT"
-        return self._owner_id
+            trusted = {}
+        self._trusted = trusted
+        self.trusted_source = source if trusted else (
+            "none: no MM_TRUSTED_HUMANS, host ids or registration PAT")
+        return trusted
 
     async def get_me(self) -> dict[str, Any]:
         if self._me is None:

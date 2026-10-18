@@ -102,6 +102,14 @@ def _handler(fake: FakeMattermost):
                 return self._send(fake.channels)
             if p == "/api/v4/users":
                 return self._send(fake.users)
+            if p.startswith("/api/v4/users/username/"):
+                known = {"dembaca": OWNER, "kollegin": "k" * 26}
+                name = p.rsplit("/", 1)[1]
+                if name in known:
+                    return self._send({"id": known[name], "username": name, "is_bot": False})
+                if name.startswith("agent-"):
+                    return self._send({"id": "b" * 26, "username": name, "is_bot": True})
+                return self._send({"message": "not found"}, 404)
             return self._send({}, 404)
 
         def _write(self):

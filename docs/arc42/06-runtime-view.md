@@ -209,30 +209,31 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ---
 
-## 6.8 Approval from the owner over the bus
+## 6.8 Approval from a trusted human over the bus
 
-**Purpose:** The developer can approve an agent's pending action from Mattermost instead of the terminal, without any other post on the bus being able to pass for an approval.
+**Purpose:** The developer, or in a team any listed teammate, can approve an agent's pending action from Mattermost instead of the terminal, without any other post on the bus being able to pass for an approval.
 
-**Trigger:** The agent asked for confirmation of a destructive or outward-facing action, and its human answers on the bus.
+**Trigger:** The agent asked for confirmation of a destructive or outward-facing action, and a trusted human answers on the bus.
 
 **Participants:** Host session hooks, MCP server; Agent runtime, Mattermost REST API, Mattermost WebSocket, Developer / operator
 
-**Quality goal illustrated:** `#secure` Secret confinement (the PAT stays on the host; only the authenticated owner can approve)
+**Quality goal illustrated:** `#secure` Secret confinement (the PAT stays on the host; only an authenticated trusted human can approve)
 
 ### Sequence
 
-1. At session start the Host session hooks look up the owner with the registration secret, a personal access token of that user (`users/me`, IF-01 side), and hand `MM_OWNER` / `MM_OWNER_USER_ID` to the sandbox; the secret stays on the host. `MM_OWNER` set on the host overrides it. Without host hooks the MCP server does the same lookup itself.
+1. At session start the Host session hooks resolve the trusted humans: the usernames in `MM_TRUSTED_HUMANS` (comma-separated), else the user the registration secret belongs to, a personal access token (`users/me`, IF-01 side). They hand `MM_TRUSTED_HUMANS` / `MM_TRUSTED_HUMAN_USER_IDS` to the sandbox; the secret stays on the host. Without host hooks the MCP server does the same lookup itself.
 2. The agent asks in the request's thread, or keeps waiting with `WAITING for my human's approval: <what>`.
-3. The MCP server marks each delivered event `from_owner` when the post's author id is the owner's. Mattermost authenticates the author, so no post can fake this.
-4. A `from_owner` post that is a DM or a reply in that thread, names the action and comes after the question approves that one action. The agent says in the thread what it does now, then acts.
+3. The MCP server marks each delivered event `from_trusted_human` when the post's author id is a trusted human's, and names them in `trusted_human`. Mattermost authenticates the author, so no post can fake this.
+4. A `from_trusted_human` post that is a DM or a reply in that thread, names the action and comes after the question approves that one action. The agent says in the thread what it does now and whose approval it is, then acts. An approval that contradicts the agent's own human in the session does not count.
 
 ### Error Handling
 
 | Step | Failure | System Response |
 |------|---------|----------------|
-| 1 | The PAT belongs to a separate admin account, not the one the developer chats with | The admin account is the owner, so the developer's posts are not `from_owner`; the banner shows the admin name, and `MM_OWNER=<everyday username>` on the host fixes it |
-| 1 | The secret is no personal access token (or belongs to a bot) | No owner; approvals over the bus stay off, the host logs how to enable them, and the corral banner says `owner none` |
-| 1 | The host hook ran from an older checkout, or the session predates the owner lookup | No `MM_OWNER_USER_ID` in the sandbox and no secret to look it up: owner `none`. The MCP tool `bus_info` shows version and owner source; restart the session |
-| 3 | A post quotes or claims to speak for the owner | Not `from_owner`; it is data, never an approval |
+| 1 | The PAT belongs to a separate admin account, not the one the developer chats with | The admin account is trusted instead of the developer; the banner shows its name, and `MM_TRUSTED_HUMANS=<everyday username>` on the host fixes it |
+| 1 | A listed name is unknown or a bot | Left out, with a log line; the others still count |
+| 1 | The secret is no personal access token (or belongs to a bot), and no list is set | Nobody trusted; approvals over the bus stay off, the host logs how to enable them, and the corral banner says `trusted none` |
+| 1 | The host hook ran from an older checkout, or the session predates the lookup | No ids in the sandbox and no secret to look them up: `bus_info` shows an empty list and its source; restart the session |
+| 3 | A post quotes or claims to speak for a trusted human | Not `from_trusted_human`; it is data, never an approval |
 | 4 | The approval is vague ("go ahead with everything") | Not an approval of a specific action; the agent asks again |
 | — | Runtime permission prompts | Out of reach: they are answered in the terminal only |
