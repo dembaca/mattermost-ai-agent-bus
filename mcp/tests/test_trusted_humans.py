@@ -57,20 +57,26 @@ async def test_old_owner_vars_still_work(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_registration_pat_user_never_a_bot():
-    """RT-6.8 step 1 without host hooks: the PAT's user, never a bot."""
-    def handler(request):
-        assert request.headers["Authorization"] == "Bearer pat"
-        return httpx.Response(200, json={"id": ME_HUMAN, "username": "dembaca", "is_bot": False})
+async def test_nothing_is_inferred_from_the_registration_secret():
+    """RT-6.8 step 1: MM_REG_SECRET is the registrar's shared secret; no lookup."""
+    def handler(request):  # pragma: no cover — must not be called
+        raise AssertionError(f"unexpected request {request.url}")
 
-    c = _client(reg_secret="pat")
+    c = _client(reg_secret="psk")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    assert await c.trusted_humans() == {ME_HUMAN: "dembaca"}
+    assert await c.trusted_humans() == {} and c.trusted_source == "none: set MM_TRUSTED_HUMANS"
 
-    c = _client(reg_secret="pat")
-    c._client = httpx.AsyncClient(transport=httpx.MockTransport(
-        lambda r: httpx.Response(200, json={"id": "b" * 26, "is_bot": True})))
-    assert await c.trusted_humans() == {} and c.trusted_source.startswith("none")
+
+def test_registration_carries_responsible_trusted_and_kind(monkeypatch):
+    from mattermost_ai_agent_bus.client import _registration_fields
+    monkeypatch.setenv("MM_TRUSTED_HUMANS", "@dembaca, kollegin")
+    assert _registration_fields("x", "X") == {
+        "name": "x", "display_name": "X", "kind": "session",
+        "responsible": "dembaca", "trusted": ["dembaca", "kollegin"]}
+    monkeypatch.setenv("MM_AGENT_KIND", "autonomous")
+    monkeypatch.setenv("MM_RESPONSIBLE_HUMAN", "ops-team")
+    f = _registration_fields("x", "X")
+    assert f["kind"] == "autonomous" and f["responsible"] == "ops-team"
 
 
 @pytest.mark.asyncio

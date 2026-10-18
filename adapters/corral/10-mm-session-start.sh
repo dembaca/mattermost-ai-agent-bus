@@ -150,61 +150,33 @@ printf 'MM_SESSION_PID=%s\n' "$PPID" >>"$MM_AGENT_SESSION_FILE"
 
 # --- trusted humans ----------------------------------------------------------
 # The humans this session answers to on the bus (RT-6.8): their posts may carry
-# approvals. MM_TRUSTED_HUMANS lists usernames (comma-separated; MM_OWNER, one
-# name, is accepted until 0.17). Without a list, the user the registration secret
-# belongs to — a personal access token — looked up here on the host, so the
-# secret never enters the sandbox. None found: approvals over the bus stay off.
+# approvals. MM_TRUSTED_HUMANS lists usernames on the host (comma-separated).
+# Without it nobody is trusted: MM_REG_SECRET is the registrar's shared secret,
+# not anyone's personal token, so there is no one to infer.
 TRUSTED="" TRUSTED_IDS=""
-names="${MM_TRUSTED_HUMANS:-${MM_OWNER:-}}"
-if [[ -n "$names" ]]; then
-  IFS=',' read -ra wanted <<<"$names"
-  for n in "${wanted[@]}"; do
-    n="${n//[[:space:]]/}"; n="${n#@}"
-    [[ -n "$n" ]] || continue
-    if mm_api GET "/api/v4/users/username/${n}" && [[ "$MM_API_STATUS" == "200" ]] &&
-      [[ "$(jq -r '.is_bot // false' <<<"$MM_API_BODY")" == false ]]; then
-      TRUSTED+="${TRUSTED:+,}${n}"
-      TRUSTED_IDS+="${TRUSTED_IDS:+,}$(jq -r '.id' <<<"$MM_API_BODY")"
-    else
-      log "trusted human '${n}' not found (or a bot) — left out"
-    fi
-  done
-elif [[ -n "${MM_REG_SECRET:-}" ]]; then
-  if me="$(MM_BOT_TOKEN="$MM_REG_SECRET"; mm_api GET "/api/v4/users/me" &&
-        [[ "$MM_API_STATUS" == "200" ]] && printf '%s' "$MM_API_BODY")" &&
-    [[ "$(jq -r '.is_bot // false' <<<"$me" 2>/dev/null)" == false ]]; then
-    TRUSTED="$(jq -r '.username // empty' <<<"$me")"
-    TRUSTED_IDS="$(jq -r '.id // empty' <<<"$me")"
+while read -r n; do
+  [[ -n "$n" ]] || continue
+  if mm_api GET "/api/v4/users/username/${n}" && [[ "$MM_API_STATUS" == "200" ]] &&
+    [[ "$(jq -r '.is_bot // false' <<<"$MM_API_BODY")" == false ]]; then
+    TRUSTED+="${TRUSTED:+,}${n}"
+    TRUSTED_IDS+="${TRUSTED_IDS:+,}$(jq -r '.id' <<<"$MM_API_BODY")"
   else
-    log "registration secret is no personal access token — approvals over the bus stay off (set MM_TRUSTED_HUMANS to enable)"
+    log "trusted human '${n}' not found (or a bot) — left out"
   fi
-fi
+done < <(mm_trusted_names)
+[[ -n "$TRUSTED" ]] || log "no trusted humans — approvals over the bus stay off (set MM_TRUSTED_HUMANS)"
 
-# --- responsible human, profile ---------------------------------------------
-# Who answers for this agent (RT-6.8): MM_RESPONSIBLE_HUMAN, else the first
-# trusted human. MM_AGENT_KIND=autonomous marks an agent nobody runs
-# interactively. Written to the bot's profile (`position`) with the registration
-# PAT: a bot cannot edit its own profile, so other agents and people can rely
-# on it more than on what the agent says about itself in its HELLO.
-RESPONSIBLE="${MM_RESPONSIBLE_HUMAN:-${TRUSTED%%,*}}"
-RESPONSIBLE="${RESPONSIBLE#@}"
+# --- responsible human ---------------------------------------------------------
+# Who answers for this agent: MM_RESPONSIBLE_HUMAN, else the first trusted human.
+# MM_AGENT_KIND=autonomous marks an agent nobody runs interactively. Both went
+# to the registrar with the registration (bin/mm-agent-register.sh), which can
+# write them into the bot's profile.
+RESPONSIBLE="$(mm_responsible_name)"
 KIND="${MM_AGENT_KIND:-session}"
 [[ "$KIND" == autonomous ]] || KIND=session
-position="${RESPONSIBLE:+for @${RESPONSIBLE}}"
-[[ "$KIND" == autonomous ]] && position+="${position:+ · }autonomous"
-[[ -n "$TRUSTED" ]] && position+="${position:+ · }trusts @${TRUSTED//,/, @}"
-position="${position:0:128}"
-if [[ -n "$position" && -n "${MM_REG_SECRET:-}" ]]; then
-  if ! (MM_BOT_TOKEN="$MM_REG_SECRET"
-        mm_api PUT "/api/v4/users/${MM_BOT_USER_ID}/patch" \
-          "$(jq -nc --arg p "$position" '{position: $p}')" &&
-        [[ "$MM_API_STATUS" == "200" ]]); then
-    log "could not write the bot profile (the registration PAT needs to manage bots) — HELLO only"
-  fi
-fi
 
 # --- contribution ------------------------------------------------------------
-trusted_shown="none (approvals over the bus off)"
+trusted_shown="none (set MM_TRUSTED_HUMANS)"
 [[ -n "$TRUSTED" ]] && trusted_shown="@${TRUSTED//,/, @}"
 # MM_REG_BOT_NAME is deliberately withheld. Not a secret — it is the username
 # without "agent-", and the registrar deletes a bot only with MM_REG_SECRET or

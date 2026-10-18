@@ -40,64 +40,58 @@ def test_register_always_without_project_channel(mm, run):
 
 # --- RT-6.8 -------------------------------------------------------------------
 
-def test_trusted_human_defaults_to_the_registration_pat_user(mm, run):
-    """RT-6.8 step 1: the host looks the PAT's user up; the PAT stays outside."""
-    from conftest import OWNER, PAT
-    r = run(START, MM_REG_SECRET=PAT, MM_PROJECT_CHANNEL="proj-x", **HOST)
-    assert r.code == 0, r.stderr
-    out = json.loads(r.stdout)
-    assert out["env"]["MM_TRUSTED_HUMANS"] == "dembaca"
-    assert out["env"]["MM_TRUSTED_HUMAN_USER_IDS"] == OWNER
-    assert PAT not in r.stdout
-    assert "@dembaca" in out["agentNotes"][0] and "trusted @dembaca" in out["status"][0]
+def register_body(mm) -> dict:
+    return next(b for m, p, b in mm.writes if p == "/register/v1/agents" and m == "POST")
 
 
-def test_trusted_humans_list_overrides_the_pat(mm, run):
-    """RT-6.8 step 1: a team lists its humans; unknown names and bots are left out."""
-    from conftest import OWNER, PAT
-    r = run(START, MM_REG_SECRET=PAT, MM_PROJECT_CHANNEL="proj-x",
+def test_trusted_humans_come_from_the_host_list_only(mm, run):
+    """RT-6.8 step 1: nothing inferred from MM_REG_SECRET (the registrar's shared
+    secret); unknown names and bots are left out."""
+    from conftest import OWNER
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x",
             MM_TRUSTED_HUMANS="dembaca, @kollegin, agent-x, ghost", **HOST)
+    assert r.code == 0, r.stderr
     out = json.loads(r.stdout)
     assert out["env"]["MM_TRUSTED_HUMANS"] == "dembaca,kollegin"
     assert out["env"]["MM_TRUSTED_HUMAN_USER_IDS"] == f"{OWNER},{'k' * 26}"
     assert "trusted @dembaca, @kollegin" in out["status"][0]
     assert "'agent-x' not found" in r.stderr and "'ghost' not found" in r.stderr
+    assert not any(p == "/api/v4/users/me" and "test-secret" in json.dumps(b)
+                   for _, p, b in mm.writes)
 
 
-def test_no_pat_no_trusted_human_and_old_owner_var(mm, run):
-    """RT-6.8 error handling: no PAT → off, said in the banner; MM_OWNER still works."""
+def test_no_list_no_trusted_human(mm, run):
+    """RT-6.8 error handling: without MM_TRUSTED_HUMANS approvals stay off, said in the banner."""
     r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
     out = json.loads(r.stdout)
-    assert "MM_TRUSTED_HUMANS" not in out["env"] and "approvals over the bus stay off" in r.stderr
-    assert "trusted none" in out["status"][0]
+    assert "MM_TRUSTED_HUMANS" not in out["env"]
+    assert "set MM_TRUSTED_HUMANS" in r.stderr and "trusted none" in out["status"][0]
     r = run(START, MM_REG_SECRET="test-secret", MM_OWNER="dembaca",
             MM_PROJECT_CHANNEL="proj-x", **HOST)
     assert json.loads(r.stdout)["env"]["MM_TRUSTED_HUMANS"] == "dembaca"
 
 
-def test_profile_says_whom_the_agent_answers_to(mm, run):
-    """RT-6.8 step 1: responsible and trusted humans go into the bot's profile,
-    written with the PAT — a bot cannot change its own profile."""
-    from conftest import ME, PAT
-    r = run(START, MM_REG_SECRET=PAT, MM_PROJECT_CHANNEL="proj-x",
+def test_registration_says_whom_the_agent_answers_to(mm, run):
+    """RT-6.8 step 1: responsible, trusted and kind go to the registrar, which can
+    put them into the bot's profile; the host does not patch the profile itself."""
+    from conftest import ME
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x",
             MM_TRUSTED_HUMANS="dembaca,kollegin", **HOST)
+    body = register_body(mm)
+    assert body["responsible"] == "dembaca" and body["trusted"] == ["dembaca", "kollegin"]
+    assert body["kind"] == "session"
     env = json.loads(r.stdout)["env"]
     assert env["MM_RESPONSIBLE_HUMAN"] == "dembaca" and env["MM_AGENT_KIND"] == "session"
-    patch = [b for m, p, b in mm.writes if p == f"/api/v4/users/{ME}/patch"]
-    assert patch == [{"position": "for @dembaca · trusts @dembaca, @kollegin"}]
+    assert not any(p == f"/api/v4/users/{ME}/patch" for _, p, _ in mm.writes)
     assert "for @dembaca" in json.loads(r.stdout)["status"][0]
 
 
-def test_autonomous_agent_and_profile_without_permission(mm, run):
-    """RT-6.8 error handling: an autonomous agent says so; a PAT that may not
-    edit bots leaves the profile alone and the session goes on."""
-    from conftest import ME, PAT
-    mm.deny.add(f"/api/v4/users/{ME}/patch")
-    r = run(START, MM_REG_SECRET=PAT, MM_PROJECT_CHANNEL="proj-x",
+def test_autonomous_agent(mm, run):
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x",
             MM_RESPONSIBLE_HUMAN="@ops-team", MM_AGENT_KIND="autonomous", **HOST)
     assert r.code == 0, r.stderr
     out = json.loads(r.stdout)
     assert out["env"]["MM_RESPONSIBLE_HUMAN"] == "ops-team"
     assert out["env"]["MM_AGENT_KIND"] == "autonomous"
     assert "autonomous" in out["agentNotes"][0]
-    assert "could not write the bot profile" in r.stderr
+    assert register_body(mm)["kind"] == "autonomous"

@@ -30,6 +30,23 @@ def env(name: str, default: str = "") -> str:
     return value
 
 
+def _registration_fields(name: str, display: str) -> dict[str, Any]:
+    """Registration body: who the agent answers to goes along (RT-6.8), so the
+    registrar can put it into the bot's profile. Unknown fields are ignored."""
+    trusted = [n.strip().lstrip("@") for n in
+               (env("MM_TRUSTED_HUMANS") or env("MM_OWNER")).split(",") if n.strip()]
+    responsible = env("MM_RESPONSIBLE_HUMAN").strip().lstrip("@") or (trusted[0] if trusted else "")
+    body: dict[str, Any] = {
+        "name": name, "display_name": display,
+        "kind": "autonomous" if env("MM_AGENT_KIND") == "autonomous" else "session",
+    }
+    if responsible:
+        body["responsible"] = responsible
+    if trusted:
+        body["trusted"] = trusted
+    return body
+
+
 def unique_name(base: str) -> str:
     """Append a registration suffix to a bot name.
 
@@ -178,7 +195,7 @@ class MattermostClient:
                 "Authorization": f"Bearer {self.reg_secret}",
                 "Content-Type": "application/json",
             },
-            json={"name": name, "display_name": display},
+            json=_registration_fields(name, display),
         )
         resp.raise_for_status()
         data = resp.json()
@@ -336,9 +353,10 @@ class MattermostClient:
         """The humans whose posts may approve actions (RT-6.8): {user_id: username}.
 
         MM_TRUSTED_HUMAN_USER_IDS with MM_TRUSTED_HUMANS (set by host hooks), else
-        the usernames in MM_TRUSTED_HUMANS looked up with the bot token, else the
-        user the registration secret belongs to — a personal access token. MM_OWNER
-        and MM_OWNER_USER_ID (one human) are read until 0.17. Cached; {} when none.
+        the usernames in MM_TRUSTED_HUMANS looked up with the bot token. MM_OWNER
+        and MM_OWNER_USER_ID (one human) are read as well. Nothing is inferred:
+        MM_REG_SECRET is the registrar's shared secret, nobody's personal token.
+        Cached; {} when none.
         """
         if self._trusted is not None:
             return self._trusted
@@ -363,20 +381,11 @@ class MattermostClient:
                     if not u.get("is_bot"):
                         trusted[u["id"]] = n
                 source = "MM_TRUSTED_HUMANS"
-            elif self.reg_secret:
-                resp = await self._http().get(
-                    f"{self.base_url}/api/v4/users/me",
-                    headers={"Authorization": f"Bearer {self.reg_secret}"},
-                )
-                if resp.status_code == 200 and not resp.json().get("is_bot"):
-                    u = resp.json()
-                    trusted = {u["id"]: u.get("username", "")}
-                    source = "registration PAT"
         except (httpx.HTTPError, KeyError, ValueError):
             trusted = {}
         self._trusted = trusted
         self.trusted_source = source if trusted else (
-            "none: no MM_TRUSTED_HUMANS, host ids or registration PAT")
+            "none: set MM_TRUSTED_HUMANS")
         return trusted
 
     async def get_me(self) -> dict[str, Any]:

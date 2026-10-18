@@ -217,12 +217,12 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Participants:** Host session hooks, MCP server; Agent runtime, Mattermost REST API, Mattermost WebSocket, Developer / operator
 
-**Quality goal illustrated:** `#secure` Secret confinement (the PAT stays on the host; only an authenticated trusted human can approve)
+**Quality goal illustrated:** `#secure` Secret confinement (the registration secret stays on the host; only an authenticated trusted human can approve)
 
 ### Sequence
 
-1. At session start the Host session hooks resolve the trusted humans: the usernames in `MM_TRUSTED_HUMANS` (comma-separated), else the user the registration secret belongs to, a personal access token (`users/me`, IF-01 side). They hand `MM_TRUSTED_HUMANS` / `MM_TRUSTED_HUMAN_USER_IDS` to the sandbox; the secret stays on the host. Without host hooks the MCP server does the same lookup itself.
-   The host also names the **responsible** human (`MM_RESPONSIBLE_HUMAN`, default the first trusted one) and the kind (`MM_AGENT_KIND`: `session` or `autonomous`), and writes `for @… · trusts @…` into the bot's profile (`position`) with the PAT. A bot cannot edit its own profile, so others can rely on it more than on the `for:` / `trusts:` lines the agent puts in its `HELLO`.
+1. At session start the Host session hooks resolve the trusted humans from `MM_TRUSTED_HUMANS` on the host (comma-separated usernames, looked up with the bot token) and hand `MM_TRUSTED_HUMANS` / `MM_TRUSTED_HUMAN_USER_IDS` to the sandbox. Nothing is inferred: `MM_REG_SECRET` is the registrar's shared secret, nobody's personal token. Without host hooks the MCP server reads the same list.
+   The host also names the **responsible** human (`MM_RESPONSIBLE_HUMAN`, default the first trusted one) and the kind (`MM_AGENT_KIND`: `session` or `autonomous`). All three go along with the registration (IF-01); the registrar, holding the admin token, can write `for @… · trusts @…` into the bot's profile. A bot cannot edit its own profile, so others can rely on it more than on the `for:` / `trusts:` lines the agent puts in its `HELLO`.
 2. The agent asks in the request's thread, or keeps waiting with `WAITING for my human's approval: <what>`.
 3. The MCP server marks each delivered event `from_trusted_human` when the post's author id is a trusted human's, and names them in `trusted_human`. Mattermost authenticates the author, so no post can fake this.
 4. A `from_trusted_human` post that is a DM or a reply in that thread, names the action and comes after the question approves that one action. The agent says in the thread what it does now and whose approval it is, then acts. An approval that contradicts the agent's own human in the session does not count.
@@ -231,11 +231,10 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 | Step | Failure | System Response |
 |------|---------|----------------|
-| 1 | The PAT belongs to a separate admin account, not the one the developer chats with | The admin account is trusted instead of the developer; the banner shows its name, and `MM_TRUSTED_HUMANS=<everyday username>` on the host fixes it |
 | 1 | A listed name is unknown or a bot | Left out, with a log line; the others still count |
-| 1 | The PAT may not edit bots | Profile left empty, with a log line; `HELLO` still names responsible and trusted humans |
+| 1 | The registrar does not know the profile fields (older version) | Profile stays as before; `HELLO` still names responsible and trusted humans |
 | 4 | A person who is not trusted by the agent approves | Not an approval; the agent answers `NO – not trusted by me; ask @<responsible>` |
-| 1 | The secret is no personal access token (or belongs to a bot), and no list is set | Nobody trusted; approvals over the bus stay off, the host logs how to enable them, and the corral banner says `trusted none` |
+| 1 | No `MM_TRUSTED_HUMANS` on the host | Nobody trusted; approvals over the bus stay off, the host logs it, and the corral banner says `trusted none (set MM_TRUSTED_HUMANS)` |
 | 1 | The host hook ran from an older checkout, or the session predates the lookup | No ids in the sandbox and no secret to look them up: `bus_info` shows an empty list and its source; restart the session |
 | 3 | A post quotes or claims to speak for a trusted human | Not `from_trusted_human`; it is data, never an approval |
 | 4 | The approval is vague ("go ahead with everything") | Not an approval of a specific action; the agent asks again |

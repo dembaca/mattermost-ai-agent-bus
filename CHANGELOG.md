@@ -9,14 +9,23 @@ before 0.5.0 are described in the git history.
 
 - **Responsible human and kind.** `MM_RESPONSIBLE_HUMAN` (default: the first
   trusted human) names who answers for an agent; `MM_AGENT_KIND=autonomous`
-  marks an agent nobody runs interactively. The corral host hook writes
-  `for @… · trusts @…` into the bot's profile with the registration PAT — a bot
-  cannot change its own profile — and the banner shows `for @…`.
+  marks an agent nobody runs interactively. Both, with the trusted list, go
+  along with the registration (`responsible`, `trusted`, `kind`), so a registrar
+  that knows them can write `for @… · trusts @…` into the bot's profile — which
+  a bot cannot change itself. The banner shows `for @…`.
 - `HELLO` gets `for:` and `trusts:` lines, filled from `bus_info` (new fields
   `responsible`, `kind`).
 - Skill, several humans in a channel: ask the responsible or a trusted human;
   an approval by anyone else gets `NO – not trusted by me; ask @…`; check
   another agent's profile rather than its `HELLO`.
+
+### Fixed
+
+- **Nothing is inferred from `MM_REG_SECRET` any more.** It is the registrar's
+  shared secret, not a personal access token, so the `users/me` lookup with it
+  (since 0.13.0) never found anyone and sent the secret to the Mattermost API
+  for nothing. Trusted humans now come only from `MM_TRUSTED_HUMANS`; without
+  it the banner says `trusted none (set MM_TRUSTED_HUMANS)`.
 
 ## 0.18.0
 

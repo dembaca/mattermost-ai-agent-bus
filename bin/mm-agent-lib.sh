@@ -284,6 +284,27 @@ mm_roster_json() {
         | .crown = (.reachable and .emoji == "crown"))' <<<"$users")" || return 1
 }
 
+# Trusted humans as configured (RT-6.8): MM_TRUSTED_HUMANS, comma-separated,
+# "@" and spaces dropped; MM_OWNER (one name) until 0.17-era configs are gone.
+# Prints one username per line.
+mm_trusted_names() {
+  local n
+  IFS=',' read -ra _names <<<"${MM_TRUSTED_HUMANS:-${MM_OWNER:-}}"
+  for n in "${_names[@]}"; do
+    n="${n//[[:space:]]/}"; n="${n#@}"
+    [[ -n "$n" ]] && printf '%s\n' "$n"
+  done
+  return 0
+}
+
+# Who answers for the agent: MM_RESPONSIBLE_HUMAN, else the first trusted human.
+mm_responsible_name() {
+  local r="${MM_RESPONSIBLE_HUMAN:-}"
+  r="${r//[[:space:]]/}"; r="${r#@}"
+  [[ -n "$r" ]] || r="$(mm_trusted_names | head -1)"
+  printf '%s' "$r"
+}
+
 # Install paths of the mattermost-ai-agent-bus Claude Code plugin, newest
 # version first: the host's own Claude config and every corral private home.
 # Read-only; used to tell whether the host copy of the corral hooks is current.
