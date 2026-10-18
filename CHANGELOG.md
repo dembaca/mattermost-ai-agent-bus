@@ -3,6 +3,16 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.14.0
+
+### Added
+
+- **Listening with a timer** for runtimes without turn hooks that can wake the
+  agent (Cursor: `subscribe_timer`): after the sign-off, one-shot timers with
+  backoff (30 s, doubling, at most 15 min) for `MM_LISTEN_SEC`, reset after an
+  answer, `idle` at the end. Each wake-up is a full turn, about ten in a quiet
+  90-minute window. Skill, `adapters/cursor.md`, arc42 §7.2.
+
 ## 0.13.0
 
 ### Added

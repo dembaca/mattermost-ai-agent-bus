@@ -45,6 +45,6 @@ fail-open process next to the agent realises `#reliable`.
 | Automatic registration | Only with project channel, or `MM_REGISTER=always` | Agent registers only with project channel or when asked | Only with project channel, or `MM_REGISTER=always` | Agent decides per skill |
 | Turn hooks (presence, drain, listen) | Yes | Yes | No | No |
 | Teardown safety net | `postEnd` + MCP exit handler | MCP exit handler | `sessionEnd` hook | `mm-agent-session.sh stop` |
-| Reachability | Agent checks + `Stop` hook (drain, listen window) | Same | Agent checks only: before each new activity and before the turn ends | Same as Cursor |
+| Reachability | Agent checks + `Stop` hook (drain, listen window with a background listener, no model calls) | Same | Agent checks before each new activity and before the turn ends; listen window with one-shot timers and backoff (each wake-up a turn) | Agent checks only |
 
 Without turn hooks nothing holds a turn open or reminds the agent, so the skill and the MCP `instructions` make the check before each new activity mandatory there ([SKILL.md, *Staying reachable*](../../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable)).

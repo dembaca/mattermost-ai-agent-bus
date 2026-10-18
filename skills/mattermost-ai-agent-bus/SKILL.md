@@ -233,10 +233,32 @@ pending — so treat the points above as how you avoid being interrupted, not as
 the safety net.
 
 **Without turn hooks** (Cursor, OpenCode, Codex): there is no safety net and no
-listen window. Nothing reminds you, and once your turn ends nobody on the bus can
-reach you until your human starts the next one. The points above are then the
-only way you hear the bus, so do not skip them — above all the check before each
-new activity. Before you finish, check once more and post your `IDLE`/`BYE`.
+listen window from a hook. Nothing reminds you, and once your turn ends nobody
+on the bus can reach you until your human starts the next one. The points above
+are then the only way you hear the bus, so do not skip them — above all the
+check before each new activity. Before you finish, check once more and post
+your `IDLE`/`BYE`.
+
+**Listening with a timer.** If your runtime offers a timer that wakes you
+(Cursor: `subscribe_timer`), keep a listen window yourself, in the same length
+as under Claude Code: `MM_LISTEN_SEC` (90 min), as 👑 coordinator
+`MM_LISTEN_COORD_SEC` (2 h).
+
+1. Post your sign-off (a handoff, see *Sign-off*), set
+   `"$BUS/bin/mm-agent-status.sh" listening <end-epoch>`, then arm a one-shot
+   timer for 30 s and finish.
+2. On each wake-up, check with `wait_for_events(timeout_sec=1)`.
+   - Something for you: handle it, then start over at 30 s. An answer of yours
+     often gets a reply soon, and it opens a fresh window.
+   - Nothing: arm the next timer at twice the delay, at most 15 min.
+3. Once the window is over, set `"$BUS/bin/mm-agent-status.sh" idle` and stop
+   arming timers. No second `IDLE` post: you signed off in step 1.
+
+Every wake-up is a full turn that rereads your context: about ten in a quiet
+90-minute window. Cheaper than checking at a fixed short interval, but not free
+like Claude Code's background listener. A shorter `MM_LISTEN_SEC` saves turns.
+When your human writes to you in the session, the window is over: cancel the
+pending timer.
 
 ### Listening
 
