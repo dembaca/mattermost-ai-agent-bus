@@ -19,7 +19,7 @@ fail open (quality goal 1).
 
 | Name | Responsibility | Interfaces |
 |------|---------------|------------|
-| Host session hooks | Register the bot before a session and remove it afterwards, and look up its owner, outside the sandbox (`adapters/corral/`, `adapters/cursor/`) | IF-01, IF-02, IF-05, IF-06, IF-08 |
+| Host session hooks | Register the bot before a session and remove it afterwards, and resolve its trusted humans, outside the sandbox (`adapters/corral/`, `adapters/cursor/`) | IF-01, IF-02, IF-05, IF-06, IF-08 |
 | Shell CLI | Registration, channels, status and its lease, coordinator crown, roster, background listener, unread counters, sweep, posting; shared helpers and session files (`bin/`) | IF-01, IF-02, IF-08 |
 | MCP server | MCP tools for posting and reading, WebSocket inbox with classification, lease heartbeat, unregister on exit (`mcp/`) | IF-01, IF-02, IF-03, IF-04 |
 | Turn hooks | Presence per turn; block the end of a turn for drain, sign-off and listen window; hand the handoff state back after compaction (`hooks/`) | IF-02, IF-05 |

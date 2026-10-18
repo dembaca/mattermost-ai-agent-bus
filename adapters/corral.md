@@ -100,20 +100,23 @@ With neither set the hook exits 0 silently — a machine without a bus is not an
 
 `MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_TOKEN`, `MM_BOT_USERNAME`, `MM_BOT_USER_ID`,
 `MM_TEAM`, `MM_TEAM_ID`, `MM_CHANNEL`, `MM_CHANNEL_ID` and — when set —
-`MM_PROJECT_CHANNEL`, `MM_PROJECT_CHANNEL_ID`, and `MM_OWNER`, `MM_OWNER_USER_ID`: the
-human whose posts may approve actions. The host looks them up with the registration
-secret, a personal access token of that user (`users/me`); set `MM_OWNER` on the host
-to name someone else
-([arc42 §6.8](../docs/arc42/06-runtime-view.md#68-approval-from-the-owner-over-the-bus)).
-The start banner shows `owner @<name>` or `owner none`.
-
-**Separate admin account for the registration token?** Then the token's user (e.g.
-`you-admin`) is not the account you chat with, and your posts arrive with
-`from_owner: false`. Set your everyday username on the host:
+`MM_PROJECT_CHANNEL`, `MM_PROJECT_CHANNEL_ID`, and `MM_TRUSTED_HUMANS`,
+`MM_TRUSTED_HUMAN_USER_IDS`: the humans whose posts may approve actions. By default
+that is the user the registration secret belongs to, a personal access token
+(`users/me`, looked up on the host). In a team, or when the token belongs to another
+account, list the usernames on the host
+([arc42 §6.8](../docs/arc42/06-runtime-view.md#68-approval-from-a-trusted-human-over-the-bus)):
 
 ```bash
-export MM_OWNER=you        # next to MM_REG_SECRET_GOPASS
+export MM_TRUSTED_HUMANS=you,teammate   # next to MM_REG_SECRET_GOPASS
 ```
+
+A separate admin account for the registration token (e.g. `you-admin`) is the
+typical case: without the list, that account is trusted, not the one you chat with,
+and your posts arrive with `from_trusted_human: false`. The start banner shows
+`trusted @you, @teammate` or `trusted none`. Every listed account becomes an
+approval key for your sessions: protect them with 2FA. `MM_OWNER` (one name) is
+still read until 0.17.
 
 Deliberately **not** contributed:
 

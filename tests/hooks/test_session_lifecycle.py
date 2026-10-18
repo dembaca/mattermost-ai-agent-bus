@@ -40,24 +40,36 @@ def test_register_always_without_project_channel(mm, run):
 
 # --- RT-6.8 -------------------------------------------------------------------
 
-def test_owner_is_the_user_the_registration_pat_belongs_to(mm, run):
-    """RT-6.8 step 1: the host looks the owner up with the PAT; the PAT stays outside."""
+def test_trusted_human_defaults_to_the_registration_pat_user(mm, run):
+    """RT-6.8 step 1: the host looks the PAT's user up; the PAT stays outside."""
     from conftest import OWNER, PAT
     r = run(START, MM_REG_SECRET=PAT, MM_PROJECT_CHANNEL="proj-x", **HOST)
     assert r.code == 0, r.stderr
-    env = json.loads(r.stdout)["env"]
-    assert env["MM_OWNER"] == "dembaca" and env["MM_OWNER_USER_ID"] == OWNER
+    out = json.loads(r.stdout)
+    assert out["env"]["MM_TRUSTED_HUMANS"] == "dembaca"
+    assert out["env"]["MM_TRUSTED_HUMAN_USER_IDS"] == OWNER
     assert PAT not in r.stdout
-    assert "@dembaca" in json.loads(r.stdout)["agentNotes"][0]
-    assert "owner @dembaca" in json.loads(r.stdout)["status"][0]
+    assert "@dembaca" in out["agentNotes"][0] and "trusted @dembaca" in out["status"][0]
 
 
-def test_owner_override_and_no_pat(mm, run):
-    """RT-6.8 error handling: MM_OWNER overrides; a secret that is no PAT leaves it off."""
+def test_trusted_humans_list_overrides_the_pat(mm, run):
+    """RT-6.8 step 1: a team lists its humans; unknown names and bots are left out."""
+    from conftest import OWNER, PAT
+    r = run(START, MM_REG_SECRET=PAT, MM_PROJECT_CHANNEL="proj-x",
+            MM_TRUSTED_HUMANS="dembaca, @kollegin, agent-x, ghost", **HOST)
+    out = json.loads(r.stdout)
+    assert out["env"]["MM_TRUSTED_HUMANS"] == "dembaca,kollegin"
+    assert out["env"]["MM_TRUSTED_HUMAN_USER_IDS"] == f"{OWNER},{'k' * 26}"
+    assert "trusted @dembaca, @kollegin" in out["status"][0]
+    assert "'agent-x' not found" in r.stderr and "'ghost' not found" in r.stderr
+
+
+def test_no_pat_no_trusted_human_and_old_owner_var(mm, run):
+    """RT-6.8 error handling: no PAT → off, said in the banner; MM_OWNER still works."""
     r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
-    env = json.loads(r.stdout)["env"]
-    assert "MM_OWNER" not in env and "approvals over the bus stay off" in r.stderr
-    assert "owner none" in json.loads(r.stdout)["status"][0]
-    r = run(START, MM_REG_SECRET="test-secret", MM_OWNER="someone",
+    out = json.loads(r.stdout)
+    assert "MM_TRUSTED_HUMANS" not in out["env"] and "approvals over the bus stay off" in r.stderr
+    assert "trusted none" in out["status"][0]
+    r = run(START, MM_REG_SECRET="test-secret", MM_OWNER="dembaca",
             MM_PROJECT_CHANNEL="proj-x", **HOST)
-    assert json.loads(r.stdout)["env"]["MM_OWNER"] == "someone"
+    assert json.loads(r.stdout)["env"]["MM_TRUSTED_HUMANS"] == "dembaca"
