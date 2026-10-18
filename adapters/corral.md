@@ -16,6 +16,31 @@ register or delete agents itself.
 
 ## Config
 
+**First install the hooks on the host**, in a normal terminal outside corral, from the
+installed plugin:
+
+```bash
+bash "$(ls -d ~/.cache/corral/home-*/.claude/plugins/cache/*/mattermost-ai-agent-bus/*/ \
+        | sort -V | tail -1)bin/mm-agent-host-install.sh"
+# or from a checkout you trust: bin/mm-agent-host-install.sh --from .
+```
+
+The installer finds the newest installed plugin itself; `--from DIR` picks another
+source. The host copy is only as trustworthy as that source at install time, so run
+it right after updating the plugin, before working in a session.
+
+It copies `adapters/corral/` and `bin/` to `~/.local/share/mm-agent-bus/current/`,
+where no sandbox can change them, and prints the config below. **Rerun it after every
+plugin update**; `mm-agent-host-install.sh --check` tells whether the host copy is
+current, and the start hook says so in the banner when it is not.
+
+**Never point `exec` at the plugin directory or at a checkout a session works in.**
+The hooks run on the host with the registration secret, and corral approves only the
+`exec` file by content, not the scripts it sources and starts. Both locations are
+writable from inside a sandbox
+([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
+The start hook warns if it finds itself there.
+
 The bus is not repo-specific, so this belongs in the **global** config
 `~/.config/corral/config.yml`:
 
@@ -25,16 +50,17 @@ providers:
     enabled: true
     preStart:
       mm-bus:
-        exec: ~/git/github.com/dembaca/mattermost-ai-agent-bus/adapters/corral/10-mm-session-start.sh
+        exec: ~/.local/share/mm-agent-bus/current/adapters/corral/10-mm-session-start.sh
         optional: true
     postEnd:
       mm-bus:
-        exec: ~/git/github.com/dembaca/mattermost-ai-agent-bus/adapters/corral/90-mm-session-stop.sh
+        exec: ~/.local/share/mm-agent-bus/current/adapters/corral/90-mm-session-stop.sh
         optional: true
 ```
 
-`~` is expanded in `exec`, so the same entry works from any working directory. Both
-scripts need the executable bit (`chmod +x adapters/corral/*.sh`).
+`~` is expanded in `exec`, so the same entry works from any working directory. After
+each reinstall corral asks once to approve the changed hooks: that prompt is your
+check that new host code is about to run.
 
 **`optional: true` is deliberate**: a Mattermost outage then degrades to a warning
 instead of blocking every `corral run` on the machine. Set it to `false` if a session
@@ -80,10 +106,6 @@ secret, a personal access token of that user (`users/me`); set `MM_OWNER` on the
 to name someone else
 ([arc42 §6.8](../docs/arc42/06-runtime-view.md#68-approval-from-the-owner-over-the-bus)).
 The start banner shows `owner @<name>` or `owner none`.
-
-The hooks run from the path in `exec`. Point it at a checkout that stays on a
-released state (`main` or a tag); a development checkout switched to another
-branch hands every session started meanwhile that branch's hook.
 
 Deliberately **not** contributed:
 
