@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.14.1
+
+### Added
+
+- **`bus_info` MCP tool:** plugin version (the MCP server reports the same in
+  its server info and instructions), bot, owner with the source it came from,
+  work channel, crown. Owner `none` means approvals over the bus are off.
+- The corral start banner shows `owner @<name>` or `owner none`.
+
+### Fixed (docs)
+
+- `adapters/corral.md`: point the hooks' `exec` at a checkout that stays on a
+  released state. A development checkout on another branch handed sessions an
+  older hook, so `from_owner` stayed `false`.
+
 ## 0.14.0
 
 ### Added

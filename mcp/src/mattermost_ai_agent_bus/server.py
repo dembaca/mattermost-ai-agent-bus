@@ -11,6 +11,7 @@ import signal
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
@@ -20,6 +21,18 @@ from .client import MattermostClient
 from .websocket_inbox import WebSocketInbox
 
 log = logging.getLogger(__name__)
+
+
+def _plugin_version() -> str:
+    """The plugin's version: the MCP server ships inside the plugin, so they match."""
+    root = Path(__file__).resolve().parents[3]
+    try:
+        return json.loads((root / ".claude-plugin" / "plugin.json").read_text())["version"]
+    except (OSError, ValueError, KeyError):
+        return "unknown"
+
+
+VERSION = _plugin_version()
 
 
 async def _bus_client() -> MattermostClient | None:
@@ -42,7 +55,7 @@ async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
 mcp = MCPServer(
     "mattermost-ai-agent-bus",
     instructions=(
-        "Mattermost agent bus. When MM_BOT_TOKEN is already set, a host-side session "
+        f"Mattermost agent bus {VERSION}. When MM_BOT_TOKEN is already set, a host-side session "
         "hook registered the bot and resolved the channels — post/reply directly and "
         "do NOT call session_start/session_end. When MM_BOT_TOKEN is unset: with "
         "MM_PROJECT_CHANNEL set, register with session_start (needs MM_REG_SECRET) and "
@@ -59,6 +72,7 @@ mcp = MCPServer(
         "Never create channels or teams."
     ),
     lifespan=_lifespan,
+    version=VERSION,
 )
 
 _client: MattermostClient | None = None
@@ -145,6 +159,31 @@ async def session_end(name: str = "") -> str:
         _inbox = None
     await client.session_end(name or None)
     return _dump({"ok": True, "ended": name or os.environ.get("MM_REG_BOT_NAME", "")})
+
+
+@mcp.tool()
+async def bus_info() -> str:
+    """This bus session at a glance: plugin/MCP version, bot, owner, channels.
+
+    owner says whose posts are marked from_owner and where that came from; if it
+    is "none", approvals over the bus are off for this session.
+    """
+    client = _get_client()
+    me = await client.get_me()
+    owner_id = await client.owner_id()
+    owner: dict[str, Any] = {"id": owner_id or None, "source": client.owner_source}
+    if owner_id:
+        try:
+            owner["username"] = (await client._api("GET", f"/api/v4/users/{owner_id}"))["username"]
+        except Exception:  # noqa: BLE001 — diagnostic only
+            pass
+    return _dump({
+        "version": VERSION,
+        "bot": {"username": me.get("username"), "id": me.get("id")},
+        "owner": owner,
+        "work_channel": client.work_channel_name,
+        "crown": lease.crown_held(me.get("id", "")),
+    })
 
 
 @mcp.tool()

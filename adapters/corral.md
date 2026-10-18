@@ -79,6 +79,11 @@ human whose posts may approve actions. The host looks them up with the registrat
 secret, a personal access token of that user (`users/me`); set `MM_OWNER` on the host
 to name someone else
 ([arc42 §6.8](../docs/arc42/06-runtime-view.md#68-approval-from-the-owner-over-the-bus)).
+The start banner shows `owner @<name>` or `owner none`.
+
+The hooks run from the path in `exec`. Point it at a checkout that stays on a
+released state (`main` or a tag); a development checkout switched to another
+branch hands every session started meanwhile that branch's hook.
 
 Deliberately **not** contributed:
 

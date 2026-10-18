@@ -76,3 +76,32 @@ async def test_from_owner_marks_only_the_owners_posts(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: _C())
     events = json.loads(await server.wait_for_events(timeout_sec=1))
     assert [e["from_owner"] for e in events] == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_bus_info_reports_version_and_owner_source(monkeypatch):
+    """RT-6.8 error handling: the agent can see whether approvals are on, and why."""
+    monkeypatch.setenv("MM_OWNER_USER_ID", OWNER)
+    c = _client()
+
+    async def api(method, path, **_):
+        if path == "/api/v4/users/me":
+            return {"id": "b" * 26, "username": "agent-x"}
+        assert path == f"/api/v4/users/{OWNER}"
+        return {"username": "dembaca"}
+
+    monkeypatch.setattr(c, "_api", api)
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    info = json.loads(await server.bus_info())
+    plugin = json.loads((server.Path(server.__file__).resolve().parents[3]
+                         / ".claude-plugin" / "plugin.json").read_text())
+    assert info["version"] == plugin["version"] == server.VERSION
+    assert info["owner"] == {"id": OWNER, "source": "MM_OWNER_USER_ID (host)", "username": "dembaca"}
+
+
+@pytest.mark.asyncio
+async def test_owner_source_says_why_it_is_missing(monkeypatch):
+    for v in ("MM_OWNER_USER_ID", "MM_OWNER"):
+        monkeypatch.delenv(v, raising=False)
+    c = _client()
+    assert await c.owner_id() == "" and c.owner_source.startswith("none")

@@ -176,7 +176,7 @@ jq -nc \
   --arg owner "$OWNER" \
   --arg ownerid "$OWNER_ID" \
   --arg note "$note" \
-  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}" \
+  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}, owner ${OWNER:+@}${OWNER:-none (approvals over the bus off)}" \
   '{
      corralContributionVersion: 1,
      env: ({
