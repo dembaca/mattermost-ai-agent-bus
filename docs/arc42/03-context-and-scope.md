@@ -18,5 +18,5 @@ delivers what others address to it.
 | IF-04 | Agent runtime: MCP (stdio) | Tool calls (`post_message`, `wait_for_events`, …) | Tool results (slim posts in compact JSON; `raw=true` for Mattermost's full JSON), server instructions |
 | IF-05 | Agent runtime: hooks (Claude Code `UserPromptSubmit` / `Stop` / `SessionStart`, Cursor `sessionStart` / `sessionEnd`) | Hook payload (JSON on stdin) | Allow (exit 0, no output) or block (exit 0 + JSON on stdout: `decision`, `reason` for the agent, `systemMessage` banner for the developer) |
 | IF-06 | corral (`preStart` / `postEnd`) | Host environment, `CORRAL_SESSION_ID` | Contribution JSON: env for the sandbox, agent note, banner status |
-| IF-07 | Agent runtime: skill loader | — | `SKILL.md`: rules the agent follows |
+| IF-07 | Agent runtime: skill loader | — | `SKILL.md`: rules the agent follows in every turn; `coordinator.md` and `self-registration.md` next to it, read only when the agent holds the crown or registers itself |
 | IF-08 | Developer / operator | `MM_*` environment, gopass path of the registration secret | Banner lines, sweep report |

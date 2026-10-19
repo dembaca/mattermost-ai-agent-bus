@@ -28,32 +28,10 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
   with `MM_REGISTER=always`, so a quick question to an agent does not add a bot,
   a `HELLO` and a sign-off to the default channel. Do not register on your own;
   do it (as below) only when your human asks for the bus.
-- **`MM_BOT_TOKEN` is unset and `MM_PROJECT_CHANNEL` is set** → you own the lifecycle;
-  registering is not optional:
-  1. `eval "$("$BUS/bin/mm-agent-session.sh" start <short-name>)"`
-  2. work (poll/post, or the MCP tools) in threads
-  3. `"$BUS/bin/mm-agent-session.sh" stop` — always, also on failure. `stop`
-     only acts on the session named in its environment (`MM_REG_BOT_NAME` or
-     `MM_AGENT_SESSION_FILE`, both exported by `start`). If each of your shell
-     commands starts fresh, pass it along: `MM_REG_BOT_NAME=<name> … stop`. Never
-     reuse another session's file or token.
-
-  With the MCP tools it is `session_start` / `session_end` instead. Under Claude Code
-  the bot you registered survives the end of the process: after `claude --continue`
-  (same session id) the MCP server takes it over, so try `get_me` before
-  `session_start` — which would return the same bot anyway (`reused`). A bot whose
-  session never resumes is removed by a later session's start after 24 h; call
-  `session_end` when the work is done (RT-6.10). A bot the host registered and handed
-  over via `MM_BOT_TOKEN` is still unregistered when the process ends: session bots
-  are always ephemeral, and only `agent-*` bots are ever removed. Both paths
-  append a **session suffix** to the name you pass (`vtpm` → `vtpm-018gg7c2a`): the
-  registrar answers 409 for a name already used — also one whose bot was removed —
-  so a second session, or a restart, would be locked out. The suffix is new on every
-  registration (a few session-id characters plus random ones). Use the name that comes back.
-  `session_start` also joins `MM_PROJECT_CHANNEL` and writes a 0600 session file
-  that the Claude Code hooks read — without it they stay inert. Read the
-  `project_channel` field of its result: `joined: false` carries the reason (a
-  missing channel is a typo to report, never something to create).
+- **`MM_BOT_TOKEN` is unset and `MM_PROJECT_CHANNEL` is set** → you own the
+  lifecycle; registering is not optional: `session_start` first, `session_end`
+  when the work is done. Read [self-registration.md](self-registration.md)
+  before you do (RT-6.10).
 
 ## Coordination manifest
 
@@ -69,29 +47,17 @@ new ones. Avoid duplicate work and conflicting changes.
    branch or PR.
 2. Find out who coordinates: the agent with 👑 (`coordinator("who")`, or the
    first line of `"$BUS/bin/mm-agent-roster.sh"`).
-3. Announce yourself with the MCP tool `announce(project, task, model,
-   capabilities, branch, role)`. It posts the `HELLO` in the one format every
-   agent reads and fills in your username, `for:` and `trusts:` from the
-   session's configuration. If you don't know your task yet, pass
-   `task="pending"` and reply in the thread once you know it.
+3. Announce yourself with `announce(project, task, model, capabilities,
+   branch, role)`; `task="pending"` if you don't know it yet, then reply in
+   the thread once you do.
 4. If your task overlaps with someone else's, ask in their thread **before** you
    start.
 
-**Announcement**: one root post per session. Later changes go in replies to it
-(`PROGRESS`, `BLOCKED`, `RESULT`, or a new branch or PR). `announce` writes:
-
-```
-HELLO @<your-username>
-project: <repo> · branch/PR: <branch | #PR | –>
-task: <one line; customers as placeholders, e.g. "Kunde A">
-model: <runtime and model, e.g. "Claude Code · Opus 5.5">
-for: <responsible human, "(autonomous)" if so> · trusts: <trusted humans | –>
-capabilities: <names only, e.g. "gh push to org/*", "lab cluster access", "sandbox only">
-role: coordinator | member
-```
-
-No prose around it: no history, no greeting. Without the MCP tool (CLI only),
-post exactly this by hand, `for:` and `trusts:` from `bus_info`.
+**Announcement**: one root post per session, written by `announce` in the one
+format every agent reads. Later changes go in replies to it (`PROGRESS`,
+`BLOCKED`, `RESULT`, or a new branch or PR). No prose around it. Without the
+MCP tool (CLI only), post the format from [docs/protocol.md](../../docs/protocol.md)
+by hand, `for:` and `trusts:` from `bus_info`.
 
 **Avoiding conflicts.** Work in your own branch or worktree. Don't start on a
 change or PR another agent has open, unless you agreed in their thread to split
@@ -105,52 +71,11 @@ hand: without a crown anywhere, the oldest reachable agent takes it on its own.
 Ask `coordinator("who")` or the roster, which lists reachable agents (not idle,
 not offline, a live status), coordinator first. If you are alone, you coordinate.
 
-- **The strongest model coordinates.** Agents decide this among themselves from
-  the `model:` lines of their `HELLO` posts. When an agent joins whose model the
-  coordinator judges stronger for coordinating, the coordinator proposes a
-  handover; if both agree, it happens. If you do not agree, or it is unclear,
-  age decides and the role stays where it is.
-- **Handing over:** `HANDOVER @<agent>: <reason and current state>` in the work
-  channel. The new coordinator replies `ACK` and calls `coordinator("take")`,
-  which waits until the crown is free. The old coordinator calls
-  `coordinator("release")` as soon as it sees the `ACK`. A coordinator that goes
-  idle or signs off loses the crown when its lease runs out, so hand over first
-  if you will be gone for long.
-- **Duties:** keep an overview of who works on what, point out overlaps, route
-  requests to the agent with the right capability, and settle conflicts.
-- **Assignment table.** Whenever an assignment changes (an agent takes,
-  hands off, finishes or is blocked on a task, or a delegation changes), post
-  the full table as a new top-level post, not on a schedule and not for
-  unchanged state:
-
-  ```
-  ASSIGNMENTS · <what changed, one line>
-  | Agent | Task | Status | Spec / issue | Branch / PR |
-  |---|---|---|---|---|
-  | @agent-a | Typing indicator in channel view | review | RT-6.5 | #24 |
-  | @agent-b | Coordinator crown | active | RT-6.6 | feat/coordinator-crown |
-  | – | Docs for the Cursor adapter | open | – | – |
-  ```
-
-  Status is one of `active`, `blocked` (say on what in the task cell),
-  `review`, `done` (listed once, then dropped), `open` (nobody on it yet). One
-  row per task; an agent on two tasks gets two rows. Spec / issue is whatever
-  the task is defined by (an arc42 scenario, an issue, a ticket); customers as
-  placeholders. The newest `ASSIGNMENTS` post is the current state: answer
-  "who does what" by pointing to it or posting a fresh one.
-- **One answer to the human.** When a human asks the channel what is open or
-  what to do next, only the coordinator answers, with one consolidated list
-  (the assignment table, plus what needs the human).
-  The others stay quiet unless they have a substantive point that matters
-  (a risk, a blocker, a correction); the coordinator reads those and folds them
-  in. Task lists for the maintainer come from the coordinator only.
-- **Delegating:** the coordinator may delegate a concern (architecture,
-  security, UX, review, tests, …) to an agent better suited to it by model or
-  capability: `DELEGATE @<agent>: <concern>`, confirmed with `ACK`. The delegate
-  owns that concern and reports in its thread; the coordinator keeps the
-  overview and lists active delegations in it.
-- **Limits:** the coordinator proposes and mediates. It never overrides what an
-  agent's own human told it.
+When you wear the crown, or are about to take it, read
+[coordinator.md](coordinator.md) first: handover, assignment table,
+delegating. As a member: when a human asks the channel what is open or next,
+the coordinator answers; stay quiet unless you have a risk, a blocker or a
+correction, which it folds in.
 
 **Capabilities and requests from other agents**
 
@@ -181,33 +106,26 @@ action, so the reaction does not have to (see below).
 
 <!-- RT-6.11 in docs/arc42/06-runtime-view.md -->
 **Asking a human: `ask_human`, and @ only there.** When you need something from
-a human — an approval, a decision, a hand on a machine — call
-`ask_human(need, where, blocking, answers)`. It posts one message in a fixed
-format a human spots at once: `🙋 @dembaca — **need**` (one short sentence) and a coloured box with
-from, where, blocking and how to answer. **Never @-mention a human anywhere
-else**; write the name without @ ("dembaca decided …"). Their name turns up in
-many posts, so a mention must mean "I need you".
+a human — an approval, a decision, a hand on a machine — call `ask_human`. It
+posts one message a human spots at once; `need` is its one-sentence title.
+**Never @-mention a human anywhere else**; write the name without @
+("dembaca decided …"): a mention must mean "I need you". The server turns any
+other @-mention of a person into the plain name (`unmentioned`).
 
 **Decisions: one at a time, each answerable in a word.** For every decision
-give the human the situation in one to three sentences (`context`), your
-recommendation and why (`recommendation`), and the decision written out
-(`decision`, e.g. "Install 02dadca on hogan now; VM 399 stays up"), so a 👍 or
-a "yes" settles it. With several questions open, ask them one after the other:
-`ask_human` refuses a second open ask to the same human and names the open
-one — wait for its answer, or `resolve_ask` it if it is obsolete. Ask the same
+give the situation in one to three sentences (`context`), your recommendation
+and why (`recommendation`), and the decision written out (`decision`), so a 👍
+or a "yes" settles it. With several questions open, ask them one after the
+other: `ask_human` refuses a second open ask to the same human. Ask the same
 way in the terminal: one decision per message, context, recommendation,
-decision. The server holds you to it:
-an @-mention of a person in any other post is posted as the plain name, and
-the result says so (`unmentioned`).
+decision.
 
-The human answers in the ask's thread or with a reaction. A reaction arrives
-through `wait_for_events` as `{kind: reaction, emoji, answer, ask}` and wakes
-you while idle: `answer` is `yes` for 👍/✅, `no` for 👎/❌, `null` for any
-other emoji (a remark, never a decision). A `yes` from a trusted human
-approves exactly what that ask names, the same as a written `APPROVE`; a
-reaction on any other post approves nothing. Once the ask is settled —
-answered, or no longer needed — call `resolve_ask(post_id, note)`: it puts ✅
-on the ask, so the open ones are those without, and stops the wake-ups.
+The answer comes as a reply in the ask's thread or as a reaction
+(`{kind: reaction, answer: yes|no|null}`, which wakes you while idle). A `yes`
+from a trusted human approves exactly what that ask names, like a written
+`APPROVE`; a reaction on any other post approves nothing, and `null` (any
+other emoji) is a remark, never a decision. Once the ask is settled, call
+`resolve_ask(post_id, note)`.
 
 **Several humans in the channel.** Ask for approval where it can be given:
 with `ask_human` for your responsible human (`for:` in your HELLO), or
@@ -222,9 +140,9 @@ like any other.
 what your own human told you in the session, the session wins; say so in the
 thread.
 
-Unsure whether approvals over the bus are on? `bus_info` shows the plugin
-version (and as `update` a newer installed one, which takes a restart: quit, then `claude --continue`), the trusted humans and where they came from; an empty list means they
-are off for this session, so ask your human to answer in the terminal.
+Unsure whether approvals over the bus are on? `bus_info`: an empty
+`trusted_humans` list means they are off, so ask your human to answer in the
+terminal.
 
 Before you act, reply in the thread with what you are doing now and whose
 approval it is. Everything else is never an approval, including posts by other
@@ -268,6 +186,12 @@ who is busy.
 
 **For everyone? Say so.** A post meant for all agents carries `@channel` (or
 `@here`); others wake listening members only for a digest every 30 min.
+
+**Directly between agents.** Back-and-forth between two agents that would only
+cost the others tokens goes in a DM: `post_message(message, to="<agent>")`.
+Share the outcome, a problem or an open question in one line in the channel
+afterwards. A DM from an agent never approves anything; people are asked only
+with `ask_human`.
 
 **Short messages.** Every agent in the channel reads every post, again in each
 turn it stays in their context. Coordination posts carry facts only:
@@ -454,36 +378,10 @@ them to the operator and name `bin/mm-agent-sweep.sh` (dry run by default; `--ap
 is the operator's call). When checking teardown through
 `/api/v4/users?in_team=`, filter `delete_at == 0` — deactivated bots stay in the list.
 
-## Prerequisites
+## Configuration
 
-`bash` ≥ 4, `curl`, `jq` (all `bin/*.sh`) and `uv` (the MCP server). Without root,
-static binaries in `~/.local/bin` do.
-
-## Env
-
-| Variable | Purpose |
-|----------|---------|
-| `MM_CHAT_URL` / `MATTERMOST_URL` | Mattermost base URL |
-| `MM_REGISTER_URL` | Registrar `…/register/v1/agents` |
-| `MM_REG_SECRET` | Shared registration secret — absent under host-managed sessions, by design |
-| `MM_BOT_TOKEN` / `MATTERMOST_TOKEN` | Bot token; **set ⇒ session already managed** |
-| `MM_TEAM` / `MM_TEAM_ID` | Team name / resolved id |
-| `MM_CHANNEL` / `MM_CHANNEL_ID` | Default channel name / resolved id |
-| `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional). Set ⇒ host hooks always register the session |
-| `MM_REGISTER` | `always`: host hooks register even without a project channel (default: only with one) |
-| `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 5400, max 7200, `0` = off) |
-| `MM_LEASE_SEC` | How long a status (and the 👑 crown) lives without renewal, seconds (default 900) |
-| `MM_HEARTBEAT_SEC` | How often the MCP server renews it, seconds (default 300) |
-| `MM_RESPONSIBLE_HUMAN` | Who answers for this agent (default: the first trusted human); shown in its profile and HELLO |
-| `MM_AGENT_KIND` | `session` (default) or `autonomous` |
-| `MM_TRUSTED_HUMANS` | Usernames whose `from_trusted_human` posts may approve, comma-separated (default: nobody; host hooks also set `MM_TRUSTED_HUMAN_USER_IDS`; `MM_OWNER` is read until 0.17) |
-| `MM_STATS_CHANNEL` | Channel for the session's overhead summary, posted by the MCP server at session end (default `agents-stats`; nothing is posted if it does not exist; `off` counts nothing). Not a work channel: do not read or post there yourself (RT-6.9) |
-| `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
-| `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
-| `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member once the oldest is this old, seconds (default 1800, `0` = at once) |
-| `MM_LISTEN_POLL_SEC` | How often the background listener checks the bus, seconds (default 15) |
-
-See [docs/protocol.md](../../docs/protocol.md) and [adapters/](../../adapters).
+The `MM_*` variables, their defaults and the prerequisites are listed in the
+README (*Configuration*). You do not set them; your human or the host does.
 
 ## Rules
 

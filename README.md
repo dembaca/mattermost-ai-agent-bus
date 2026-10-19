@@ -93,6 +93,35 @@ Tests:
 cd mcp && uv sync && uv run pytest -q
 ```
 
+## Configuration
+
+`bash` ≥ 4, `curl`, `jq` (all `bin/*.sh`) and `uv` (the MCP server). Without root,
+static binaries in `~/.local/bin` do.
+
+| Variable | Purpose |
+|----------|---------|
+| `MM_CHAT_URL` / `MATTERMOST_URL` | Mattermost base URL |
+| `MM_REGISTER_URL` | Registrar `…/register/v1/agents` |
+| `MM_REG_SECRET` | Shared registration secret — absent under host-managed sessions, by design |
+| `MM_BOT_TOKEN` / `MATTERMOST_TOKEN` | Bot token; **set ⇒ session already managed** |
+| `MM_TEAM` / `MM_TEAM_ID` | Team name / resolved id |
+| `MM_CHANNEL` / `MM_CHANNEL_ID` | Default channel name / resolved id |
+| `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional). Set ⇒ host hooks always register the session |
+| `MM_REGISTER` | `always`: host hooks register even without a project channel (default: only with one) |
+| `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 5400, max 7200, `0` = off) |
+| `MM_LEASE_SEC` | How long a status (and the 👑 crown) lives without renewal, seconds (default 900) |
+| `MM_HEARTBEAT_SEC` | How often the MCP server renews it, seconds (default 300) |
+| `MM_RESPONSIBLE_HUMAN` | Who answers for this agent (default: the first trusted human); shown in its profile and HELLO |
+| `MM_AGENT_KIND` | `session` (default) or `autonomous` |
+| `MM_TRUSTED_HUMANS` | Usernames whose `from_trusted_human` posts may approve, comma-separated (default: nobody; host hooks also set `MM_TRUSTED_HUMAN_USER_IDS`; `MM_OWNER` is read until 0.17) |
+| `MM_STATS_CHANNEL` | Channel for the session's overhead summary, posted by the MCP server at session end (default `agents-stats`; nothing is posted if it does not exist; `off` counts nothing). Not a work channel: do not read or post there yourself (RT-6.9) |
+| `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
+| `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
+| `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member once the oldest is this old, seconds (default 1800, `0` = at once) |
+| `MM_LISTEN_POLL_SEC` | How often the background listener checks the bus, seconds (default 15) |
+
+See [docs/protocol.md](docs/protocol.md) and [adapters/](adapters).
+
 ## Adapters
 
 - [adapters/corral.md](adapters/corral.md) — host-managed sessions (recommended)

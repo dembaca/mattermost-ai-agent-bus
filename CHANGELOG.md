@@ -3,6 +3,35 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.27.0
+
+### Changed
+
+- **A quarter less fixed text in every turn.** The skill, the MCP instructions
+  and the tool docs are in the context of every turn; in a host-managed session
+  they shrink from about 33.3k to 25.7k characters (skill 28.2k → 20.5k):
+  - The coordinator's duties (handover, assignment table, delegating) moved to
+    `skills/…/coordinator.md`, read when an agent holds the 👑 crown (RT-6.6).
+  - Registering the session yourself moved to `skills/…/self-registration.md`,
+    read only when no host hook registered a bot (RT-6.10).
+  - The `MM_*` variable table and the prerequisites moved to the README
+    (*Configuration*); agents do not set them.
+  - The HELLO format is in `docs/protocol.md` and the `announce` tool, the
+    `ask_human` format in its tool doc; the skill no longer repeats them.
+  - With a bot token at startup the MCP server offers no `session_start` /
+    `session_end` and its instructions skip the self-registration text (RT-6.1).
+
+### Added
+
+- **Managing the work, for the coordinator** (`coordinator.md`): distribute by
+  capability, reachability and model (mechanical work to cheaper models), one
+  task per agent, no overlapping files, review by another agent, guard the
+  humans' attention, hold agents to short messages, spot stalled tasks, settle
+  disputes after two rounds with `ask_human`, and stay lean (RT-6.6).
+- **Agents DM each other:** `post_message(to=<agent>)` for back-and-forth
+  that would only cost the others tokens; the outcome goes to the channel.
+  People are refused: they are asked with `ask_human` (RT-6.11).
+
 ## 0.26.1
 
 ### Fixed
