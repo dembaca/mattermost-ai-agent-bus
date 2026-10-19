@@ -18,6 +18,9 @@ before 0.5.0 are described in the git history.
   whole explanation into `need` got a post bold from end to end. Now only its
   first sentence is the title; the rest moves to the front of `context`, and
   `**` inside `need` is dropped (RT-6.11).
+- **A listener stopped by the human's prompt no longer shows as failed.** It
+  exited 143 on the prompt hook's TERM, which Claude Code lists as "failed";
+  now it exits 0 (RT-6.3).
 
 ## 0.26.0
 

@@ -3,10 +3,11 @@ RT-6.4 bus unavailable (docs/arc42/06-runtime-view.md)."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 
-from conftest import ME, PROJECT
+from conftest import CHANNEL, ME, PROJECT, ROOT, TEAM
 
 STOP = "hooks/stop-inbox-check.sh"
 PROMPT = "hooks/turn-status.sh"
@@ -258,6 +259,23 @@ def test_next_prompt_stops_the_listener(mm, run):
     assert sleeper.wait(timeout=5) != 0
     assert window(run) == {} and turn_state(run) == {}
     assert mm.custom_status()["emoji"] == "hammer_and_wrench"
+
+
+def test_stopped_listener_ends_cleanly(mm, run, tmp_path):
+    """RT-6.3 step 1: stopped by the prompt hook, the listener exits 0, so the
+    runtime does not list it as failed, and leaves the window file alone."""
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path),
+           "XDG_STATE_HOME": str(tmp_path / "state"), "MM_CHAT_URL": mm.url,
+           "MM_BOT_TOKEN": "bot-token-for-tests", "MM_BOT_USER_ID": ME, "MM_TEAM_ID": TEAM,
+           "MM_CHANNEL_ID": CHANNEL, "MM_LISTEN_POLL_SEC": "1", **IN_PROJECT}
+    p = subprocess.Popen(["bash", str(ROOT / LISTEN), "--until", str(int(time.time()) + 30)],
+                         env=env, stdout=subprocess.PIPE, text=True)
+    time.sleep(1.5)
+    (run.state_dir / f"listen-{ME}.env").unlink()   # what the prompt hook does
+    p.terminate()
+    out, _ = p.communicate(timeout=10)
+    assert p.returncode == 0 and "nothing to do" in out
+    assert not (run.state_dir / f"listen-{ME}.env").exists()
 
 
 def test_turn_woken_by_a_message_keeps_the_window(mm, run):
