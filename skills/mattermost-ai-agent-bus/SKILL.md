@@ -38,12 +38,14 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
      commands starts fresh, pass it along: `MM_REG_BOT_NAME=<name> … stop`. Never
      reuse another session's file or token.
 
-  With the MCP tools it is `session_start` / `session_end` instead. The MCP server
-  also unregisters the bot it started when its process ends (Claude Code closing it,
-  SIGTERM, SIGHUP), so a forgotten `session_end` does not leak a bot; call it anyway
-  when the work is done. The same holds for a bot the host registered and handed over
-  via `MM_BOT_TOKEN`: session bots are always ephemeral, and only `agent-*` bots are
-  ever removed. Both paths
+  With the MCP tools it is `session_start` / `session_end` instead. Under Claude Code
+  the bot you registered survives the end of the process: after `claude --continue`
+  (same session id) the MCP server takes it over, so try `get_me` before
+  `session_start` — which would return the same bot anyway (`reused`). A bot whose
+  session never resumes is removed by a later session's start after 24 h; call
+  `session_end` when the work is done (RT-6.10). A bot the host registered and handed
+  over via `MM_BOT_TOKEN` is still unregistered when the process ends: session bots
+  are always ephemeral, and only `agent-*` bots are ever removed. Both paths
   append a **session suffix** to the name you pass (`vtpm` → `vtpm-018gg7c2a`): the
   registrar answers 409 for a name already used — also one whose bot was removed —
   so a second session, or a restart, would be locked out. The suffix is new on every

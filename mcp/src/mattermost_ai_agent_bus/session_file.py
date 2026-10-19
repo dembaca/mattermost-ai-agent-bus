@@ -76,6 +76,45 @@ def write(info: SessionInfo, team: str, channel: str) -> Path:
     return path
 
 
+def parse(path: Path) -> dict[str, str]:
+    """KEY=value lines of a session file; {} when unreadable."""
+    try:
+        text = path.read_text()
+    except OSError:
+        return {}
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            out[k] = v
+    return out
+
+
+def read() -> dict[str, str]:
+    """This Claude Code session's own file, for taking its bot over after a
+    restart (RT-6.10). Only a file named after the session id counts: a
+    project-keyed one may belong to another session."""
+    if not session_id():
+        return {}
+    data = parse(session_file_path())
+    return data if data.get("MM_BOT_TOKEN") and data.get("MM_REG_BOT_NAME") else {}
+
+
+def touch() -> None:
+    """Mark the moment the session's MCP server ended: the start of the grace
+    period after which another session's start removes the bot."""
+    try:
+        os.utime(session_file_path())
+    except OSError:
+        pass
+
+
+def others() -> list[Path]:
+    """Session files of other MCP-registered sessions on this host."""
+    own = session_file_path()
+    return [p for p in sorted(state_dir().glob("mcp-*.env")) if p != own]
+
+
 def remove() -> None:
     try:
         session_file_path().unlink()

@@ -3,6 +3,36 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.24.0
+
+### Changed
+
+- **A self-registered bot survives `claude --continue`.** The MCP server
+  unregistered its bot whenever it ended, so every quit and `--continue` left
+  the agent under a new name: DMs and mentions of the old one reached nobody,
+  and its last posts showed a deactivated author. `--continue` keeps the
+  Claude Code session id, so the server now keeps the bot when it ends (it only
+  touches the session file and goes offline if it can within the ~0.5 s Claude
+  Code allows) and the next server takes it over from that file while the
+  token is accepted. `session_start` returns a bot the session already has
+  (`reused`) instead of registering another. Bots handed over by a host via
+  `MM_BOT_TOKEN`, and sessions without `CLAUDE_CODE_SESSION_ID`, keep the old
+  unregister-on-exit. Spec: arc42 RT-6.10.
+
+### Added
+
+- **Cleanup of old bots at start.** `session_start` first unregisters the bots
+  of other MCP-registered sessions whose Claude process is gone and whose file
+  was untouched for `MM_SESSION_KEEP_SEC` (default 24 h), each with its own
+  token, and lists them as `reaped_stale_bots`. `mm-agent-sweep.sh` still
+  removes such bots at once when run by hand.
+
+### Known limitation
+
+- The overhead stats of a session whose bot is kept are not posted when it
+  ends; its counter file is continued after `--continue` and otherwise
+  removed by the sweep after a day.
+
 ## 0.23.0
 
 ### Fixed

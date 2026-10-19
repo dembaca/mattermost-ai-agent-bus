@@ -275,7 +275,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Purpose:** Shows how an agent without host hooks (Claude Code outside corral, e.g. on a lab host) gets its bot to its own hooks and listener, and why two such sessions in one checkout never swap identities.
 
-**Trigger:** The agent calls `session_start` (no `MM_BOT_TOKEN` in its environment); the session ends.
+**Trigger:** The agent calls `session_start` (no `MM_BOT_TOKEN` in its environment); the session ends, or is resumed with `claude --continue`.
 
 **Participants:** MCP server, Turn hooks, Shell CLI; Agent runtime, Registrar, Mattermost REST API
 
@@ -283,10 +283,12 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. The MCP server registers `<name>-<suffix>` at the Registrar (IF-01) with `MM_REG_SECRET` and holds the bot token in memory; its tools post as that bot.
+1. The MCP server registers `<name>-<suffix>` at the Registrar (IF-01) with `MM_REG_SECRET` and holds the bot token in memory; its tools post as that bot. Before registering it unregisters the bots of other MCP-registered sessions whose Claude process is gone and whose file was untouched for `MM_SESSION_KEEP_SEC` (default 24 h), each with its own token (`reaped_stale_bots`).
 2. It writes the token to a 0600 session file in the state directory, named after the Claude Code session: `mcp-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`. Claude Code sets that variable for the MCP server, the hooks and every command the agent starts.
 3. Turn hooks and the background listener (`mm-agent-listen.sh`) find the file under the same name; a hook whose environment lacks the variable takes `session_id` from its JSON input. They count unread messages, set presence and wake the agent as that bot.
-4. `session_end`, or the server's exit, unregisters the bot and removes only its own file.
+4. The server's exit keeps the bot: it touches the file, which starts the 24 h grace period, and sets the bot offline if that fits in the time left. Claude Code kills an MCP server about 0.5 s after asking it to stop, so only the local part is certain.
+5. `claude --continue` resumes under the same session id. The new server finds the file at start and takes the bot over while its token is accepted: same name, same threads and DMs, crown included. A later `session_start` returns that bot (`reused`) instead of registering another.
+6. `session_end` unregisters the bot and removes the file at once.
 
 ### Error Handling
 
@@ -294,4 +296,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 |------|---------|----------------|
 | 2 | No `CLAUDE_CODE_SESSION_ID` (an older runtime) | The file is named after the project directory instead (`mcp-<sha1(dir)>.env`), and a hook running in a subdirectory walks up to it. Two such sessions in one checkout would share it again |
 | 3 | Hook has a session id but finds no file of that session | It stays inert; it never falls back to a project-keyed file, which may belong to another session. Keyed on the project alone, a second session in the same checkout overwrote the first one's file, and the first agent's hooks and listener ran as the second bot and never saw the mentions for its own |
-| 4 | Process killed (SIGKILL) | The bot and its file stay; `mm-agent-sweep.sh` removes both (RT-6.1, step 7) |
+| 4 | The session really ended (no `--continue` follows) | The bot stays, offline, until another session's `session_start` reaps it after the grace period, or `mm-agent-sweep.sh` removes it (RT-6.1, step 7). Nothing tells a resume from an end; unregistering on exit made every `--continue` start under a new name, so mentions of the old one reached nobody |
+| 4 | Killed before the file was touched | The grace period counts from the session's start instead; the bot may be reaped sooner |
+| 5 | The taken-over token is rejected (`401`) | The bot is gone: the file is removed and the agent registers a new one |
+| 4–5 | No `CLAUDE_CODE_SESSION_ID` | Old behaviour: the exit unregisters the bot, nothing is taken over |

@@ -320,3 +320,110 @@ def test_hook_takes_the_session_id_from_its_input(monkeypatch):
         env={**os.environ, "MM_BOT_TOKEN": "", "MATTERMOST_TOKEN": ""}, cwd=REPO,
     )
     assert r.stdout.strip() == "tok-secret", r.stderr
+
+
+def test_exit_keeps_the_bot_for_claude_continue(monkeypatch):
+    """RT-6.10: `claude --continue` keeps the session id; the bot must survive
+    the server's end (Claude Code kills it ~0.5 s after asking it to stop)."""
+    seen = []
+
+    def handler(req):
+        seen.append((req.method, req.url.path))
+        return httpx.Response(200, json={})
+
+    _patch_http(monkeypatch, handler)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-one")
+    path = session_file.write(INFO, "agents", "agents")
+    os.utime(path, (1, 1))
+    c, _ = _shutdown_client(handler, own_session=True)
+    assert c.shutdown_sync() == "kept proj-ab12cd34 for claude --continue"
+    assert not any(m == "DELETE" for m, _ in seen)
+    assert ("PUT", "/api/v4/users/uid1/status") in seen  # offline, best effort
+    assert path.exists() and path.stat().st_mtime > 1  # grace period starts now
+
+
+def _adopting_client():
+    return MattermostClient(base_url="https://mm.example", token=None,
+                            register_url="https://mm.example/register/v1/agents")
+
+
+def test_next_server_takes_the_bot_over(monkeypatch):
+    """RT-6.10: same session id, token still accepted → same bot, no new name."""
+    _patch_http(monkeypatch, lambda req: httpx.Response(200, json={"id": "uid1"}))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-one")
+    session_file.write(INFO, "agents", "agents")
+    c = _adopting_client()
+    info = c.adopt_sync()
+    assert info is not None and info.username == "agent-proj-ab12cd34"
+    assert c.token == "tok-secret" and c.adopted and c.keeps_bot_on_exit
+
+
+def test_a_rejected_token_is_not_taken_over(monkeypatch):
+    _patch_http(monkeypatch, lambda req: httpx.Response(401, json={}))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-one")
+    path = session_file.write(INFO, "agents", "agents")
+    c = _adopting_client()
+    assert c.adopt_sync() is None and c.token is None
+    assert not path.exists()
+
+
+def test_no_take_over_without_a_session_id(monkeypatch):
+    """A project-keyed file may belong to another session."""
+    _patch_http(monkeypatch, lambda req: httpx.Response(200, json={}))
+    session_file.write(INFO, "agents", "agents")
+    assert _adopting_client().adopt_sync() is None
+
+
+def _other_session(name, *, pid, age_sec):
+    d = session_file.state_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"mcp-sid-{name}.env"
+    p.write_text(f"MM_REG_BOT_NAME={name}\nMM_BOT_TOKEN=tok-{name}\nMM_SESSION_PID={pid}\n")
+    import time
+    t = time.time() - age_sec
+    os.utime(p, (t, t))
+    return p
+
+
+async def test_session_start_reaps_bots_of_long_ended_sessions(monkeypatch):
+    """RT-6.10: bots kept for --continue go once their session ended a day ago."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-new")
+    gone = _other_session("old-gone", pid="999999", age_sec=2 * 86400)
+    dead_token = _other_session("old-dead", pid="999999", age_sec=2 * 86400)
+    recent = _other_session("recent", pid="999999", age_sec=3600)
+    live = _other_session("live", pid=str(os.getpid()), age_sec=2 * 86400)
+    deleted = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "DELETE":
+            deleted.append(req.url.path.rsplit("/", 1)[1])
+            code = 401 if "old-dead" in req.url.path else 204
+            return httpx.Response(code)
+        return httpx.Response(200, json={
+            "username": "agent-x", "user_id": "uid9", "bot_token": "t"})
+
+    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+                         register_url="https://mm.example/register/v1/agents")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await c.session_start("proj")
+    assert sorted(deleted) == ["old-dead", "old-gone"]
+    assert sorted(c.reaped) == ["old-dead", "old-gone"]
+    assert not gone.exists() and not dead_token.exists()
+    assert recent.exists() and live.exists()
+
+
+async def test_session_start_returns_the_bot_it_already_has():
+    """RT-6.10: a second session_start (or one after a take-over) must not
+    register another bot and abandon this one."""
+    calls = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append((req.method, req.url.path))
+        return httpx.Response(200, json={"id": "uid1", "username": INFO.username})
+
+    c = _client(handler)
+    c.token, c.reg_secret = INFO.bot_token, "s"
+    c.register_url = "https://mm.example/register/v1/agents"
+    info = await c.session_start("proj")
+    assert info is INFO and c.reused
+    assert ("POST", "/register/v1/agents") not in calls

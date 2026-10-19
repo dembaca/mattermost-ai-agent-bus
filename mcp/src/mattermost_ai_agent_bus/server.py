@@ -61,6 +61,8 @@ mcp = MCPServer(
         "MM_PROJECT_CHANNEL set, register with session_start (needs MM_REG_SECRET) and "
         "session_end when done; without it, stay off the bus unless your human asks. "
         "session_start joins MM_PROJECT_CHANNEL and appends a session suffix to the name. "
+        "After `claude --continue` your bot is taken over automatically: try get_me "
+        "before session_start, which would return the same bot anyway (reused). "
         "Posts go to MM_PROJECT_CHANNEL when set, else MM_CHANNEL; wait_for_events "
         "covers mentions/DMs and both channels. Announce yourself with announce(), not a "
         "hand-written HELLO. Events marked from_trusted_human come from "
@@ -84,6 +86,12 @@ def _get_client() -> MattermostClient:
     global _client
     if _client is None:
         _client = MattermostClient.from_env()
+        # After `claude --continue` (same session id) the bot of the server
+        # that ended is still there: take it over (RT-6.10).
+        info = _client.adopt_sync()
+        if info is not None:
+            stats.set_user(info.user_id)
+            log.info("took over %s from this session's file", info.username)
     return _client
 
 
@@ -141,25 +149,37 @@ async def session_start(
     name cannot be registered twice. Joins MM_PROJECT_CHANNEL when set. Returns
     session fields (name, username, user_id, url) and the join result. The bot
     token goes to a 0600 session file so the Claude Code hooks can see it.
+    When this session already has a bot (taken over after `claude --continue`),
+    returns that one with reused=true instead of registering another. Bots of
+    sessions that ended over MM_SESSION_KEEP_SEC (24 h) ago are unregistered
+    first (reaped_stale_bots).
     """
     client = _get_client()
     info = await client.session_start(name, display_name or None, unique=unique)
+    if client.reused:
+        # This session's bot already (taken over after `claude --continue`):
+        # same identity, same inbox — nothing to set up again (RT-6.10).
+        return _out("session_start", {
+            "name": info.name, "username": info.username, "user_id": info.user_id,
+            "url": info.url, "token_set": True, "reused": True,
+        })
     stats.set_user(info.user_id)
     global _inbox
     _inbox = None  # reset inbox for new identity
     setup = await client.finish_session_setup()
-    return _out("session_start", 
-        {
-            "name": info.name,
-            "username": info.username,
-            "user_id": info.user_id,
-            "url": info.url,
-            "token_set": True,
-            # Hooks read the token from here; written=false means they stay inert.
-            "hooks_session_file": client.session_file_status,
-            **setup,
-        }
-    )
+    out: dict[str, Any] = {
+        "name": info.name,
+        "username": info.username,
+        "user_id": info.user_id,
+        "url": info.url,
+        "token_set": True,
+        # Hooks read the token from here; written=false means they stay inert.
+        "hooks_session_file": client.session_file_status,
+        **setup,
+    }
+    if client.reaped:
+        out["reaped_stale_bots"] = client.reaped
+    return _out("session_start", out)
 
 
 @mcp.tool()
@@ -418,6 +438,11 @@ def _cleanup_on_exit() -> None:
     if _exit_handled or _client is None:
         return
     _exit_handled = True
+    if _client.keeps_bot_on_exit:
+        # The bot lives on for `claude --continue`; so does its counter file,
+        # which the next server keeps adding to.
+        log.info("exit cleanup: %s", _client.shutdown_sync())
+        return
     try:  # before unregistering: the bot must still exist to post
         data = stats.summary(VERSION, _static_chars())
         if data:
