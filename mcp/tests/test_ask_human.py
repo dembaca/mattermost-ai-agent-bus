@@ -207,6 +207,19 @@ async def test_a_decision_comes_with_context_recommendation_and_wording(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_only_the_first_sentence_is_bold(monkeypatch):
+    """RT-6.11: an explanation written into need goes to context, not into the bold title."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(
+        need="**Merge #62** `reload` (new VMs within 5 s). Ready now: review passed.",
+        context="Open only 1.1.")
+    assert c.posted[0]["message"].endswith("— **Merge #62 `reload` (new VMs within 5 s).**")
+    fields = dict((f["title"], f["value"]) for f in c.posted[0]["props"]["attachments"][0]["fields"])
+    assert fields["context"] == "Ready now: review passed. Open only 1.1."
+
+
+@pytest.mark.asyncio
 async def test_one_open_ask_per_human_at_a_time(monkeypatch):
     """RT-6.11: several questions at once are asked one after the other."""
     c = _Client()

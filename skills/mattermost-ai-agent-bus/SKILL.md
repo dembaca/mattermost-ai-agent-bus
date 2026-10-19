@@ -183,7 +183,7 @@ action, so the reaction does not have to (see below).
 **Asking a human: `ask_human`, and @ only there.** When you need something from
 a human — an approval, a decision, a hand on a machine — call
 `ask_human(need, where, blocking, answers)`. It posts one message in a fixed
-format a human spots at once: `🙋 @dembaca — **need**` and a coloured box with
+format a human spots at once: `🙋 @dembaca — **need**` (one short sentence) and a coloured box with
 from, where, blocking and how to answer. **Never @-mention a human anywhere
 else**; write the name without @ ("dembaca decided …"). Their name turns up in
 many posts, so a mention must mean "I need you".

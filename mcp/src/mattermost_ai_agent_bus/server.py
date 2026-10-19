@@ -287,6 +287,21 @@ def _one_line(text: str) -> str:
     return " ".join(str(text).split())
 
 
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=\S)")
+
+
+def _headline(need: str) -> tuple[str, str]:
+    """The bold title of an ask and what is left over (RT-6.11).
+
+    Only the first sentence is the title; an agent that writes the whole
+    explanation into need gets the rest moved to context, so the post is not
+    bold from end to end. Its own ** would close the bold early: dropped.
+    """
+    text = _one_line(need).replace("**", "")
+    head = _SENTENCE_END.split(text, maxsplit=1)[0]
+    return head, text[len(head):].strip()
+
+
 _MENTION_RE = re.compile(r"(?<![\w@`])@([a-z0-9][a-z0-9._-]*[a-z0-9]|[a-z0-9])", re.I)
 _BROADCAST = {"channel", "all", "here"}
 
@@ -434,8 +449,9 @@ async def ask_human(
     """Ask a human for something — the only way to @-mention one (RT-6.11).
 
     One post in the work channel in a fixed, easy-to-spot format: the mention
-    and what you need in the text, and a callout. need: one line ("Go to
-    install 02dadca on hogan"). For a decision give the human what lets them
+    and what you need in the text, and a callout. need: one short sentence, the
+    bold title ("Go to install 02dadca on hogan?"); more sentences are moved to
+    context. For a decision give the human what lets them
     answer in a word: context — the situation in 1–3 sentences; recommendation
     — what you would do and why; decision — the decision written out ("Install
     02dadca on hogan now, VM 399 stays up"), which a 👍 then approves as it
@@ -467,7 +483,10 @@ async def ask_human(
             "hint": f"{who} still has your ask {pending[0]} open: wait for the answer, "
                     "or resolve_ask it if it is obsolete, then ask the next one",
         })
-    text = lease.with_crown(f"🙋 @{who} — **{_one_line(need)}**", me.get("id", ""))
+    head, rest = _headline(need)
+    if rest:
+        context = f"{rest} {context}"
+    text = lease.with_crown(f"🙋 @{who} — **{head}**", me.get("id", ""))
     fields = [
         {"title": "from", "value": f"@{me.get('username')}", "short": True},
         {"title": "blocking", "value": "yes" if blocking else "no", "short": True},
