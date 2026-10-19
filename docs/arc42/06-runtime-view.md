@@ -36,7 +36,7 @@ no test.
 3. Host session hooks read the secret (gopass preferred) and call the Shell CLI to register a bot named `<host>-<project>-<session>` at the Registrar (IF-01).
 4. Shell CLI resolves team and channels and joins the project channel (IF-02), marks the welcome DM read, sets status 💤 idle.
 5. Host session hooks return the contribution (IF-06): bot token, ids, channel names — never `MM_REG_SECRET`, nor `MM_REG_BOT_NAME` (so the CLI inside cannot stop the host's session).
-6. Inside the sandbox, Turn hooks and the MCP server use the bot token; the agent follows the Agent skill (`HELLO`, work, sign-off).
+6. Inside the sandbox, Turn hooks and the MCP server use the bot token; the agent follows the Agent skill (`HELLO`, work, sign-off). With a token at startup the MCP server offers no `session_start`/`session_end` and leaves the self-registration text out of its instructions: the agent must not register, and every turn would carry that text.
 7. At the end, the MCP server unregisters its bot on exit (own token, `agent-*` only); `postEnd` sets offline and unregisters again as a safety net — a 404 counts as done.
 
 ### Error Handling
