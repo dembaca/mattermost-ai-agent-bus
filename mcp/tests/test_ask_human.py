@@ -187,3 +187,36 @@ async def test_humans_among_asks_once_and_skips_bots():
     assert await c.humans_among({"dembaca", "helper-bot", "nobody"}) == {"dembaca"}
     assert await c.humans_among({"Dembaca"}) == {"Dembaca"}
     assert calls == [["dembaca", "helper-bot", "nobody"]]  # second call from cache
+
+
+@pytest.mark.asyncio
+async def test_a_decision_comes_with_context_recommendation_and_wording(monkeypatch):
+    """RT-6.11: the human answers in a word because the ask explains itself."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(
+        need="Install 02dadca on hogan?",
+        context="#50 throttles guest requests; lab 3.2 passed, the hogan part needs the package.",
+        recommendation="Yes: the change is reviewed and the flood test is ready.",
+        decision="Install 02dadca on hogan now; VM 399 stays up.")
+    fields = [(f["title"], f["value"]) for f in c.posted[0]["props"]["attachments"][0]["fields"]]
+    titles = [t for t, _ in fields]
+    assert titles == ["from", "blocking", "where", "context", "recommendation", "decision", "answer"]
+    assert dict(fields)["decision"] == "Install 02dadca on hogan now; VM 399 stays up."
+    assert dict(fields)["answer"].startswith("👍 = yes to the decision")
+
+
+@pytest.mark.asyncio
+async def test_one_open_ask_per_human_at_a_time(monkeypatch):
+    """RT-6.11: several questions at once are asked one after the other."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    first = json.loads(await server.ask_human(need="Merge #61?"))
+    second = json.loads(await server.ask_human(need="Archive #60?"))
+    assert len(c.posted) == 1 and second["posted"] is False
+    assert second["open_ask"] == first["ask"] and "resolve_ask" in second["hint"]
+    other = json.loads(await server.ask_human(need="Hand on hogan?", human="kollegin"))
+    assert other["ask"] and len(c.posted) == 2  # another human: own queue
+    await server.resolve_ask(first["ask"])
+    third = json.loads(await server.ask_human(need="Archive #60?"))
+    assert third["ask"] and len(c.posted) == 3

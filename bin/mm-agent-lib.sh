@@ -366,6 +366,20 @@ mm_installed_plugin_dirs() {
   done | sort -t$'\t' -k1,1V -r | cut -f2
 }
 
+# A newer installed plugin than the tree these scripts run from: prints its
+# version, else fails. A running session keeps the plugin it started with, so a
+# plugin update applies only after a restart (quit, then `claude --continue`).
+mm_newer_plugin() {
+  local have want newest
+  have="$(mm_tree_version "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")"
+  newest="$(mm_installed_plugin_dirs | head -1)"
+  [[ -n "$newest" ]] || return 1
+  want="$(mm_tree_version "$newest")"
+  [[ "$have" != "?" && "$want" != "?" && "$have" != "$want" ]] || return 1
+  [[ "$(printf '%s\n%s\n' "$have" "$want" | sort -V | tail -1)" == "$want" ]] || return 1
+  printf '%s' "$want"
+}
+
 # Version of a mattermost-ai-agent-bus tree (checkout, plugin or host copy).
 mm_tree_version() {
   jq -r '.version // "?"' "$1/.claude-plugin/plugin.json" 2>/dev/null || echo "?"

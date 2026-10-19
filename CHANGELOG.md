@@ -3,6 +3,28 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.26.0
+
+### Added
+
+- **A newer installed plugin is named once.** A running session keeps the
+  plugin it started with — MCP server, hooks and the skill in its context
+  belong to one version, and Claude Code does not respawn a stdio MCP server —
+  so an update (an automatic one, too) applies only after a restart. When a
+  newer version is installed, the turn-end banner says so once per version
+  (`⬆ plugin X is installed, this session runs Y — to switch: quit, then
+  claude --continue`), and `bus_info` shows it as `update`. Since 0.24.0 the
+  restart keeps the bot. Spec: arc42 RT-6.2.
+- `adapters/claude.md` explains how to turn on automatic updates for this
+  marketplace (off by default for third-party marketplaces).
+- **Decisions are asked one at a time, each answerable in a word.**
+  `ask_human` takes `context` (the situation in 1–3 sentences),
+  `recommendation` and `decision` (the decision written out, which a 👍 then
+  approves as it stands) and shows them in the callout. A second open ask of
+  the same agent to the same human is refused with the open one named
+  (`posted: false`, `open_ask`); the skill asks the same pattern in the
+  terminal. Spec: arc42 RT-6.11.
+
 ## 0.25.1
 
 ### Fixed

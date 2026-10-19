@@ -313,3 +313,30 @@ def test_listener_wakes_for_a_reaction_to_an_open_ask(mm, run):
             **IN_PROJECT)
     assert r.code == 0 and "1 reaction(s) to your ask(s)" in r.stdout
     assert "resolve_ask" in r.stdout and window(run)["ENDED"] == "event"
+
+
+def newer_plugin(tmp_path, version="99.0.0"):
+    import json
+    d = tmp_path / "cache" / "mattermost-ai-agent-bus" / version
+    (d / ".claude-plugin").mkdir(parents=True)
+    (d / ".claude-plugin" / "plugin.json").write_text(json.dumps({"version": version}))
+    reg = tmp_path / ".claude" / "plugins" / "installed_plugins.json"
+    reg.parent.mkdir(parents=True, exist_ok=True)
+    reg.write_text(json.dumps({"plugins": {"mattermost-ai-agent-bus@x": [{"installPath": str(d)}]}}))
+
+
+def test_a_newer_installed_plugin_is_named_once_when_the_turn_ends(mm, run, tmp_path):
+    """RT-6.2 step 6: a session keeps the plugin it started with; when a newer one
+    is installed (an automatic update, too), the human learns once per version
+    that a restart switches to it."""
+    newer_plugin(tmp_path)
+    r = run(STOP)
+    assert r.passed and "plugin 99.0.0 is installed" in r.banner
+    assert "quit, then claude --continue" in r.banner
+    again = run(STOP)
+    assert again.passed and again.banner == ""
+
+
+def test_no_update_note_when_the_session_runs_the_newest(mm, run, tmp_path):
+    newer_plugin(tmp_path, version="0.0.1")  # older than this tree
+    assert run(STOP).banner == ""
