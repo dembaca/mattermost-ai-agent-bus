@@ -3,6 +3,17 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.22.1
+
+### Fixed
+
+- **`mm-agent-sweep.sh` looks only at session files.** It listed every per-bot
+  state file (`coord-`, `listen-`, `presence-`, `turn-<uid>.env`) as a skipped
+  session without a bot name — a screen of noise on a host with nothing to
+  clean. Those files are now ignored as sessions, and `--apply` removes the
+  ones (and `stats-<uid>.jsonl`) whose bot has no session file left and that
+  were untouched for a day. Spec: arc42 RT-6.1.
+
 ## 0.22.0
 
 ### Fixed

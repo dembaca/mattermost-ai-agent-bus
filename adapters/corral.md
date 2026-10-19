@@ -182,7 +182,9 @@ this, sweeping while a session runs revokes that session's credentials mid-task.
 
 When the registrar rejects a file's token (`401`) and Mattermost rejects it too,
 the bot is gone already: the sweep reports `gone` and removes the stale file. Any
-other failure is printed with its HTTP status and the file kept
+other failure is printed with its HTTP status and the file kept. Per-bot state
+files (presence, listen window, turn, crown, stats) are no sessions; the sweep
+removes those of bots without a session file once they are a day old
 ([arc42 §6.1](../docs/arc42/06-runtime-view.md#61-host-managed-session-lifecycle)).
 
 Bots whose session file is already gone need the registration secret, because a

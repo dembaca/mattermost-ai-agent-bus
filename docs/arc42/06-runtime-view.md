@@ -47,6 +47,7 @@ no test.
 | 4 | Channel missing or not joinable | Bot is unregistered again, session file removed; channels are never created |
 | 7 | Unregister fails | Status already offline; session file kept so `mm-agent-sweep.sh` can remove the bot with its own token |
 | 7 | Sweep: the registrar rejects the bot's own token (`401`) | `/users/me` with that token is asked too; a `401` there means the bot is gone already, so only the stale file is removed. Any other failure is printed with its HTTP status and the file kept |
+| 7 | Sweep: per-bot state files (`coord-`, `listen-`, `presence-`, `turn-<uid>.env`, `stats-<uid>.jsonl`) | Not treated as sessions. With `--apply` those whose bot has no session file left and that were untouched for a day are removed; a live session keeps writing its own |
 
 ---
 
