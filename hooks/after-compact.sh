@@ -11,10 +11,9 @@
 # error — exit 0 without output, and the session goes on as without the hook.
 set -uo pipefail
 
-cat >/dev/null 2>&1 || true   # drain the hook payload; we do not read it
-
 # shellcheck source=../bin/mm-agent-lib.sh
 source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
+mm_read_hook_input            # drains the payload; only its session id is used
 mm_load_hook_session || true
 
 command -v jq >/dev/null 2>&1 || exit 0

@@ -196,15 +196,27 @@ mm_load_session_file() {
 }
 
 # Session file written by the MCP server's session_start (see
-# mcp/.../session_file.py). Keyed on the directory the server runs in, which is
-# the project directory Claude Code was started in. A hook may run deeper (the
-# agent cd'ed into a subdirectory), so the lookup walks up from CLAUDE_PROJECT_DIR
-# / $PWD to the root and takes the nearest session file. The key must match
-# session_file_path() there.
+# mcp/.../session_file.py). Keyed on the Claude Code session
+# (CLAUDE_CODE_SESSION_ID), so two sessions in one checkout never share a file
+# (RT-6.10); with a session id there is no fallback, since a project-keyed file
+# may belong to another session. Without one it is keyed on the directory the
+# server runs in, the project directory Claude Code was started in. A hook may
+# run deeper (the agent cd'ed into a subdirectory), so that lookup walks up from
+# CLAUDE_PROJECT_DIR / $PWD to the root and takes the nearest session file. The
+# keys must match session_file_path() there.
 mm_hook_session_file() {
-  local dir state key f
-  dir="$(cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null && pwd -P)" || return 1
+  local dir state key f sid
   state="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
+  sid="${CLAUDE_CODE_SESSION_ID:-}"
+  sid="${sid//[[:space:]]/}"
+  if [[ -n "$sid" ]]; then
+    key="$(printf '%s' "$sid" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16)"
+    f="${state}/mcp-sid-${key}.env"
+    [[ -n "$key" && -f "$f" ]] || return 1
+    printf '%s' "$f"
+    return 0
+  fi
+  dir="$(cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null && pwd -P)" || return 1
   while :; do
     key="$(printf '%s' "$dir" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16)"
     f="${state}/mcp-${key}.env"
@@ -215,6 +227,19 @@ mm_hook_session_file() {
     [[ "$dir" == "/" ]] && return 1
     dir="$(dirname "$dir")"
   done
+}
+
+# For hooks: read the hook's JSON input once into MM_HOOK_INPUT and take the
+# session id from it when the environment has none, so the session file lookup
+# (mm_hook_session_file) keys on this session even then.
+mm_read_hook_input() {
+  MM_HOOK_INPUT="$(cat 2>/dev/null || true)"
+  if [[ -z "${CLAUDE_CODE_SESSION_ID:-}" ]] && command -v jq >/dev/null 2>&1; then
+    local sid
+    sid="$(jq -r '.session_id // empty' <<<"$MM_HOOK_INPUT" 2>/dev/null || true)"
+    [[ -n "$sid" ]] && export CLAUDE_CODE_SESSION_ID="$sid"
+  fi
+  return 0
 }
 
 # For hooks: pick up the bot token of an MCP-managed session. A no-op when the

@@ -34,8 +34,21 @@ where no sandbox can change them, and prints the config below. **Rerun it after 
 plugin update**; `mm-agent-host-install.sh --check` tells whether the host copy is
 current, and the start hook says so in the banner when it is not.
 
-**Never point `exec` at the plugin directory or at a checkout a session works in.**
-The hooks run on the host with the registration secret, and corral approves only the
+**Or follow `/plugin update` without installing:** point both `exec` entries at the
+host's marketplace clone instead:
+
+```yaml
+exec: ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus/adapters/corral/10-mm-session-start.sh
+exec: ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus/adapters/corral/90-mm-session-stop.sh
+```
+
+Nothing to rerun after an update. The cost: corral no longer asks before new hook
+code runs, and since the corral homes share `~/.claude`, a sandboxed agent can change
+that code. Choose it where that is acceptable — see
+[arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed).
+
+**Otherwise never point `exec` at a plugin directory or at a checkout a session
+works in.** The hooks run on the host with the registration secret, and corral approves only the
 `exec` file by content, not the scripts it sources and starts. Both locations are
 writable from inside a sandbox
 ([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
@@ -166,6 +179,11 @@ whole run. Each one records `MM_SESSION_PID`, the supervising corral process,
 and a session whose process is still alive is skipped. Files written before that
 guard existed have no PID and are skipped too; `--force` includes them. Without
 this, sweeping while a session runs revokes that session's credentials mid-task.
+
+When the registrar rejects a file's token (`401`) and Mattermost rejects it too,
+the bot is gone already: the sweep reports `gone` and removes the stale file. Any
+other failure is printed with its HTTP status and the file kept
+([arc42 §6.1](../docs/arc42/06-runtime-view.md#61-host-managed-session-lifecycle)).
 
 Bots whose session file is already gone need the registration secret, because a
 bot token can only delete its own agent (the registrar answers `401` otherwise):

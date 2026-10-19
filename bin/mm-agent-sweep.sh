@@ -59,7 +59,9 @@ is_live() {
 shopt -s nullglob
 for f in "$STATE_DIR"/*.env; do
   name="$(field "$f" MM_REG_BOT_NAME)"
-  [[ -n "$name" ]] || { note "skip $(basename "$f") (no MM_REG_BOT_NAME)"; continue; }
+  # Files from before MM_REG_BOT_NAME carry only the username.
+  [[ -n "$name" ]] || { name="$(field "$f" MM_BOT_USERNAME)"; name="${name#agent-}"; }
+  [[ -n "$name" ]] || { note "skip $(basename "$f") (no bot name)"; continue; }
 
   pid="$(field "$f" MM_SESSION_PID)"
   if [[ "$FORCE" -eq 0 ]] && is_live "$pid"; then
@@ -80,16 +82,27 @@ for f in "$STATE_DIR"/*.env; do
     echo "would unregister ${name}  (from $(basename "$f"))"
     continue
   fi
-  if (
+  if err="$( (
       export MM_AGENT_SESSION_FILE="$f"
       mm_load_session_file || exit 1
-      exec "$BIN/mm-agent-unregister.sh" "$name" >/dev/null 2>&1
-     ); then
+      exec "$BIN/mm-agent-unregister.sh" "$name" 2>&1 >/dev/null
+     ) )"; then
     note "unregistered ${name}"
     rm -f "$f"
     removed=$((removed + 1))
+  elif [[ "$( (
+      export MM_AGENT_SESSION_FILE="$f"
+      mm_load_session_file >/dev/null 2>&1 || exit 0
+      mm_api GET "/api/v4/users/me" >/dev/null 2>&1 || exit 0
+      printf '%s' "$MM_API_STATUS"
+     ) )" == "401" ]]; then
+    # The bot's own token is rejected: the bot is gone already (its teardown
+    # deleted it, or the server revoked the token). Only the file is left.
+    note "gone    ${name} (its token is no longer accepted) — removed $(basename "$f")"
+    rm -f "$f"
+    removed=$((removed + 1))
   else
-    note "FAILED ${name} — keeping $(basename "$f")"
+    note "FAILED ${name}: ${err:-no reason given} — keeping $(basename "$f")"
     kept=$((kept + 1))
   fi
 done

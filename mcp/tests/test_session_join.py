@@ -277,3 +277,46 @@ def test_shutdown_survives_network_failure(monkeypatch):
     _patch_http(monkeypatch, handler)
     c, _ = _shutdown_client(handler, own_session=True)
     assert c.shutdown_sync().startswith("unregister failed")
+
+
+def test_two_sessions_in_one_checkout_keep_their_own_bot(monkeypatch):
+    """RT-6.10: keyed on the project alone, the second session's file replaced the
+    first one's, and the first agent's hooks ran as the second bot."""
+    other = SessionInfo(url=INFO.url, name="proj-zz99", username="agent-proj-zz99",
+                        user_id="uid2", bot_token="tok-other")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-one")
+    first = session_file.write(INFO, "agents", "agents")
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-two")
+    second = session_file.write(other, "agents", "agents")
+    assert first != second and first.exists() and second.exists()
+    load = f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "$MM_BOT_TOKEN"'
+    for sid, tok in (("sess-one", "tok-secret"), ("sess-two", "tok-other")):
+        r = _bash(load, MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_CODE_SESSION_ID=sid)
+        assert r.stdout.strip() == tok, r.stderr
+    session_file.remove()  # sess-two ends; sess-one keeps its file
+    assert first.exists() and not second.exists()
+
+
+def test_hook_with_session_id_ignores_a_project_keyed_file():
+    """RT-6.10: a project-keyed file may belong to another session."""
+    session_file.write(INFO, "agents", "agents")  # no session id: project key
+    r = _bash(
+        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "[$MM_BOT_TOKEN]"',
+        MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_CODE_SESSION_ID="sess-new",
+    )
+    assert r.stdout.strip() == "[]"
+
+
+def test_hook_takes_the_session_id_from_its_input(monkeypatch):
+    """RT-6.10: without CLAUDE_CODE_SESSION_ID in the environment the hook payload's
+    session_id keys the lookup."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-one")
+    session_file.write(INFO, "agents", "agents")
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+    r = subprocess.run(
+        ["bash", "-c", f'source "{REPO}/bin/mm-agent-lib.sh"; mm_read_hook_input; '
+                       'mm_load_hook_session; echo "$MM_BOT_TOKEN"'],
+        input='{"session_id": "sess-one"}', capture_output=True, text=True,
+        env={**os.environ, "MM_BOT_TOKEN": "", "MATTERMOST_TOKEN": ""}, cwd=REPO,
+    )
+    assert r.stdout.strip() == "tok-secret", r.stderr

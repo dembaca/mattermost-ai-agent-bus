@@ -124,6 +124,9 @@ def _handler(fake: FakeMattermost):
             if p == "/api/v4/users/status/ids":
                 return self._send([{"user_id": u, "status": fake.presence.get(u, "offline")}
                                    for u in body])
+            if (p.startswith("/register/v1/agents/") and self.command == "DELETE"
+                    and self.headers.get("Authorization") != "Bearer bot-token-for-tests"):
+                return self._send({"message": "unauthorized"}, 401)
             if p == "/register/v1/agents" and self.command == "POST":
                 return self._send({"username": f"agent-{body['name']}",
                                    "bot_token": "bot-token-for-tests", "user_id": ME})

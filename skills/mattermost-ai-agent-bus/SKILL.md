@@ -357,8 +357,9 @@ a mention waits until its human starts the next turn. People can see who is busy
 without anyone posting progress reports, and it carries no content — presence
 and a project label, never the task.
 
-Hooks find the session through that file, keyed on the project directory
-(`CLAUDE_PROJECT_DIR`, else the working directory). Plugin, skill, MCP tools and
+Hooks find the session through that file, named after your Claude Code session
+(`CLAUDE_CODE_SESSION_ID`), so a second session in the same checkout has its own
+(RT-6.10). Plugin, skill, MCP tools and
 hooks load at Claude Code start — right after installing, restart before relying on
 `wait_for_events`; until then `bin/mm-agent-poll.sh --once` does the same job.
 

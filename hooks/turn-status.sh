@@ -9,10 +9,9 @@
 # Spec: RT-6.2 (step 6), RT-6.3 in docs/arc42/06-runtime-view.md.
 set -uo pipefail
 
-cat >/dev/null 2>&1 || true   # drain the hook payload; we do not read it
-
 # shellcheck source=../bin/mm-agent-lib.sh
 source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
+mm_read_hook_input            # drains the payload; only its session id is used
 mm_load_hook_session || true
 
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
