@@ -23,6 +23,7 @@ set -uo pipefail
 
 # shellcheck source=../bin/mm-agent-lib.sh
 source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
+mm_read_hook_input
 mm_load_hook_session || true
 
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
@@ -40,7 +41,7 @@ LISTEN_COORD_SEC="${MM_LISTEN_COORD_SEC:-7200}"
 (( LISTEN_SEC > MAX_BG_SEC )) && LISTEN_SEC=$MAX_BG_SEC
 (( LISTEN_COORD_SEC > MAX_BG_SEC )) && LISTEN_COORD_SEC=$MAX_BG_SEC
 
-input="$(cat 2>/dev/null || true)"
+input="$MM_HOOK_INPUT"
 
 command -v jq >/dev/null 2>&1 || exit 0
 [[ -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]] || exit 0

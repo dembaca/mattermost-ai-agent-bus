@@ -10,9 +10,14 @@ It lives next to the corral session files, so ``mm-agent-sweep.sh`` sees it too:
 it records MM_SESSION_PID, which the sweep uses to tell a live session from an
 abandoned one.
 
-Server and hooks have to derive the same file name. Both key it on the project
-directory (CLAUDE_PROJECT_DIR, else the working directory) — the one thing the
-two processes share without being told.
+Server and hooks have to derive the same file name, and two sessions must never
+share one. Both key it on the Claude Code session (CLAUDE_CODE_SESSION_ID), which
+Claude Code puts into the environment of the MCP server, the hooks and every
+command the agent starts. Only without it do they fall back to the project
+directory (CLAUDE_PROJECT_DIR, else the working directory). Keyed on the project
+alone, a second session in the same checkout overwrote the first one's file:
+the first agent's hooks and listener then ran as the second bot and never saw
+the messages for its own (RT-6.10).
 """
 
 from __future__ import annotations
@@ -35,8 +40,15 @@ def project_dir() -> str:
     return os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
 
 
+def session_id() -> str:
+    return os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
+
+
 def session_file_path() -> Path:
     # Must match mm_hook_session_file in bin/mm-agent-lib.sh.
+    sid = session_id()
+    if sid:
+        return state_dir() / f"mcp-sid-{hashlib.sha1(sid.encode()).hexdigest()[:16]}.env"
     key = hashlib.sha1(project_dir().encode()).hexdigest()[:16]
     return state_dir() / f"mcp-{key}.env"
 

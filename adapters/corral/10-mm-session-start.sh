@@ -21,18 +21,24 @@ log() { echo "mm-bus: $*" >&2; }
 # They run on the host with the registration secret, so the scripts they source
 # and start must be out of every sandbox's reach (arc42 §7.1). corral approves
 # only this file by content. Warn, do not refuse: refusing would silently take
-# the bus away.
+# the bus away. The host's marketplace clone
+# (~/.claude/plugins/marketplaces/mattermost-ai-agent-bus) is a deliberate
+# choice: a stable path that `/plugin update` moves, so no warning for it.
 ROOT="$(cd "$BIN/.." && pwd)"
+FROM_MARKETPLACE=0
 case "$ROOT" in
+  "$HOME"/.claude/plugins/marketplaces/*) FROM_MARKETPLACE=1 ;;
   */.cache/corral/home-*|*/.claude/plugins/*)
-    log "WARNING: hooks run from the plugin directory ${ROOT}, which any sandbox can change — install them with bin/mm-agent-host-install.sh" ;;
+    log "WARNING: hooks run from the plugin directory ${ROOT}, which any sandbox can change — install them with bin/mm-agent-host-install.sh, or point exec at ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus to follow plugin updates by choice" ;;
 esac
 if [[ -n "${CORRAL_WORKDIR:-}" && "$ROOT/" == "$(cd "$CORRAL_WORKDIR" 2>/dev/null && pwd)/"* ]]; then
   log "WARNING: hooks run from this session's own workdir ${ROOT}, which the agent can change — install them with bin/mm-agent-host-install.sh"
 fi
 if command -v jq >/dev/null 2>&1 && newest="$(mm_installed_plugin_dirs | head -1)" && [[ -n "$newest" ]]; then
   have="$(mm_tree_version "$ROOT")" want="$(mm_tree_version "$newest")"
-  if [[ "$have" != "$want" ]]; then
+  if [[ "$have" != "$want" && "$FROM_MARKETPLACE" -eq 1 ]]; then
+    log "host hooks (marketplace) are ${have}, the installed plugin is ${want} — run /plugin update"
+  elif [[ "$have" != "$want" ]]; then
     log "host hooks are ${have}, the installed plugin is ${want} — rerun mm-agent-host-install.sh"
   fi
 fi

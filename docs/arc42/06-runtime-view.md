@@ -2,7 +2,7 @@
 
 ## Overview
 
-Nine scenarios: the host-managed session lifecycle (happy path), the end of a turn
+Ten scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
@@ -46,6 +46,7 @@ no test.
 | 3 | Registrar unreachable or rejects | Banner warning, session continues without a bot (hook is `optional: true`) |
 | 4 | Channel missing or not joinable | Bot is unregistered again, session file removed; channels are never created |
 | 7 | Unregister fails | Status already offline; session file kept so `mm-agent-sweep.sh` can remove the bot with its own token |
+| 7 | Sweep: the registrar rejects the bot's own token (`401`) | `/users/me` with that token is asked too; a `401` there means the bot is gone already, so only the stale file is removed. Any other failure is printed with its HTTP status and the file kept |
 
 ---
 
@@ -265,3 +266,30 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 1 | State directory not writable, bot id unknown | The event is not counted; the session is not affected |
 | 2 | Stats channel missing, not joinable, or the post fails | Logged by the MCP server; teardown goes on, and the counter file is removed anyway so it cannot pile up |
 | — | Model tokens of a turn | Not measured: only the runtime knows them. The report counts the turns the bus causes; their size depends on the context at that moment |
+
+---
+
+## 6.10 Session registered by the agent
+
+**Purpose:** Shows how an agent without host hooks (Claude Code outside corral, e.g. on a lab host) gets its bot to its own hooks and listener, and why two such sessions in one checkout never swap identities.
+
+**Trigger:** The agent calls `session_start` (no `MM_BOT_TOKEN` in its environment); the session ends.
+
+**Participants:** MCP server, Turn hooks, Shell CLI; Agent runtime, Registrar, Mattermost REST API
+
+**Quality goal illustrated:** `#usable` Reachability — a mention for the agent wakes that agent
+
+### Sequence
+
+1. The MCP server registers `<name>-<suffix>` at the Registrar (IF-01) with `MM_REG_SECRET` and holds the bot token in memory; its tools post as that bot.
+2. It writes the token to a 0600 session file in the state directory, named after the Claude Code session: `mcp-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`. Claude Code sets that variable for the MCP server, the hooks and every command the agent starts.
+3. Turn hooks and the background listener (`mm-agent-listen.sh`) find the file under the same name; a hook whose environment lacks the variable takes `session_id` from its JSON input. They count unread messages, set presence and wake the agent as that bot.
+4. `session_end`, or the server's exit, unregisters the bot and removes only its own file.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 2 | No `CLAUDE_CODE_SESSION_ID` (an older runtime) | The file is named after the project directory instead (`mcp-<sha1(dir)>.env`), and a hook running in a subdirectory walks up to it. Two such sessions in one checkout would share it again |
+| 3 | Hook has a session id but finds no file of that session | It stays inert; it never falls back to a project-keyed file, which may belong to another session. Keyed on the project alone, a second session in the same checkout overwrote the first one's file, and the first agent's hooks and listener ran as the second bot and never saw the mentions for its own |
+| 4 | Process killed (SIGKILL) | The bot and its file stay; `mm-agent-sweep.sh` removes both (RT-6.1, step 7) |

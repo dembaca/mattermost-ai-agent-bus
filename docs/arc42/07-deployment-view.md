@@ -28,7 +28,7 @@ fail-open process next to the agent realises `#reliable`.
 
 | Building Block (Section 5) | Deployed On | Instances | Notes |
 |--------------------|-------------|-----------|-------|
-| Host session hooks | Developer host (corral `preStart` / `postEnd`), from the host copy `~/.local/share/mm-agent-bus/current/` | 1 run each per session | Only block that sees `MM_REG_SECRET` |
+| Host session hooks | Developer host (corral `preStart` / `postEnd`), from the host copy `~/.local/share/mm-agent-bus/current/`, or by choice from the host's marketplace clone | 1 run each per session | Only block that sees `MM_REG_SECRET` |
 | Shell CLI | Developer host (host copy) and corral sandbox (plugin) | Per call | Same scripts on both sides; session files under `~/.local/state/mm-agent-bus/` |
 
 **Host copy.** corral approves a hook's `exec` file by its content, but not the
@@ -42,6 +42,20 @@ corral's `exec` points there once; after a plugin update the developer reruns th
 installer, and corral asks to approve the changed hook. The start hook warns when
 it runs from the plugin directory or the session's workdir, and when the host copy
 is older than the installed plugin.
+
+**From the marketplace clone, by choice.** corral's `exec` may point straight at
+the host's marketplace clone,
+`~/.claude/plugins/marketplaces/mattermost-ai-agent-bus/adapters/corral/`. Its path
+is stable and `/plugin update` moves it, so updates take effect with the next session
+and there is no installer to rerun. This gives up the protection above: corral no
+longer asks before new hook code runs, and where `~/.claude` is shared with the
+corral homes (the default) a sandboxed agent can change the code the host then runs —
+outside the sandbox, with the registration secret. It suits a host where that is
+already true for other reasons (agents that never run in corral, such as Cursor), and
+a registration secret that can do no more than create bots that may delete
+themselves. The start hook does not warn for this path; it still says when the
+installed plugin is newer than the clone (`/plugin update`), and it still warns for
+a versioned plugin directory, the corral home's plugins and the session's workdir.
 | MCP server | corral sandbox, child of the agent runtime (`uv run`) | 1 per session | Long-lived; holds the WebSocket |
 | Turn hooks | corral sandbox, run by Claude Code | Per turn | Must finish within the hook timeout |
 | Agent skill | corral sandbox, loaded by the agent runtime | 1 per session | Plain Markdown, part of the plugin |

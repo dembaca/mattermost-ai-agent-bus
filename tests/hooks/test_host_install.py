@@ -67,3 +67,39 @@ def test_start_hook_warns_about_writable_or_outdated_hooks(mm, run, tmp_path):
             CORRAL_SESSION_ID="sess-1")
     assert "this session's own workdir" in r.stderr
     assert f"host hooks are {VERSION}, the installed plugin is 99.0.0" in r.stderr
+
+
+
+def plugin_link(home, *parts):
+    """ROOT as Claude Code lays it out under the host's ~/.claude/plugins."""
+    d = home.joinpath(".claude", "plugins", *parts)
+    d.parent.mkdir(parents=True, exist_ok=True)
+    d.symlink_to(ROOT)
+    return d
+
+
+def test_start_hook_from_the_marketplace_clone_follows_updates_quietly(mm, run, tmp_path):
+    """arc42 §7.1: exec pointed at the host's marketplace clone is a choice, not a mistake."""
+    market = plugin_link(tmp_path, "marketplaces", "mattermost-ai-agent-bus")
+    registry(tmp_path, market)
+    r = run(str(market / START), MM_BOT_TOKEN=None, MM_TEAM="team", CORRAL_SESSION_ID="sess-1")
+    assert r.code == 0, r.stderr
+    assert "WARNING" not in r.stderr and "host hooks" not in r.stderr
+    assert "mm-bus: no bot for this session: " in r.stderr  # the hook itself ran
+
+
+def test_start_hook_from_the_marketplace_says_when_the_plugin_is_newer(mm, run, tmp_path):
+    market = plugin_link(tmp_path, "marketplaces", "mattermost-ai-agent-bus")
+    newer = tmp_path / "plugins-cache" / "mattermost-ai-agent-bus" / "99.0.0"
+    (newer / ".claude-plugin").mkdir(parents=True)
+    (newer / ".claude-plugin" / "plugin.json").write_text('{"version": "99.0.0"}')
+    registry(tmp_path, newer)
+    r = run(str(market / START), MM_BOT_TOKEN=None, MM_TEAM="team", CORRAL_SESSION_ID="sess-1")
+    assert f"host hooks (marketplace) are {VERSION}, the installed plugin is 99.0.0" in r.stderr
+    assert "/plugin update" in r.stderr
+
+
+def test_start_hook_from_a_versioned_plugin_directory_still_warns(mm, run, tmp_path):
+    plugin = plugin_link(tmp_path, "cache", "mattermost-ai-agent-bus", VERSION)
+    r = run(str(plugin / START), MM_BOT_TOKEN=None, MM_TEAM="team", CORRAL_SESSION_ID="sess-1")
+    assert "hooks run from the plugin directory" in r.stderr

@@ -3,6 +3,36 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.22.0
+
+### Fixed
+
+- **Two agent-registered sessions in one checkout no longer swap identities.**
+  The session file that hands the bot token from the MCP server to the hooks was
+  named after the project directory, so a second `session_start` in the same
+  checkout overwrote the first one's: the first agent's hooks and listener then
+  ran as the second bot, showed its presence and never woke for the first bot's
+  mentions and DMs, and whichever session ended first took the file away from
+  the other. It is now named after the Claude Code session
+  (`CLAUDE_CODE_SESSION_ID`, or the `session_id` in a hook's input); only
+  without one is it keyed on the project directory. Spec: arc42 RT-6.10.
+- **`mm-agent-sweep.sh` removes files of bots that are gone already.** A bot
+  whose own token the registrar and Mattermost both reject (`401`) no longer
+  counts as a failure kept forever: the stale file is removed and reported as
+  `gone`. Real failures now print their HTTP status, and session files from
+  before `MM_REG_BOT_NAME` are swept by their username. Spec: arc42 RT-6.1.
+
+### Added
+
+- **Host hooks from the marketplace clone.** corral's `exec` may point at
+  `~/.claude/plugins/marketplaces/mattermost-ai-agent-bus/adapters/corral/`, so
+  `/plugin update` takes effect without the installer. A deliberate trade,
+  documented: corral no longer asks before new hook code runs, and a sandbox
+  sharing `~/.claude` can change that code. The start hook no longer warns for
+  that path and points to `/plugin update` when the installed plugin is newer;
+  it still warns for versioned plugin directories, the corral home's plugins and
+  the session's workdir. Spec: arc42 §7.1.
+
 ## 0.21.0
 
 ### Added

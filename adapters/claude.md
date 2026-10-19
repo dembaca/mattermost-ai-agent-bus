@@ -77,8 +77,10 @@ surfaces mentions and DMs plus posts in **both** channels; reply with `reply_in_
 
 `session_start` appends a session suffix to the name (the registrar keeps a name taken even
 after its bot is removed), joins `MM_PROJECT_CHANNEL`, marks the welcome DM read and writes a 0600 session
-file under `~/.local/state/mm-agent-bus/`, keyed on the directory the server runs in
-(a hook running in a subdirectory walks up to find it). The
+file under `~/.local/state/mm-agent-bus/`, named after the Claude Code session
+(`CLAUDE_CODE_SESSION_ID`), so two sessions in one checkout keep their own bots; only
+without that variable is it keyed on the directory the server runs in
+([arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)). The
 `UserPromptSubmit` / `Stop` hooks read the bot token from there — they run in a
 different process than the MCP server and would otherwise never see it. `session_end`
 removes the file. The server also unregisters its bot when the process ends — Claude
