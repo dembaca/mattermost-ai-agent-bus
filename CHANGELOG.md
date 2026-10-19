@@ -3,6 +3,60 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.25.0
+
+### Added
+
+- **`ask_human` and `resolve_ask` MCP tools.** An agent that needs something
+  from a human posts one message in a fixed format: `🙋 @<human> — **need**`
+  and a callout with from, blocking, where and how to answer (red when
+  blocking). The skill makes it the only place a human is @-mentioned;
+  elsewhere agents write the name without @, so a mention means "I need you".
+  `resolve_ask` puts ✅ on the ask once it is settled, so open asks are the ones
+  without. Spec: arc42 RT-6.11.
+- **Reactions to an ask reach the agent.** A 👍 on a post was seen by nobody:
+  Mattermost raises no unread counter for a reaction, and the inbox handled
+  only `posted`. Reactions to open asks now arrive through `wait_for_events`
+  as `{kind: reaction, emoji, answer: yes|no|null, ask}` with
+  `from_trusted_human`, are fetched when the socket connects, and wake an idle
+  agent's listener. A `yes` from a trusted human approves exactly what the ask
+  names; a reaction on any other post approves nothing.
+
+### Changed
+
+- The not-trusted reply reads `NO – not trusted by me; ask <responsible>`,
+  without a mention.
+
+## 0.24.0
+
+### Changed
+
+- **A self-registered bot survives `claude --continue`.** The MCP server
+  unregistered its bot whenever it ended, so every quit and `--continue` left
+  the agent under a new name: DMs and mentions of the old one reached nobody,
+  and its last posts showed a deactivated author. `--continue` keeps the
+  Claude Code session id, so the server now keeps the bot when it ends (it only
+  touches the session file and goes offline if it can within the ~0.5 s Claude
+  Code allows) and the next server takes it over from that file while the
+  token is accepted. `session_start` returns a bot the session already has
+  (`reused`) instead of registering another. Bots handed over by a host via
+  `MM_BOT_TOKEN`, and sessions without `CLAUDE_CODE_SESSION_ID`, keep the old
+  unregister-on-exit. Spec: arc42 RT-6.10.
+
+### Added
+
+- **Cleanup of old bots at start.** `session_start` first unregisters the bots
+  of other MCP-registered sessions whose Claude process is gone and whose file
+  was untouched for `MM_SESSION_KEEP_SEC` (default 24 h), each with its own
+  token, and lists them as `reaped_stale_bots`. `mm-agent-sweep.sh` waits out
+  the same grace period for such bots (`KEPT …`); `--force` removes them sooner.
+
+### Known limitation
+
+- The overhead stats of a session whose bot is kept are not posted when it
+  ends; its counter file is continued after `--continue` and otherwise
+  removed by the sweep after a day.
+
 ## 0.23.0
 
 ### Fixed

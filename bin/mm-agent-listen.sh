@@ -9,7 +9,9 @@
 #   - an unread mention or DM, or @channel / @all / @here,
 #   - a reply in a thread the agent posted in,
 #   - a post by a trusted human (MM_TRUSTED_HUMAN_USER_IDS),
-#   - any new post, while the agent holds the 👑 (the coordinator sees all).
+#   - any new post, while the agent holds the 👑 (the coordinator sees all),
+#   - a reaction to one of its open asks (asks-<uid>.env, RT-6.11) that the
+#     agent has not been handed yet.
 # Other posts wake it only for a digest, once the oldest of them is
 # MM_LISTEN_DIGEST_SEC (default 1800 s) old: every wake-up is a full model turn,
 # and a busy channel would otherwise wake every member for every post.
@@ -33,7 +35,7 @@ UNTIL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --until) UNTIL="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
     *) echo "usage: $0 --until EPOCH" >&2; exit 2 ;;
   esac
 done
@@ -57,6 +59,7 @@ DIGEST="${MM_LISTEN_DIGEST_SEC:-1800}"
 [[ "$DIGEST" =~ ^[0-9]+$ ]] || DIGEST=1800
 TRUSTED_IDS="${MM_TRUSTED_HUMAN_USER_IDS:-${MM_OWNER_USER_ID:-}}"
 COORD="$(mm_bot_state_file coord "$ME" 2>/dev/null)" || COORD=""
+ASKS="$(mm_bot_state_file asks "$ME" 2>/dev/null)" || ASKS=""
 
 # Who am I to a post: the username (for @mentions in the text) and the threads
 # this agent posted in, read once — the agent is idle while this runs.
@@ -97,6 +100,27 @@ while (( $(date +%s) < UNTIL )); do
     mm_stat wake reason=dm
     echo "Mattermost: ${pending} unread mention(s) or DM(s) for you. Collect them with wait_for_events(timeout_sec=1), answer in their threads, then finish your turn."
     exit 0
+  fi
+  # A reaction to an open ask (RT-6.11) raises no unread counter: look at the
+  # asks themselves, and wake for any reaction not yet handed to the agent.
+  if [[ -n "$ASKS" && -f "$ASKS" ]]; then
+    seen="$(sed -n 's/^SEEN=//p' "$ASKS" | jq -R . | jq -sc . 2>/dev/null || echo '[]')"
+    fresh=0
+    while read -r pid; do
+      [[ "$pid" =~ ^[a-z0-9]{26}$ ]] || continue
+      mm_api GET "/api/v4/posts/${pid}/reactions" && [[ "$MM_API_STATUS" == "200" ]] || continue
+      n="$(jq --arg me "$ME" --arg pid "$pid" --argjson seen "$seen" '
+        [(. // [])[] | select(.user_id != $me)
+         | "\($pid):\(.user_id):\(.emoji_name)" | select(. as $k | $seen | index($k) | not)]
+        | length' <<<"$MM_API_BODY" 2>/dev/null || echo 0)"
+      [[ "$n" =~ ^[0-9]+$ ]] && fresh=$((fresh + n))
+    done < <(sed -n 's/^ASK=\([^ ]*\).*/\1/p' "$ASKS")
+    if (( fresh > 0 )); then
+      ENDED_AS=event
+      mm_stat wake reason=reaction
+      echo "Mattermost: ${fresh} reaction(s) to your ask(s). Collect them with wait_for_events(timeout_sec=1), act on the answer, call resolve_ask once it is settled, then finish your turn."
+      exit 0
+    fi
   fi
   if [[ -n "$CID" ]] && mm_api GET "/api/v4/channels/${CID}/posts?since=${since_ms}" &&
     [[ "$MM_API_STATUS" == "200" ]]; then

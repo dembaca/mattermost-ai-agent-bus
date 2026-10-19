@@ -5,6 +5,10 @@
 #   mm-agent-sweep.sh --apply    # actually unregister
 #   mm-agent-sweep.sh --apply --force   # include sessions that still look live
 #
+# A bot an agent registered itself (mcp-*.env) outlives its process for
+# `claude --continue`; it counts as abandoned only once its file is untouched
+# for MM_SESSION_KEEP_SEC (default 24 h). --force includes it sooner.
+#
 # A session file exists for the whole run of a session, so it is NOT evidence
 # that a bot is abandoned. Each file records MM_SESSION_PID, the supervising
 # corral process; while that process is alive the session is in use and is
@@ -19,7 +23,7 @@
 #      Required rather than convenient: a bot token targeting another agent is
 #      answered 401.
 #
-# Per-bot state files next to them (coord-, listen-, presence-, turn-<uid>.env,
+# Per-bot state files next to them (asks-, coord-, listen-, presence-, turn-<uid>.env,
 # stats-<uid>.jsonl) hold no token and are not sessions. Last, the sweep removes
 # those whose bot has no session file left and that were untouched for a day: a
 # live session keeps writing them, and one whose token was exported by hand has
@@ -39,7 +43,7 @@ for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
     --force) FORCE=1 ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -49,6 +53,8 @@ removed=0
 kept=0
 skipped=0
 ACTIVE_NAMES=()
+KEEP_SEC="${MM_SESSION_KEEP_SEC:-86400}"
+[[ "$KEEP_SEC" =~ ^[0-9]+$ ]] || KEEP_SEC=86400
 
 note() { echo "$*" >&2; }
 
@@ -62,7 +68,7 @@ is_live() {
 }
 
 # Per-bot state, not a session: the uid in its name, never a token.
-STATE_RE='^(coord|listen|presence|turn)-[a-z0-9]{26}\.env$|^stats-[a-z0-9]{26}\.jsonl$'
+STATE_RE='^(asks|coord|listen|presence|turn)-[a-z0-9]{26}\.env$|^stats-[a-z0-9]{26}\.jsonl$'
 is_state_file() { [[ "$(basename "$1")" =~ $STATE_RE ]]; }
 
 # --- 1. session files --------------------------------------------------------
@@ -87,6 +93,17 @@ for f in "$STATE_DIR"/*.env; do
     ACTIVE_NAMES+=("$name")
     skipped=$((skipped + 1))
     continue
+  fi
+  # An MCP-registered bot is kept for `claude --continue` (RT-6.10) until its
+  # file has been untouched for the grace period; the server's exit touches it.
+  if [[ "$FORCE" -eq 0 && "$(basename "$f")" == mcp-* ]]; then
+    age=$(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") ))
+    if (( age < KEEP_SEC )); then
+      note "KEPT    ${name} (ended $((age / 3600)) h ago, kept for claude --continue until $((KEEP_SEC / 3600)) h) — use --force to include"
+      ACTIVE_NAMES+=("$name")
+      skipped=$((skipped + 1))
+      continue
+    fi
   fi
 
   if [[ "$APPLY" -eq 0 ]]; then

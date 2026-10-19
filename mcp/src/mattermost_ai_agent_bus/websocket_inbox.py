@@ -11,6 +11,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
+from . import asks
 from .client import MattermostClient, ws_url_from_http
 
 log = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class ClassifiedEvent:
-    kind: str  # mention | dm | watched_channel
+    kind: str  # mention | dm | watched_channel | reaction (to an open ask)
     post: dict[str, Any]
     channel: dict[str, Any] | None = None
     raw: dict[str, Any] | None = None
@@ -189,6 +190,15 @@ class WebSocketInbox:
                     continue
                 self._seen_ids.add(post["id"])
                 await self._queue.put(ClassifiedEvent(kind=kind, post=post))
+        # Reactions to open asks given while nothing was listening.
+        for pid in asks.open_asks(self._bot_user_id):
+            try:
+                found = await self.client.reactions(pid)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("could not read reactions to ask %s: %s", pid, exc)
+                continue
+            for reaction in found:
+                await self._queue_reaction(reaction, "")
 
     def start_typing(self, channel_id: str, parent_id: str = "") -> None:
         """Show the bot as typing in channel_id (thread parent_id) for a while."""
@@ -246,6 +256,9 @@ class WebSocketInbox:
                     msg = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
+                if msg.get("event") == "reaction_added":
+                    await self._on_reaction_event(msg)
+                    continue
                 if msg.get("event") != "posted":
                     continue
                 data = msg.get("data") or {}
@@ -299,6 +312,37 @@ class WebSocketInbox:
         self._ws = None
         self._reader = None
 
+    async def _on_reaction_event(self, msg: dict[str, Any]) -> None:
+        raw = (msg.get("data") or {}).get("reaction")
+        try:
+            reaction = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except json.JSONDecodeError:
+            return
+        cid = (msg.get("broadcast") or {}).get("channel_id", "")
+        await self._queue_reaction(reaction, cid)
+
+    async def _queue_reaction(self, reaction: dict[str, Any], channel_id: str) -> None:
+        """Queue a reaction to one of this bot's open asks (RT-6.11).
+
+        Mattermost raises no unread counter for a reaction, and nothing but an
+        ask makes one meaningful: a 👍 on any other post stays a remark.
+        """
+        pid = reaction.get("post_id") or ""
+        user = reaction.get("user_id") or ""
+        emoji = reaction.get("emoji_name") or ""
+        if not pid or not emoji or user == self._bot_user_id:
+            return
+        if not asks.is_open(self._bot_user_id, pid):
+            return
+        key = asks.seen_key(pid, user, emoji)
+        if key in self._seen_ids or asks.was_seen(self._bot_user_id, key):
+            return
+        self._seen_ids.add(key)
+        post = {"id": key, "root_id": pid, "channel_id": channel_id, "user_id": user,
+                "create_at": reaction.get("create_at") or 0, "message": f":{emoji}:"}
+        await self._queue.put(ClassifiedEvent(
+            kind="reaction", post=post, raw={"emoji": emoji, "ask": pid}))
+
     async def wait_for_events(
         self,
         *,
@@ -334,11 +378,15 @@ class WebSocketInbox:
                 break
         # Mentions and DMs first: a backlog of channel posts must never push the
         # one message that wants an answer past max_events.
-        queued.sort(key=lambda e: e.kind not in ("mention", "dm"))
+        queued.sort(key=lambda e: e.kind not in ("mention", "dm", "reaction"))
         events, rest = queued[:max(1, max_events)], queued[max(1, max_events):]
         for e in rest:
             self._queue.put_nowait(e)
         self.pending = len(rest)
+        # Handed over: the listener must not wake the agent for these again.
+        for e in events:
+            if e.kind == "reaction":
+                asks.mark_seen(self._bot_user_id, e.post["id"])
         # A channel with events still queued stays unread, so its counters keep
         # telling the hooks and the listener that something waits.
         waiting = {e.post.get("channel_id") for e in rest}

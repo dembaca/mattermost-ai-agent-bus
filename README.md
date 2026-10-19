@@ -85,7 +85,7 @@ uv run mattermost-ai-agent-bus-mcp
 ```
 
 Tools: `session_start`, `session_end`, `get_me`, `post_message`, `reply_in_thread`,
-`get_thread`, `list_recent`, `wait_for_events`.
+`ask_human`, `resolve_ask`, `get_thread`, `list_recent`, `wait_for_events`.
 
 Tests:
 

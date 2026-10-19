@@ -186,6 +186,10 @@ other failure is printed with its HTTP status and the file kept. Per-bot state
 files (presence, listen window, turn, crown, stats) are no sessions; the sweep
 removes those of bots without a session file once they are a day old
 ([arc42 §6.1](../docs/arc42/06-runtime-view.md#61-host-managed-session-lifecycle)).
+A bot an agent registered itself (`mcp-*.env`, outside corral) is kept for
+`claude --continue`; the sweep reports it as `KEPT` until its file is untouched for
+`MM_SESSION_KEEP_SEC` (24 h), and `--force` includes it sooner
+([arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
 
 Bots whose session file is already gone need the registration secret, because a
 bot token can only delete its own agent (the registrar answers `401` otherwise):

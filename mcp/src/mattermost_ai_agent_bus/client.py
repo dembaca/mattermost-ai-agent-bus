@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse, urlunparse
@@ -12,6 +14,20 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from . import session_file
+
+log = logging.getLogger(__name__)
+
+
+def _pid_alive(pid: str) -> bool:
+    if not pid.isdigit():
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 _NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$")
 _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
@@ -111,6 +127,17 @@ class MattermostClient:
     session_file_status: dict[str, Any] = field(
         default_factory=dict, repr=False, init=False
     )
+    # The bot was taken over from this session's file, not registered here.
+    adopted: bool = field(default=False, repr=False, init=False)
+    # Set by session_start: an existing bot was returned instead of a new one;
+    # bots of long-ended sessions it unregistered first.
+    reused: bool = field(default=False, repr=False, init=False)
+    reaped: list[str] = field(default_factory=list, repr=False, init=False)
+
+    @property
+    def keeps_bot_on_exit(self) -> bool:
+        """A bot of our own, in a session `claude --continue` can resume (RT-6.10)."""
+        return self.session is not None and bool(session_file.session_id())
 
     @property
     def work_channel_name(self) -> str:
@@ -183,6 +210,17 @@ class MattermostClient:
             raise RuntimeError("MM_REG_SECRET is required for session_start")
         if not self.register_url:
             raise RuntimeError("MM_REGISTER_URL is required for session_start")
+        # Already this session's bot (taken over after `claude --continue`, or a
+        # second call): registering again would abandon it (RT-6.10).
+        if self.session is not None and self.token:
+            try:
+                await self._api("GET", "/api/v4/users/me")  # uncached: still alive?
+                self.reused = True
+                return self.session
+            except httpx.HTTPStatusError:
+                pass  # deleted meanwhile: register a new one
+        self.reused = False
+        self.reaped = await self.reap_stale_sessions()
         name = name.strip().lower()
         if unique and _NAME_RE.match(name) and len(name) >= 3:
             name = unique_name(name)
@@ -206,6 +244,11 @@ class MattermostClient:
             user_id=data["user_id"],
             bot_token=data["bot_token"],
         )
+        self._take(info)
+        return info
+
+    def _take(self, info: SessionInfo) -> None:
+        """Make ``info`` this process's bot and hand it to the hooks."""
         self.base_url = info.url
         self.token = info.bot_token
         self.session = info
@@ -232,7 +275,71 @@ class MattermostClient:
                 "error": f"{type(exc).__name__}: {exc.strerror or exc}",
             }
         self.session_file_status["project_dir"] = session_file.project_dir()
+
+    def adopt_sync(self) -> SessionInfo | None:
+        """Take over this Claude Code session's bot after a restart (RT-6.10).
+
+        `claude --continue` keeps the session id, and the server that ended
+        kept the bot and its session file. Taken over only while its token is
+        still accepted; a rejected one means the bot is gone, so the file goes.
+        """
+        if self.token:
+            return None
+        data = session_file.read()
+        if not data:
+            return None
+        url = (data.get("MM_CHAT_URL") or self.base_url).rstrip("/")
+        try:
+            with httpx.Client(timeout=5.0) as http:
+                me = http.get(f"{url}/api/v4/users/me",
+                              headers={"Authorization": f"Bearer {data['MM_BOT_TOKEN']}"})
+            if me.status_code == 401:
+                session_file.remove()
+                return None
+        except httpx.HTTPError:
+            pass  # unreachable now; the token is most likely still good
+        info = SessionInfo(url=url, name=data["MM_REG_BOT_NAME"],
+                           username=data.get("MM_BOT_USERNAME", ""),
+                           user_id=data.get("MM_BOT_USER_ID", ""),
+                           bot_token=data["MM_BOT_TOKEN"])
+        self._take(info)  # rewrites the file: MM_SESSION_PID is this server's parent now
+        self.adopted = True
         return info
+
+    async def reap_stale_sessions(self) -> list[str]:
+        """Unregister bots whose MCP-registered session ended long ago (RT-6.10).
+
+        A server keeps its bot when it ends, for `claude --continue`; nothing
+        tells a resume from a real end. A session file whose Claude process is
+        gone and that was untouched for MM_SESSION_KEEP_SEC (default 24 h) is
+        taken as ended: its bot is deleted with its own token, the file removed.
+        """
+        try:
+            keep = float(env("MM_SESSION_KEEP_SEC") or 86400)
+        except ValueError:
+            keep = 86400.0
+        reaped: list[str] = []
+        now = time.time()
+        for path in session_file.others():
+            data = session_file.parse(path)
+            name, token = data.get("MM_REG_BOT_NAME"), data.get("MM_BOT_TOKEN")
+            if not name or not token or _pid_alive(data.get("MM_SESSION_PID", "")):
+                continue
+            try:
+                if now - path.stat().st_mtime < keep:
+                    continue
+                resp = await self._http().delete(
+                    f"{self.register_url}/{name.removeprefix('agent-')}",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            except (OSError, httpx.HTTPError) as exc:
+                log.info("stale session %s left: %s", name, exc)
+                continue
+            # 401: the token is dead, so the bot is gone already.
+            if resp.status_code in (200, 204, 401, 404):
+                path.unlink(missing_ok=True)
+                reaped.append(name)
+        return reaped
 
     async def finish_session_setup(self) -> dict[str, Any]:
         """What session_start leaves undone: join the project channel, empty the inbox.
@@ -315,6 +422,24 @@ class MattermostClient:
         if not self.token or not self.register_url:
             return "no session"
         headers = {"Authorization": f"Bearer {self.token}"}
+        if self.keeps_bot_on_exit and self.session is not None:
+            # Kept for `claude --continue`, which reuses the session id: the next
+            # server takes the bot over (adopt_sync). The file's mtime starts the
+            # grace period after which another session's start reaps it. Claude
+            # Code kills the server ~0.5 s after asking it to stop, so only the
+            # quick, local part is certain; going offline is best effort.
+            session_file.touch()
+            name = self.session.name
+            try:
+                with httpx.Client(timeout=0.3) as http:
+                    http.put(f"{self.base_url}/api/v4/users/{self.session.user_id}/status",
+                             headers=headers,
+                             json={"user_id": self.session.user_id, "status": "offline"})
+            except httpx.HTTPError:
+                pass
+            self.session = None
+            self.token = None
+            return f"kept {name} for claude --continue"
         try:
             with httpx.Client(timeout=5.0) as http:
                 if self.session:
@@ -494,12 +619,23 @@ class MattermostClient:
         *,
         channel_id: str | None = None,
         root_id: str | None = None,
+        props: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cid = channel_id or await self.get_channel_id()
         body: dict[str, Any] = {"channel_id": cid, "message": message}
         if root_id:
             body["root_id"] = root_id
+        if props:
+            body["props"] = props
         return await self._api("POST", "/api/v4/posts", json=body)
+
+    async def add_reaction(self, post_id: str, emoji: str) -> None:
+        me = await self.get_me()
+        await self._api("POST", "/api/v4/reactions", json={
+            "user_id": me["id"], "post_id": post_id, "emoji_name": emoji})
+
+    async def reactions(self, post_id: str) -> list[dict[str, Any]]:
+        return await self._api("GET", f"/api/v4/posts/{post_id}/reactions") or []
 
     async def thread(self, post_id: str) -> dict[str, Any]:
         """Return post + ordered replies for a thread root (or any post id)."""

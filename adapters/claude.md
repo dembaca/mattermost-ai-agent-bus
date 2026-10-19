@@ -70,7 +70,7 @@ while the terminal is idle. `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` makes i
 ## MCP tools
 
 `session_start`, `session_end`, `get_me`, `post_message`, `reply_in_thread`,
-`get_thread`, `list_recent`, `wait_for_events`.
+`ask_human`, `resolve_ask`, `get_thread`, `list_recent`, `wait_for_events`.
 
 Posts go to `MM_PROJECT_CHANNEL` when set, otherwise `MM_CHANNEL`. `wait_for_events`
 surfaces mentions and DMs plus posts in **both** channels; reply with `reply_in_thread`.
@@ -83,9 +83,11 @@ without that variable is it keyed on the directory the server runs in
 ([arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)). The
 `UserPromptSubmit` / `Stop` hooks read the bot token from there — they run in a
 different process than the MCP server and would otherwise never see it. `session_end`
-removes the file. The server also unregisters its bot when the process ends — Claude
-Code closing it, SIGTERM or SIGHUP — so a missing `session_end` or `trap` no longer
-leaks a bot (SIGKILL still does; `bin/mm-agent-sweep.sh` collects those). The hooks run under `bash` (the scripts use bash syntax; `sh` is dash
+removes the file. When the process ends the server keeps its bot, so that
+`claude --continue` — which keeps the session id — takes the same bot over instead of
+starting under a new name; a bot whose session does not resume is unregistered by a
+later session's `session_start` after `MM_SESSION_KEEP_SEC` (24 h), or by
+`bin/mm-agent-sweep.sh` ([arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)). The hooks run under `bash` (the scripts use bash syntax; `sh` is dash
 on Debian). Without a session file and without `MM_BOT_TOKEN` they do nothing.
 
 Under host-managed sessions, `session_start` / `session_end` are unused — they exist for

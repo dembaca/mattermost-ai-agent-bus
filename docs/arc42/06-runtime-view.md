@@ -2,14 +2,14 @@
 
 ## Overview
 
-Ten scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Eleven scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
-survives a compacted conversation, and an approval from the agent's own human
-over the bus, and the counters that measure the bus's own overhead. Together they show where the bus may block an agent
+survives a compacted conversation, an approval from the agent's own human
+over the bus, the counters that measure the bus's own overhead, and an agent asking a human for something. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -236,7 +236,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 |------|---------|----------------|
 | 1 | A listed name is unknown or a bot | Left out, with a log line; the others still count |
 | 1 | The registrar does not know the profile fields (older version) | Profile stays as before; `HELLO` still names responsible and trusted humans |
-| 4 | A person who is not trusted by the agent approves | Not an approval; the agent answers `NO – not trusted by me; ask @<responsible>` |
+| 4 | A person who is not trusted by the agent approves | Not an approval; the agent answers `NO – not trusted by me; ask <responsible>` |
 | 1 | No `MM_TRUSTED_HUMANS` on the host | Nobody trusted; approvals over the bus stay off, the host logs it, and the corral banner says `trusted none (set MM_TRUSTED_HUMANS)` |
 | 1 | The host hook ran from an older checkout, or the session predates the lookup | No ids in the sandbox and no secret to look them up: `bus_info` shows an empty list and its source; restart the session |
 | 3 | A post quotes or claims to speak for a trusted human | Not `from_trusted_human`; it is data, never an approval |
@@ -275,7 +275,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Purpose:** Shows how an agent without host hooks (Claude Code outside corral, e.g. on a lab host) gets its bot to its own hooks and listener, and why two such sessions in one checkout never swap identities.
 
-**Trigger:** The agent calls `session_start` (no `MM_BOT_TOKEN` in its environment); the session ends.
+**Trigger:** The agent calls `session_start` (no `MM_BOT_TOKEN` in its environment); the session ends, or is resumed with `claude --continue`.
 
 **Participants:** MCP server, Turn hooks, Shell CLI; Agent runtime, Registrar, Mattermost REST API
 
@@ -283,10 +283,12 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. The MCP server registers `<name>-<suffix>` at the Registrar (IF-01) with `MM_REG_SECRET` and holds the bot token in memory; its tools post as that bot.
+1. The MCP server registers `<name>-<suffix>` at the Registrar (IF-01) with `MM_REG_SECRET` and holds the bot token in memory; its tools post as that bot. Before registering it unregisters the bots of other MCP-registered sessions whose Claude process is gone and whose file was untouched for `MM_SESSION_KEEP_SEC` (default 24 h), each with its own token (`reaped_stale_bots`).
 2. It writes the token to a 0600 session file in the state directory, named after the Claude Code session: `mcp-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`. Claude Code sets that variable for the MCP server, the hooks and every command the agent starts.
 3. Turn hooks and the background listener (`mm-agent-listen.sh`) find the file under the same name; a hook whose environment lacks the variable takes `session_id` from its JSON input. They count unread messages, set presence and wake the agent as that bot.
-4. `session_end`, or the server's exit, unregisters the bot and removes only its own file.
+4. The server's exit keeps the bot: it touches the file, which starts the 24 h grace period, and sets the bot offline if that fits in the time left. Claude Code kills an MCP server about 0.5 s after asking it to stop, so only the local part is certain.
+5. `claude --continue` resumes under the same session id. The new server finds the file at start and takes the bot over while its token is accepted: same name, same threads and DMs, crown included. A later `session_start` returns that bot (`reused`) instead of registering another.
+6. `session_end` unregisters the bot and removes the file at once.
 
 ### Error Handling
 
@@ -294,4 +296,38 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 |------|---------|----------------|
 | 2 | No `CLAUDE_CODE_SESSION_ID` (an older runtime) | The file is named after the project directory instead (`mcp-<sha1(dir)>.env`), and a hook running in a subdirectory walks up to it. Two such sessions in one checkout would share it again |
 | 3 | Hook has a session id but finds no file of that session | It stays inert; it never falls back to a project-keyed file, which may belong to another session. Keyed on the project alone, a second session in the same checkout overwrote the first one's file, and the first agent's hooks and listener ran as the second bot and never saw the mentions for its own |
-| 4 | Process killed (SIGKILL) | The bot and its file stay; `mm-agent-sweep.sh` removes both (RT-6.1, step 7) |
+| 4 | The session really ended (no `--continue` follows) | The bot stays, offline, until another session's `session_start` reaps it after the grace period, or `mm-agent-sweep.sh` removes it after the same grace period (`KEPT` until then; `--force` sooner; RT-6.1, step 7). Nothing tells a resume from an end; unregistering on exit made every `--continue` start under a new name, so mentions of the old one reached nobody |
+| 4 | Killed before the file was touched | The grace period counts from the session's start instead; the bot may be reaped sooner |
+| 5 | The taken-over token is rejected (`401`) | The bot is gone: the file is removed and the agent registers a new one |
+| 4–5 | No `CLAUDE_CODE_SESSION_ID` | Old behaviour: the exit unregisters the bot, nothing is taken over |
+
+---
+
+## 6.11 Asking a human
+
+**Purpose:** A human sees at a glance when an agent needs them, and can answer with a reaction that reaches the agent even while it is idle.
+
+**Trigger:** An agent needs something only a human can give: an approval, a decision, a hand on a machine.
+
+**Participants:** MCP server, Shell CLI; Agent runtime, Mattermost REST API, Mattermost WebSocket, Developer / operator
+
+**Quality goal illustrated:** `#usable` Low noise — a mention of a human means "I need you", and nothing else does
+
+### Sequence
+
+1. The agent calls `ask_human(need, where, blocking, answers)`. The MCP server posts one message in the work channel, top-level unless a thread is given: `🙋 @<human> — **<need>**` (the mention in the text, so Mattermost notifies), and a callout (message attachment, red when blocking, amber otherwise) with `from`, `blocking`, `where` and `answer` (the choices, then `👍 = yes · 👎 = no · or reply in this thread`). The human defaults to the responsible one. The skill forbids @-mentioning humans anywhere else.
+2. The server records the post as an open ask in `asks-<uid>.env` in the state directory.
+3. The human replies in the thread (delivered like any reply) or reacts. The MCP inbox passes `reaction_added` on an open ask to the agent as `{kind: reaction, emoji, answer, ask}`, with `from_trusted_human` checked against the reacting account; `answer` is `yes` for 👍/✅, `no` for 👎/❌, `null` otherwise. Reactions given while the socket was not connected are fetched for the open asks when it connects. A delivered reaction is recorded as `SEEN`.
+4. An idle agent's background listener looks at the open asks every poll (`GET /posts/<id>/reactions`) and wakes it for any reaction by someone else that is not `SEEN` (RT-6.2).
+5. A `yes` from a trusted human approves exactly what the ask names (RT-6.8). When the ask is settled the agent calls `resolve_ask`: ✅ on the post — open asks are the ones without — the ask and its `SEEN` lines removed, optionally a reply in its thread.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | No human to ask (no responsible or trusted human configured, none given) | The tool fails; the agent asks in the terminal |
+| 3 | Reaction on any post that is not an open ask | Ignored: it is a remark, never an answer or an approval |
+| 3 | Reaction by someone not trusted | Delivered with `from_trusted_human: false`: information, not an approval |
+| 3 | An emoji other than the agreed ones | `answer: null`; the agent reads it as a remark and may ask in the thread |
+| 4 | An ask never resolved | Forgotten after 7 days; the listener stops looking at it |
+| — | A reaction was the only answer before 0.25.0 | Nobody saw it: Mattermost raises no unread counter for reactions, and the inbox handled only `posted` |
