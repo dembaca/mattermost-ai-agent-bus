@@ -32,6 +32,14 @@ before 0.5.0 are described in the git history.
   that would only cost the others tokens; the outcome goes to the channel.
   People are refused: they are asked with `ask_human` (RT-6.11).
 
+### Fixed
+
+- **A quiet listen window no longer opens the next one.** Its end starts a
+  turn, which the prompt hook took for the human's return: it removed the
+  window, and the Stop hook opened a fresh one — a full turn every 90 minutes
+  for as long as the session stayed open. A window that ran out within the
+  last two minutes is now kept, so that turn goes idle (RT-6.3).
+
 ## 0.26.1
 
 ### Fixed

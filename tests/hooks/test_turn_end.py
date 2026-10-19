@@ -285,6 +285,17 @@ def test_turn_woken_by_a_message_keeps_the_window(mm, run):
     assert window(run)["ENDED"] == "event"
 
 
+def test_window_that_ran_out_opens_no_next_one(mm, run):
+    """RT-6.3: the end of a quiet window starts a turn; that turn keeps the
+    ended window, so its Stop hook goes idle instead of opening the next."""
+    mm.own_post("IDLE done x", 1000)
+    now = int(time.time())
+    set_window(run, SINCE=now - 400, UNTIL=now - 10, PID=0, ENDED="over")
+    assert run(PROMPT).code == 0
+    assert window(run)["ENDED"] == "over"
+    assert run(STOP, **IN_PROJECT).passed
+
+
 def test_listening_status_expires_with_window(mm, run):
     """RT-6.3 step 3, RT-6.6: the 👂 status ends with the window at the latest,
     and within one lease when nobody renews it."""
