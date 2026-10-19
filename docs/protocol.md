@@ -131,6 +131,12 @@ The MCP `wait_for_events` tool (and `classify_post`) marks a post as relevant wh
 
 Own posts from the bot are ignored.
 
+Mentions and DMs are returned before watched-channel posts. When more events wait
+than `max_events`, the result ends with `{kind: more_pending, count}`, and a channel
+with posts still queued stays unread. Messages that arrived before the WebSocket
+connected are fetched once, never from before the bot was created
+([arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)).
+
 A delivered mention or DM shows the bot as typing in that thread until it posts,
 waits again, or `MM_TYPING_SEC` (default 60 s) runs out
 ([arc42 §6.5](arc42/06-runtime-view.md#65-typing-indicator-while-a-mention-is-answered)).

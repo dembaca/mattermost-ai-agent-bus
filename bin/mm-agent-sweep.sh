@@ -19,6 +19,12 @@
 #      Required rather than convenient: a bot token targeting another agent is
 #      answered 401.
 #
+# Per-bot state files next to them (coord-, listen-, presence-, turn-<uid>.env,
+# stats-<uid>.jsonl) hold no token and are not sessions. Last, the sweep removes
+# those whose bot has no session file left and that were untouched for a day: a
+# live session keeps writing them, and one whose token was exported by hand has
+# no session file but would lose its crown lease if they went sooner.
+#
 # Runs on the HOST: session files never enter a sandbox.
 set -uo pipefail
 
@@ -55,9 +61,14 @@ is_live() {
   kill -0 "$pid" 2>/dev/null
 }
 
+# Per-bot state, not a session: the uid in its name, never a token.
+STATE_RE='^(coord|listen|presence|turn)-[a-z0-9]{26}\.env$|^stats-[a-z0-9]{26}\.jsonl$'
+is_state_file() { [[ "$(basename "$1")" =~ $STATE_RE ]]; }
+
 # --- 1. session files --------------------------------------------------------
 shopt -s nullglob
 for f in "$STATE_DIR"/*.env; do
+  is_state_file "$f" && continue
   name="$(field "$f" MM_REG_BOT_NAME)"
   # Files from before MM_REG_BOT_NAME carry only the username.
   [[ -n "$name" ]] || { name="$(field "$f" MM_BOT_USERNAME)"; name="${name#agent-}"; }
@@ -145,6 +156,32 @@ if [[ -n "${MM_REG_SECRET:-}" && -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]];
   fi
 elif [[ "$APPLY" -eq 1 ]]; then
   note "(set MM_REG_SECRET to also sweep orphans that have no session file)"
+fi
+
+# --- 3. state files of bots without a session ---------------------------------
+# Bots that still have a session file (live, or kept after a failed unregister)
+# keep their state; so does this shell's own bot.
+KEEP_UIDS=" ${MM_BOT_USER_ID:-} "
+shopt -s nullglob
+for f in "$STATE_DIR"/*.env; do
+  is_state_file "$f" || KEEP_UIDS+="$(field "$f" MM_BOT_USER_ID) "
+done
+stale=0
+for f in "$STATE_DIR"/*-*.env "$STATE_DIR"/stats-*.jsonl; do
+  is_state_file "$f" || continue
+  uid="$(basename "$f")"; uid="${uid#*-}"; uid="${uid%%.*}"
+  [[ "$KEEP_UIDS" == *" $uid "* ]] && continue
+  [[ -n "$(find "$f" -mtime +0 2>/dev/null)" ]] || continue   # touched within a day
+  stale=$((stale + 1))
+  [[ "$APPLY" -eq 1 ]] && rm -f "$f"
+done
+shopt -u nullglob
+if (( stale > 0 )); then
+  if [[ "$APPLY" -eq 1 ]]; then
+    note "removed ${stale} state file(s) of bots without a session"
+  else
+    echo "would remove ${stale} state file(s) of bots without a session"
+  fi
 fi
 
 if [[ "$APPLY" -eq 1 ]]; then

@@ -188,3 +188,57 @@ async def test_wait_times_out_empty():
     inbox._ws = object()
     assert await inbox.wait_for_events(timeout_sec=0.01) == []
     assert inbox._queue.qsize() == 0
+
+
+class _FreshBotClient(_BackfillClient):
+    """A bot that just joined: Mattermost reports the channel as never viewed."""
+
+    def __init__(self, posts, **kw):
+        super().__init__(posts, **kw)
+        self.since: list = []
+
+    async def unread_channels(self):
+        return [{"channel_id": "proj", "type": "O", "last_viewed_at": 0, "pending": 1}]
+
+    async def list_recent(self, channel_id=None, per_page=20, since_ms=None):
+        self.since.append(since_ms)
+        return [p for p in self.posts if p["channel_id"] == channel_id
+                and p.get("create_at", 0) >= (since_ms or 0)]
+
+
+@pytest.mark.asyncio
+async def test_backfill_never_reads_before_the_bot_existed():
+    """RT-6.2: a fresh bot was handed the project channel's last 50 posts of
+    history, oldest first, and the mention that woke it was cut off."""
+    old = [dict(_post(f"old{i}", channel="proj"), create_at=1000 + i) for i in range(20)]
+    new = dict(_post("ask", "@agent-test hast du das gesehen?", channel="proj"), create_at=9000)
+    client = _FreshBotClient(old + [new])
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"})
+    inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
+    inbox._since_floor = 5000  # the bot's create_at
+    inbox._ws = _DeadSocket()
+    await inbox._backfill()
+    assert client.since == [5000]
+    events = await inbox.wait_for_events(timeout_sec=1)
+    assert [e.post["id"] for e in events] == ["ask"] and events[0].kind == "mention"
+
+
+@pytest.mark.asyncio
+async def test_mentions_and_dms_come_first_and_the_rest_stays_unread():
+    """RT-6.2: max_events must not cut off the message that wants an answer, and
+    a channel with posts still queued must not be marked read."""
+    from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
+    client = _BackfillClient([])
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"})
+    inbox._ws = _DeadSocket()
+    for i in range(12):
+        inbox._queue.put_nowait(ClassifiedEvent(
+            kind="watched_channel", post=_post(f"c{i}", channel="proj")))
+    inbox._queue.put_nowait(ClassifiedEvent(kind="dm", post=_post("dm", channel="dm1")))
+    events = await inbox.wait_for_events(timeout_sec=1, max_events=10)
+    assert events[0].post["id"] == "dm" and len(events) == 10
+    assert inbox.pending == 3
+    assert client.viewed == ["dm1"]  # proj still has queued posts: stays unread
+    rest = await inbox.wait_for_events(timeout_sec=1, max_events=10)
+    assert [e.post["id"] for e in rest] == ["c9", "c10", "c11"] and inbox.pending == 0
+    assert client.viewed == ["dm1", "proj"]
