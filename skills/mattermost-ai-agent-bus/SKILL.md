@@ -267,6 +267,9 @@ queue is empty, so a check costs almost nothing; when something is waiting it
 comes back at once, because the WebSocket reader buffers in the background while
 you do other things.
 
+Mentions and DMs come first. When more were waiting than one call returns, the
+last item is `{kind: more_pending, count}`: call again until it is gone (RT-6.2).
+
 Collecting an event marks its channel read. Under Claude Code a `Stop` hook also
 checks the unread counters and blocks the end of a turn while anything is
 pending — so treat the points above as how you avoid being interrupted, not as

@@ -78,6 +78,12 @@ class WebSocketInbox:
     )
     _bot_user_id: str = field(default="", repr=False, init=False)
     _bot_username: str = field(default="", repr=False, init=False)
+    # When the bot was created (ms). Nothing older can be for this session, so
+    # backfill never reads before it, even where Mattermost reports a channel
+    # as never viewed (last_viewed_at 0) right after the bot joined it.
+    _since_floor: int = field(default=0, repr=False, init=False)
+    # Events still queued after the last wait_for_events returned max_events.
+    pending: int = field(default=0, repr=False, init=False)
     # Post ids already queued. Backfill and the live stream overlap around the
     # moment the socket opens, so without this a message can be delivered twice.
     _seen_ids: set[str] = field(default_factory=set, repr=False, init=False)
@@ -99,6 +105,7 @@ class WebSocketInbox:
         me = await self.client.get_me()
         self._bot_user_id = me["id"]
         self._bot_username = me.get("username") or ""
+        self._since_floor = int(me.get("create_at") or 0)
         if not self.watched_channel_ids:
             # Watch the default channel (where the agent stays addressable) and the
             # project channel (where it works) — either may be where it is called.
@@ -156,11 +163,14 @@ class WebSocketInbox:
             return
         for entry in pending:
             cid = entry["channel_id"]
+            # A fresh bot's channels can report last_viewed_at 0: read from the
+            # bot's creation then, not the channel's last 50 posts of history.
+            since = max(entry.get("last_viewed_at") or 0, self._since_floor)
             try:
                 posts = await self.client.list_recent(
                     channel_id=cid,
                     per_page=50,
-                    since_ms=entry.get("last_viewed_at") or None,
+                    since_ms=since or None,
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("could not backfill channel %s: %s", cid, exc)
@@ -316,13 +326,25 @@ class WebSocketInbox:
         if getter not in done or getter.cancelled():
             # Timed out, or superseded by a newer call.
             return []
-        events: list[ClassifiedEvent] = [getter.result()]
-        while len(events) < max_events:
+        queued: list[ClassifiedEvent] = [getter.result()]
+        while True:
             try:
-                events.append(self._queue.get_nowait())
+                queued.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:
                 break
-        await self._mark_delivered_read(events)
+        # Mentions and DMs first: a backlog of channel posts must never push the
+        # one message that wants an answer past max_events.
+        queued.sort(key=lambda e: e.kind not in ("mention", "dm"))
+        events, rest = queued[:max(1, max_events)], queued[max(1, max_events):]
+        for e in rest:
+            self._queue.put_nowait(e)
+        self.pending = len(rest)
+        # A channel with events still queued stays unread, so its counters keep
+        # telling the hooks and the listener that something waits.
+        waiting = {e.post.get("channel_id") for e in rest}
+        await self._mark_delivered_read(
+            [e for e in events if e.post.get("channel_id") not in waiting]
+        )
         # Posts from watched channels often need no answer, so only a mention or
         # DM, which does, promises one.
         addressed = next((e for e in events if e.kind in ("mention", "dm")), None)

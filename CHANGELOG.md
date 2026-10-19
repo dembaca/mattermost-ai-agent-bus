@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.23.0
+
+### Fixed
+
+- **A mention no longer drowns in history after a fresh registration.** A bot
+  that had just joined its project channel could see the channel reported as
+  never viewed (`last_viewed_at` 0); the backfill then queued the channel's last
+  50 posts, `wait_for_events` handed out the ten oldest and marked the channel
+  read — the mention that had woken the agent stayed queued while every
+  counter said zero. Backfill now reads nothing older than the bot, mentions
+  and DMs are returned first, a channel with posts still queued stays unread,
+  and a last item `{kind: more_pending, count}` says when to call again.
+  Spec: arc42 RT-6.2.
+
 ## 0.22.1
 
 ### Fixed

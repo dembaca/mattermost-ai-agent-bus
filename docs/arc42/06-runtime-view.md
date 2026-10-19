@@ -77,6 +77,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | Step | Failure | System Response |
 |------|---------|----------------|
 | 1 | Counter cannot be drained (stale) | After 3 rounds the hook lets the turn end |
+| 1, 5 | More events queued than `wait_for_events` returns (a backlog after the socket connected) | Mentions and DMs come first; the result ends with `{kind: more_pending, count}`, and a channel with posts still queued stays unread, so the counters keep waking the agent. Backfill reads nothing older than the bot: a freshly joined channel can report `last_viewed_at` 0, which once handed a new bot the channel's last 50 posts and cut off the mention that woke it |
 | 1–3 | Bot id unknown (no turn state) | Falls back to `stop_hook_active`: one extra round per turn, no listen window |
 | 3 | The agent cannot run a background command (older runtime, command denied) | Asked once per window; with no listener started since, the next stop goes idle |
 | 4 | Runtime does not wake the agent (machine asleep, session gone) | Nothing waits on it: the listener ends with the window, and the status lease runs out (RT-6.6) |

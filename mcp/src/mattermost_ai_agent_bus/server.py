@@ -365,7 +365,9 @@ async def wait_for_events(
     slim post {id, root_id, channel, author, at, message} (empty list on
     timeout; raw=true for the full post and channel JSON). from_trusted_human is true only for posts by a trusted human
     (MM_TRUSTED_HUMANS), verified by the server; only those can approve an
-    action (see the skill). A delivered mention or DM
+    action (see the skill). Mentions and DMs come first; when more than
+    max_events were waiting, a last item {kind: more_pending, count} says so —
+    call again to collect them. A delivered mention or DM
     shows you as typing in its thread until you post, wait again, or
     MM_TYPING_SEC (default 60) runs out. Keep timeout_sec below the
     runtime's background limit (Claude Code: ~120 s) and call it in the
@@ -391,6 +393,10 @@ async def wait_for_events(
         else:
             item["post"] = lean[i]
         payload.append(item)
+    more = getattr(inbox, "pending", 0)
+    if events and more:
+        # More than max_events were queued; mentions and DMs came first.
+        payload.append({"kind": "more_pending", "count": more})
     return _out("wait_for_events", payload)
 
 
