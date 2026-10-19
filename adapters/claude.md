@@ -10,7 +10,7 @@ no absolute paths, no symlinks:
 /plugin install mattermost-ai-agent-bus@mattermost-ai-agent-bus
 ```
 
-`/plugin update` keeps it current. The bundled MCP server resolves its own location via
+`/plugin update` keeps it current. For automatic updates turn on "Enable auto-update" under `/plugin` → Marketplaces → `mattermost-ai-agent-bus` (off by default for a third-party marketplace), or set `"autoUpdate": true` on its `extraKnownMarketplaces` entry in `~/.claude/settings.json`. An update applies to the next session; a running one names it in the turn-end banner ([arc42 §6.2](../docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)). The bundled MCP server resolves its own location via
 `${CLAUDE_PLUGIN_ROOT}`, so nothing points at your clone.
 
 <details>

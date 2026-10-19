@@ -36,6 +36,45 @@ def _plugin_version() -> str:
 VERSION = _plugin_version()
 
 
+def _version_key(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:3]) or (0,)
+
+
+def _newer_installed() -> str | None:
+    """A newer plugin version installed than this server runs, if any (RT-6.2).
+
+    A running session keeps the plugin it started with; an update (also an
+    automatic one) applies after a restart: quit, then `claude --continue`.
+    """
+    reg = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        data = json.loads(reg.read_text())
+    except (OSError, ValueError):
+        return None
+    found: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            path = node.get("installPath")
+            if isinstance(path, str) and "mattermost-ai-agent-bus" in path:
+                try:
+                    found.append(json.loads(
+                        (Path(path) / ".claude-plugin" / "plugin.json").read_text())["version"])
+                except (OSError, ValueError, KeyError):
+                    pass
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(data)
+    newest = max(found, key=_version_key, default=None)
+    if newest and VERSION != "unknown" and _version_key(newest) > _version_key(VERSION):
+        return newest
+    return None
+
+
 async def _bus_client() -> MattermostClient | None:
     try:
         return _get_client()
@@ -200,7 +239,8 @@ async def session_end(name: str = "") -> str:
 @mcp.tool()
 async def bus_info() -> str:
     """This bus session at a glance: plugin/MCP version, bot, responsible and
-    trusted humans, channels.
+    trusted humans, channels; update names a newer installed plugin, which
+    takes a restart (quit, then `claude --continue`).
 
     responsible names who answers for you and kind is "session" or
     "autonomous" — announce puts both into your HELLO (for: / trusts:). trusted_humans says
@@ -227,6 +267,8 @@ async def bus_info() -> str:
         "trusted_humans": {"humans": humans, "source": client.trusted_source},
         "work_channel": client.work_channel_name,
         "crown": lease.crown_held(me.get("id", "")),
+        **({"update": {"installed": newer, "how": "quit, then claude --continue"}}
+           if (newer := _newer_installed()) else {}),
     })
 
 

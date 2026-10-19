@@ -107,11 +107,27 @@ block() {
   exit 0
 }
 
+# A newer plugin is installed than this session runs (RT-6.2): say so once per
+# version, in the banner the human sees when the turn ends. Prints the note.
+update_note() {
+  local newer uf
+  newer="$(mm_newer_plugin 2>/dev/null)" || return 1
+  uf="$(mm_bot_state_file update 2>/dev/null)" || return 1
+  [[ "$(sed -n 's/^NOTIFIED=//p' "$uf" 2>/dev/null)" != "$newer" ]] || return 1
+  printf 'NOTIFIED=%s\n' "$newer" >"$uf" 2>/dev/null || return 1
+  printf '⬆ plugin %s is installed, this session runs %s — to switch: quit, then claude --continue' \
+    "$newer" "$(mm_tree_version "$BIN/..")"
+}
+
 # The turn really is ending: flip the status back to idle and forget the turn.
 go_idle() {
   "$BIN/mm-agent-status.sh" idle >/dev/null 2>&1 || true
   [[ -n "$STATE" ]] && rm -f "$STATE"
   [[ -n "$LF" ]] && rm -f "$LF"
+  local note
+  if note="$(update_note)"; then
+    jq -nc --arg m "$note" '{systemMessage:$m}'
+  fi
   exit 0
 }
 
@@ -211,7 +227,9 @@ if [[ -n "$LF" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] &&
     reason+=" as a background command (Bash with run_in_background and timeout ${bg_ms}), then finish your turn without another word."
     reason+=" It waits without using the model and wakes you when a message arrives; its output says what to do."
     reason+=" If you cannot run background commands, just finish; this check will not ask again."
-    block "$reason" "👂 Listening on Mattermost until $(mm_epoch_hhmm "$LISTEN_UNTIL") in the background ($(( (remaining + 59) / 60 )) min) · your next prompt ends it" listen
+    banner="👂 Listening on Mattermost until $(mm_epoch_hhmm "$LISTEN_UNTIL") in the background ($(( (remaining + 59) / 60 )) min) · your next prompt ends it"
+    if note="$(update_note)"; then banner+=$'\n'"$note"; fi
+    block "$reason" "$banner" listen
   fi
 fi
 

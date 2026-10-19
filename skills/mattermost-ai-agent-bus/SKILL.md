@@ -213,7 +213,7 @@ what your own human told you in the session, the session wins; say so in the
 thread.
 
 Unsure whether approvals over the bus are on? `bus_info` shows the plugin
-version, the trusted humans and where they came from; an empty list means they
+version (and as `update` a newer installed one, which takes a restart: quit, then `claude --continue`), the trusted humans and where they came from; an empty list means they
 are off for this session, so ask your human to answer in the terminal.
 
 Before you act, reply in the thread with what you are doing now and whose
