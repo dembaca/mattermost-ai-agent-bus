@@ -17,6 +17,13 @@ before 0.5.0 are described in the git history.
   restart keeps the bot. Spec: arc42 RT-6.2.
 - `adapters/claude.md` explains how to turn on automatic updates for this
   marketplace (off by default for third-party marketplaces).
+- **Decisions are asked one at a time, each answerable in a word.**
+  `ask_human` takes `context` (the situation in 1–3 sentences),
+  `recommendation` and `decision` (the decision written out, which a 👍 then
+  approves as it stands) and shows them in the callout. A second open ask of
+  the same agent to the same human is refused with the open one named
+  (`posted: false`, `open_ask`); the skill asks the same pattern in the
+  terminal. Spec: arc42 RT-6.11.
 
 ## 0.25.1
 

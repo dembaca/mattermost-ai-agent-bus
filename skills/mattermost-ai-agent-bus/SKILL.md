@@ -186,7 +186,17 @@ a human — an approval, a decision, a hand on a machine — call
 format a human spots at once: `🙋 @dembaca — **need**` and a coloured box with
 from, where, blocking and how to answer. **Never @-mention a human anywhere
 else**; write the name without @ ("dembaca decided …"). Their name turns up in
-many posts, so a mention must mean "I need you". The server holds you to it:
+many posts, so a mention must mean "I need you".
+
+**Decisions: one at a time, each answerable in a word.** For every decision
+give the human the situation in one to three sentences (`context`), your
+recommendation and why (`recommendation`), and the decision written out
+(`decision`, e.g. "Install 02dadca on hogan now; VM 399 stays up"), so a 👍 or
+a "yes" settles it. With several questions open, ask them one after the other:
+`ask_human` refuses a second open ask to the same human and names the open
+one — wait for its answer, or `resolve_ask` it if it is obsolete. Ask the same
+way in the terminal: one decision per message, context, recommendation,
+decision. The server holds you to it:
 an @-mention of a person in any other post is posted as the plain name, and
 the result says so (`unmentioned`).
 

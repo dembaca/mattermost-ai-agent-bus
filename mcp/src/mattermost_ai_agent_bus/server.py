@@ -411,6 +411,9 @@ async def reply_in_thread(
 @mcp.tool()
 async def ask_human(
     need: str,
+    context: str = "",
+    recommendation: str = "",
+    decision: str = "",
     where: str = "",
     blocking: bool = False,
     answers: str = "",
@@ -420,12 +423,18 @@ async def ask_human(
     """Ask a human for something — the only way to @-mention one (RT-6.11).
 
     One post in the work channel in a fixed, easy-to-spot format: the mention
-    and what you need in the text, and a callout with from, where, blocking and
-    how to answer. need: one line ("Go to install 02dadca on hogan"). where:
-    PR, thread or host. blocking: true if you cannot go on without it. answers:
-    the choices, if any ("go / not now"); the default says 👍 = yes, 👎 = no,
-    or reply in the thread. human defaults to your responsible human. root_id
-    puts it in a thread; the default is a top-level post, so it stands out.
+    and what you need in the text, and a callout. need: one line ("Go to
+    install 02dadca on hogan"). For a decision give the human what lets them
+    answer in a word: context — the situation in 1–3 sentences; recommendation
+    — what you would do and why; decision — the decision written out ("Install
+    02dadca on hogan now, VM 399 stays up"), which a 👍 then approves as it
+    stands. where: PR, thread or host. blocking: true if you cannot go on
+    without it. answers: other choices, if any ("go / not now"). human defaults
+    to your responsible human. root_id puts it in a thread; the default is a
+    top-level post, so it stands out.
+
+    One at a time: while you have an open ask to that human, this refuses and
+    names it — wait for the answer, or resolve_ask it if it is obsolete.
 
     The answer comes through wait_for_events: a reply, or {kind: reaction,
     emoji, answer: yes|no|null, ask} — 👍/✅ from a trusted human is a yes to
@@ -439,15 +448,28 @@ async def ask_human(
     who = human.strip().lstrip("@") or responsible
     if not who:
         raise ValueError("no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
+    pending = asks.open_to(me.get("id", ""), who)
+    if pending:
+        # The human answers one question at a time, each in a word (RT-6.11).
+        return _out("ask_human", {
+            "posted": False, "open_ask": pending[0],
+            "hint": f"{who} still has your ask {pending[0]} open: wait for the answer, "
+                    "or resolve_ask it if it is obsolete, then ask the next one",
+        })
     text = lease.with_crown(f"🙋 @{who} — **{_one_line(need)}**", me.get("id", ""))
     fields = [
         {"title": "from", "value": f"@{me.get('username')}", "short": True},
         {"title": "blocking", "value": "yes" if blocking else "no", "short": True},
         {"title": "where", "value": _one_line(where) or "–", "short": False},
-        {"title": "answer", "short": False,
-         "value": (f"{_one_line(answers)} — " if answers else "")
-         + "👍 = yes · 👎 = no · or reply in this thread"},
     ]
+    for title, value in (("context", context), ("recommendation", recommendation),
+                         ("decision", decision)):
+        if value.strip():
+            fields.append({"title": title, "value": " ".join(value.split()), "short": False})
+    yes = "👍 = yes to the decision" if decision.strip() else "👍 = yes"
+    fields.append({"title": "answer", "short": False,
+                   "value": (f"{_one_line(answers)} — " if answers else "")
+                   + f"{yes} · 👎 = no · or reply in this thread"})
     props = {"attachments": [{
         "color": "#d24b4e" if blocking else "#e8a317",
         "fallback": f"{who}: {_one_line(need)}",
@@ -455,7 +477,7 @@ async def ask_human(
     }]}
     stats.record("post", chars=len(text))
     post = await client.post(text, root_id=root_id or None, props=props)
-    asks.add(me.get("id", ""), post["id"])
+    asks.add(me.get("id", ""), post["id"], who)
     out = await slim.post(client, post)
     out["ask"] = post["id"]
     return _out("ask_human", out)

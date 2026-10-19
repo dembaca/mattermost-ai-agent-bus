@@ -5,7 +5,7 @@ A human answers an ask by replying in its thread or with a reaction (👍/✅ ye
 and the listener would never notice one; this file tells them which posts to
 look at. It lives next to the other per-bot state, asks-<uid>.env:
 
-    ASK=<post_id> <epoch>          an open ask
+    ASK=<post_id> <epoch> <human>  an open ask, and whom it asks
     SEEN=<post_id>:<user_id>:<emoji>   a reaction already handed to the agent
 
 The background listener (bin/mm-agent-listen.sh) wakes the agent for any
@@ -42,31 +42,44 @@ def _path(uid: str) -> Path:
 
 
 def _read(uid: str) -> tuple[dict[str, float], set[str]]:
+    asks, seen, _ = _read_all(uid)
+    return asks, seen
+
+
+def _read_all(uid: str) -> tuple[dict[str, float], set[str], dict[str, str]]:
     asks: dict[str, float] = {}
+    whom: dict[str, str] = {}
     seen: set[str] = set()
     try:
         lines = _path(uid).read_text().splitlines()
     except OSError:
-        return asks, seen
+        return asks, seen, whom
     now = time.time()
     for line in lines:
         key, _, val = line.partition("=")
         if key == "ASK":
-            pid, _, at = val.partition(" ")
+            parts = val.split()
+            pid = parts[0] if parts else ""
             try:
-                when = float(at)
-            except ValueError:
+                when = float(parts[1])
+            except (IndexError, ValueError):
                 when = now
             if pid and now - when < MAX_AGE_SEC:
                 asks[pid] = when
+                if len(parts) > 2:
+                    whom[pid] = parts[2]
         elif key == "SEEN" and val:
             seen.add(val)
-    return asks, seen
+    return asks, seen, whom
 
 
-def _write(uid: str, asks: dict[str, float], seen: set[str]) -> None:
+def _write(uid: str, asks: dict[str, float], seen: set[str],
+           whom: dict[str, str] | None = None) -> None:
+    if whom is None:
+        whom = _read_all(uid)[2]
     seen = {s for s in seen if s.split(":", 1)[0] in asks}
-    lines = [f"ASK={pid} {int(at)}" for pid, at in asks.items()]
+    lines = [f"ASK={pid} {int(at)} {whom[pid]}".rstrip() if pid in whom
+             else f"ASK={pid} {int(at)}" for pid, at in asks.items()]
     lines += [f"SEEN={s}" for s in sorted(seen)]
     path = _path(uid)
     if not lines:
@@ -86,10 +99,18 @@ def is_open(uid: str, post_id: str) -> bool:
     return post_id in _read(uid)[0]
 
 
-def add(uid: str, post_id: str) -> None:
-    asks, seen = _read(uid)
+def add(uid: str, post_id: str, human: str = "") -> None:
+    asks, seen, whom = _read_all(uid)
     asks[post_id] = time.time()
-    _write(uid, asks, seen)
+    if human:
+        whom[post_id] = human.lower()
+    _write(uid, asks, seen, whom)
+
+
+def open_to(uid: str, human: str) -> list[str]:
+    """Open asks of this bot to that human: one at a time (RT-6.11)."""
+    asks, _, whom = _read_all(uid)
+    return [pid for pid in asks if whom.get(pid) == human.lower()]
 
 
 def seen_key(post_id: str, user_id: str, emoji: str) -> str:
