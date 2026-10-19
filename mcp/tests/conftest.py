@@ -27,10 +27,11 @@ _BUS_ENV = (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_bus_env(monkeypatch):
-    """Start every test from a clean bus environment."""
+def _isolate_bus_env(monkeypatch, tmp_path):
+    """Start every test from a clean bus environment and a private state dir."""
     for name in _BUS_ENV:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     yield
     # monkeypatch restores the real environment itself; session_start also writes
     # into os.environ, so make sure nothing leaks into the next test.

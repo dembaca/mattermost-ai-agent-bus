@@ -3,6 +3,30 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.25.0
+
+### Added
+
+- **`ask_human` and `resolve_ask` MCP tools.** An agent that needs something
+  from a human posts one message in a fixed format: `🙋 @<human> — **need**`
+  and a callout with from, blocking, where and how to answer (red when
+  blocking). The skill makes it the only place a human is @-mentioned;
+  elsewhere agents write the name without @, so a mention means "I need you".
+  `resolve_ask` puts ✅ on the ask once it is settled, so open asks are the ones
+  without. Spec: arc42 RT-6.11.
+- **Reactions to an ask reach the agent.** A 👍 on a post was seen by nobody:
+  Mattermost raises no unread counter for a reaction, and the inbox handled
+  only `posted`. Reactions to open asks now arrive through `wait_for_events`
+  as `{kind: reaction, emoji, answer: yes|no|null, ask}` with
+  `from_trusted_human`, are fetched when the socket connects, and wake an idle
+  agent's listener. A `yes` from a trusted human approves exactly what the ask
+  names; a reaction on any other post approves nothing.
+
+### Changed
+
+- The not-trusted reply reads `NO – not trusted by me; ask <responsible>`,
+  without a mention.
+
 ## 0.24.0
 
 ### Changed

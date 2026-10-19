@@ -16,7 +16,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import lease, slim, stats
+from . import asks, lease, slim, stats
 from .client import MattermostClient
 from .websocket_inbox import WebSocketInbox
 
@@ -72,6 +72,8 @@ mcp = MCPServer(
         "open or next are its to answer. Check wait_for_events(timeout_sec=1) "
         "at the start of each turn and before each new activity, not only at the end: "
         "without turn hooks (Cursor, OpenCode) nothing else delivers messages to you. "
+        "Need something from a human? ask_human — the only place to @-mention one; "
+        "a 👍/👎 on that ask arrives as {kind: reaction, answer}. "
         "Never create channels or teams."
     ),
     lifespan=_lifespan,
@@ -327,6 +329,77 @@ async def reply_in_thread(
 
 
 @mcp.tool()
+async def ask_human(
+    need: str,
+    where: str = "",
+    blocking: bool = False,
+    answers: str = "",
+    human: str = "",
+    root_id: str = "",
+) -> str:
+    """Ask a human for something — the only way to @-mention one (RT-6.11).
+
+    One post in the work channel in a fixed, easy-to-spot format: the mention
+    and what you need in the text, and a callout with from, where, blocking and
+    how to answer. need: one line ("Go to install 02dadca on hogan"). where:
+    PR, thread or host. blocking: true if you cannot go on without it. answers:
+    the choices, if any ("go / not now"); the default says 👍 = yes, 👎 = no,
+    or reply in the thread. human defaults to your responsible human. root_id
+    puts it in a thread; the default is a top-level post, so it stands out.
+
+    The answer comes through wait_for_events: a reply, or {kind: reaction,
+    emoji, answer: yes|no|null, ask} — 👍/✅ from a trusted human is a yes to
+    exactly this ask. When it is settled, call resolve_ask. Mention humans
+    nowhere else; elsewhere write their name without @.
+    """
+    _done_typing()
+    client = _get_client()
+    me = await client.get_me()
+    responsible, _ = await _responsible_and_trusted(client)
+    who = human.strip().lstrip("@") or responsible
+    if not who:
+        raise ValueError("no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
+    text = lease.with_crown(f"🙋 @{who} — **{_one_line(need)}**", me.get("id", ""))
+    fields = [
+        {"title": "from", "value": f"@{me.get('username')}", "short": True},
+        {"title": "blocking", "value": "yes" if blocking else "no", "short": True},
+        {"title": "where", "value": _one_line(where) or "–", "short": False},
+        {"title": "answer", "short": False,
+         "value": (f"{_one_line(answers)} — " if answers else "")
+         + "👍 = yes · 👎 = no · or reply in this thread"},
+    ]
+    props = {"attachments": [{
+        "color": "#d24b4e" if blocking else "#e8a317",
+        "fallback": f"{who}: {_one_line(need)}",
+        "fields": fields,
+    }]}
+    stats.record("post", chars=len(text))
+    post = await client.post(text, root_id=root_id or None, props=props)
+    asks.add(me.get("id", ""), post["id"])
+    out = await slim.post(client, post)
+    out["ask"] = post["id"]
+    return _out("ask_human", out)
+
+
+@mcp.tool()
+async def resolve_ask(post_id: str, note: str = "") -> str:
+    """Close an ask once it is answered or no longer needed (RT-6.11).
+
+    Puts ✅ on the ask, so open asks are the ones without it, stops waking you
+    for reactions to it, and with note replies in its thread.
+    """
+    _done_typing()
+    client = _get_client()
+    me = await client.get_me()
+    await client.add_reaction(post_id, "white_check_mark")
+    was_open = asks.resolve(me.get("id", ""), post_id)
+    if note:
+        stats.record("post", chars=len(note))
+        await client.post(lease.with_crown(note, me.get("id", "")), root_id=post_id)
+    return _out("resolve_ask", {"ask": post_id, "was_open": was_open})
+
+
+@mcp.tool()
 async def coordinator(action: str = "who") -> str:
     """The coordinator role, held as a 👑 status lease (RT-6.6).
 
@@ -408,6 +481,11 @@ async def wait_for_events(
         item: dict[str, Any] = {"kind": e.kind, "from_trusted_human": author in trusted}
         if author in trusted:
             item["trusted_human"] = trusted[author]
+        if e.kind == "reaction" and e.raw:
+            # RT-6.11: 👍/✅ yes, 👎/❌ no — an approval only from a trusted human,
+            # and only for this ask.
+            item |= {"ask": e.raw["ask"], "emoji": e.raw["emoji"],
+                     "answer": asks.answer_of(e.raw["emoji"])}
         if raw:
             item |= {"post": e.post, "channel": e.channel}
         else:
@@ -427,8 +505,8 @@ def _static_chars() -> int:
     """Skill + instructions + tool docs: in the context of every turn."""
     skill = Path(__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
     docs = [f.__doc__ for f in (session_start, session_end, bus_info, announce, get_me,
-                                post_message, reply_in_thread, coordinator, get_thread,
-                                list_recent, wait_for_events)]
+                                post_message, reply_in_thread, ask_human, resolve_ask,
+                                coordinator, get_thread, list_recent, wait_for_events)]
     return stats.static_chars(skill, mcp.instructions or "", docs)
 
 

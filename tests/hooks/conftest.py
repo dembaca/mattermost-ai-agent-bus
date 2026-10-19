@@ -35,6 +35,7 @@ class FakeMattermost:
     users: list[dict] = field(default_factory=list)  # channel members (roster)
     presence: dict[str, str] = field(default_factory=dict)
     deny: set[str] = field(default_factory=set)  # write paths answered with 403
+    reactions: dict[str, list] = field(default_factory=dict)  # post id → reactions
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -94,6 +95,8 @@ def _handler(fake: FakeMattermost):
             if p.startswith(f"/api/v4/teams/{TEAM}/channels/name/"):
                 name = p.rsplit("/", 1)[1]
                 return self._send({"id": PROJECT if name.startswith("proj") else CHANNEL})
+            if p.startswith("/api/v4/posts/") and p.endswith("/reactions"):
+                return self._send(fake.reactions.get(p.split("/")[4], []))
             if p.endswith("/posts"):
                 return self._send({"order": [x["id"] for x in fake.posts],
                                    "posts": {x["id"]: x for x in fake.posts}})

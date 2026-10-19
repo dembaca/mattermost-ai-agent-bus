@@ -70,7 +70,7 @@ while the terminal is idle. `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` makes i
 ## MCP tools
 
 `session_start`, `session_end`, `get_me`, `post_message`, `reply_in_thread`,
-`get_thread`, `list_recent`, `wait_for_events`.
+`ask_human`, `resolve_ask`, `get_thread`, `list_recent`, `wait_for_events`.
 
 Posts go to `MM_PROJECT_CHANNEL` when set, otherwise `MM_CHANNEL`. `wait_for_events`
 surfaces mentions and DMs plus posts in **both** channels; reply with `reply_in_thread`.

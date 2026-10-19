@@ -291,3 +291,25 @@ def test_bus_unreachable_never_blocks(run):
 def test_no_token_never_blocks(run):
     """RT-6.4: no bus configured → no opinion."""
     assert run(STOP, MM_BOT_TOKEN=None).passed
+
+
+ASK = "q" * 26
+HUMAN = "h" * 26
+
+
+def test_listener_wakes_for_a_reaction_to_an_open_ask(mm, run):
+    """RT-6.11: a 👍 on an ask raises no unread counter; the listener looks at the
+    open asks and wakes for a reaction the agent has not been handed yet."""
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / f"asks-{ME}.env").write_text(
+        f"ASK={ASK} {int(time.time())}\nSEEN={ASK}:{HUMAN}:eyes\n")
+    mm.reactions[ASK] = [{"user_id": HUMAN, "post_id": ASK, "emoji_name": "eyes"},
+                         {"user_id": ME, "post_id": ASK, "emoji_name": "white_check_mark"}]
+    quiet = run(LISTEN, "--until", str(int(time.time()) + 3), MM_LISTEN_POLL_SEC="1",
+                **IN_PROJECT)
+    assert window(run)["ENDED"] == "over", quiet.stdout  # seen and own: nothing new
+    mm.reactions[ASK].append({"user_id": HUMAN, "post_id": ASK, "emoji_name": "+1"})
+    r = run(LISTEN, "--until", str(int(time.time()) + 30), MM_LISTEN_POLL_SEC="1",
+            **IN_PROJECT)
+    assert r.code == 0 and "1 reaction(s) to your ask(s)" in r.stdout
+    assert "resolve_ask" in r.stdout and window(run)["ENDED"] == "event"

@@ -23,7 +23,7 @@
 #      Required rather than convenient: a bot token targeting another agent is
 #      answered 401.
 #
-# Per-bot state files next to them (coord-, listen-, presence-, turn-<uid>.env,
+# Per-bot state files next to them (asks-, coord-, listen-, presence-, turn-<uid>.env,
 # stats-<uid>.jsonl) hold no token and are not sessions. Last, the sweep removes
 # those whose bot has no session file left and that were untouched for a day: a
 # live session keeps writing them, and one whose token was exported by hand has
@@ -68,7 +68,7 @@ is_live() {
 }
 
 # Per-bot state, not a session: the uid in its name, never a token.
-STATE_RE='^(coord|listen|presence|turn)-[a-z0-9]{26}\.env$|^stats-[a-z0-9]{26}\.jsonl$'
+STATE_RE='^(asks|coord|listen|presence|turn)-[a-z0-9]{26}\.env$|^stats-[a-z0-9]{26}\.jsonl$'
 is_state_file() { [[ "$(basename "$1")" =~ $STATE_RE ]]; }
 
 # --- 1. session files --------------------------------------------------------

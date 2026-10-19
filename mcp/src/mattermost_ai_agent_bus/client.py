@@ -619,12 +619,23 @@ class MattermostClient:
         *,
         channel_id: str | None = None,
         root_id: str | None = None,
+        props: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         cid = channel_id or await self.get_channel_id()
         body: dict[str, Any] = {"channel_id": cid, "message": message}
         if root_id:
             body["root_id"] = root_id
+        if props:
+            body["props"] = props
         return await self._api("POST", "/api/v4/posts", json=body)
+
+    async def add_reaction(self, post_id: str, emoji: str) -> None:
+        me = await self.get_me()
+        await self._api("POST", "/api/v4/reactions", json={
+            "user_id": me["id"], "post_id": post_id, "emoji_name": emoji})
+
+    async def reactions(self, post_id: str) -> list[dict[str, Any]]:
+        return await self._api("GET", f"/api/v4/posts/{post_id}/reactions") or []
 
     async def thread(self, post_id: str) -> dict[str, Any]:
         """Return post + ordered replies for a thread root (or any post id)."""
