@@ -105,3 +105,28 @@ def test_old_state_of_a_bot_without_session_is_removed(mm, run):
     assert "removed 5 state file(s) of bots without a session" in r.stderr
     assert not any((run.state_dir / f).exists() for f in old)
     assert (run.state_dir / fresh).exists() and (run.state_dir / live).exists()
+
+
+def mcp_session(run, name: str, *, hours_ago: float) -> str:
+    """A bot an agent registered itself, its Claude process gone."""
+    import time
+    f = session(run, name)
+    p = run.state_dir / f
+    target = run.state_dir / f"mcp-sid-{name}.env"
+    p.rename(target)
+    t = time.time() - hours_ago * 3600
+    os.utime(target, (t, t))
+    return target.name
+
+
+def test_a_bot_kept_for_claude_continue_waits_out_the_grace_period(mm, run):
+    """RT-6.10: a self-registered bot outlives its process for --continue; the
+    sweep leaves it alone for 24 h unless forced."""
+    recent = mcp_session(run, "hogan-vtpm-aaa1", hours_ago=2)
+    old = mcp_session(run, "hogan-vtpm-bbb2", hours_ago=30)
+    r = run(SWEEP, "--apply", MM_BOT_TOKEN=None)
+    assert "KEPT    hogan-vtpm-aaa1 (ended 2 h ago" in r.stderr
+    assert "unregistered hogan-vtpm-bbb2" in r.stderr
+    assert (run.state_dir / recent).exists() and not (run.state_dir / old).exists()
+    forced = run(SWEEP, "--apply", "--force", MM_BOT_TOKEN=None)
+    assert "unregistered hogan-vtpm-aaa1" in forced.stderr

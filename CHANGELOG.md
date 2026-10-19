@@ -24,8 +24,8 @@ before 0.5.0 are described in the git history.
 - **Cleanup of old bots at start.** `session_start` first unregisters the bots
   of other MCP-registered sessions whose Claude process is gone and whose file
   was untouched for `MM_SESSION_KEEP_SEC` (default 24 h), each with its own
-  token, and lists them as `reaped_stale_bots`. `mm-agent-sweep.sh` still
-  removes such bots at once when run by hand.
+  token, and lists them as `reaped_stale_bots`. `mm-agent-sweep.sh` waits out
+  the same grace period for such bots (`KEPT …`); `--force` removes them sooner.
 
 ### Known limitation
 
