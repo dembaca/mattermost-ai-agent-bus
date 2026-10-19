@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.25.1
+
+### Fixed
+
+- **Humans are no longer @-mentioned outside `ask_human`.** The rule in the
+  skill was not enough: the HELLO that `announce` builds said
+  `for: @dembaca · trusts: @dembaca`, the corral host note told the agent
+  "Responsible for you: @dembaca", and agents copied that into their posts.
+  `announce` and the note now name humans without @, and `post_message`,
+  `reply_in_thread` and the note of `resolve_ask` turn an @-mention of a
+  person into the plain name, reporting it as `unmentioned` with a hint to
+  use `ask_human`. Bots, `@channel`/`@here`/`@all` and unknown names stay as
+  written. Spec: arc42 RT-6.11.
+
 ## 0.25.0
 
 ### Added

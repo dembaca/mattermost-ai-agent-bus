@@ -196,9 +196,11 @@ else
   note+=" Home channel: ~${MM_CHANNEL}."
 fi
 note+=" The session is managed by the host — do not register or unregister."
-[[ -n "$RESPONSIBLE" ]] && note+=" Responsible for you: @${RESPONSIBLE}."
+# Names without @ (RT-6.11): a note written as "@name" teaches the agent to
+# mention its human in every post; only ask_human may do that.
+[[ -n "$RESPONSIBLE" ]] && note+=" Responsible for you: ${RESPONSIBLE}."
 [[ "$KIND" == autonomous ]] && note+=" You run as an autonomous agent."
-[[ -n "$TRUSTED" ]] && note+=" Trusted humans on the bus: @${TRUSTED//,/, @}. Their posts arrive marked from_trusted_human and may approve actions (see the skill)."
+[[ -n "$TRUSTED" ]] && note+=" Trusted humans on the bus: ${TRUSTED//,/, }. Their posts arrive marked from_trusted_human and may approve actions (see the skill). To ask them for anything, use ask_human; never @-mention a human otherwise."
 
 jq -nc \
   --arg chat "$MM_CHAT_URL" \

@@ -128,3 +128,62 @@ async def test_reactions_given_while_nobody_listened_are_backfilled():
     events = await inbox.wait_for_events(timeout_sec=1)
     assert [(e.kind, e.raw["emoji"]) for e in events] == [("reaction", "-1")]
     assert asks.answer_of("-1") == "no" and asks.answer_of("eyes") is None
+
+
+class _NamingClient(_Client):
+    """Knows which usernames are people."""
+
+    PEOPLE = {"dembaca", "kollegin"}
+
+    async def humans_among(self, names):
+        return {n for n in names if n.lower() in self.PEOPLE}
+
+
+@pytest.mark.asyncio
+async def test_posts_never_mention_a_human(monkeypatch):
+    """RT-6.11: only ask_human notifies a person; elsewhere a name stays a name."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.reply_in_thread(
+        "r1", "@dembaca gave the coordination to @agent-mac-1; APPROVE from @Dembaca "
+              "in thread, @kollegin too. @channel heads-up, mail a@b.de, `@dembaca` in code"))
+    msg = c.posted[0]["message"]
+    assert msg == ("dembaca gave the coordination to @agent-mac-1; APPROVE from Dembaca "
+                   "in thread, kollegin too. @channel heads-up, mail a@b.de, `@dembaca` in code")
+    assert out["unmentioned"] == ["Dembaca", "dembaca", "kollegin"] and "ask_human" in out["hint"]
+
+
+@pytest.mark.asyncio
+async def test_a_post_without_human_mentions_is_untouched(monkeypatch):
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.post_message("@agent-cursor-1 please HANDOVER, then release"))
+    assert c.posted[0]["message"] == "@agent-cursor-1 please HANDOVER, then release"
+    assert "unmentioned" not in out
+
+
+@pytest.mark.asyncio
+async def test_ask_human_still_mentions(monkeypatch):
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="Merge #61")
+    assert c.posted[0]["message"].startswith("🙋 @dembaca — ")
+
+
+@pytest.mark.asyncio
+async def test_humans_among_asks_once_and_skips_bots():
+    import httpx
+
+    from mattermost_ai_agent_bus.client import MattermostClient
+    calls = []
+
+    def handler(req):
+        calls.append(json.loads(req.content))
+        return httpx.Response(200, json=[{"username": "dembaca", "is_bot": False},
+                                         {"username": "helper-bot", "is_bot": True}])
+
+    c = MattermostClient(base_url="https://mm.example", token="t")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    assert await c.humans_among({"dembaca", "helper-bot", "nobody"}) == {"dembaca"}
+    assert await c.humans_among({"Dembaca"}) == {"Dembaca"}
+    assert calls == [["dembaca", "helper-bot", "nobody"]]  # second call from cache
