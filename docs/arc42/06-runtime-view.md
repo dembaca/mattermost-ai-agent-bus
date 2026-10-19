@@ -44,6 +44,7 @@ no test.
 | Step | Failure | System Response |
 |------|---------|----------------|
 | 3 | Registrar unreachable or rejects | Banner warning, session continues without a bot (hook is `optional: true`) |
+| 3 | No bus settings reached the session (no hook, no env) | `bus_info` answers `on_bus: false` with the reason instead of failing; the other bus tools fail |
 | 4 | Channel missing or not joinable | Bot is unregistered again, session file removed; channels are never created |
 | 7 | Unregister fails | Status already offline; session file kept so `mm-agent-sweep.sh` can remove the bot with its own token |
 | 7 | Sweep: the registrar rejects the bot's own token (`401`) | `/users/me` with that token is asked too; a `401` there means the bot is gone already, so only the stale file is removed. Any other failure is printed with its HTTP status and the file kept |
@@ -97,7 +98,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. `UserPromptSubmit`: Turn hooks find the listener still running, stop it and remove the window, then set 🛠 working. A listener that already ended on a message is what started this turn, so its window is kept for step 5 of RT-6.2.
+1. `UserPromptSubmit`: Turn hooks find the listener still running, stop it and remove the window, then set 🛠 working. Stopped this way, the listener exits 0, so the runtime does not list it as failed. A listener that already ended on a message is what started this turn, so its window is kept for step 5 of RT-6.2.
 2. The new turn ends with a fresh window, as in RT-6.2.
 3. The 👂 status ends with the window at the latest (Mattermost `expires_at`), so even an interrupted window leaves no stale "listening" behind.
 
@@ -260,7 +261,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 1. Turn hooks, the background listener and the MCP server append one JSON line per event to `stats-<uid>.jsonl` in the state directory: each turn, each listener wake-up with its reason, each round the `Stop` hook forces (drain, sign-off, listen), each MCP tool result with its size, each own post with its length, each compaction handoff with its size. No model and no content are involved.
 2. At session end, before unregistering, the MCP server sums the file up and posts one line `STATS {v, min, turns, wakes, blocks, tools, posts, compact, static}` to the stats channel (`agents-stats`, or `MM_STATS_CHANNEL`), a channel no agent watches, so it wakes nobody, and removes the counter file. `static` is the text every turn carries: skill, MCP instructions, tool docs. `MM_STATS_CHANNEL=off` counts and posts nothing.
-3. `bin/mm-agent-stats.sh report` reads the channel and shows per version: sessions, hours, turns the plugin caused per hour and as a share of all turns, bus characters per turn, characters posted per session, fixed characters per turn.
+3. `bin/mm-agent-stats.sh report` reads the channel and shows per version: sessions, hours, turns the plugin caused per hour and as a share of all turns (`turns` counts the human's prompts, so all turns are those plus the plugin's), bus characters per turn of all turns, characters posted per session, fixed characters per turn.
 
 ### Error Handling
 
@@ -316,7 +317,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. The agent calls `ask_human(need, context, recommendation, decision, where, blocking, answers)`. A decision comes with the situation in 1–3 sentences, the agent's recommendation and the decision written out, so the human answers in a word; a 👍 approves the decision as written. The MCP server posts one message in the work channel, top-level unless a thread is given: `🙋 @<human> — **<need>**` (the mention in the text, so Mattermost notifies), and a callout (message attachment, red when blocking, amber otherwise) with `from`, `blocking`, `where` and `answer` (the choices, then `👍 = yes · 👎 = no · or reply in this thread`). The human defaults to the responsible one. No other post mentions a human: `post_message`, `reply_in_thread` and the note of `resolve_ask` turn an @-mention of a person (a non-bot account) into the plain name and report it as `unmentioned`; `announce` and the corral host note name humans without @.
+1. The agent calls `ask_human(need, context, recommendation, decision, where, blocking, answers)`. A decision comes with the situation in 1–3 sentences, the agent's recommendation and the decision written out, so the human answers in a word; a 👍 approves the decision as written. The MCP server posts one message in the work channel, top-level unless a thread is given: `🙋 @<human> — **<need>**` (the mention in the text, so Mattermost notifies; only the first sentence of `need` is the bold title, the rest goes to the front of `context`, and `**` in it is dropped), and a callout (message attachment, red when blocking, amber otherwise) with `from`, `blocking`, `where` and `answer` (the choices, then `👍 = yes · 👎 = no · or reply in this thread`). The human defaults to the responsible one. No other post mentions a human: `post_message`, `reply_in_thread` and the note of `resolve_ask` turn an @-mention of a person (a non-bot account) into the plain name and report it as `unmentioned`; `announce` and the corral host note name humans without @.
 2. The server records the post as an open ask in `asks-<uid>.env` in the state directory, with the human it asks.
 3. The human replies in the thread (delivered like any reply) or reacts. The MCP inbox passes `reaction_added` on an open ask to the agent as `{kind: reaction, emoji, answer, ask}`, with `from_trusted_human` checked against the reacting account; `answer` is `yes` for 👍/✅, `no` for 👎/❌, `null` otherwise. Reactions given while the socket was not connected are fetched for the open asks when it connects. A delivered reaction is recorded as `SEEN`.
 4. An idle agent's background listener looks at the open asks every poll (`GET /posts/<id>/reactions`) and wakes it for any reaction by someone else that is not `SEEN` (RT-6.2).

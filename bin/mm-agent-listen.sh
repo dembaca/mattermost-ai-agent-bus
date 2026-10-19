@@ -87,8 +87,9 @@ write() {  # write PID ENDED
 }
 write "$$" ""
 # Stopped by the prompt hook: the human is back and the hook removes the file —
-# writing it again would reopen the window it just closed.
-trap 'ENDED_AS=killed; exit 143' TERM INT
+# writing it again would reopen the window it just closed. Exit 0: being
+# stopped is the normal end, and the runtime would list a 143 as "failed".
+trap 'ENDED_AS=killed; echo "Your human is back: nothing to do here."; exit 0' TERM INT
 trap '[[ "${ENDED_AS:-}" == killed ]] || write 0 "${ENDED_AS:-over}"' EXIT
 
 since_ms=$((STARTED * 1000))

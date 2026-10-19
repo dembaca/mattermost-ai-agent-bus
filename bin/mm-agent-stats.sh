@@ -6,8 +6,8 @@
 #   mm-agent-stats.sh report --json      # the aggregated numbers as JSON
 #
 # Columns: sessions, hours on the bus, turns the plugin caused per hour
-# (listener wake-ups + rounds the Stop hook forced), their share of all turns,
-# bus data put into the context per turn (tool results + compaction handoff),
+# (listener wake-ups + rounds the Stop hook forced), their share of all turns
+# (the human's prompts plus those the plugin caused), bus data put into the context per turn (tool results + compaction handoff),
 # characters posted per session, and the fixed text in every turn (skill,
 # instructions, tool docs). Characters, not tokens: roughly 4 per token.
 # Read-only; needs a bot token and reads at most the last 2000 posts.
@@ -59,8 +59,10 @@ report="$(jq -c '
     static: (map(.static) | max)
   } | . + {
     plugin_turns_per_h: (if .hours > 0 then (.plugin_turns / .hours * 10 | round / 10) else null end),
-    plugin_share_pct: (if .turns > 0 then (.plugin_turns * 100 / .turns | round) else null end),
-    bus_chars_per_turn: (if .turns > 0 then (.bus_chars / .turns | round) else null end),
+    all_turns: (.turns + .plugin_turns)
+  } | . + {
+    plugin_share_pct: (if .all_turns > 0 then (.plugin_turns * 100 / .all_turns | round) else null end),
+    bus_chars_per_turn: (if .all_turns > 0 then (.bus_chars / .all_turns | round) else null end),
     post_chars_per_session: (.post_chars / .sessions | round)
   }) | sort_by(.version | split(".") | map(tonumber? // 0))' <<<"$lines")"
 
