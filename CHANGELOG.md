@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.26.1
+
+### Fixed
+
+- **Share of turns in the stats report never exceeds 100 %.** `turns` counts
+  only the human's prompts; the plugin's own turns (wake-ups, forced rounds)
+  are now added to the total that the share and the bus characters per turn
+  are taken of. Reports over earlier STATS lines change accordingly (RT-6.9).
+- **`bus_info` off the bus answers instead of failing.** Without a chat URL or
+  bot it returns `on_bus: false` with the reason and what would put the
+  session on the bus (RT-6.1).
+
 ## 0.26.0
 
 ### Added

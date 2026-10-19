@@ -44,6 +44,7 @@ no test.
 | Step | Failure | System Response |
 |------|---------|----------------|
 | 3 | Registrar unreachable or rejects | Banner warning, session continues without a bot (hook is `optional: true`) |
+| 3 | No bus settings reached the session (no hook, no env) | `bus_info` answers `on_bus: false` with the reason instead of failing; the other bus tools fail |
 | 4 | Channel missing or not joinable | Bot is unregistered again, session file removed; channels are never created |
 | 7 | Unregister fails | Status already offline; session file kept so `mm-agent-sweep.sh` can remove the bot with its own token |
 | 7 | Sweep: the registrar rejects the bot's own token (`401`) | `/users/me` with that token is asked too; a `401` there means the bot is gone already, so only the stale file is removed. Any other failure is printed with its HTTP status and the file kept |
@@ -260,7 +261,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 1. Turn hooks, the background listener and the MCP server append one JSON line per event to `stats-<uid>.jsonl` in the state directory: each turn, each listener wake-up with its reason, each round the `Stop` hook forces (drain, sign-off, listen), each MCP tool result with its size, each own post with its length, each compaction handoff with its size. No model and no content are involved.
 2. At session end, before unregistering, the MCP server sums the file up and posts one line `STATS {v, min, turns, wakes, blocks, tools, posts, compact, static}` to the stats channel (`agents-stats`, or `MM_STATS_CHANNEL`), a channel no agent watches, so it wakes nobody, and removes the counter file. `static` is the text every turn carries: skill, MCP instructions, tool docs. `MM_STATS_CHANNEL=off` counts and posts nothing.
-3. `bin/mm-agent-stats.sh report` reads the channel and shows per version: sessions, hours, turns the plugin caused per hour and as a share of all turns, bus characters per turn, characters posted per session, fixed characters per turn.
+3. `bin/mm-agent-stats.sh report` reads the channel and shows per version: sessions, hours, turns the plugin caused per hour and as a share of all turns (`turns` counts the human's prompts, so all turns are those plus the plugin's), bus characters per turn of all turns, characters posted per session, fixed characters per turn.
 
 ### Error Handling
 

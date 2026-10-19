@@ -245,10 +245,20 @@ async def bus_info() -> str:
     responsible names who answers for you and kind is "session" or
     "autonomous" — announce puts both into your HELLO (for: / trusts:). trusted_humans says
     whose posts are marked from_trusted_human and where that came from; if the
-    list is empty, approvals over the bus are off.
+    list is empty, approvals over the bus are off. Off the bus (no chat URL, no
+    bot yet) it says so in on_bus/reason instead of failing.
     """
-    client = _get_client()
-    me = await client.get_me()
+    try:
+        client = _get_client()
+        me = await client.get_me()
+    except RuntimeError as exc:
+        return _out("bus_info", {
+            "version": VERSION,
+            "on_bus": False,
+            "reason": str(exc),
+            "how": ("session_start when MM_REG_SECRET and MM_PROJECT_CHANNEL are set; "
+                    "otherwise the host must pass the bus settings into the session"),
+        })
     trusted = await client.trusted_humans()
     humans = []
     for uid, name in trusted.items():
@@ -260,6 +270,7 @@ async def bus_info() -> str:
         humans.append({"id": uid, "username": name})
     return _out("bus_info", {
         "version": VERSION,
+        "on_bus": True,
         "bot": {"username": me.get("username"), "id": me.get("id")},
         "responsible": (os.environ.get("MM_RESPONSIBLE_HUMAN", "").strip().lstrip("@")
                         or next((h["username"] for h in humans if h["username"]), None)),
