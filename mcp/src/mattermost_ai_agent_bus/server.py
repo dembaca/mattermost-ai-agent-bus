@@ -7,6 +7,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import signal
 import sys
 from collections.abc import AsyncIterator
@@ -233,6 +234,40 @@ def _one_line(text: str) -> str:
     return " ".join(str(text).split())
 
 
+_MENTION_RE = re.compile(r"(?<![\w@`])@([a-z0-9][a-z0-9._-]*[a-z0-9]|[a-z0-9])", re.I)
+_BROADCAST = {"channel", "all", "here"}
+
+
+async def _unmention(client: MattermostClient, text: str) -> tuple[str, list[str]]:
+    """Turn @-mentions of people into plain names (RT-6.11).
+
+    A human's name turns up in many posts, so a mention must mean "I need you":
+    only ask_human may notify a person. Bots, @channel/@here/@all and unknown
+    names stay as written. Fails open: if the lookup fails, the text is unchanged.
+    """
+    names = {m.group(1) for m in _MENTION_RE.finditer(text)}
+    names = {n for n in names if n.lower() not in _BROADCAST and not n.lower().startswith("agent-")}
+    if not names:
+        return text, []
+    try:
+        humans = await client.humans_among(names)
+    except Exception as exc:  # noqa: BLE001 — never block a post over this
+        log.info("mention check skipped: %s", exc)
+        return text, []
+    if not humans:
+        return text, []
+    lowered = {h.lower() for h in humans}
+    out = _MENTION_RE.sub(lambda m: m.group(1) if m.group(1).lower() in lowered else m.group(0), text)
+    return out, sorted(humans)
+
+
+def _with_unmentioned(result: dict[str, Any], removed: list[str]) -> dict[str, Any]:
+    if removed:
+        result["unmentioned"] = removed
+        result["hint"] = "humans are @-mentioned only by ask_human; use it when you need them"
+    return result
+
+
 async def _responsible_and_trusted(client: MattermostClient) -> tuple[str | None, list[str]]:
     trusted = await client.trusted_humans()
     names = [n for n in trusted.values() if n]
@@ -264,7 +299,8 @@ async def announce(
     me = await client.get_me()
     responsible, trusted = await _responsible_and_trusted(client)
     autonomous = os.environ.get("MM_AGENT_KIND") == "autonomous"
-    who = f"@{responsible}" if responsible else "–"
+    # Names without @: a HELLO is no request to anyone (RT-6.11).
+    who = responsible or "–"
     if autonomous:
         who += " (autonomous)"
     lines = [
@@ -272,7 +308,7 @@ async def announce(
         f"project: {_one_line(project)} · branch/PR: {_one_line(branch) or '–'}",
         f"task: {_one_line(task)}",
         f"model: {_one_line(model)}",
-        f"for: {who} · trusts: {', '.join('@' + n for n in trusted) or '–'}",
+        f"for: {who} · trusts: {', '.join(trusted) or '–'}",
         f"capabilities: {_one_line(capabilities) or '–'}",
         f"role: {role}",
     ]
@@ -300,13 +336,14 @@ async def post_message(
     """
     _done_typing()
     client = _get_client()
+    message, removed = await _unmention(client, message)
     stats.record("post", chars=len(message))
     post = await client.post(
         lease.with_crown(message, await _my_id(client)),
         channel_id=channel_id or None,
         root_id=root_id or None,
     )
-    return _out("post_message", await slim.post(client, post))
+    return _out("post_message", _with_unmentioned(await slim.post(client, post), removed))
 
 
 @mcp.tool()
@@ -319,13 +356,14 @@ async def reply_in_thread(
     """
     _done_typing()
     client = _get_client()
+    message, removed = await _unmention(client, message)
     stats.record("post", chars=len(message))
     post = await client.post(
         lease.with_crown(message, await _my_id(client)),
         channel_id=channel_id or None,
         root_id=root_id,
     )
-    return _out("reply_in_thread", await slim.post(client, post))
+    return _out("reply_in_thread", _with_unmentioned(await slim.post(client, post), removed))
 
 
 @mcp.tool()
@@ -394,6 +432,7 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
     await client.add_reaction(post_id, "white_check_mark")
     was_open = asks.resolve(me.get("id", ""), post_id)
     if note:
+        note, _ = await _unmention(client, note)
         stats.record("post", chars=len(note))
         await client.post(lease.with_crown(note, me.get("id", "")), root_id=post_id)
     return _out("resolve_ask", {"ask": post_id, "was_open": was_open})

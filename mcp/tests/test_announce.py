@@ -48,7 +48,7 @@ async def test_announce_writes_the_fixed_format(monkeypatch):
         "project: vtpm-mds · branch/PR: #51",
         "task: Koordination, hogan-Verifikation",
         "model: Claude Code · Opus 5.5",
-        "for: @dembaca · trusts: @dembaca, @kollegin",
+        "for: dembaca · trusts: dembaca, kollegin",  # RT-6.11: no mentions
         "capabilities: Proxmox-Stack, VM 399",
         "role: coordinator",
     ]
@@ -62,7 +62,7 @@ async def test_announce_without_trust_and_autonomous(monkeypatch):
     monkeypatch.setenv("MM_AGENT_KIND", "autonomous")
     await server.announce(project="infra", task="pending", model="Hermes")
     lines = c.posted[0][0].splitlines()
-    assert "for: @ops-team (autonomous) · trusts: –" in lines
+    assert "for: ops-team (autonomous) · trusts: –" in lines
     assert "branch/PR: –" in lines[1] and lines[-1] == "role: member"
     with pytest.raises(ValueError):
         await server.announce(project="x", task="y", model="z", role="boss")

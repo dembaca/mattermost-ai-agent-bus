@@ -315,7 +315,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. The agent calls `ask_human(need, where, blocking, answers)`. The MCP server posts one message in the work channel, top-level unless a thread is given: `🙋 @<human> — **<need>**` (the mention in the text, so Mattermost notifies), and a callout (message attachment, red when blocking, amber otherwise) with `from`, `blocking`, `where` and `answer` (the choices, then `👍 = yes · 👎 = no · or reply in this thread`). The human defaults to the responsible one. The skill forbids @-mentioning humans anywhere else.
+1. The agent calls `ask_human(need, where, blocking, answers)`. The MCP server posts one message in the work channel, top-level unless a thread is given: `🙋 @<human> — **<need>**` (the mention in the text, so Mattermost notifies), and a callout (message attachment, red when blocking, amber otherwise) with `from`, `blocking`, `where` and `answer` (the choices, then `👍 = yes · 👎 = no · or reply in this thread`). The human defaults to the responsible one. No other post mentions a human: `post_message`, `reply_in_thread` and the note of `resolve_ask` turn an @-mention of a person (a non-bot account) into the plain name and report it as `unmentioned`; `announce` and the corral host note name humans without @.
 2. The server records the post as an open ask in `asks-<uid>.env` in the state directory.
 3. The human replies in the thread (delivered like any reply) or reacts. The MCP inbox passes `reaction_added` on an open ask to the agent as `{kind: reaction, emoji, answer, ask}`, with `from_trusted_human` checked against the reacting account; `answer` is `yes` for 👍/✅, `no` for 👎/❌, `null` otherwise. Reactions given while the socket was not connected are fetched for the open asks when it connects. A delivered reaction is recorded as `SEEN`.
 4. An idle agent's background listener looks at the open asks every poll (`GET /posts/<id>/reactions`) and wakes it for any reaction by someone else that is not `SEEN` (RT-6.2).
@@ -326,6 +326,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | Step | Failure | System Response |
 |------|---------|----------------|
 | 1 | No human to ask (no responsible or trusted human configured, none given) | The tool fails; the agent asks in the terminal |
+| 1 | An agent writes `@<human>` in an ordinary post | The server posts the plain name instead and says so (`unmentioned`, with a hint to `ask_human`); `@channel`/`@here`/`@all`, bots and unknown names stay. A failed user lookup leaves the text unchanged |
 | 3 | Reaction on any post that is not an open ask | Ignored: it is a remark, never an answer or an approval |
 | 3 | Reaction by someone not trusted | Delivered with `from_trusted_human: false`: information, not an approval |
 | 3 | An emoji other than the agreed ones | `answer: null`; the agent reads it as a remark and may ask in the thread |

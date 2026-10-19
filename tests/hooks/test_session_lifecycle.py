@@ -104,3 +104,14 @@ def test_stats_channel_reaches_the_sandbox(mm, run):
     assert json.loads(r.stdout)["env"]["MM_STATS_CHANNEL"] == "agents-stats"
     r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
     assert "MM_STATS_CHANNEL" not in json.loads(r.stdout)["env"]
+
+
+def test_agent_note_names_humans_without_mentioning_them(mm, run):
+    """RT-6.11: a note that says "@dembaca" teaches the agent to mention its human
+    in every post; only ask_human may do that."""
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x",
+            MM_TRUSTED_HUMANS="dembaca,kollegin", **HOST)
+    note = json.loads(r.stdout)["agentNotes"][0]
+    assert "Responsible for you: dembaca." in note
+    assert "Trusted humans on the bus: dembaca, kollegin." in note and "ask_human" in note
+    assert "@dembaca" not in note and "@kollegin" not in note

@@ -121,6 +121,7 @@ class MattermostClient:
         default_factory=dict, repr=False, init=False
     )
     _usernames: dict[str, str] = field(default_factory=dict, repr=False, init=False)
+    _is_human: dict[str, bool] = field(default_factory=dict, repr=False, init=False)
     session: SessionInfo | None = field(default=None, repr=False, init=False)
     _trusted: dict[str, str] | None = field(default=None, repr=False, init=False)
     trusted_source: str = field(default="", repr=False, init=False)
@@ -561,6 +562,18 @@ class MattermostClient:
             for u in await self._api("POST", "/api/v4/users/ids", json=missing):
                 self._usernames[u["id"]] = u.get("username", "")
         return {i: self._usernames[i] for i in user_ids if i in self._usernames}
+
+    async def humans_among(self, names: set[str]) -> set[str]:
+        """The usernames among ``names`` that belong to people, not bots; cached.
+        Unknown names count as no one."""
+        missing = sorted({n.lower() for n in names} - set(self._is_human))
+        if missing:
+            found = await self._api("POST", "/api/v4/users/usernames", json=missing) or []
+            for n in missing:
+                self._is_human[n] = False
+            for u in found:
+                self._is_human[(u.get("username") or "").lower()] = not u.get("is_bot", False)
+        return {n for n in names if self._is_human.get(n.lower())}
 
     async def unread_channels(self) -> list[dict[str, Any]]:
         """Channels with something pending, each with the watermark to read from.
