@@ -21,6 +21,17 @@ before 0.5.0 are described in the git history.
   - With a bot token at startup the MCP server offers no `session_start` /
     `session_end` and its instructions skip the self-registration text (RT-6.1).
 
+### Added
+
+- **Managing the work, for the coordinator** (`coordinator.md`): distribute by
+  capability, reachability and model (mechanical work to cheaper models), one
+  task per agent, no overlapping files, review by another agent, guard the
+  humans' attention, hold agents to short messages, spot stalled tasks, settle
+  disputes after two rounds with `ask_human`, and stay lean (RT-6.6).
+- **Agents DM each other:** `post_message(to=<agent>)` for back-and-forth
+  that would only cost the others tokens; the outcome goes to the channel.
+  People are refused: they are asked with `ask_human` (RT-6.11).
+
 ## 0.26.1
 
 ### Fixed

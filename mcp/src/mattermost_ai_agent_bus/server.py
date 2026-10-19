@@ -397,14 +397,19 @@ async def get_me(raw: bool = False) -> str:
 
 @mcp.tool()
 async def post_message(
-    message: str, channel_id: str = "", root_id: str = ""
+    message: str, channel_id: str = "", root_id: str = "", to: str = ""
 ) -> str:
     """Create a post. Uses default MM_CHANNEL when channel_id is empty.
 
-    While you hold the coordinator crown the post starts with 👑.
+    to: another agent's username — a DM, for back-and-forth that would only
+    cost the others tokens; share the outcome in the channel afterwards.
+    Agents only: people are asked with ask_human. While you hold the
+    coordinator crown the post starts with 👑.
     """
     _done_typing()
     client = _get_client()
+    if to.strip():
+        channel_id = await client.direct_channel_with_bot(to)
     message, removed = await _unmention(client, message)
     stats.record("post", chars=len(message))
     post = await client.post(

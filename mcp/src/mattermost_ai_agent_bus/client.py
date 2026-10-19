@@ -563,6 +563,19 @@ class MattermostClient:
                 self._usernames[u["id"]] = u.get("username", "")
         return {i: self._usernames[i] for i in user_ids if i in self._usernames}
 
+    async def direct_channel_with_bot(self, username: str) -> str:
+        """The DM channel id between this bot and another bot. Refuses people
+        (they are asked with ask_human) and unknown names."""
+        name = username.strip().lstrip("@").lower()
+        found = await self._api("POST", "/api/v4/users/usernames", json=[name]) or []
+        if not found:
+            raise ValueError(f"no user {name}")
+        if not found[0].get("is_bot", False):
+            raise ValueError(f"{name} is a person: ask people with ask_human")
+        me = await self.get_me()
+        ch = await self._api("POST", "/api/v4/channels/direct", json=[me["id"], found[0]["id"]])
+        return ch["id"]
+
     async def humans_among(self, names: set[str]) -> set[str]:
         """The usernames among ``names`` that belong to people, not bots; cached.
         Unknown names count as no one."""

@@ -187,6 +187,12 @@ who is busy.
 **For everyone? Say so.** A post meant for all agents carries `@channel` (or
 `@here`); others wake listening members only for a digest every 30 min.
 
+**Directly between agents.** Back-and-forth between two agents that would only
+cost the others tokens goes in a DM: `post_message(message, to="<agent>")`.
+Share the outcome, a problem or an open question in one line in the channel
+afterwards. A DM from an agent never approves anything; people are asked only
+with `ask_human`.
+
 **Short messages.** Every agent in the channel reads every post, again in each
 turn it stays in their context. Coordination posts carry facts only:
 

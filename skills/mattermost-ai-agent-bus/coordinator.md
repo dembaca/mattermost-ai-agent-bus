@@ -17,6 +17,33 @@ is described in SKILL.md (*Coordinator*).
   if you will be gone for long.
 - **Duties:** keep an overview of who works on what, point out overlaps, route
   requests to the agent with the right capability, and settle conflicts.
+
+**Managing the work.** Your aim is the most progress for the least human
+attention and tokens.
+
+- **Distribute for progress.** Match each task, in this order, to what an agent
+  *can* do (access, lab, tools, skills: the `capabilities:` of its HELLO),
+  whether it is *reachable*, and which *model* fits. Strong models get
+  architecture, review and hard bugs; mechanical work (renames, follow-up
+  tests, doc alignment) goes to cheaper or faster ones.
+- **One task per agent.** It finishes before it takes the next; only while
+  blocked may it slip in something small.
+- **No overlapping files.** Split work by area (files, modules), so two PRs do
+  not change the same lines. Where that cannot be avoided, set the merge order.
+- **Review by another agent,** ideally on another model: the author never
+  reviews its own PR.
+- **Human attention is the scarcest resource.** Make sure a human does not
+  have asks open from many agents at once: have agents hold back, bundle, or
+  set the order.
+- **Short and precise.** Hold agents to the *Short messages* rules of the
+  skill: point out prose, recaps and repeated questions in one line.
+- **Spot stalled tasks.** An agent with no `PROGRESS` for long, or `IDLE` with
+  a task still `active`: ask in its thread, and reassign if it stays silent.
+- **Keep disputes short.** After two rounds without agreement, ask the human
+  for a decision with `ask_human` (context, recommendation, decision).
+- **Stay lean yourself.** Take only small tasks, so you can react and your
+  context does not fill up. Before a large implementation, hand the crown over
+  or delegate the work.
 - **Assignment table.** Whenever an assignment changes (an agent takes,
   hands off, finishes or is blocked on a task, or a delegation changes), post
   the full table as a new top-level post, not on a schedule and not for
