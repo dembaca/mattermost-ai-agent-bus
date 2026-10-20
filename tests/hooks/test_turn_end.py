@@ -79,6 +79,16 @@ def test_listen_window_opens_in_project_channel(mm, run):
     assert status["emoji"] == "ear" and status["duration"] == "date_and_time"
 
 
+def test_channel_session_needs_no_listener(mm, run):
+    """RT-6.12: started as a channel, the MCP server pushes every message into
+    the session, so the stop goes idle instead of asking for a listener."""
+    mm.own_post("IDLE done x", 1000)
+    r = run(STOP, MM_CHANNEL_PUSH="1", **IN_PROJECT)
+    assert r.passed
+    assert window(run).get("UNTIL", "0") == "0"
+    assert mm.custom_status().get("emoji") != "ear"
+
+
 def test_running_listener_lets_the_turn_end(mm, run):
     """RT-6.2 step 4: with a listener waiting, the stop goes through and stays 👂."""
     mm.own_post("IDLE done x", 1000)

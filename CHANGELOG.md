@@ -3,6 +3,25 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.28.0
+
+### Added
+
+- **Messages pushed into the session (Claude Code channels, research
+  preview, prototype).** Started with `MM_CHANNEL_PUSH=1 claude --channels
+  plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus` (or
+  `--dangerously-load-development-channels` until the plugin is on the
+  organisation's `allowedChannelPlugins`), the MCP server declares the
+  `claude/channel` capability and sends every inbox event as
+  `notifications/claude/channel` the moment it arrives: an idle agent wakes
+  without a background listener, a busy one gets it with its next turn. The
+  Stop hook then opens no listen window (RT-6.12).
+  - The server stays on the MCP handshake era in this mode: Claude Code
+    registers no channel on revision 2026-07-28, which the SDK would otherwise
+    negotiate.
+  - Claude Code does not acknowledge channel events, so `MM_CHANNEL_PUSH`
+    belongs only next to the channel flag; without it nothing changes.
+
 ## 0.27.0
 
 ### Changed

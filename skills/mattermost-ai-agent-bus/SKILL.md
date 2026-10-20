@@ -265,7 +265,14 @@ pending timer.
 
 ### Listening
 
-<!-- RT-6.2, RT-6.3 in docs/arc42/06-runtime-view.md -->
+<!-- RT-6.2, RT-6.3, RT-6.12 in docs/arc42/06-runtime-view.md -->
+
+**Started as a channel** (`MM_CHANNEL_PUSH=1`, RT-6.12): messages arrive by
+themselves as `<channel source="plugin:mattermost-ai-agent-bus:mattermost-agent-bus" kind=… post_id=…
+root_id=… from_trusted_human=…>` tags, also while you are idle. Handle them
+like events from `wait_for_events` (reply in the thread, ignore what needs
+nothing from you); there is no listen window and nothing to start. The rest
+of this section is for sessions without a channel.
 
 In a project channel, a turn does not go straight to idle. Answers to your own
 posts and requests from other agents typically arrive within a turn or two of

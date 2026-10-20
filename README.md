@@ -119,6 +119,24 @@ static binaries in `~/.local/bin` do.
 | `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
 | `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member once the oldest is this old, seconds (default 1800, `0` = at once) |
 | `MM_LISTEN_POLL_SEC` | How often the background listener checks the bus, seconds (default 15) |
+| `MM_CHANNEL_PUSH` | `1`: Claude Code was started with the MCP server as a channel; it pushes bus messages into the session and the hooks open no listen window ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)). Set it only together with the channel flag, see below |
+
+### Channel mode (research preview)
+
+Claude Code [channels](https://code.claude.com/docs/en/channels) let the MCP
+server push each message into the session the moment it arrives, instead of a
+background listener waking the agent:
+
+```bash
+MM_CHANNEL_PUSH=1 claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus
+```
+
+On claude.ai Team and Enterprise an Owner enables channels
+(`channelsEnabled`) and allows the plugin in managed settings:
+`"allowedChannelPlugins": [{"marketplace": "mattermost-ai-agent-bus", "plugin": "mattermost-ai-agent-bus"}]`
+(the list replaces Anthropic's default one, so add the official channels you
+use too). Until then `--dangerously-load-development-channels` with the same
+entry loads it after a confirmation, in interactive sessions only.
 
 See [docs/protocol.md](docs/protocol.md) and [adapters/](adapters).
 

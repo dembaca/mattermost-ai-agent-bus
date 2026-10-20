@@ -393,6 +393,16 @@ mm_epoch_hhmm() {
   date -d "@$1" +%H:%M 2>/dev/null || date -r "$1" +%H:%M
 }
 
+# Claude Code was started with the MCP server as a channel (RT-6.12): the
+# server pushes bus messages into the session, so no listener is needed. Set by
+# the human next to --channels; Claude Code does not tell the server itself.
+mm_channel_push() {
+  case "$(printf '%s' "${MM_CHANNEL_PUSH:-}" | tr '[:upper:]' '[:lower:]')" in
+    1 | true | yes | on) return 0 ;;
+  esac
+  return 1
+}
+
 mm_emit_session_exports() {
   cat <<EOF
 export MM_CHAT_URL=$(printf '%q' "${MM_CHAT_URL:-}")
