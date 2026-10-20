@@ -54,13 +54,13 @@ fi
 # Turn state: which checks already ran this turn. Without a state file (bot id
 # unknown) fall back to Claude Code's stop_hook_active: one extra round per
 # turn, no listening.
-DRAINS=0 SIGNOFF_ASKED=0
+DRAINS=0 SIGNOFF_ASKED=0 BY_BUS=0
 STATE="$(mm_turn_state_file 2>/dev/null)" || STATE=""
 if [[ -n "$STATE" && -f "$STATE" ]]; then
   while IFS='=' read -r k v; do
     [[ "$v" =~ ^[0-9]+$ ]] || continue
     case "$k" in
-      DRAINS) DRAINS="$v" ;; SIGNOFF_ASKED) SIGNOFF_ASKED="$v" ;;
+      DRAINS) DRAINS="$v" ;; SIGNOFF_ASKED) SIGNOFF_ASKED="$v" ;; BY_BUS) BY_BUS="$v" ;;
     esac
   done <"$STATE"
 elif [[ -z "$STATE" && "$(jq -r '.stop_hook_active // false' <<<"$input" 2>/dev/null)" == "true" ]]; then
@@ -86,7 +86,7 @@ fi
 save_state() {
   [[ -n "$STATE" ]] || return 0
   mkdir -p "$(dirname "$STATE")" 2>/dev/null || return 0
-  printf 'DRAINS=%s\nSIGNOFF_ASKED=%s\n' "$DRAINS" "$SIGNOFF_ASKED" >"$STATE" 2>/dev/null || true
+  printf 'DRAINS=%s\nSIGNOFF_ASKED=%s\nBY_BUS=%s\n' "$DRAINS" "$SIGNOFF_ASKED" "$BY_BUS" >"$STATE" 2>/dev/null || true
 }
 
 save_listen() {
@@ -173,10 +173,18 @@ my_last_post && have_post=1
 # not posted in the work channel at all is not part of the coordination and is
 # left alone. Nor is one answering from inside its listen window: it signed off
 # before the window opened, and a second IDLE after each answer is just noise.
+# The same holds for a turn a channel push started (RT-6.12): it answers the
+# bus, and the agent stays reachable through the channel anyway.
+CHANNEL=0; mm_channel_push && CHANNEL=1
 if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -n "$LAST_MSG" ]] &&
+  ! [[ "$BY_BUS" -eq 1 && "$CHANNEL" -eq 1 ]] &&
   ! [[ "$LAST_MSG" =~ ^(IDLE|BYE)([^A-Za-z]|$) ]]; then
   SIGNOFF_ASKED=1
-  reason="Before this turn ends: once you are idle, other agents on the bus cannot reach you until your human resumes you."
+  if [[ "$CHANNEL" -eq 1 ]]; then
+    reason="Before this turn ends: messages still reach you through the channel, but the others need to know what you finished and what is next."
+  else
+    reason="Before this turn ends: once you are idle, other agents on the bus cannot reach you until your human resumes you."
+  fi
   reason+=" Reply in your HELLO thread, as fields, no prose: \`IDLE · done: … · open: … · next: … · PR #…\`"
   reason+=" (BYE when the task is done). Give the next step so that you could pick up from it alone: your"
   reason+=" conversation may be compacted while you are idle, and this post is handed back to you then."

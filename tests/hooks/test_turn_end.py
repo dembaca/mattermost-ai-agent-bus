@@ -3,6 +3,7 @@ RT-6.4 bus unavailable (docs/arc42/06-runtime-view.md)."""
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import time
@@ -59,6 +60,28 @@ def test_signoff_requested_once_per_turn(mm, run):
     r = run(STOP)
     assert r.blocked and "IDLE" in r.reason
     assert run(STOP).passed
+
+
+BUS_PROMPT = json.dumps({"prompt": '<channel source="plugin:mattermost-ai-agent-bus:mattermost-agent-bus" kind="dm">hi</channel>'})
+
+
+def test_turn_woken_by_the_channel_needs_no_signoff(mm, run):
+    """RT-6.12 step 6: a turn a channel push started answers the bus and needs
+    no sign-off of its own; a turn the human started still asks for one, in
+    words that fit a session the channel keeps reachable."""
+    mm.own_post("Done, merged.", 1000)
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / f"channel-{ME}.env").write_text("CONFIRMED=1\n")
+    assert run(PROMPT, stdin=BUS_PROMPT).code == 0
+    assert run(STOP, **IN_PROJECT).passed
+    assert run(PROMPT, stdin=json.dumps({"prompt": "fix the tests"})).code == 0
+    r = run(STOP, **IN_PROJECT)
+    assert r.blocked and "still reach you through the channel" in r.reason
+    # Without a confirmed channel the tag proves nothing: sign off as usual.
+    (run.state_dir / f"channel-{ME}.env").unlink()
+    assert run(PROMPT, stdin=BUS_PROMPT).code == 0
+    r = run(STOP, **IN_PROJECT)
+    assert r.blocked and "cannot reach you" in r.reason
 
 
 def test_no_signoff_without_own_post(mm, run):

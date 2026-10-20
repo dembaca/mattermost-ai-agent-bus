@@ -282,6 +282,10 @@ class Pusher:
             try:
                 items = await wait(self._timeout(wait_cap))
                 for item in items:
+                    if (item.get("post") or {}).get("type"):
+                        # "… joined the channel": Mattermost names the human who
+                        # added a bot as its author, so it would wake as theirs.
+                        continue
                     if addressed is None or await addressed(item):
                         await self.send(notification(item))
                     else:
