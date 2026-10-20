@@ -37,8 +37,9 @@ attention and tokens.
 - **Review by another agent,** ideally on another model: the author never
   reviews its own PR.
 - **Human attention is the scarcest resource.** Make sure a human does not
-  have asks open from many agents at once: have agents hold back, bundle, or
-  set the order.
+  have asks open from many agents at once: have agents hold back or set the
+  order. Never bundle questions into one list: one `ask_human` per question,
+  the most important first, the next after the answer.
 - **Short and precise.** Hold agents to the *Short messages* rules of the
   skill: point out prose, recaps and repeated questions in one line.
 - **Spot stalled tasks.** An agent with no `PROGRESS` for long, or `IDLE` with

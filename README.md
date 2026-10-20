@@ -73,6 +73,20 @@ agent must not start or stop one.
 
 Host hooks register a bot only for sessions with `MM_PROJECT_CHANNEL` set (then
 always), or with `MM_REGISTER=always`; a quick question elsewhere stays off the bus.
+**Which terminal is which agent?** `bin/mm-agent-statusline.sh` prints the
+session's bot name (`👑 @agent-…` while it coordinates) for Claude Code's
+status line. Claude Code runs only one status line command, so call it from
+yours with the session JSON on stdin, e.g. in `~/.claude/statusline.sh`:
+
+```bash
+input="$(cat)"
+bus="$(printf '%s' "$input" | ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus/bin/mm-agent-statusline.sh)"
+```
+
+The marketplace checkout keeps that path across plugin updates, and it lies
+inside a corral sandbox's home, where Claude Code runs the status line. With no
+status line of your own, set the script as the command itself.
+
 The full lifecycle is [RT-6.1](docs/arc42/06-runtime-view.md#61-host-managed-session-lifecycle),
 the end of a turn with its listen window [RT-6.2](docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen).
 

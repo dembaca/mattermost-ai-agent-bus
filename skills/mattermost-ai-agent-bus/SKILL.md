@@ -116,8 +116,10 @@ other @-mention of a person into the plain name (`unmentioned`).
 **Decisions: one at a time, each answerable in a word.** For every decision
 give the situation in one to three sentences (`context`), your recommendation
 and why (`recommendation`), and the decision written out (`decision`), so a 👍
-or a "yes" settles it. With several questions open, ask them one after the
-other: `ask_human` refuses a second open ask to the same human. Ask the same
+or a "yes" settles it. **One question per ask**, never a list: with several
+questions, ask the most important first and the next once it is answered (the
+answer often settles it); `ask_human` refuses a list of questions and a second
+open ask to the same human. Ask the same
 way in the terminal: one decision per message, context, recommendation,
 decision.
 

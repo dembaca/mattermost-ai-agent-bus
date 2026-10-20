@@ -62,6 +62,12 @@ def test_signoff_requested_once_per_turn(mm, run):
     assert run(STOP).passed
 
 
+def test_coordinators_signoff_counts_with_its_crown(mm, run):
+    """RT-6.2 step 2, RT-6.6: the 👑 before a coordinator's IDLE is no new post."""
+    mm.own_post("👑 IDLE · done: x · next: y")
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+
+
 BUS_PROMPT = json.dumps({"prompt": '<channel source="plugin:mattermost-ai-agent-bus:mattermost-agent-bus" kind="dm">hi</channel>'})
 
 

@@ -233,3 +233,18 @@ async def test_one_open_ask_per_human_at_a_time(monkeypatch):
     await server.resolve_ask(first["ask"])
     third = json.loads(await server.ask_human(need="Archive #60?"))
     assert third["ask"] and len(c.posted) == 3
+
+
+@pytest.mark.asyncio
+async def test_one_question_per_ask(monkeypatch):
+    """RT-6.11 step 1: a list of questions in one ask is refused, so the human
+    answers them one after the other."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(
+        need="Three open points",
+        context="1. Merge #62 now? 2. Keep VM 399? 3. Who reviews #63?"))
+    assert out["posted"] is False and "one question per ask" in out["hint"]
+    assert c.posted == []
+    await server.ask_human(need="Merge #62 now?", context="Review passed; CI is green.")
+    assert len(c.posted) == 1
