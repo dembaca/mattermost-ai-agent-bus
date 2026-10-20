@@ -3,6 +3,15 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.27.1
+
+### Changed
+
+- **The MCP server's packages are pinned:** it starts with `uv run --locked`
+  against the committed `mcp/uv.lock`, so a fresh install fetches exactly the
+  tested versions. The plugin validation for the channel allowlist requires
+  it.
+
 ## 0.27.0
 
 ### Changed
