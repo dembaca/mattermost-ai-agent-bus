@@ -98,7 +98,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. `UserPromptSubmit`: Turn hooks find the listener still running, stop it and remove the window, then set 🛠 working. Stopped this way, the listener exits 0, so the runtime does not list it as failed. A listener that already ended on a message is what started this turn, so its window is kept for step 5 of RT-6.2.
+1. `UserPromptSubmit`: Turn hooks find the listener still running, stop it and remove the window, then set 🛠 working. Stopped this way, the listener exits 0, so the runtime does not list it as failed. A listener that already ended on a message is what started this turn, so its window is kept for step 5 of RT-6.2. So is a window that ran out within the last two minutes: its end started this turn, not the human, and with the window removed the Stop hook would open the next one, a turn per window for good.
 2. The new turn ends with a fresh window, as in RT-6.2.
 3. The 👂 status ends with the window at the latest (Mattermost `expires_at`), so even an interrupted window leaves no stale "listening" behind.
 

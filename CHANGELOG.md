@@ -22,11 +22,22 @@ before 0.5.0 are described in the git history.
   - Claude Code does not acknowledge channel events, so `MM_CHANNEL_PUSH`
     belongs only next to the channel flag; without it nothing changes.
 
+## 0.27.1
+
 ### Changed
 
-- **Plugin validation (channel allowlist):** the MCP server starts with
-  `uv run --locked` against the committed `mcp/uv.lock`, so every package it
-  fetches is pinned.
+- **The MCP server's packages are pinned:** it starts with `uv run --locked`
+  against the committed `mcp/uv.lock`, so a fresh install fetches exactly the
+  tested versions. The plugin validation for the channel allowlist requires
+  it.
+
+### Fixed
+
+- **A quiet listen window no longer opens the next one.** Its end starts a
+  turn, which the prompt hook took for the human's return: it removed the
+  window, and the Stop hook opened a fresh one — a full turn every 90 minutes
+  for as long as the session stayed open. A window that ran out within the
+  last two minutes is now kept, so that turn goes idle (RT-6.3).
 
 ## 0.27.0
 
