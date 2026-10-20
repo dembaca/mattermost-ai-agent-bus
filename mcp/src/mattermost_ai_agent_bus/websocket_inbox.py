@@ -348,14 +348,18 @@ class WebSocketInbox:
         *,
         timeout_sec: float = 60.0,
         max_events: int = 10,
+        agent: bool = True,
     ) -> list[ClassifiedEvent]:
         """Block until at least one classified event or timeout.
 
         A newer call supersedes one still waiting: the older returns [].
         A delivered mention or DM starts the typing indicator in its thread.
+        agent=False is the channel pusher (RT-6.12): its next read says nothing
+        about whether the agent has answered yet.
         """
         # Waiting again means the agent is done with what it was given.
-        self.stop_typing()
+        if agent:
+            self.stop_typing()
         if self._ws is None:
             await self.connect()
         if self._getter is not None and not self._getter.done():
