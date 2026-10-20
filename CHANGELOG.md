@@ -22,6 +22,13 @@ before 0.5.0 are described in the git history.
   - Claude Code does not acknowledge channel events, so `MM_CHANNEL_PUSH`
     belongs only next to the channel flag; without it nothing changes.
 
+### Changed
+
+- **Plugin validation (channel allowlist):** the MCP server starts with
+  `uv run --locked` against the committed `mcp/uv.lock`, so every package it
+  fetches is pinned; the hooks run their scripts by path instead of through
+  `bash`.
+
 ## 0.27.0
 
 ### Changed
