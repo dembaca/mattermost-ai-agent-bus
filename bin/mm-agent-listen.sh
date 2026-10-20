@@ -8,8 +8,8 @@
 # waits, costing no tokens, and exits as soon as something is for this agent:
 #   - an unread mention or DM, or @channel / @all / @here,
 #   - a reply in a thread the agent posted in,
-#   - a post by a trusted human (MM_TRUSTED_HUMAN_USER_IDS),
-#   - any new post, while the agent holds the 👑 (the coordinator sees all),
+#   - any new post, while the agent holds the 👑 (the coordinator sees all,
+#     and routes a human's plain post to the agent it means, RT-6.6),
 #   - a reaction to one of its open asks (asks-<uid>.env, RT-6.11) that the
 #     agent has not been handed yet.
 # Other posts wake it only for a digest, once the oldest of them is
@@ -57,7 +57,6 @@ POLL="${MM_LISTEN_POLL_SEC:-15}"
 [[ "$POLL" =~ ^[0-9]+$ && "$POLL" -gt 0 ]] || POLL=15
 DIGEST="${MM_LISTEN_DIGEST_SEC:-1800}"
 [[ "$DIGEST" =~ ^[0-9]+$ ]] || DIGEST=1800
-TRUSTED_IDS="${MM_TRUSTED_HUMAN_USER_IDS:-${MM_OWNER_USER_ID:-}}"
 COORD="$(mm_bot_state_file coord "$ME" 2>/dev/null)" || COORD=""
 ASKS="$(mm_bot_state_file asks "$ME" 2>/dev/null)" || ASKS=""
 
@@ -131,13 +130,11 @@ while (( $(date +%s) < UNTIL )); do
     # ?since= also returns posts edited since then; look only at new ones.
     read -r addressed others oldest < <(jq -r --arg me "$ME" --arg name "$MY_NAME" \
         --argjson t "$since_ms" --argjson threads "$MY_THREADS" \
-        --arg trusted "$TRUSTED_IDS" --argjson coord "$coordinator" '
-      ($trusted | split(",") | map(select(. != ""))) as $tr
-      | [.posts // {} | .[] | select(.user_id != $me and (.type // "") == "" and .create_at >= $t)]
+        --argjson coord "$coordinator" '
+      [.posts // {} | .[] | select(.user_id != $me and (.type // "") == "" and .create_at >= $t)]
       | map(. + {addressed: (
             $coord
             or ((.root_id // "") as $r | $r != "" and ($threads | index($r)) != null)
-            or (.user_id as $u | $tr | index($u)) != null
             or ((.message // "") | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
                 | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))
           )})

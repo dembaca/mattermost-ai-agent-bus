@@ -3,6 +3,17 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.29.3
+
+### Changed
+
+- **A human's post without a mention wakes only the coordinator.** It woke
+  every agent at once, and each spent a turn finding out it was not meant.
+  Mentions, DMs, replies in an agent's own thread and `@channel` still wake
+  at once, in channel mode and in the listen window alike; members see the
+  rest in their next digest. The coordinator routes such a post: it replies
+  in the thread with an @-mention of the agent the post means (RT-6.6).
+
 ## 0.29.2
 
 ### Fixed
