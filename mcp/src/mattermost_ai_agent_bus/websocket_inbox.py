@@ -343,6 +343,13 @@ class WebSocketInbox:
         await self._queue.put(ClassifiedEvent(
             kind="reaction", post=post, raw={"emoji": emoji, "ask": pid}))
 
+    def holds(self, channel_id: str) -> bool | None:
+        """Whether events of this channel wait in the queue; None while the
+        socket is not connected, so nothing is known about what arrived."""
+        if self._ws is None:
+            return None
+        return any(e.post.get("channel_id") == channel_id for e in list(self._queue._queue))
+
     async def wait_for_events(
         self,
         *,

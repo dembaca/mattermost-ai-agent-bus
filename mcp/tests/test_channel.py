@@ -126,7 +126,7 @@ async def test_handshake_era_channel_pushes_events():
             async def serve():
                 await channel.serve_handshake_only(
                     low, s_read, s_write, lifespan_state={}, init_options=opts,
-                    pusher=pusher, on_connected=lambda: pusher.run(wait))
+                    pusher=pusher, on_connected=lambda: pusher.run(wait, check_after=(0.01,)))
             tg.start_soon(serve)
 
             await _send(c_write, JSONRPCRequest(jsonrpc="2.0", id=1, method="server/discover", params={
@@ -195,7 +195,7 @@ async def test_pusher_waits_for_the_bus():
     with anyio.move_on_after(0.5):
         await pusher.run(wait, prepare=prepare, retry_sec=0.01)
     assert calls >= 2
-    assert pusher.connection.sent == [channel.check(pusher.code), channel.notification(MENTION)]
+    assert pusher.connection.sent == [channel.notification(MENTION)]
 
 
 @pytest.mark.anyio
@@ -212,10 +212,36 @@ async def test_unconfirmed_channel_reads_nothing():
         return [MENTION]
 
     with anyio.move_on_after(0.2):
-        await pusher.run(wait)
+        await pusher.run(wait, check_after=(0.01,), check_every=10)
     assert calls == 0
     assert pusher.connection.sent == [channel.check(pusher.code)]
     assert not pusher.confirm("deadbeef") and not pusher.confirmed.is_set()
+
+
+@pytest.mark.anyio
+async def test_check_comes_late_and_again_until_confirmed():
+    """RT-6.12 step 2: Claude Code drops a push sent before it registered the
+    channel, so the check waits a moment and repeats with growing gaps; once
+    confirmed it stops and the inbox is read."""
+    pusher = _pusher()
+    reads = 0
+
+    async def wait(timeout):
+        nonlocal reads
+        reads += 1
+        await asyncio.sleep(3600)
+
+    async def confirm_later():
+        await asyncio.sleep(0.25)
+        pusher.confirm(pusher.code)
+
+    with anyio.move_on_after(0.5):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(confirm_later)
+            await pusher.run(wait, check_after=(0.05, 0.1), check_every=1)
+    checks = [p for p in pusher.connection.sent if p["meta"]["kind"] == "channel_check"]
+    assert len(checks) == 2  # at 0.05 s and 0.15 s; confirmed before the next
+    assert reads == 1
 
 
 def _post(message, kind="watched_channel", trusted=False, root=""):
@@ -262,9 +288,9 @@ async def test_other_posts_come_as_one_digest(monkeypatch):
     with anyio.move_on_after(1.0):
         await pusher.run(wait, addressed=addressed, wait_cap=5)
     sent = pusher.connection.sent
-    assert sent[1] == channel.notification(MENTION)  # at once, while two are held
-    assert len(sent) == 3 and sent[2]["meta"] == {"kind": "digest", "count": "2"}
-    assert "IDLE a" in sent[2]["content"] and "thread r1" in sent[2]["content"]
+    assert sent[0] == channel.notification(MENTION)  # at once, while two are held
+    assert len(sent) == 2 and sent[1]["meta"] == {"kind": "digest", "count": "2"}
+    assert "IDLE a" in sent[1]["content"] and "thread r1" in sent[1]["content"]
     # While posts are held the wait ends when the digest is due, not at the cap.
     assert timeouts[0] == 5 and all(t <= 0.3 for t in timeouts[1:4])
 

@@ -22,6 +22,10 @@ def _client(calls):
             return httpx.Response(200, json=[USERS[n] for n in body if n in USERS])
         if req.url.path == "/api/v4/channels/direct":
             return httpx.Response(201, json={"id": DM})
+        if req.url.path == "/api/v4/posts/rootindm":
+            return httpx.Response(200, json={"id": "rootindm", "channel_id": DM})
+        if req.url.path == "/api/v4/posts":
+            return httpx.Response(201, json={"id": "new", **body})
         return httpx.Response(404, json={})
     c = MattermostClient(base_url="https://mm.example", token="t")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -44,3 +48,40 @@ async def test_no_dm_to_a_person_or_unknown_name():
     with pytest.raises(ValueError, match="no user"):
         await c.direct_channel_with_bot("nobody")
     assert not any(path == "/api/v4/channels/direct" for path, _ in calls)
+
+
+@pytest.mark.asyncio
+async def test_reply_goes_where_its_root_is():
+    """A reply to a DM stays in the DM: without channel_id the root decides,
+    not the default channel (where Mattermost would refuse the root)."""
+    calls = []
+    post = await _client(calls).post("ok", root_id="rootindm")
+    assert post["channel_id"] == DM and post["root_id"] == "rootindm"
+    assert ("/api/v4/posts/rootindm", None) in calls
+
+
+@pytest.mark.asyncio
+async def test_own_post_leaves_no_unread_dm(monkeypatch):
+    """Mattermost counts the bot's own post as unread for it; in a DM the Stop
+    hook and the listener would then wake for it forever. The channel is
+    marked read, unless the inbox holds — or, unconnected, may have missed —
+    a message there still to be collected."""
+    from mattermost_ai_agent_bus import server
+    from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
+
+    viewed = []
+
+    class Client:
+        async def view_channel(self, cid):
+            viewed.append(cid)
+
+    inbox = WebSocketInbox(client=Client())
+    monkeypatch.setattr(server, "_inbox", inbox)
+    await server._posted(Client(), {"channel_id": DM})
+    assert viewed == []                       # not connected: may have missed one
+    inbox._ws = object()
+    await server._posted(Client(), {"channel_id": DM})
+    assert viewed == [DM]
+    inbox._queue.put_nowait(ClassifiedEvent(kind="dm", post={"channel_id": DM}))
+    await server._posted(Client(), {"channel_id": DM})
+    assert viewed == [DM]                     # a DM still to collect stays unread
