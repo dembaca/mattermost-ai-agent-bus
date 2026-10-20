@@ -3,6 +3,15 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.28.1
+
+### Fixed
+
+- **Channel mode under corral:** the sandbox starts with an empty
+  environment, so `MM_CHANNEL_PUSH` from the host shell never reached the MCP
+  server or the hooks. The corral host session hook now passes it on with the
+  bot's other variables (RT-6.12).
+
 ## 0.28.0
 
 ### Added
