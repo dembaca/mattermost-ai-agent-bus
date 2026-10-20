@@ -18,6 +18,11 @@ before 0.5.0 are described in the git history.
   refused. The agent asks the most important first and the next after the
   answer, which often settles it; the coordinator no longer bundles (RT-6.11).
 
+### Fixed
+
+- **A coordinator was asked for its sign-off again and again:** its IDLE is
+  posted as `👑 IDLE …`, which the `Stop` hook did not take for one.
+
 ## 0.29.3
 
 ### Changed

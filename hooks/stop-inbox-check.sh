@@ -132,6 +132,7 @@ go_idle() {
 }
 
 # Latest own post in the work channel: sets LAST_MSG and LAST_AT (epoch ms).
+# Without the 👑 the MCP server puts before a coordinator's posts (RT-6.6).
 LAST_MSG="" LAST_AT=0
 my_last_post() {
   local cid
@@ -141,7 +142,7 @@ my_last_post() {
     [[ "$MM_API_STATUS" == "200" ]] || return 1
   read -r LAST_AT LAST_MSG < <(jq -r --arg me "$MM_BOT_USER_ID" '
     first(.order[] as $i | .posts[$i] | select(.user_id == $me)
-          | "\(.create_at) \(.message | gsub("\n"; " "))") // "0 "' \
+          | "\(.create_at) \(.message | ltrimstr("👑 ") | gsub("\n"; " "))") // "0 "' \
     <<<"$MM_API_BODY" 2>/dev/null) || return 1
   [[ "$LAST_AT" =~ ^[0-9]+$ ]] || LAST_AT=0
 }
