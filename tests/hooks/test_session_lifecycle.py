@@ -97,6 +97,16 @@ def test_autonomous_agent(mm, run):
     assert register_body(mm)["kind"] == "autonomous"
 
 
+def test_channel_push_reaches_the_sandbox(mm, run):
+    """RT-6.12 trigger: the MCP server and the Stop hook inside the sandbox read
+    MM_CHANNEL_PUSH; the host hook passes it on, no corral passthrough needed."""
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x",
+            MM_CHANNEL_PUSH="1", **HOST)
+    assert json.loads(r.stdout)["env"]["MM_CHANNEL_PUSH"] == "1"
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
+    assert "MM_CHANNEL_PUSH" not in json.loads(r.stdout)["env"]
+
+
 def test_stats_channel_reaches_the_sandbox(mm, run):
     """RT-6.9 step 2: the MCP server inside the sandbox needs MM_STATS_CHANNEL."""
     r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x",

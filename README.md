@@ -138,6 +138,10 @@ On claude.ai Team and Enterprise an Owner enables channels
 use too). Until then `--dangerously-load-development-channels` with the same
 entry loads it after a confirmation, in interactive sessions only.
 
+Under corral, set `MM_CHANNEL_PUSH=1` in the shell that starts `corral run`:
+the host session hook passes it into the sandbox, and the channel flag goes
+after `--`.
+
 See [docs/protocol.md](docs/protocol.md) and [adapters/](adapters).
 
 ## Adapters

@@ -342,7 +342,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Purpose:** A message for the agent reaches its session the moment it is posted, without a background listener, listen windows or turns spent waiting.
 
-**Trigger:** The developer starts Claude Code with the MCP server as a channel (research preview): `MM_CHANNEL_PUSH=1 claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus` once the plugin is on the organisation's `allowedChannelPlugins`, otherwise `--dangerously-load-development-channels` with the same entry.
+**Trigger:** The developer starts Claude Code with the MCP server as a channel (research preview): `MM_CHANNEL_PUSH=1 claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus` once the plugin is on the organisation's `allowedChannelPlugins`, otherwise `--dangerously-load-development-channels` with the same entry. Under corral the host session hook passes `MM_CHANNEL_PUSH` into the sandbox with the bot's other variables.
 
 **Participants:** MCP server, Turn hooks; Agent runtime, Mattermost WebSocket, Developer / operator
 
