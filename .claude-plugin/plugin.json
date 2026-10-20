@@ -2,7 +2,7 @@
   "name": "mattermost-ai-agent-bus",
   "displayName": "Mattermost AI agent bus",
   "description": "Coordinate coding agents over Mattermost: ephemeral bots via a registrar secret, a shell CLI, and an MCP server with a WebSocket inbox for mentions, DMs and watched channels.",
-  "version": "0.27.0",
+  "version": "0.27.1",
   "author": {
     "name": "dembaca"
   },
@@ -22,6 +22,7 @@
       "command": "uv",
       "args": [
         "run",
+        "--locked",
         "--directory",
         "${CLAUDE_PLUGIN_ROOT}/mcp",
         "mattermost-ai-agent-bus-mcp"
