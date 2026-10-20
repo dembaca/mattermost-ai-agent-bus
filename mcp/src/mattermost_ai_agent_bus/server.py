@@ -495,8 +495,11 @@ async def ask_human(
     to your responsible human. root_id puts it in a thread; the default is a
     top-level post, so it stands out.
 
-    One at a time: while you have an open ask to that human, this refuses and
-    names it — wait for the answer, or resolve_ask it if it is obsolete.
+    One question per ask, one ask at a time: several questions in need and
+    context are refused (the human would scroll between them, and an answer
+    often settles the next one), and while you have an open ask to that human
+    this refuses and names it — wait for the answer, or resolve_ask it if it is
+    obsolete. Ask the most important question first.
 
     The answer comes through wait_for_events: a reply, or {kind: reaction,
     emoji, answer: yes|no|null, ask} — 👍/✅ from a trusted human is a yes to
@@ -517,6 +520,12 @@ async def ask_human(
             "posted": False, "open_ask": pending[0],
             "hint": f"{who} still has your ask {pending[0]} open: wait for the answer, "
                     "or resolve_ask it if it is obsolete, then ask the next one",
+        })
+    if f"{need} {context}".count("?") > 1:
+        return _out("ask_human", {
+            "posted": False,
+            "hint": "one question per ask: ask the most important one now, wait for the "
+                    "answer, then the next — it may settle the rest",
         })
     head, rest = _headline(need)
     if rest:

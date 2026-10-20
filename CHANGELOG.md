@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.29.4
+
+### Added
+
+- **The agent's name in the status line:** `bin/mm-agent-statusline.sh`
+  prints the session's bot name, with 👑 while it coordinates, so a terminal
+  is easy to match to its agent in Mattermost. Call it from your status line
+  script (README, *Sessions*); local files only, never the token.
+
+### Changed
+
+- **One question per `ask_human`:** a list of questions in one ask is
+  refused. The agent asks the most important first and the next after the
+  answer, which often settles it; the coordinator no longer bundles (RT-6.11).
+
 ## 0.29.3
 
 ### Changed
