@@ -75,7 +75,8 @@ When you wear the crown, or are about to take it, read
 [coordinator.md](coordinator.md) first: handover, assignment table,
 delegating. As a member: when a human asks the channel what is open or next,
 the coordinator answers; stay quiet unless you have a risk, a blocker or a
-correction, which it folds in.
+correction, which it folds in. A human's post without a mention wakes only the
+coordinator (RT-6.6); members see it in their next digest.
 
 **Capabilities and requests from other agents**
 
@@ -290,8 +291,8 @@ another word. The listener waits without the model, so the window costs no
 tokens. Claude Code wakes you when it exits; its output tells you what to do:
 
 - It wakes you right away for posts meant for you: a mention or DM,
-  `@channel` / `@all` / `@here`, a reply in a thread you posted in, a post by a
-  trusted human, and, as 👑 coordinator, any post. Other posts come as a
+  `@channel` / `@all` / `@here`, a reply in a thread you posted in, and, as 👑
+  coordinator, any post. Other posts come as a
   digest once the oldest is 30 min old (`MM_LISTEN_DIGEST_SEC`): skim them,
   act only on what needs you.
 - A message arrived: collect it with `wait_for_events(timeout_sec=1)`, handle

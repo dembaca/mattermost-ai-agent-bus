@@ -171,10 +171,9 @@ def check(code: str) -> dict[str, Any]:
 
 
 def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool) -> bool:
-    """The listener's rules (RT-6.2): what is for this agent is pushed at once."""
+    """The listener's rules (RT-6.2): what is for this agent is pushed at once.
+    A human's plain post wakes only the coordinator, which routes it (RT-6.6)."""
     if item.get("kind") in ("mention", "dm", "reaction") or coordinator or in_my_thread:
-        return True
-    if item.get("from_trusted_human"):
         return True
     words = str((item.get("post") or {}).get("message", "")).lower().split()
     return any(w.rstrip(".,:;!?") in BROADCAST for w in words)

@@ -258,7 +258,9 @@ def test_wake_rules_match_the_listener():
     assert wakes(_post("hi", kind="mention"))
     assert wakes(_post("hi", kind="dm"))
     assert wakes(_post(":+1:", kind="reaction"))
-    assert wakes(_post("deploy now?", trusted=True))
+    # A trusted human's plain post is for the coordinator to route (RT-6.6).
+    assert not wakes(_post("deploy now?", trusted=True))
+    assert wakes(_post("deploy now?", trusted=True), coordinator=True)
     assert wakes(_post("Heads up @channel: main is red."))
     assert wakes(_post("done", root="r"), in_my_thread=True)
     assert wakes(_post("IDLE done x"), coordinator=True)
@@ -271,7 +273,7 @@ async def test_other_posts_come_as_one_digest(monkeypatch):
     """RT-6.12 step 2: posts not for the agent are held, then pushed together
     once the oldest is MM_LISTEN_DIGEST_SEC old: one wake-up, not one each.
     System posts ("… joined the channel") are dropped: their author is the
-    human who added the bot, so they would wake as a trusted human's post."""
+    human who added the bot, so a pusher that wakes for that human would wake."""
     pusher = _pusher(digest_sec=0.3)
     pusher.confirm(pusher.code)
     joined = _post("agent-y joined the channel.", trusted=True)

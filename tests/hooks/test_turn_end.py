@@ -253,20 +253,26 @@ def test_listener_ignores_posts_not_for_it(mm, run):
 
 
 def test_listener_wakes_when_addressed(mm, run):
-    """RT-6.2 step 4: @name, @channel, a reply in its thread or a trusted human wake it."""
+    """RT-6.2 step 4: @name, @channel or a reply in its thread wake it."""
     mm.own_post("HELLO @agent-test", 1000)
     my_root = mm.posts[0]["id"]
     cases = [
         ({"message": "hey @Agent-Test, can you look?"}, {}),
         ({"message": "@channel deploy freeze at 5"}, {}),
         ({"message": "answer", "root_id": my_root}, {}),
-        ({"message": "fyi", "user_id": "h" * 26}, {"MM_TRUSTED_HUMAN_USER_IDS": "h" * 26}),
     ]
     for post, env in cases:
         mm.posts = [p for p in mm.posts if p["user_id"] == mm.posts[-1]["user_id"]]
         other_post(mm, **post)
         r = listen(run, **env)
         assert "for you" in r.stdout, post
+
+
+def test_trusted_humans_plain_post_is_for_the_coordinator(mm, run):
+    """RT-6.2 step 4, RT-6.6: a human's post without a mention does not wake a
+    member; the coordinator, which sees every post, routes it."""
+    other_post(mm, "fyi", user_id="h" * 26)
+    assert "nothing new" in listen(run, MM_TRUSTED_HUMAN_USER_IDS="h" * 26).stdout
 
 
 def test_coordinator_wakes_for_every_post(mm, run):

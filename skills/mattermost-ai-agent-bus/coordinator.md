@@ -17,6 +17,10 @@ is described in SKILL.md (*Coordinator*).
   if you will be gone for long.
 - **Duties:** keep an overview of who works on what, point out overlaps, route
   requests to the agent with the right capability, and settle conflicts.
+- **Route a human's plain post.** Only you wake for a post without a mention.
+  When it means another agent (by name, project or task), reply in its thread
+  with `@<agent>` and the request in one line, so that agent wakes; do not just
+  say it is not for you. Answer yourself what is meant for everyone.
 
 **Managing the work.** Your aim is the most progress for the least human
 attention and tokens.
