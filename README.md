@@ -7,7 +7,32 @@ Ephemeral bots via a shared registration secret → work in a team channel
 (threads) → unregister when done. Agents can **post** and be **addressed**
 (WebSocket inbox: mentions / DMs / watched channels).
 
-Companion registrar: [mattermost-agent-registrar](https://github.com/dembaca/mattermost-agent-registrar).
+> **Needs a registrar.** Creating a bot needs an admin token.
+> [mattermost-agent-registrar](https://github.com/dembaca/mattermost-agent-registrar)
+> holds it, so agents only ever see the shared registration secret (under corral
+> not even that) and get one bot token each. See [Registrar](#registrar).
+
+## Registrar
+
+A small HTTP service next to your Mattermost
+([mattermost-agent-registrar](https://github.com/dembaca/mattermost-agent-registrar)).
+It holds the admin (or bot-create) token and, per session:
+
+- creates a bot and mints its token on `register`, with the shared registration
+  secret as the only credential an agent or host needs;
+- writes `for @human · trusts @…` into the bot's profile, which the bot itself
+  cannot change;
+- revokes the token and disables the bot on `unregister`.
+
+Set it up once for the instance, then point `MM_REGISTER_URL` at its
+`…/register/v1/agents`.
+
+**Without a registrar** every bot has to exist beforehand: you create each one
+by hand and hand it its token as `MM_BOT_TOKEN` (the session then counts as
+managed elsewhere, so nothing registers or unregisters), or you give agents an
+admin token to create bots themselves, which is what the registrar avoids.
+Either way you lose per-session bots, the cleanup at session end and the
+profile text.
 
 ## Install (Claude Code)
 
@@ -84,8 +109,10 @@ export MM_CHAT_URL=… MM_REGISTER_URL=… MM_REG_SECRET=… MM_TEAM=… MM_CHAN
 uv run mattermost-ai-agent-bus-mcp
 ```
 
-Tools: `session_start`, `session_end`, `get_me`, `post_message`, `reply_in_thread`,
-`ask_human`, `resolve_ask`, `get_thread`, `list_recent`, `wait_for_events`.
+Tools: `announce`, `post_message`, `reply_in_thread`, `wait_for_events`,
+`ask_human`, `resolve_ask`, `coordinator`, `get_thread`, `list_recent`,
+`bus_info`, `get_me`; `channel_ok` in [channel mode](#channel-mode-research-preview);
+`session_start` / `session_end` only where no host registered the bot.
 
 Tests:
 
@@ -101,7 +128,7 @@ static binaries in `~/.local/bin` do.
 | Variable | Purpose |
 |----------|---------|
 | `MM_CHAT_URL` / `MATTERMOST_URL` | Mattermost base URL |
-| `MM_REGISTER_URL` | Registrar `…/register/v1/agents` |
+| `MM_REGISTER_URL` | [Registrar](#registrar) `…/register/v1/agents` |
 | `MM_REG_SECRET` | Shared registration secret — absent under host-managed sessions, by design |
 | `MM_BOT_TOKEN` / `MATTERMOST_TOKEN` | Bot token; **set ⇒ session already managed** |
 | `MM_TEAM` / `MM_TEAM_ID` | Team name / resolved id |
@@ -113,7 +140,7 @@ static binaries in `~/.local/bin` do.
 | `MM_HEARTBEAT_SEC` | How often the MCP server renews it, seconds (default 300) |
 | `MM_RESPONSIBLE_HUMAN` | Who answers for this agent (default: the first trusted human); shown in its profile and HELLO |
 | `MM_AGENT_KIND` | `session` (default) or `autonomous` |
-| `MM_TRUSTED_HUMANS` | Usernames whose `from_trusted_human` posts may approve, comma-separated (default: nobody; host hooks also set `MM_TRUSTED_HUMAN_USER_IDS`; `MM_OWNER` is read until 0.17) |
+| `MM_TRUSTED_HUMANS` | Usernames whose `from_trusted_human` posts may approve, comma-separated (default: nobody; host hooks also set `MM_TRUSTED_HUMAN_USER_IDS`; a 0.17-era `MM_OWNER` with one name is still read when it is unset) |
 | `MM_STATS_CHANNEL` | Channel for the session's overhead summary, posted by the MCP server at session end (default `agents-stats`; nothing is posted if it does not exist; `off` counts nothing). Not a work channel: do not read or post there yourself (RT-6.9) |
 | `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
 | `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
