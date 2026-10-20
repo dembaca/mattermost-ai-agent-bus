@@ -80,13 +80,27 @@ def test_listen_window_opens_in_project_channel(mm, run):
 
 
 def test_channel_session_needs_no_listener(mm, run):
-    """RT-6.12: started as a channel, the MCP server pushes every message into
-    the session, so the stop goes idle instead of asking for a listener."""
+    """RT-6.12: started as a channel and confirmed, the MCP server pushes the
+    messages into the session, so the stop goes idle instead of asking for a
+    listener."""
     mm.own_post("IDLE done x", 1000)
-    r = run(STOP, MM_CHANNEL_PUSH="1", **IN_PROJECT)
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / f"channel-{ME}.env").write_text("CONFIRMED=1\n")
+    r = run(STOP, **IN_PROJECT)
     assert r.passed
     assert window(run).get("UNTIL", "0") == "0"
     assert mm.custom_status().get("emoji") != "ear"
+    # MM_CHANNEL_PUSH=0 overrides: back to the listener.
+    assert run(STOP, MM_CHANNEL_PUSH="0", **IN_PROJECT).blocked
+
+
+def test_unconfirmed_channel_keeps_the_listener(mm, run):
+    """RT-6.12 step 1: the start flag or MM_CHANNEL_PUSH alone proves nothing —
+    the session may not receive a single push — so until the agent confirmed
+    the check the stop asks for a listener as without a channel."""
+    mm.own_post("IDLE done x", 1000)
+    r = run(STOP, MM_CHANNEL_PUSH="1", **IN_PROJECT)
+    assert r.blocked and "mm-agent-listen.sh" in r.reason
 
 
 def test_running_listener_lets_the_turn_end(mm, run):
