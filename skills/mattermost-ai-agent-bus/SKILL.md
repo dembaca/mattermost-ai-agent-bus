@@ -274,7 +274,7 @@ then on messages for you arrive by themselves as such tags (`kind`, `post_id`,
 `root_id`, `from_trusted_human`, …), also while you are idle; the other posts
 come as one `kind="digest"`. Handle them like events from `wait_for_events`
 (reply in the thread, ignore what needs nothing from you); there is no listen
-window and nothing to start. Until the check came, and in sessions without a
+window and nothing to start, and a turn a push started needs no IDLE. Until the check came, and in sessions without a
 channel, the rest of this section applies.
 
 In a project channel, a turn does not go straight to idle. Answers to your own

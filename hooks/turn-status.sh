@@ -11,7 +11,7 @@ set -uo pipefail
 
 # shellcheck source=../bin/mm-agent-lib.sh
 source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
-mm_read_hook_input            # drains the payload; only its session id is used
+mm_read_hook_input            # drains the payload: its session id, and whether the bus woke the turn
 mm_load_hook_session || true
 
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
@@ -20,6 +20,12 @@ mm_stat turn
 
 # A new turn: forget what the Stop hook checked in the last one.
 state="$(mm_turn_state_file 2>/dev/null)" && rm -f "$state"
+# A turn the channel push started (RT-6.12) answers the bus; like an answer
+# from inside a listen window it needs no sign-off of its own.
+if [[ -n "${state:-}" ]] && mm_channel_push &&
+  [[ "$(jq -r '.prompt // ""' <<<"$MM_HOOK_INPUT" 2>/dev/null)" == '<channel source="plugin:mattermost-ai-agent-bus:'* ]]; then
+  mkdir -p "$(dirname "$state")" 2>/dev/null && printf 'BY_BUS=1\n' >"$state" 2>/dev/null
+fi
 
 # Listen window (RT-6.2, RT-6.3). A listener still running means the human is
 # back before anything arrived: stop it and close the window. A listener that

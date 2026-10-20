@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.29.2
+
+### Fixed
+
+- **Channel mode: every pushed message ended with a sign-off block** ("Stop
+  hook error"). A turn a channel push started answers the bus and now needs
+  no IDLE of its own, as an answer from inside a listen window never did. A
+  turn the human started still asks for one, worded for a session the
+  channel keeps reachable (RT-6.12).
+- **"… joined the channel" woke agents:** Mattermost names the human who
+  added a bot as the system post's author, so it was pushed as a trusted
+  human's post. The pusher drops system posts.
+
 ## 0.29.1
 
 ### Fixed

@@ -269,10 +269,14 @@ def test_wake_rules_match_the_listener():
 @pytest.mark.anyio
 async def test_other_posts_come_as_one_digest(monkeypatch):
     """RT-6.12 step 2: posts not for the agent are held, then pushed together
-    once the oldest is MM_LISTEN_DIGEST_SEC old: one wake-up, not one each."""
+    once the oldest is MM_LISTEN_DIGEST_SEC old: one wake-up, not one each.
+    System posts ("… joined the channel") are dropped: their author is the
+    human who added the bot, so they would wake as a trusted human's post."""
     pusher = _pusher(digest_sec=0.3)
     pusher.confirm(pusher.code)
-    batches = [[_post("IDLE a")], [_post("IDLE b", root="r1")], [MENTION]]
+    joined = _post("agent-y joined the channel.", trusted=True)
+    joined["post"]["type"] = "system_join_channel"
+    batches = [[_post("IDLE a"), joined], [_post("IDLE b", root="r1")], [MENTION]]
     timeouts = []
 
     async def wait(timeout):
@@ -283,7 +287,7 @@ async def test_other_posts_come_as_one_digest(monkeypatch):
         return []
 
     async def addressed(item):
-        return item["kind"] == "mention"
+        return item["kind"] == "mention" or item["from_trusted_human"]
 
     with anyio.move_on_after(1.0):
         await pusher.run(wait, addressed=addressed, wait_cap=5)
