@@ -26,8 +26,7 @@ before 0.5.0 are described in the git history.
 
 - **Plugin validation (channel allowlist):** the MCP server starts with
   `uv run --locked` against the committed `mcp/uv.lock`, so every package it
-  fetches is pinned; the hooks run their scripts by path instead of through
-  `bash`.
+  fetches is pinned.
 
 ## 0.27.0
 
