@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.29.1
+
+### Fixed
+
+- **Channel mode never switched on (RT-6.12):** the check was pushed right
+  after the handshake, before Claude Code registered the channel, and was
+  dropped, so no session confirmed it and every message went the listener's
+  way. The check now comes 3 s after the handshake and again after 30 s,
+  2 min and every 10 min until the agent confirms it.
+- **`reply_in_thread` to a DM** failed without `channel_id`: a reply now goes
+  to its root's channel.
+- **A reply in a DM woke the agent again:** Mattermost counts the bot's own
+  post as unread for it, so the Stop hook and the listener saw an unread DM
+  that nothing could collect. After a post the channel is marked read, unless
+  the inbox still holds a message there.
+
 ## 0.29.0
 
 ### Changed

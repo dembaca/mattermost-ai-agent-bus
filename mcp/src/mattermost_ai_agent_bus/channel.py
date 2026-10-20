@@ -244,6 +244,8 @@ class Pusher:
         addressed: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
         retry_sec: float = 5.0,
         wait_cap: float = 300.0,
+        check_after: tuple[float, ...] = (3.0, 30.0, 120.0),
+        check_every: float = 600.0,
     ) -> None:
         """Check the channel, then push what `wait(timeout)` returns, forever.
 
@@ -264,10 +266,18 @@ class Pusher:
             except Exception as exc:  # noqa: BLE001 — no bus yet
                 log.info("channel check waits for the bus: %s", exc)
                 await asyncio.sleep(retry_sec)
-        await self.send(check(self.code))
         # Unconfirmed, the session may not see a single push: leave the inbox
         # to wait_for_events and the listener, which mark read what they hand over.
-        await self.confirmed.wait()
+        # Claude Code drops a push that comes before it registered the channel
+        # (some 100 ms after the handshake), and the session may be busy: send
+        # the check a little later, then again with growing gaps.
+        gaps = iter(check_after)
+        while not self.confirmed.is_set():
+            try:
+                await asyncio.wait_for(self.confirmed.wait(), next(gaps, check_every))
+                break
+            except asyncio.TimeoutError:
+                await self.send(check(self.code))
         while True:
             try:
                 items = await wait(self._timeout(wait_cap))

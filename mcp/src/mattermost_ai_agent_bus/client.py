@@ -647,6 +647,10 @@ class MattermostClient:
         root_id: str | None = None,
         props: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if not channel_id and root_id:
+            # A reply belongs where its root is: a DM, or another channel.
+            root = await self._api("GET", f"/api/v4/posts/{root_id}")
+            channel_id = root.get("channel_id") or None
         cid = channel_id or await self.get_channel_id()
         body: dict[str, Any] = {"channel_id": cid, "message": message}
         if root_id:

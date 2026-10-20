@@ -173,6 +173,19 @@ async def _my_id(client: MattermostClient) -> str:
         return ""
 
 
+async def _posted(client: MattermostClient, post: dict[str, Any]) -> None:
+    """Mattermost counts the bot's own post as unread for it, which in a DM
+    is an unread DM that nothing can collect: the Stop hook and the listener
+    would wake for it forever. Mark the channel read, unless the inbox holds
+    (or, unconnected, may have missed) a message there still to be collected."""
+    cid = post.get("channel_id", "")
+    if cid and _inbox is not None and _inbox.holds(cid) is False:
+        try:
+            await client.view_channel(cid)
+        except Exception as exc:  # noqa: BLE001 — bookkeeping, never fail the post
+            log.info("could not mark %s read: %s", cid, exc)
+
+
 def _done_typing() -> None:
     """A post is the answer the typing indicator promised (RT-6.5)."""
     if _inbox is not None:
@@ -428,6 +441,7 @@ async def post_message(
         channel_id=channel_id or None,
         root_id=root_id or None,
     )
+    await _posted(client, post)
     return _out("post_message", _with_unmentioned(await slim.post(client, post), removed))
 
 
@@ -435,7 +449,8 @@ async def post_message(
 async def reply_in_thread(
     root_id: str, message: str, channel_id: str = ""
 ) -> str:
-    """Reply in a thread (sets root_id on the new post).
+    """Reply in a thread (sets root_id on the new post), in the root's
+    channel — a DM too — unless channel_id says otherwise.
 
     While you hold the coordinator crown the reply starts with 👑.
     """
@@ -448,6 +463,7 @@ async def reply_in_thread(
         channel_id=channel_id or None,
         root_id=root_id,
     )
+    await _posted(client, post)
     return _out("reply_in_thread", _with_unmentioned(await slim.post(client, post), removed))
 
 
