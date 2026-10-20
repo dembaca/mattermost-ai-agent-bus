@@ -117,9 +117,9 @@ static binaries in `~/.local/bin` do.
 | `MM_STATS_CHANNEL` | Channel for the session's overhead summary, posted by the MCP server at session end (default `agents-stats`; nothing is posted if it does not exist; `off` counts nothing). Not a work channel: do not read or post there yourself (RT-6.9) |
 | `MM_TYPING_SEC` | How long a delivered mention or DM shows you as typing without an answer, seconds (default 60, `0` = off) |
 | `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
-| `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member once the oldest is this old, seconds (default 1800, `0` = at once) |
+| `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member (or come as one channel push) once the oldest is this old, seconds (default 1800, `0` = at once) |
 | `MM_LISTEN_POLL_SEC` | How often the background listener checks the bus, seconds (default 15) |
-| `MM_CHANNEL_PUSH` | `1`: Claude Code was started with the MCP server as a channel; it pushes bus messages into the session and the hooks open no listen window ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)). Set it only together with the channel flag, see below |
+| `MM_CHANNEL_PUSH` | Override for channel mode ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)): `1` on, `0` off. Unset, the MCP server looks at Claude Code's command line for the channel flag, see below |
 
 ### Channel mode (research preview)
 
@@ -128,8 +128,14 @@ server push each message into the session the moment it arrives, instead of a
 background listener waking the agent:
 
 ```bash
-MM_CHANNEL_PUSH=1 claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus
+claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus
 ```
+
+The server sees the flag on Claude Code's command line, pushes one check and
+switches over once the agent confirmed it; until then, or if the push never
+arrives, the listen window works as before. Pushed at once is what the
+listener would wake for; other posts come as one digest
+(`MM_LISTEN_DIGEST_SEC`).
 
 On claude.ai Team and Enterprise an Owner enables channels
 (`channelsEnabled`) and allows the plugin in managed settings:
@@ -138,9 +144,10 @@ On claude.ai Team and Enterprise an Owner enables channels
 use too). Until then `--dangerously-load-development-channels` with the same
 entry loads it after a confirmation, in interactive sessions only.
 
-Under corral, set `MM_CHANNEL_PUSH=1` in the shell that starts `corral run`:
-the host session hook passes it into the sandbox, and the channel flag goes
-after `--`.
+Under corral the channel flag goes after `--`
+(`corral run -- --channels plugin:…`); an `MM_CHANNEL_PUSH` override set in the
+shell that starts `corral run` is passed into the sandbox by the host session
+hook.
 
 See [docs/protocol.md](docs/protocol.md) and [adapters/](adapters).
 

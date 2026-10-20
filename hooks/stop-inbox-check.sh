@@ -198,8 +198,8 @@ fi
 # before going fully idle. Needs a project channel and a reachable bus —
 # listening on a dead one would hold nothing; MM_LISTEN_SEC=0 turns it off. A
 # BYE ends the session's part in the coordination, so it skips the window.
-# Started as a channel (MM_CHANNEL_PUSH, RT-6.12), the MCP server pushes every
-# message into the session itself: nothing to listen for.
+# Started as a channel (RT-6.12) and confirmed by the agent,
+# the MCP server pushes messages into the session itself: nothing to listen for.
 if [[ -n "$LF" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] && ! mm_channel_push &&
   [[ -n "${MM_PROJECT_CHANNEL_ID:-}${MM_PROJECT_CHANNEL:-}" ]] &&
   ! [[ "$LAST_MSG" =~ ^BYE([^A-Za-z]|$) ]]; then

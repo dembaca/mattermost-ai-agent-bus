@@ -342,7 +342,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Purpose:** A message for the agent reaches its session the moment it is posted, without a background listener, listen windows or turns spent waiting.
 
-**Trigger:** The developer starts Claude Code with the MCP server as a channel (research preview): `MM_CHANNEL_PUSH=1 claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus` once the plugin is on the organisation's `allowedChannelPlugins`, otherwise `--dangerously-load-development-channels` with the same entry. Under corral the host session hook passes `MM_CHANNEL_PUSH` into the sandbox with the bot's other variables.
+**Trigger:** The developer starts Claude Code with the MCP server as a channel (research preview): `claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus` once the plugin is on the organisation's `allowedChannelPlugins`, otherwise `--dangerously-load-development-channels` with the same entry. The MCP server finds the nearest ancestor process named `claude` and reads its command line for one of the two flags naming this plugin. `MM_CHANNEL_PUSH` overrides that (`1` on, `0` off); under corral the host session hook passes it into the sandbox with the bot's other variables.
 
 **Participants:** MCP server, Turn hooks; Agent runtime, Mattermost WebSocket, Developer / operator
 
@@ -350,16 +350,20 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. With `MM_CHANNEL_PUSH=1` the MCP server serves stdio itself: it declares the experimental capability `claude/channel` and answers on the handshake era only. Claude Code's first request in the 2026-07-28 envelope (`server/discover`) gets `INVALID_REQUEST`, so it falls back to `initialize`; Claude Code registers no channel on the newer revision.
-2. After `notifications/initialized` the server's pusher reads the inbox like `wait_for_events` does (mentions, DMs, both channels, reactions to open asks; RT-6.5, RT-6.11) and sends each event as `notifications/claude/channel`: the message as content, `kind`, `post_id`, `root_id`, `channel`, `author`, `at`, `from_trusted_human` (server-verified, RT-6.8) and, for a reaction, `ask`, `emoji`, `answer` as attributes. Delivered events are marked read, as in `wait_for_events`.
-3. Claude Code wakes an idle session with the event, or queues it for the next turn while one runs; the agent answers with `reply_in_thread`. A delivered mention or DM shows the typing indicator until the agent posts (RT-6.5).
-4. A `wait_for_events` call by the agent takes the inbox over while it runs; the pusher waits for it to return.
-5. The Turn hooks see `MM_CHANNEL_PUSH` too: the drain and the sign-off stay (RT-6.2, steps 1–2), the listen window is skipped.
+1. In channel mode the MCP server serves stdio itself: it declares the experimental capability `claude/channel` and answers on the handshake era only. Claude Code's first request in the 2026-07-28 envelope (`server/discover`) gets `INVALID_REQUEST`, so it falls back to `initialize`; Claude Code registers no channel on the newer revision.
+2. After `notifications/initialized` the server forgets an older confirmation (`channel-<uid>.env`) and pushes one check (`kind=channel_check`) with a code only that push carries: the agent calls `channel_ok(code)`, which writes `channel-<uid>.env`. Until then the pusher reads nothing from the inbox, so nothing is marked read unseen, and the Turn hooks keep the listen window (RT-6.2).
+3. Confirmed, the pusher reads the inbox like `wait_for_events` does (mentions, DMs, both channels, reactions to open asks; RT-6.5, RT-6.11) and sends as `notifications/claude/channel` at once what the listener would wake for (RT-6.2 step 4): a mention, DM or reaction, `@channel` / `@all` / `@here`, a reply in a thread the bot posted in, a post by a trusted human, or any post while it holds the 👑. Each push is the message as content, `kind`, `post_id`, `root_id`, `channel`, `author`, `at`, `from_trusted_human` (server-verified, RT-6.8) and, for a reaction, `ask`, `emoji`, `answer` as attributes. Other posts are held and pushed as one digest (`kind=digest`, each post cut to 300 characters with its id and thread) once the oldest is `MM_LISTEN_DIGEST_SEC` (default 1800 s) old: every push wakes the agent, and every wake-up is a model turn. Read events are marked read, as in `wait_for_events`.
+4. Claude Code wakes an idle session with the event, or queues it for the next turn while one runs; the agent answers with `reply_in_thread`. A delivered mention or DM shows the typing indicator until the agent posts (RT-6.5).
+5. A `wait_for_events` call by the agent takes the inbox over while it runs; the pusher waits for it to return.
+6. The Turn hooks see `channel-<uid>.env`: the drain and the sign-off stay (RT-6.2, steps 1–2), the listen window is skipped. `MM_CHANNEL_PUSH=0` keeps it. The server removes the file when it ends.
 
 ### Error Handling
 
 | Step | Failure | System Response |
 |------|---------|----------------|
-| 1 | The session did not opt the server in (`--channels` missing, plugin not allowed, `channelsEnabled` off) | Claude Code drops the notifications silently and acknowledges none, so the server cannot tell: messages are marked read but never seen. `MM_CHANNEL_PUSH=1` belongs only next to the channel flag |
+| 1 | The flag is there but the session did not opt the server in (plugin not allowed, `channelsEnabled` off, a protocol Claude Code registers no channel on) | Claude Code drops the check silently; it is never confirmed, so the inbox stays with `wait_for_events` and the listen window as in RT-6.2 |
+| 1 | Claude Code's command line cannot be read (another OS, a sandbox that denies it) | No channel; `MM_CHANNEL_PUSH=1` turns it on, and the check still decides |
+| 2 | The agent calls `channel_ok` with another code | Refused: only the session that received the check can confirm it |
 | 2 | No bus yet (before `session_start`) or the WebSocket dropped | The pusher retries every 5 s; nothing is lost, the backfill on reconnect queues what came meanwhile |
-| — | Another runtime (Cursor, OpenCode) | No channels there: without `MM_CHANNEL_PUSH` everything works as in RT-6.2 and RT-6.3 |
+| 3 | The server ends with posts held for the digest | They are not pushed; they were marked read, as posts the agent never needed to answer |
+| — | Another runtime (Cursor, OpenCode) | No channels there: no `claude` ancestor, so everything works as in RT-6.2 and RT-6.3 |

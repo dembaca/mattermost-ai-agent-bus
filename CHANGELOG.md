@@ -3,6 +3,23 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.29.0
+
+### Changed
+
+- **Channel mode starts by itself and checks itself (RT-6.12).** Without
+  `MM_CHANNEL_PUSH` the MCP server reads Claude Code's command line for
+  `--channels` (or `--dangerously-load-development-channels`) naming this
+  plugin; `MM_CHANNEL_PUSH=1` or `0` overrides that. Its first push is a check
+  the agent confirms with the new tool `channel_ok(code)`. Until then the
+  server reads nothing from the inbox and the Stop hook keeps the listen
+  window, so a session that never receives a push loses no message.
+- **Channel pushes follow the listener's wake rules.** Pushed at once is a
+  mention, DM, reaction to an ask, `@channel` / `@all` / `@here`, a reply in a
+  thread the agent posted in, a trusted human's post, or anything while it
+  holds the 👑. Other posts come as one digest once the oldest is
+  `MM_LISTEN_DIGEST_SEC` (default 1800 s) old, instead of one model turn each.
+
 ## 0.28.1
 
 ### Fixed

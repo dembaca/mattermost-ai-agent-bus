@@ -394,13 +394,15 @@ mm_epoch_hhmm() {
 }
 
 # Claude Code was started with the MCP server as a channel (RT-6.12): the
-# server pushes bus messages into the session, so no listener is needed. Set by
-# the human next to --channels; Claude Code does not tell the server itself.
+# server pushes bus messages into the session, so no listener is needed. The
+# server finds that out itself; it counts once the agent confirmed the server's
+# check (channel-<uid>.env). MM_CHANNEL_PUSH=0 turns it off.
 mm_channel_push() {
   case "$(printf '%s' "${MM_CHANNEL_PUSH:-}" | tr '[:upper:]' '[:lower:]')" in
-    1 | true | yes | on) return 0 ;;
+    0 | false | no | off) return 1 ;;
   esac
-  return 1
+  local f
+  f="$(mm_bot_state_file channel "${1:-}")" && [[ -f "$f" ]]
 }
 
 mm_emit_session_exports() {
