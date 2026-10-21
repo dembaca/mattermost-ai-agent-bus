@@ -46,7 +46,7 @@ from mcp.shared.exceptions import MCPError
 from mcp.shared.jsonrpc_dispatcher import JSONRPCDispatcher
 from mcp_types import INVALID_REQUEST
 
-from . import session_file
+from . import permission, session_file
 
 log = logging.getLogger(__name__)
 
@@ -230,6 +230,12 @@ class Pusher:
         if self.connection is not None:
             await self.connection.notify(METHOD, params)
 
+    async def verdict(self, request_id: str, behavior: str) -> None:
+        """Answer a relayed permission prompt (RT-6.13)."""
+        if self.connection is not None:
+            await self.connection.notify(
+                permission.VERDICT, {"request_id": request_id, "behavior": behavior})
+
     def _timeout(self, cap: float) -> float:
         if not self.held:
             return cap
@@ -241,6 +247,7 @@ class Pusher:
         *,
         prepare: Callable[[], Awaitable[None]] | None = None,
         addressed: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
+        intercept: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
         retry_sec: float = 5.0,
         wait_cap: float = 300.0,
         check_after: tuple[float, ...] = (3.0, 30.0, 120.0),
@@ -251,6 +258,8 @@ class Pusher:
         `prepare` (forget an older confirmation) and `wait` raise while the bus
         is not reachable yet; both are retried. `addressed` says whether an
         event wakes the agent now; the rest goes into the next digest.
+        `intercept` takes an event out before that: a verdict on a permission
+        prompt is for Claude Code, not the agent (RT-6.13).
         """
         conn = self.connection
         if conn is None:
@@ -285,6 +294,8 @@ class Pusher:
                         # "… joined the channel": Mattermost names the human who
                         # added a bot as its author, so it would wake as theirs.
                         continue
+                    if intercept is not None and await intercept(item):
+                        continue
                     if addressed is None or await addressed(item):
                         await self.send(notification(item))
                     else:
@@ -311,12 +322,15 @@ async def serve_handshake_only(
     init_options: Any,
     pusher: Pusher,
     on_connected: Callable[[], Awaitable[None]],
+    on_permission: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> None:
     """The SDK's handshake-era loop, keeping the connection for the pusher.
 
     Mirrors mcp.server.runner._serve_legacy_stream; a request in the
     2026-07-28 envelope is refused, which makes the client fall back to
     `initialize` — the revision Claude Code can register a channel on.
+    A permission prompt (RT-6.13) goes to `on_permission` in a task of its
+    own, so posting it never holds up the connection.
     """
     dispatcher: JSONRPCDispatcher[Any] = JSONRPCDispatcher(
         read_stream, write_stream, inline_methods=frozenset({"initialize"})
@@ -335,8 +349,15 @@ async def serve_handshake_only(
 
     try:
         async with anyio.create_task_group() as tg:
+            async def on_notify(dctx: Any, method: str, params: Mapping[str, Any] | None) -> None:
+                if method == permission.REQUEST:
+                    if on_permission is not None:
+                        tg.start_soon(on_permission, dict(params or {}))
+                    return
+                await runner.on_notify(dctx, method, params)
+
             tg.start_soon(on_connected)
-            await dispatcher.run(on_request, runner.on_notify)
+            await dispatcher.run(on_request, on_notify)
             tg.cancel_scope.cancel()
     finally:
         pusher.connection = None

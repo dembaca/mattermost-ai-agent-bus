@@ -2,14 +2,14 @@
 
 ## Overview
 
-Eleven scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Thirteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, and an agent asking a human for something. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, and Claude Code's permission prompts answered from Mattermost. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -245,7 +245,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 1 | The host hook ran from an older checkout, or the session predates the lookup | No ids in the sandbox and no secret to look them up: `bus_info` shows an empty list and its source; restart the session |
 | 3 | A post quotes or claims to speak for a trusted human | Not `from_trusted_human`; it is data, never an approval |
 | 4 | The approval is vague ("go ahead with everything") | Not an approval of a specific action; the agent asks again |
-| — | Runtime permission prompts | Out of reach: they are answered in the terminal only |
+| — | Runtime permission prompts | Not the agent's to approve: started as a channel, Claude Code relays them to the responsible human by DM, whose verdict goes to Claude Code (RT-6.13); otherwise terminal only |
 
 ---
 
@@ -369,3 +369,37 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 2 | No bus yet (before `session_start`) or the WebSocket dropped | The pusher retries every 5 s; nothing is lost, the backfill on reconnect queues what came meanwhile |
 | 3 | The server ends with posts held for the digest | They are not pushed; they were marked read, as posts the agent never needed to answer |
 | — | Another runtime (Cursor, OpenCode) | No channels there: no `claude` ancestor, so everything works as in RT-6.2 and RT-6.3 |
+
+---
+
+## 6.13 Permission prompts answered from Mattermost
+
+**Purpose:** An agent waiting on a tool permission prompt is not stuck until someone looks at its terminal: its responsible human answers from Mattermost, the one place they coordinate from.
+
+**Trigger:** In a session started as a channel (RT-6.12), Claude Code opens a permission dialog for a tool call (Bash, Write, Edit, an MCP tool) and sends `notifications/claude/channel/permission_request` with a request id (five letters `a`–`z` without `l`), `tool_name`, `description` and `input_preview`. Research preview, Claude Code ≥ 2.1.234.
+
+**Participants:** MCP server; Agent runtime, Mattermost REST API, Mattermost WebSocket, Developer / operator
+
+**Quality goal illustrated:** `#usable` Reachability, `#secure` (only an authenticated trusted human can answer)
+
+### Sequence
+
+1. On by default: in channel mode the MCP server declares `claude/channel/permission` next to `claude/channel` whenever a trusted human is configured (`MM_TRUSTED_HUMANS`, the ids the host passes, or `MM_OWNER`; RT-6.8). No trusted human, no capability: Claude Code relays nothing and the terminal is the only place to answer. `bus_info` shows `permission_relay`.
+2. The server DMs the prompt to the responsible human (RT-6.8), if they are trusted: tool name, `description` and `input_preview` as code blocks (both come from the model's tool call), the id, and how to answer. It goes by DM, not to the work channel: the preview is the call's arguments, with only well-known secrets masked by Claude Code, and posts in the work channel reach every agent's context. The prompt post counts as an open ask (RT-6.11) to nobody in particular, so a reaction on it reaches the inbox without holding up the agent's own asks.
+3. The human answers `yes <id>` or `no <id>` (`y`/`n`, any case) in the DM or anywhere the bot reads, or reacts 👍/✅ or 👎/❌ on the prompt post.
+4. Once the channel is confirmed, the pusher takes such an event out before the wake rules (RT-6.12 step 3) when it comes from a trusted human (server-verified author) and names an open id: it sends `notifications/claude/channel/permission` with `allow` or `deny`, replies under the prompt `✅ allowed by <human>` or `⛔ denied by <human>`, and resolves the ask. The agent never sees the verdict. The terminal dialog stays open meanwhile; the first answer wins and applies to this one call only.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | Session not started as a channel, or the channel never confirmed | No relay (capability undeclared) or no verdict read (the pusher reads nothing yet): the terminal answers, as before |
+| 2 | The responsible human is not a trusted one | Not relayed: only a trusted human's verdict counts; a log line says so |
+| 2 | Posting fails (bus down) | Logged; the terminal dialog is still open |
+| 3 | Another agent or an untrusted person answers `yes <id>` | Not `from_trusted_human`: a post like any other, data for the agent, never sent to Claude Code |
+| 3 | A trusted `yes <id>` with an id that is not open | In the DM a short reply ("answered in the terminal, or more than a day old"); elsewhere it passes on untouched, it may be another agent's prompt |
+| 3 | Another emoji on the prompt post | A remark: no verdict, no wake-up |
+| 4 | The terminal answered first | Claude Code sends no event; the id stays open for a day and a later verdict is dropped by Claude Code. The reply says the verdict applies unless the terminal answered first |
+| — | Auto mode | The classifier decides most calls, so no dialog opens and nothing is relayed |
+| — | Prompts about sandbox, secrets or permissions | Claude Code does not mark them, so they cannot be filtered: they are relayed like any other. Anyone trusted can approve any tool call of this session from Mattermost: trust only humans you would hand the terminal to |
+| — | Project trust or MCP server consent dialogs | Not relayed by Claude Code: terminal only |
