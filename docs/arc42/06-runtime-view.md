@@ -435,4 +435,5 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 3 | An agent reports on its task in its HELLO thread instead of the task's thread | The task does not move; SKILL.md asks for task updates in the task's thread |
 | 3 | More than 14 days without a word in a task's thread | The task drops out of the window |
 | 4 | `mm-agent-roster.sh` cannot run (no token, no `jq`) | An empty roster; `coordinator("who")` still works |
+| 5 | The channel cannot be read when `ASSIGNMENTS` is posted | The post goes out without a table, with a log line |
 | 6 | The cut part of a status post mattered to a bystander | The post id is in the item: `get_thread` shows it whole |

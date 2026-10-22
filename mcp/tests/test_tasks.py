@@ -269,6 +269,18 @@ async def test_assignments_table_comes_from_the_server(bus):
 
 
 @pytest.mark.asyncio
+async def test_assignments_go_out_when_the_channel_cannot_be_read(bus):
+    """RT-6.14 step 5: no table rather than no post."""
+    c = bus([], crown=True)
+
+    async def broken(**kw):
+        raise RuntimeError("HTTP 500")
+    c.list_recent = broken
+    await server.post_message(message="ASSIGNMENTS · x")
+    assert c.posted[0]["message"] == "👑 ASSIGNMENTS · x"
+
+
+@pytest.mark.asyncio
 async def test_bystander_gets_status_posts_cut(bus):
     """RT-6.14 step 6: in wait_for_events a status post of another agent is
     cut to its first line — not in my own thread, not for the coordinator."""

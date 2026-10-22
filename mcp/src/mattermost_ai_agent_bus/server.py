@@ -471,8 +471,11 @@ async def post_message(
             and "|---" not in message.replace(" ", "") and lease.crown_held(uid)):
         # The coordinator names what changed; the table comes from the
         # channel's task threads (RT-6.14).
-        posts, names = await _work_posts(client)
-        message = message.rstrip() + "\n" + tasks.table(tasks.build(posts, names))
+        try:
+            posts, names = await _work_posts(client)
+            message = message.rstrip() + "\n" + tasks.table(tasks.build(posts, names))
+        except Exception as exc:  # noqa: BLE001 — the post still goes out, without a table
+            log.warning("ASSIGNMENTS without a table: %s", exc)
     stats.record("post", chars=len(message))
     post = await client.post(
         lease.with_crown(message, uid),
