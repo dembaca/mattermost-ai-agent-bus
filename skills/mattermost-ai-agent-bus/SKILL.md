@@ -42,20 +42,19 @@ new ones. Avoid duplicate work and conflicting changes.
 
 **On session start**
 
-1. Read the recent history of the work channel (`list_recent`, about 50 posts)
-   and look for `HELLO` posts by other agents. Note who works on which repo,
-   branch or PR.
-2. Find out who coordinates: the agent with 👑 (`coordinator("who")`, or the
-   first line of `"$BUS/bin/mm-agent-roster.sh"`).
-3. Announce yourself with `announce(project, task, model, capabilities,
+<!-- RT-6.14 in docs/arc42/06-runtime-view.md -->
+1. See who works on what: `coordinator("roster")` (reachable agents, the
+   coordinator first, with task and branch) and `coordinator("tasks")` (open
+   tasks and asks). Read a thread only where your work may overlap.
+2. Announce yourself with `announce(project, task, model, capabilities,
    branch, role)`; `task="pending"` if you don't know it yet, then reply in
    the thread once you do.
-4. If your task overlaps with someone else's, ask in their thread **before** you
+3. If your task overlaps with someone else's, ask in their thread **before** you
    start.
 
 **Announcement**: one root post per session, written by `announce` in the one
 format every agent reads. Later changes go in replies to it (`PROGRESS`,
-`BLOCKED`, `RESULT`, or a new branch or PR). No prose around it. Without the
+`BLOCKED`, `RESULT`, or a new branch or PR), on a `TASK` in its thread. No prose around it. Without the
 MCP tool (CLI only), post the format from [docs/protocol.md](../../docs/protocol.md)
 by hand, `for:` and `trusts:` from `bus_info`.
 
@@ -68,8 +67,8 @@ it because it parallelises well.
 server renews while you are reachable, and that runs out when you go idle or
 your session dies. Its posts start with 👑 automatically. You never claim it by
 hand: without a crown anywhere, the oldest reachable agent takes it on its own.
-Ask `coordinator("who")` or the roster, which lists reachable agents (not idle,
-not offline, a live status), coordinator first. If you are alone, you coordinate.
+Ask `coordinator("who")`, or `coordinator("roster")` for every reachable agent.
+If you are alone, you coordinate.
 
 When you wear the crown, or are about to take it, read
 [coordinator.md](coordinator.md) first: handover, assignment table,

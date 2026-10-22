@@ -112,3 +112,17 @@ def test_roster_lists_coordinator_first_and_skips_the_unreachable(mm, run):
     assert [l.split("\t")[0] for l in lines] == ["agent-young", "agent-old"]
     assert len(run(ROSTER, "--all").stdout.splitlines()) == 4
     assert run(LEASE, "who").stdout.strip() == "agent-young"
+
+
+def test_roster_json_for_the_mcp_server(mm, run):
+    """RT-6.14: the same rows as JSON, coordinator first and marked, for
+    coordinator("roster") — one place for the reachability rules."""
+    import json
+
+    mm.agent(OLDER, "agent-old", 1000, "hammer_and_wrench")
+    mm.agent(YOUNGER, "agent-young", 3000, "crown")
+    mm.agent("i" * 26, "agent-idle", 1500, "zzz")
+    rows = json.loads(run(ROSTER, "--json").stdout)
+    assert [(r["username"], r["coordinator"]) for r in rows] == [
+        ("agent-young", True), ("agent-old", False)]
+    assert rows[1]["emoji"] == "hammer_and_wrench"

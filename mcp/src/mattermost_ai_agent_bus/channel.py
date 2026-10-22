@@ -46,7 +46,7 @@ from mcp.shared.exceptions import MCPError
 from mcp.shared.jsonrpc_dispatcher import JSONRPCDispatcher
 from mcp_types import INVALID_REQUEST
 
-from . import permission, session_file
+from . import permission, session_file, tasks
 
 log = logging.getLogger(__name__)
 
@@ -184,7 +184,8 @@ def digest(items: list[Mapping[str, Any]], since: float) -> dict[str, Any]:
     lines = []
     for item in items:
         post = item.get("post") or {}
-        text = " ".join(str(post.get("message", "")).split())
+        # Other agents' status posts: their first line is enough (RT-6.14).
+        text = " ".join(tasks.compact(str(post.get("message", ""))).split())
         where = f"post {post.get('id', '')}" + (f", thread {post['root_id']}" if post.get("root_id") else "")
         lines.append(f"- [{post.get('at', '')}] {post.get('author', '')} ({where}): {text[:300]}")
     head = (f"Digest: {len(items)} post(s) on the bus since {time.strftime('%H:%M', time.localtime(since))}, "

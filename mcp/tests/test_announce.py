@@ -16,8 +16,9 @@ class _Client:
     async def trusted_humans(self):
         return self.trusted
 
-    async def post(self, message, channel_id=None, root_id=None):
+    async def post(self, message, channel_id=None, root_id=None, props=None):
         self.posted.append((message, root_id))
+        self.props = props
         return {"id": "p1", "message": message, "user_id": "b" * 26, "channel_id": "c1"}
 
     async def usernames(self, ids):
@@ -52,6 +53,30 @@ async def test_announce_writes_the_fixed_format(monkeypatch):
         "capabilities: Proxmox-Stack, VM 399",
         "role: coordinator",
     ]
+
+
+@pytest.mark.asyncio
+async def test_announce_stores_the_card_in_props(monkeypatch):
+    """RT-6.14 step 1: the same fields as an A2A-shaped card in the HELLO's
+    props, which no slim post shows; the text alone gives the same card."""
+    from mattermost_ai_agent_bus import a2a
+
+    c = _Client({"h" * 26: "dembaca"})
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = await server.announce(project="vtpm-mds", task="hogan", model="Claude Code · Opus 5.5",
+                                capabilities="Proxmox-Stack, VM 399", branch="#51")
+    card = c.props["agent_card"]
+    assert c.props["a2a"] == {"v": 1, "kind": "hello"}
+    assert card["name"] == "agent-vtpm-hogan-1" and card["description"] == "hogan"
+    assert card["skills"] == [{"id": "proxmox-stack", "name": "Proxmox-Stack"},
+                              {"id": "vm-399", "name": "VM 399"}]
+    assert card["meta"] == {"project": "vtpm-mds", "branch": "#51", "model": "Claude Code · Opus 5.5",
+                            "role": "member", "kind": "session", "for": "dembaca",
+                            "trusts": ["dembaca"]}
+    assert "agent_card" not in out and "props" not in out
+    from_text = a2a.card_of({"message": c.posted[0][0]})
+    assert {k: from_text[k] for k in ("name", "description", "skills", "meta")} == {
+        k: card[k] for k in ("name", "description", "skills", "meta")}
 
 
 @pytest.mark.asyncio

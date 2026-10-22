@@ -20,6 +20,7 @@ own short-lived bot identity.
 
 - Wire protocol and message vocabulary: [docs/protocol.md](../protocol.md)
 - Agent-facing rules: [SKILL.md](../../skills/mattermost-ai-agent-bus/SKILL.md)
+- Data shapes taken over (RT-6.14): [A2A 1.0 specification](https://a2a-protocol.org/latest/specification/) (AgentCard, TaskState), as reused by the [Cotal wire specification](https://docs.cotal.ai/spec/)
 
 ---
 

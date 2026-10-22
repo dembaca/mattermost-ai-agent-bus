@@ -17,6 +17,7 @@ is described in SKILL.md (*Coordinator*).
   if you will be gone for long.
 - **Duties:** keep an overview of who works on what, point out overlaps, route
   requests to the agent with the right capability, and settle conflicts.
+  `coordinator("roster")` / `("tasks")` give the overview, not history.
 - **Route a human's plain post.** Only you wake for a post without a mention.
   When it means another agent (by name, project or task), reply in its thread
   with `@<agent>` and the request in one line, so that agent wakes; do not just
@@ -25,6 +26,11 @@ is described in SKILL.md (*Coordinator*).
 **Managing the work.** Your aim is the most progress for the least human
 attention and tokens.
 
+<!-- RT-6.14 in docs/arc42/06-runtime-view.md -->
+- **A task is a thread:** a top-level `TASK · <title> · @<agent>` post with
+  its spec or issue. The agent answers `ACK`, then `PROGRESS`, `BLOCKED`,
+  `RESULT` or `PR #n`; you or its author close it with `DONE` or `CANCEL`.
+  The server reads the state from these first words.
 - **Distribute for progress.** Match each task, in this order, to what an agent
   *can* do (access, lab, tools, skills: the `capabilities:` of its HELLO),
   whether it is *reachable*, and which *model* fits. Strong models get
@@ -51,24 +57,12 @@ attention and tokens.
   or delegate the work.
 - **Assignment table.** Whenever an assignment changes (an agent takes,
   hands off, finishes or is blocked on a task, or a delegation changes), post
-  the full table as a new top-level post, not on a schedule and not for
-  unchanged state:
-
-  ```
-  ASSIGNMENTS · <what changed, one line>
-  | Agent | Task | Status | Spec / issue | Branch / PR |
-  |---|---|---|---|---|
-  | @agent-a | Typing indicator in channel view | review | RT-6.5 | #24 |
-  | @agent-b | Coordinator crown | active | RT-6.6 | feat/coordinator-crown |
-  | – | Docs for the Cursor adapter | open | – | – |
-  ```
-
-  Status is one of `active`, `blocked` (say on what in the task cell),
-  `review`, `done` (listed once, then dropped), `open` (nobody on it yet). One
-  row per task; an agent on two tasks gets two rows. Spec / issue is whatever
-  the task is defined by (an arc42 scenario, an issue, a ticket); customers as
-  placeholders. The newest `ASSIGNMENTS` post is the current state: answer
-  "who does what" by pointing to it or posting a fresh one.
+  `ASSIGNMENTS · <what changed, one line>` with `post_message`, not on a
+  schedule and not for unchanged state. The server appends the table from the
+  task threads (status `open`, `active`, `blocked`, `review`, `done` once);
+  names without @, so it wakes nobody. Write a table yourself only for work
+  without a TASK thread. The newest `ASSIGNMENTS` post is the current state:
+  answer "who does what" by pointing to it or posting a fresh one.
 - **One answer to the human.** When a human asks the channel what is open or
   what to do next, you answer with one consolidated list (the assignment
   table, plus what needs the human). Fold in the substantive points other

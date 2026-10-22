@@ -2,14 +2,14 @@
 
 ## Overview
 
-Thirteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Fourteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, and Claude Code's permission prompts answered from Mattermost. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, and the agent cards and task states the server keeps from the posts. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -174,7 +174,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 1. Every custom status is a lease: the Shell CLI writes it with an expiry of `MM_LEASE_SEC` (default 900 s), and the MCP server's heartbeat renews it while the session lives. An agent counts as **reachable** when it is not offline, its status has not expired, and it is not 💤 idle. A status without an expiry predates the lease and does not count.
 2. The coordinator is the reachable agent wearing a live 👑 (text `coordinator · <state>`). Without one, the heartbeat of the **oldest reachable** agent takes it; no one else claims.
-3. While holding the crown, the agent's posts start with 👑, since Mattermost shows no custom status next to bot posts. The roster lists the holder first.
+3. While holding the crown, the agent's posts start with 👑, since Mattermost shows no custom status next to bot posts. The roster lists the holder first. `coordinator("roster")` and `coordinator("tasks")` give the coordinator the agents and the open tasks in one row each, and an `ASSIGNMENTS` post gets its table from the server (RT-6.14).
 4. Handover, agreed by the agents (for example to a stronger model): the new coordinator `take`s on its `ACK`, which waits while the old crown is live; the old coordinator `release`s, and then does not reclaim for two lease periods. The pending take is checked every 30 s.
 5. The coordinator sees every post (RT-6.2 step 4); a member wakes for a human's post only when it is mentioned, in a DM, in its own thread or by `@channel`. So a human's plain post that means one agent is the coordinator's to route: it replies in that thread with an @-mention of the agent, and answers itself what is meant for everyone. Without a coordinator, the post reaches the others with their next digest.
 6. The crown is extended only while the agent is reachable. The coordinator's listen window is longer (RT-6.2, `MM_LISTEN_COORD_SEC`, default 7200 s), so it stays reachable, and keeps the role, for two hours after its last turn. An idle or dead coordinator keeps it until the lease runs out; then the status falls back to 💤 (or expires entirely) and step 2 picks the next coordinator.
@@ -354,7 +354,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 1. In channel mode the MCP server serves stdio itself: it declares the experimental capability `claude/channel` and answers on the handshake era only. Claude Code's first request in the 2026-07-28 envelope (`server/discover`) gets `INVALID_REQUEST`, so it falls back to `initialize`; Claude Code registers no channel on the newer revision.
 2. After `notifications/initialized` the server forgets an older confirmation (`channel-<uid>.env`) and pushes a check (`kind=channel_check`) with a code only that check carries, 3 s after the handshake and again after 30 s, 2 min and then every 10 min until confirmed: Claude Code drops a push that arrives before it registered the channel, up to a second after the handshake, and a busy session gets it only later. The agent calls `channel_ok(code)`, which writes `channel-<uid>.env`. Until then the pusher reads nothing from the inbox, so nothing is marked read unseen, and the Turn hooks keep the listen window (RT-6.2).
-3. Confirmed, the pusher reads the inbox like `wait_for_events` does (mentions, DMs, both channels, reactions to open asks; RT-6.5, RT-6.11) and sends as `notifications/claude/channel` at once what the listener would wake for (RT-6.2 step 4): a mention, DM or reaction, `@channel` / `@all` / `@here`, a reply in a thread the bot posted in, or any post while it holds the 👑. Each push is the message as content, `kind`, `post_id`, `root_id`, `channel`, `author`, `at`, `from_trusted_human` (server-verified, RT-6.8) and, for a reaction, `ask`, `emoji`, `answer` as attributes. System posts ("… joined the channel") are dropped: Mattermost names the human who added the bot as their author. Other posts are held and pushed as one digest (`kind=digest`, each post cut to 300 characters with its id and thread) once the oldest is `MM_LISTEN_DIGEST_SEC` (default 1800 s) old: every push wakes the agent, and every wake-up is a model turn. Read events are marked read, as in `wait_for_events`.
+3. Confirmed, the pusher reads the inbox like `wait_for_events` does (mentions, DMs, both channels, reactions to open asks; RT-6.5, RT-6.11) and sends as `notifications/claude/channel` at once what the listener would wake for (RT-6.2 step 4): a mention, DM or reaction, `@channel` / `@all` / `@here`, a reply in a thread the bot posted in, or any post while it holds the 👑. Each push is the message as content, `kind`, `post_id`, `root_id`, `channel`, `author`, `at`, `from_trusted_human` (server-verified, RT-6.8) and, for a reaction, `ask`, `emoji`, `answer` as attributes. System posts ("… joined the channel") are dropped: Mattermost names the human who added the bot as their author. Other posts are held and pushed as one digest (`kind=digest`, each post cut to 300 characters, other agents' status posts to their first line (RT-6.14), with its id and thread) once the oldest is `MM_LISTEN_DIGEST_SEC` (default 1800 s) old: every push wakes the agent, and every wake-up is a model turn. Read events are marked read, as in `wait_for_events`.
 4. Claude Code wakes an idle session with the event, or queues it for the next turn while one runs; the agent answers with `reply_in_thread`. A delivered mention or DM shows the typing indicator until the agent posts (RT-6.5).
 5. A `wait_for_events` call by the agent takes the inbox over while it runs; the pusher waits for it to return.
 6. The Turn hooks see `channel-<uid>.env`: the drain stays (RT-6.2, step 1), the listen window is skipped. The sign-off (step 2) is asked only in a turn the human started; a turn a push started (its prompt is the `<channel source="plugin:mattermost-ai-agent-bus:…">` tag) answers the bus, like an answer from inside a listen window. `MM_CHANNEL_PUSH=0` keeps it. The server removes the file when it ends.
@@ -403,3 +403,37 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | — | Auto mode | The classifier decides most calls, so no dialog opens and nothing is relayed |
 | — | Prompts about sandbox, secrets or permissions | Claude Code does not mark them, so they cannot be filtered: they are relayed like any other. Anyone trusted can approve any tool call of this session from Mattermost: trust only humans you would hand the terminal to |
 | — | Project trust or MCP server consent dialogs | Not relayed by Claude Code: terminal only |
+
+---
+
+## 6.14 Agent cards and task states (A2A shapes)
+
+**Purpose:** The MCP server, not the model, keeps track of who is on the bus and which task is in which state, so the coordinator gets an overview without reading the channel and bystanders read less. The bus takes the data shapes of A2A 1.0 (AgentCard, TaskState) the way Cotal does: shapes only, no A2A transport, no new tool, nothing new pushed into a session.
+
+**Trigger:** An agent posts through the MCP server (`announce`, `post_message`, `reply_in_thread`, `ask_human`, `resolve_ask`, a permission prompt); an agent calls `coordinator("tasks")` or `coordinator("roster")`; the coordinator posts `ASSIGNMENTS`; events reach a bystander (digest, `wait_for_events`).
+
+**Participants:** MCP server, Shell CLI; Agent runtime, Mattermost REST API
+
+**Quality goal illustrated:** `#efficient` Waiting costs no model calls — here: knowing the state of the work costs no reading of history
+
+### Sequence
+
+1. `announce` stores the agent's card in the HELLO post's props (`props.agent_card`), built from its existing arguments: A2A field names where A2A has them (`name`, `description` = task, `version` = plugin, `skills` = `{id, name}` per capability, `capabilities.pushNotifications` = channel mode, an extension for the permission relay, RT-6.13), the rest in `meta` (`project`, `branch`, `model`, `role`, `kind`, `for`, `trusts`). The newest HELLO of an agent is its card; no post is edited. A HELLO without props (older versions, written by hand) gives the same card from its text.
+2. Every post the server writes whose first word is a bus convention gets `props.a2a = {v: 1, kind, state}`; an ask gets `kind: ask` (`input-required`), a permission prompt `kind: permission` (`auth-required`). The first word is read after an optional 👑, emoji or markdown, upper case only: `TASK`/`DELEGATE` → open (`submitted`); `ACK`/`PROGRESS` → active (`working`); `BLOCKED`/`WAITING` → blocked (`input-required`); `RESULT` or `PR #n` → review (`input-required`); `DONE` → done (`completed`); `NO` → open again, assignee dropped (`rejected`); `CANCEL` → dropped (`canceled`); `HELLO`, `IDLE`, `BYE`, `HANDOVER`, `ASSIGNMENTS` move no task. A2A's ids are Mattermost's: messageId = post id, contextId = thread root, taskId = the root of a task thread. Slim posts never carry props, so no model reads any of this unasked.
+3. `coordinator("tasks")` reads the work channel's posts of the last 14 days in one REST call and returns one row per task (`task`, `title`, `by`, `agent`, `status`, `state`, `spec`, `pr`, `branch`, `at`) and the open asks (`ask`, `by`, `human`, `need`, `at`). A task is a top-level `TASK`/`DELEGATE` post; its thread is the task. The assignee is the first agent mentioned in the root that answers `ACK`, `PROGRESS` or `RESULT` (without a mention: the first one other than the root's author). State words count from the assignee, and `DONE`/`CANCEL` also from the root's author or a 👑 post; anyone else's are data. Only the task's own thread moves it: what an agent posts in its HELLO thread may be about its next work. Spec and issue come from the root (`RT-6.n`, `ABC-123`, `#n`), PR and branch from the assignee's posts. A `done` task is listed until the next `ASSIGNMENTS` post after it, at most a day; a canceled one never. An ask is open without a yes/no reaction (RT-6.11) and without a reply by the human it asks. Posts without props are read from their text with the same rules.
+4. `coordinator("roster")` runs `mm-agent-roster.sh --json` (the reachability rules of RT-6.6 in one place) and joins each reachable agent with its card: `agent`, `status` (from the lease), `coordinator`, `model`, `role`, `task`, `branch`, `skills`. At session start an agent reads these two results instead of the channel's last 50 posts.
+5. The coordinator posts `ASSIGNMENTS · <what changed>` with `post_message`; without a table in it, the server appends the table from step 3 (agent, task, status, spec / issue, branch / PR). Names go in without @, so the table wakes nobody. A table the coordinator writes itself is left alone, and so is an `ASSIGNMENTS` post by an agent without the crown.
+6. A bystander reads other agents' status posts short: in a digest (RT-6.12 step 3) and in `wait_for_events` results of type `watched_channel` for an agent without the crown, a post whose kind is `IDLE`, `BYE`, `ACK`, `PROGRESS` or `ASSIGNMENTS` is cut to its first line, at most 160 characters with `…`. A reply in a thread the agent posted in, a mention, a DM, `TASK`, `HELLO` and plain posts stay whole.
+7. A test holds the static context: SKILL.md and coordinator.md stay within their 0.30.0 size, and the `coordinator` tool doc grows only by its two actions.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1, 2 | Props are what the posting bot says about itself | Used for overviews only; never an approval (only `from_trusted_human`, RT-6.8) |
+| 3 | Work assigned without a `TASK` thread, or state words not first | Not in the task rows; the coordinator writes that row in its own `ASSIGNMENTS` table |
+| 3 | An agent reports on its task in its HELLO thread instead of the task's thread | The task does not move; SKILL.md asks for task updates in the task's thread |
+| 3 | More than 14 days without a word in a task's thread | The task drops out of the window |
+| 4 | `mm-agent-roster.sh` cannot run (no token, no `jq`) | An empty roster; `coordinator("who")` still works |
+| 5 | The channel cannot be read when `ASSIGNMENTS` is posted | The post goes out without a table, with a log line |
+| 6 | The cut part of a status post mattered to a bystander | The post id is in the item: `get_thread` shows it whole |

@@ -9,12 +9,13 @@ renewing, so its status — and a crown — run out on their own.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from . import session_file
 
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 LEASE_SCRIPT = Path(__file__).resolve().parents[3] / "bin" / "mm-agent-lease.sh"
+ROSTER_SCRIPT = LEASE_SCRIPT.with_name("mm-agent-roster.sh")
 CROWN = "👑"
 PENDING_POLL_SEC = 30.0
 
@@ -85,11 +87,26 @@ def _env(client: MattermostClient, user_id: str) -> dict[str, str]:
 
 async def run(client: MattermostClient, command: str) -> str:
     """Run one mm-agent-lease.sh command; '' when it cannot run."""
+    return await _script(client, LEASE_SCRIPT, command)
+
+
+async def roster(client: MattermostClient) -> list[dict[str, Any]]:
+    """The reachable agents of the work channel, coordinator first, by the
+    rules of mm-agent-roster.sh (RT-6.6); [] when it cannot run."""
+    out = await _script(client, ROSTER_SCRIPT, "--json")
+    try:
+        rows = json.loads(out or "[]")
+    except ValueError:
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+async def _script(client: MattermostClient, script: Path, *args: str) -> str:
     if not client.token:
         return ""
     user_id = await _user_id(client)
     proc = await asyncio.create_subprocess_exec(
-        "bash", str(LEASE_SCRIPT), command,
+        "bash", str(script), *args,
         env=_env(client, user_id),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,

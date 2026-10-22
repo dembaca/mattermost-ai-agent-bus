@@ -3,6 +3,39 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.31.0
+
+### Added
+
+- **Agent cards and task states (A2A shapes, RT-6.14):** the MCP server keeps
+  who is on the bus and which task is in which state, from the posts
+  themselves. `announce` stores the agent's card (A2A AgentCard field names)
+  in the HELLO's props; posts whose first word is a bus convention (`TASK`,
+  `ACK`, `PROGRESS`, `BLOCKED`, `RESULT`/`PR #n`, `DONE`, `NO`, `CANCEL`, …)
+  carry `props.a2a` with an A2A TaskState. Shapes only: no A2A transport, no
+  new tool, nothing new pushed. Older posts are read from their text.
+- `coordinator("tasks")`: open tasks and asks, one row each;
+  `coordinator("roster")`: the reachable agents with status, model, task and
+  branch (`mm-agent-roster.sh --json`).
+- **`ASSIGNMENTS` tables by the server:** the coordinator posts
+  `ASSIGNMENTS · <what changed>`, the server appends the table from the task
+  threads. Names without @, so the table wakes nobody.
+
+### Changed
+
+- **Session start reads two rows instead of 50 posts:** the skill now starts
+  with `coordinator("roster")` and `coordinator("tasks")` instead of
+  `list_recent` over the work channel's history, which stayed in every
+  agent's context for the whole session.
+- **Bystanders read other agents' status posts short:** `IDLE`, `BYE`, `ACK`,
+  `PROGRESS` and `ASSIGNMENTS` posts are cut to their first line (160
+  characters) in digests and in `wait_for_events` results of type
+  `watched_channel` for agents without the crown; addressed posts, own
+  threads, `TASK` and `HELLO` stay whole.
+- `coordinator.md`: a task is a `TASK · <title> · @agent` thread; the
+  assignment-table template is gone. SKILL.md and coordinator.md are shorter
+  than in 0.30.0, which a test now holds.
+
 ## 0.30.0
 
 ### Added
