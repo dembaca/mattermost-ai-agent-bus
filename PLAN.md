@@ -90,9 +90,9 @@ so "No worries" is no `NO`.
   root's author. `NO` from the assignee drops it.
 - State words count from the assignee, the root's author and 👑 posts only;
   everyone else's are data.
-- The assignee's own HELLO thread counts too, for its single active task
-  (one task per agent, coordinator.md): `PROGRESS`/`BLOCKED`/`RESULT`/`DONE`
-  and PR numbers posted there move that task.
+- Only the task's own thread moves it. (Dropped after the live test: an
+  agent's HELLO thread also speaks of its next work, and a PROGRESS there
+  reopened a task in review.)
 - Refs: spec/issue from the root (`RT-6.n`, `ABC-123`, `#n`); PR from replies
   (`PR #n`, `/pull/n`); branch from `branch <name>`.
 - Open asks for the "needs the human" list: `🙋` posts (or `kind: ask`)
@@ -130,20 +130,27 @@ little: `root_id` already names the thread); A2A Message JSON in tool results
 
 | WP | Content | Files | Owner | Status |
 |---|---|---|---|---|
-| 0 | This plan; arc42 RT-6.14 (+ RT-6.6, RT-6.12 links), 05, 03, 01 refs; protocol.md; coordinator.md; SKILL.md id; CHANGELOG, version 0.31.0 | `PLAN.md`, `docs/`, `skills/`, `CHANGELOG.md`, `.claude-plugin/plugin.json` | agent-dhcp-166-mattermos-13bd6 | in progress |
-| 1 | `a2a.py`: words → kind/status/state, `annotate()`, card build + `card_of()` (props or HELLO text) | `mcp/src/…/a2a.py`, `mcp/tests/test_a2a.py` | agent-dhcp-166-mattermos-13bd6 | open |
-| 2 | Write side: props on announce, post_message, reply_in_thread, resolve_ask note, ask_human, permission prompt | `server.py`, tests | agent-dhcp-166-mattermos-13bd6 | open |
-| 3 | `tasks.py`: task view, open asks, ASSIGNMENTS table, compaction; `coordinator("tasks")` | `mcp/src/…/tasks.py`, `server.py`, `mcp/tests/test_tasks.py` | agent-dhcp-166-mattermos-13bd6 | open |
-| 4 | Roster: `mm-agent-roster.sh --json`, `coordinator("roster")` merging cards | `bin/mm-agent-roster.sh`, `lease.py` or `tasks.py`, tests | agent-dhcp-166-mattermos-13bd6 | open |
-| 5 | ASSIGNMENTS expansion in post_message (crown holder, no table given) | `server.py`, tests | agent-dhcp-166-mattermos-13bd6 | open |
-| 6 | Compaction in `channel.digest` and `wait_for_events` | `channel.py`, `server.py`, tests | agent-dhcp-166-mattermos-13bd6 | open |
-| 7 | `test_static_budget`; live check on the bus (props stored, `metadata.reactions` present in channel post lists) | `mcp/tests/test_stats.py` | agent-dhcp-166-mattermos-13bd6 | open |
+| 0 | This plan; arc42 RT-6.14 (+ RT-6.6, RT-6.12 links), 05, 03, 01 refs; protocol.md; coordinator.md; SKILL.md id; CHANGELOG, version 0.31.0 | `PLAN.md`, `docs/`, `skills/`, `CHANGELOG.md`, `.claude-plugin/plugin.json` | agent-dhcp-166-mattermos-13bd6 | done |
+| 1 | `a2a.py`: words → kind/status/state, `annotate()`, card build + `card_of()` (props or HELLO text) | `mcp/src/…/a2a.py`, `mcp/tests/test_tasks.py` | agent-dhcp-166-mattermos-13bd6 | done |
+| 2 | Write side: props on announce, post_message, reply_in_thread, resolve_ask note, ask_human, permission prompt | `server.py`, tests | agent-dhcp-166-mattermos-13bd6 | done |
+| 3 | `tasks.py`: task view, open asks, ASSIGNMENTS table, compaction; `coordinator("tasks")` | `mcp/src/…/tasks.py`, `server.py`, `mcp/tests/test_tasks.py` | agent-dhcp-166-mattermos-13bd6 | done |
+| 4 | Roster: `mm-agent-roster.sh --json`, `coordinator("roster")` merging cards | `bin/mm-agent-roster.sh`, `lease.py` or `tasks.py`, tests | agent-dhcp-166-mattermos-13bd6 | done |
+| 5 | ASSIGNMENTS expansion in post_message (crown holder, no table given) | `server.py`, tests | agent-dhcp-166-mattermos-13bd6 | done |
+| 6 | Compaction in `channel.digest` and `wait_for_events` | `channel.py`, `server.py`, tests | agent-dhcp-166-mattermos-13bd6 | done |
+| 7 | `test_static_budget`; live check on the bus (props stored, `metadata.reactions` present in channel post lists) | `mcp/tests/test_tasks.py` | agent-dhcp-166-mattermos-13bd6 | done |
 
-## Open questions (check live, then fold into RT-6.14)
+## Open questions — answered
 
-- Does `GET /channels/{id}/posts` carry `metadata.reactions` for every post
-  with reactions? (Needed for "ask without ✅". Fallback: a `resolve_ask`
-  reply in the ask's thread.)
-- Do older agents' hand-written `TASK` posts follow D3 well enough, or does the
-  coordinator need one line in coordinator.md on how to write them? (Planned:
-  `TASK · <title> · @agent`.)
+- `GET /channels/{id}/posts` carries `metadata.reactions` (live, 2026-10-22:
+  211 posts in the window, the one with reactions had them).
+- Hand-written `TASK` posts: the live Leitstand task (`👑 TASK · … ` without a
+  mention, `ACK` by the assignee, `👑 ACK noted` by the author, `PR #57 …`)
+  reads as review / `#57` / `RT-6.8`. coordinator.md now names the form
+  `TASK · <title> · @agent`.
+
+## Live numbers (2026-10-22, work channel ~agents)
+
+- `coordinator("tasks")` 365 + `coordinator("roster")` 263 characters vs. the
+  old session start, `list_recent` over 50 posts: 18,851 characters (−97 %).
+- SKILL.md 21,895 → 21,842 characters, coordinator.md 4,931 → 4,904;
+  `coordinator` tool doc 425 → 511.

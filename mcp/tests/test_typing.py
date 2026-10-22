@@ -100,7 +100,7 @@ async def test_post_stops_typing(monkeypatch):
     inbox, ws = _inbox()
 
     class _Client:
-        async def post(self, message, channel_id=None, root_id=None):
+        async def post(self, message, channel_id=None, root_id=None, props=None):
             return {"id": "new"}
 
     monkeypatch.setattr(server, "_inbox", inbox)

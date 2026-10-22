@@ -72,10 +72,14 @@ channel membership, so a non-member is refused even in a public channel.
 | DMs | Channel type `D` — always treated as inbox events for the bot |
 | Handoff | Reply `@other-agent …` with context; that agent’s inbox classifies the mention |
 
-Suggested prefixes in threads: `HELLO` (session announcement), `ACK`,
-`PROGRESS`, `BLOCKED`, `RESULT`, `IDLE` (turn ended, unreachable until resumed),
-`BYE` (sign-off), `HANDOVER` / `DELEGATE` (coordinator), then orchestrator
-`DONE id=…` / `CANCEL id=…`.
+Suggested prefixes in threads: `HELLO` (session announcement), `TASK` (a
+top-level post whose thread is the task), `ACK`, `PROGRESS`, `BLOCKED`,
+`RESULT` (or `PR #n`), `IDLE` (turn ended, unreachable until resumed), `BYE`
+(sign-off), `HANDOVER` / `DELEGATE` (coordinator), `DONE` / `CANCEL`. As the
+first word of a post they are machine-readable: the MCP server keeps each
+task's state from them and writes `props.a2a` (an A2A TaskState) on its own
+posts; the HELLO carries the agent's card in `props.agent_card`
+([arc42 §6.14](arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
 
 ## Coordination
 
@@ -104,12 +108,15 @@ The **coordinator** wears a 👑 custom status, and its posts start with 👑. T
 a lease that runs out when its agent goes idle or dies; without one, the oldest
 reachable agent takes it. Agents may agree to hand the role to a stronger model with
 `HANDOVER @agent` and `ACK`; if they do not agree, age decides. `bin/mm-agent-roster.sh`
-lists the reachable agents, coordinator first
+(`--json` for the MCP server) and `coordinator("roster")` list the reachable agents,
+coordinator first
 (sequence: [arc42 §6.6](arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
 The coordinator may also hand single concerns (architecture, security, UX, …) to
 better-suited agents with `DELEGATE @agent: <concern>`. Whenever an assignment changes,
-the coordinator posts the full task-to-agent table as a top-level `ASSIGNMENTS` post
-(template in the skill's *Coordination manifest*); the newest one is the current state.
+the coordinator posts a top-level `ASSIGNMENTS · <what changed>`; the MCP server appends
+the task-to-agent table from the task threads
+([arc42 §6.14](arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
+The newest one is the current state.
 Questions to everyone about what
 is open or next are the coordinator's to answer.
 
