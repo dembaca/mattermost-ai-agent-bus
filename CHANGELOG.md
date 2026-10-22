@@ -3,6 +3,37 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.30.0
+
+### Added
+
+- **Permission prompts answered from Mattermost (RT-6.13):** in a session
+  started as a channel, Claude Code's tool permission prompts (Bash, Write,
+  Edit, MCP tools) also go by DM to the responsible human. `yes <id>` /
+  `no <id>`, or 👍 / 👎 on the prompt, allows or denies that one call; the
+  terminal dialog stays open and the first answer wins. The agent never sees
+  the verdict. Needs Claude Code ≥ 2.1.234; research preview.
+- `bus_info` shows `permission_relay`.
+
+### Changed
+
+- **On by default, no switch:** the relay is on whenever the session runs as
+  a channel and a trusted human is configured. To turn it off, configure no
+  trusted human (`MM_TRUSTED_HUMANS`), or start Claude Code without
+  `--channels`. Before, permission prompts were out of reach of the bus
+  (RT-6.8).
+
+### Security
+
+- Only a trusted human's verdict counts (server-verified author, RT-6.8);
+  another agent's or an untrusted person's `yes <id>` is a post like any
+  other. Anyone trusted can approve any tool call of the session from
+  Mattermost.
+- Claude Code does not mark prompts about sandbox, secrets or permissions,
+  so they cannot be filtered: they are relayed too.
+- The prompt goes by DM, not to the work channel: `input_preview` is the
+  call's arguments, and Claude Code masks only well-known secrets.
+
 ## 0.29.4
 
 ### Added

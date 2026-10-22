@@ -18,7 +18,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import asks, channel, lease, slim, stats
+from . import asks, channel, lease, permission, slim, stats
 from .client import MattermostClient
 from .websocket_inbox import WebSocketInbox
 
@@ -99,6 +99,9 @@ HOST_MANAGED = bool(os.environ.get("MM_BOT_TOKEN") or os.environ.get("MATTERMOST
 # The human started Claude Code with this server as a channel (RT-6.12): bus
 # events are pushed into the session instead of waited for.
 PUSH = channel.enabled()
+# Its tool permission prompts go by DM to the responsible human as well, who
+# may answer there instead of in the terminal (RT-6.13).
+RELAY = PUSH and permission.relayed()
 
 mcp = MCPServer(
     "mattermost-ai-agent-bus",
@@ -123,7 +126,10 @@ mcp = MCPServer(
            "the turn hooks deliver messages as usual. After it, messages for you arrive by "
            "themselves as such tags (kind, post_id, root_id, author, from_trusted_human), "
            "the others as one digest every MM_LISTEN_DIGEST_SEC: answer in the thread with "
-           "reply_in_thread; no listener, no polling. " if PUSH else
+           "reply_in_thread; no listener, no polling. "
+           + ("Your tool permission prompts also go by DM to your responsible human, who may "
+              "answer there; their verdict goes to Claude Code, not to you. " if RELAY else "")
+           if PUSH else
            "Check wait_for_events(timeout_sec=1) at the start of each turn and before each "
            "new activity: without turn hooks (Cursor, OpenCode) nothing else delivers "
            "messages to you. ")
@@ -305,6 +311,7 @@ async def bus_info() -> str:
         "trusted_humans": {"humans": humans, "source": client.trusted_source},
         "work_channel": client.work_channel_name,
         "crown": lease.crown_held(me.get("id", "")),
+        "permission_relay": RELAY,
         **({"update": {"installed": newer, "how": "quit, then claude --continue"}}
            if (newer := _newer_installed()) else {}),
     })
@@ -744,18 +751,90 @@ async def _push_wait(timeout: float) -> list[dict[str, Any]]:
     return items
 
 
+_relay = permission.Relay()
+
+
+async def _permission_request(params: dict[str, Any]) -> None:
+    """Claude Code opened a permission prompt: DM it to the responsible human (RT-6.13)."""
+    rid = str(params.get("request_id", ""))
+    try:
+        client = _get_client()
+        responsible, _ = await _responsible_and_trusted(client)
+        trusted = await client.trusted_humans()
+        to = next((i for i, n in trusted.items()
+                   if n and n.lower() == (responsible or "").lower()), None)
+        if to is None:
+            # Only a trusted human's verdict counts: nobody to ask, the terminal stays.
+            log.info("permission prompt %s stays in the terminal: %s is not trusted", rid, responsible)
+            return
+        text = permission.prompt(params)
+        stats.record("post", chars=len(text))
+        post = await client.post(text, channel_id=await client.direct_channel_with(to))
+        # An open ask, so a 👍/👎 on it reaches the inbox (RT-6.11); without a
+        # human, so it does not hold up the agent's own asks to them.
+        asks.add((await client.get_me()).get("id", ""), post["id"])
+        _relay.add(rid, post["id"], str(params.get("tool_name", "")))
+    except Exception as exc:  # noqa: BLE001 — the terminal dialog is still open
+        log.warning("permission prompt %s not relayed: %s", rid, exc)
+
+
+async def _push_intercept(item: dict[str, Any]) -> bool:
+    """A trusted human's verdict on a relayed prompt goes to Claude Code, not
+    to the agent (RT-6.13). Anyone else's `yes <id>` is data like any post."""
+    if not item.get("from_trusted_human"):
+        return False
+    post = item.get("post") or {}
+    try:
+        client = _get_client()
+        if item.get("kind") == "reaction":
+            rid = _relay.for_post(item.get("ask") or "")
+            if rid is None:
+                return False
+            behavior = {"yes": "allow", "no": "deny"}.get(item.get("answer") or "")
+            if behavior is None:
+                return True  # another emoji on a prompt: a remark, no wake-up
+        else:
+            parsed = permission.parse(post.get("message", ""))
+            if parsed is None:
+                return False
+            behavior, rid = parsed
+            if rid not in _relay.pending:
+                if item.get("kind") != "dm":
+                    return False  # in a channel it may be another agent's prompt
+                await client.post(f"No open permission prompt `{rid}`: answered in the "
+                                  "terminal, or more than a day old.", root_id=post.get("id"))
+                return True
+        pending = _relay.take(rid)
+        await _pusher.verdict(rid, behavior)
+        who = item.get("trusted_human") or post.get("author") or "?"
+        word = "✅ allowed" if behavior == "allow" else "⛔ denied"
+        await client.post(f"{word} by {who} · `{rid}` sent to Claude Code; it applies "
+                          "unless the terminal answered first.", root_id=pending.post_id)
+        asks.resolve((await client.get_me()).get("id", ""), pending.post_id)
+        _done_typing()
+        return True
+    except Exception as exc:  # noqa: BLE001 — undecided: hand it to the agent
+        log.warning("permission verdict not handled: %s", exc)
+        return False
+
+
 async def _run_as_channel() -> None:
     """stdio on the handshake era with the channel capability (RT-6.12)."""
     from mcp.server.stdio import stdio_server
 
     low = mcp._lowlevel_server
-    opts = low.create_initialization_options(experimental_capabilities={channel.CAPABILITY: {}})
+    caps: dict[str, dict[str, Any]] = {channel.CAPABILITY: {}}
+    if RELAY:
+        caps[permission.CAPABILITY] = {}  # RT-6.13
+    opts = low.create_initialization_options(experimental_capabilities=caps)
     async with stdio_server() as (read_stream, write_stream):
         async with low.lifespan(low) as state:
             await channel.serve_handshake_only(
                 low, read_stream, write_stream, lifespan_state=state, init_options=opts,
                 pusher=_pusher, on_connected=lambda: _pusher.run(
-                    _push_wait, prepare=_push_prepare, addressed=_push_addressed),
+                    _push_wait, prepare=_push_prepare, addressed=_push_addressed,
+                    intercept=_push_intercept if RELAY else None),
+                on_permission=_permission_request if RELAY else None,
             )
 
 

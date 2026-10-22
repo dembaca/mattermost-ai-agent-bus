@@ -572,8 +572,12 @@ class MattermostClient:
             raise ValueError(f"no user {name}")
         if not found[0].get("is_bot", False):
             raise ValueError(f"{name} is a person: ask people with ask_human")
+        return await self.direct_channel_with(found[0]["id"])
+
+    async def direct_channel_with(self, user_id: str) -> str:
+        """The DM channel id between this bot and a user id; no checks."""
         me = await self.get_me()
-        ch = await self._api("POST", "/api/v4/channels/direct", json=[me["id"], found[0]["id"]])
+        ch = await self._api("POST", "/api/v4/channels/direct", json=[me["id"], user_id])
         return ch["id"]
 
     async def humans_among(self, names: set[str]) -> set[str]:
