@@ -1,5 +1,6 @@
 """RT-6.14: A2A shapes on the bus — cards, task states, and what they save."""
 
+import inspect
 import json
 import time
 
@@ -307,4 +308,5 @@ def test_static_budget():
     skill = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus"
     assert len((skill / "SKILL.md").read_text()) <= 21_895
     assert len((skill / "coordinator.md").read_text()) <= 4_931
-    assert len(server.coordinator.__doc__) <= 425 + 90
+    # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
+    assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90
