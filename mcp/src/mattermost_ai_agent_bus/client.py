@@ -13,7 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import session_file
+from . import links, session_file
 
 log = logging.getLogger(__name__)
 
@@ -514,6 +514,11 @@ class MattermostClient:
             "none: set MM_TRUSTED_HUMANS")
         return trusted
 
+    @property
+    def permalink_base(self) -> str:
+        """A post's permalink is this plus its id (RT-6.15)."""
+        return f"{self.base_url}/{self.team_name}/pl/"
+
     async def get_me(self) -> dict[str, Any]:
         if self._me is None:
             self._me = await self._api("GET", "/api/v4/users/me")
@@ -656,12 +661,15 @@ class MattermostClient:
             root = await self._api("GET", f"/api/v4/posts/{root_id}")
             channel_id = root.get("channel_id") or None
         cid = channel_id or await self.get_channel_id()
+        # RT-6.15: post ids as permalinks, odd links written out for the human.
+        message = links.send(message, post_url=self.permalink_base)
         body: dict[str, Any] = {"channel_id": cid, "message": message}
         if root_id:
             body["root_id"] = root_id
         if props:
             body["props"] = props
-        return await self._api("POST", "/api/v4/posts", json=body)
+        return links.read_post(await self._api("POST", "/api/v4/posts", json=body),
+                               self.permalink_base)
 
     async def add_reaction(self, post_id: str, emoji: str) -> None:
         me = await self.get_me()
@@ -681,7 +689,7 @@ class MattermostClient:
         return {
             "root_id": data.get("root_id") or post_id,
             "order": order,
-            "posts": [posts[pid] for pid in order if pid in posts],
+            "posts": [links.read_post(posts[pid], self.permalink_base) for pid in order if pid in posts],
         }
 
     async def list_recent(
@@ -699,4 +707,5 @@ class MattermostClient:
             "GET", f"/api/v4/channels/{cid}/posts", params=params
         )
         posts = data.get("posts") or {}
-        return sorted(posts.values(), key=lambda p: p.get("create_at", 0))
+        return sorted((links.read_post(p, self.permalink_base) for p in posts.values()),
+                      key=lambda p: p.get("create_at", 0))

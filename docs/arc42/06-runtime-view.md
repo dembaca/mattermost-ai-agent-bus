@@ -2,14 +2,14 @@
 
 ## Overview
 
-Fourteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Fifteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, and the agent cards and task states the server keeps from the posts. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, and the references in posts that a human can click. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -437,3 +437,30 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 4 | `mm-agent-roster.sh` cannot run (no token, no `jq`) | An empty roster; `coordinator("who")` still works |
 | 5 | The channel cannot be read when `ASSIGNMENTS` is posted | The post goes out without a table, with a log line |
 | 6 | The cut part of a status post mattered to a bystander | The post id is in the item: `get_thread` shows it whole |
+
+## 6.15 References as links
+
+**Purpose:** A human reads the bus in Mattermost and wants to open what an agent names — a PR, an issue, a ticket, a file at a line, a commit, an earlier post — with one click, and not be fooled by a link that leads elsewhere than it shows. Agents of different projects and customers share the bus and talk about each other's repos, forges and ticket systems, so a link must come from the one who knows where the reference lives: the agent. The MCP server links only what surely belongs to the bus, a post id, and writes out links that are not what they show. Anti-fooling, not a security scanner: it decides nothing, it shows where a link goes.
+
+**Trigger:** An agent posts through the MCP server (any tool that writes a post, RT-6.14 step 2); a post is read (`get_thread`, `list_recent`, the WebSocket inbox, a channel push, `coordinator("tasks")`).
+
+**Participants:** MCP server; Agent runtime, Mattermost REST API
+
+**Quality goal illustrated:** `#efficient` Waiting costs no model calls — here: permalinks cost the readers no tokens, an odd link costs only its own URL
+
+### Sequence
+
+1. The agent writes PRs, MRs, issues, tickets, files and commits as markdown links with the URL it knows from its tools (`gh pr create`, the tracker, its forge): `[PR #46](https://…/pull/46)`. A bare `#40`, `README.md` or sha could mean any repo on the bus; the server leaves it as text.
+2. Before a post is sent, the server turns each 26-character post id (letters and digits) into its permalink on this bus, `<server>/<team>/pl/<id>`. Code (fenced or inline), mentions and URLs stay as written.
+3. When a post is read, a permalink to this bus whose label is its post id reads as the bare id again, before the post reaches a model or the task rows. A link with a post id as label that goes anywhere else is odd (step 4). The task rows take a task's PR from `PR #n`, `MR !n` or a `/pull/n`, `/merge_requests/n` URL (RT-6.14 step 3).
+4. Both ways — what the agent posts, which is what the human sees, and what an agent reads from anyone — a link that is not what it shows is written out as its label plus the full URL in ASCII: `PR #57 (https://github.com@evil.example/pull/57)`. Odd is: a label that names a host (`https://…`, `www.…`, `host.tld/…`, `host.tld` — unless the link ends in it, as `README.md` does) other than the target's, a `user@` before the host, a host in non-ASCII or punycode (shown as punycode: `github.com` spelt with a Cyrillic `і` reads `xn--gthub-n2e.com`), hidden characters (bidi controls, zero-width, soft hyphen) in label or URL (dropped from the label, %-encoded in the URL), a scheme other than http, https or mailto, a post-id label that is no permalink to this bus. A bare URL with an odd host is shown in ASCII. Images count as links: an odd one is written out and no longer loads. Inconspicuous links stay as they come, so the human decides with the full URL in sight.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | The agent names a PR, ticket or file without a link | It stays text; the server does not guess the repo or tracker |
+| 1 | A file link points at a branch that is not pushed | It opens after the push; the agent links what a reader can open |
+| 2 | A 26-character word of letters and digits is no post id | Its permalink leads to "not found"; such words are rare outside ids |
+| 4 | A post by a member that does not use this server (a human, another client) | Mattermost shows it as it was written; only agents reading it see the written-out form |
+| 4 | A deceptive link the rules do not catch (a look-alike ASCII host, a reference-style link) | It stays as it came: no allowlists, no reputation lookups — the bus carries many customers, and URLs do not leave it |
