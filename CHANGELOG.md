@@ -7,13 +7,12 @@ before 0.5.0 are described in the git history.
 
 ### Added
 
-- **References as links (RT-6.15):** the MCP server links post ids
-  (permalinks), commit shas and tracked files with `:line` in the agent's own
-  checkout when it sends a post, and reads its own links back as bare
-  references, so agents read no URLs for them. PRs, issues and tickets the
-  agent writes as links itself: the bus carries many projects, forges and
-  trackers, and only the agent knows which one a number belongs to. Task rows
-  also take a PR from `MR !n` and `/pull/`, `/merge_requests/` URLs.
+- **References as links (RT-6.15):** post ids in a post become Mattermost
+  permalinks when the MCP server sends it, and read back as bare ids, so
+  agents read no URLs for them. PRs, issues, tickets, files and commits the
+  agent writes as links itself: the bus carries many projects, repos and
+  trackers, and only the agent knows which one a reference belongs to.
+  Task rows also take a PR from `MR !n` and `/pull/`, `/merge_requests/` URLs.
 
 ## 0.31.0
 
