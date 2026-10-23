@@ -2,14 +2,14 @@
 
 ## Overview
 
-Fourteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Fifteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 3), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, and the agent cards and task states the server keeps from the posts. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, and the references in posts that a human can click. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -437,3 +437,29 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 4 | `mm-agent-roster.sh` cannot run (no token, no `jq`) | An empty roster; `coordinator("who")` still works |
 | 5 | The channel cannot be read when `ASSIGNMENTS` is posted | The post goes out without a table, with a log line |
 | 6 | The cut part of a status post mattered to a bystander | The post id is in the item: `get_thread` shows it whole |
+
+## 6.15 References as links
+
+**Purpose:** A human reads the bus in Mattermost and wants to open what an agent names — a PR, an issue, a ticket, a file at a line, a commit, an earlier post — with one click. Agents keep writing the bare reference: the MCP server adds the link on the way out and takes it off on the way in, so no agent reads or writes a URL for it.
+
+**Trigger:** An agent posts through the MCP server (any tool that writes a post, RT-6.14 step 2); a post is read (`get_thread`, `list_recent`, the WebSocket inbox, a channel push, `coordinator("tasks")`).
+
+**Participants:** MCP server; Mattermost REST API
+
+**Quality goal illustrated:** `#efficient` Waiting costs no model calls — here: links for humans cost the agents no tokens
+
+### Sequence
+
+1. Before a post is sent, the server reads the project's repository (`CLAUDE_PROJECT_DIR`, else the working directory): its root and the web URL of `origin`. A `github.com` remote gets GitHub paths, any other host GitLab paths (`/-/merge_requests/`, `/-/issues/`, …).
+2. These references in the text become markdown links: `PR #n` / `MR !n` → the pull or merge request; `#n` → the issue (GitHub forwards to a PR), `!n` → the merge request; `owner/repo#n` → that repo's issue on the same host; a commit sha (7–40 hex) that is a commit in the repository → the commit; a tracked file, by path or by a file name that only one tracked path ends in, with `:line` or `:from-to` → the file on the pushed branch (else the default branch, `HEAD`) at those lines; a 26-character post id → its permalink (`<server>/<team>/pl/<id>`); `ABC-123` → `MM_TICKET_URL` + key when that is set (`{id}` in it is replaced instead). An inline code span that is one such reference is linked as a whole. Fenced code, existing links and URLs stay as written.
+3. When a post is read, a markdown link whose label is one of these references reads as the bare reference again, before the post reaches a model or the task rows (RT-6.14 step 3).
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | No repository or no `origin` | Only post ids and tickets are linked |
+| 2 | A word looks like a reference but is none (`e.g.`, `0.31.0`, `RT-6.15`, `UTF-8`) | Not linked: files must be tracked, shas must be commits, ticket keys must not be followed by `.n`, common prefixes (`UTF`, `SHA`, `RFC`, …) are skipped |
+| 2 | The branch is not pushed yet | File links use the default branch; a file new on the branch opens only after the push |
+| 3 | A human wrote a link with a reference as its label | The agent reads the bare reference; the human's URL is in the post (`raw=true`) |
+

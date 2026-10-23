@@ -11,6 +11,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
+from . import links
+
 if TYPE_CHECKING:
     from .client import MattermostClient
 
@@ -45,7 +47,7 @@ def _one(p: dict[str, Any], users: dict, channels: dict) -> dict[str, Any]:
     uid = p.get("user_id", "")
     out["author"] = users.get(uid) or uid
     out["at"] = _when(p.get("create_at"))
-    out["message"] = p.get("message", "")
+    out["message"] = links.plain(p.get("message", ""))
     if p.get("type"):
         out["type"] = p["type"]
     if p.get("edit_at"):

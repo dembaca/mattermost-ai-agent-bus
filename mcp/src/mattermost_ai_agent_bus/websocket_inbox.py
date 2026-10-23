@@ -11,7 +11,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import asks
+from . import asks, links
 from .client import MattermostClient, ws_url_from_http
 
 log = logging.getLogger(__name__)
@@ -272,6 +272,7 @@ class WebSocketInbox:
                     post = post_raw
                 else:
                     continue
+                links.plain_post(post)  # RT-6.15: read links as bare references
                 channel_type = data.get("channel_type")
                 channel = None
                 cid = post.get("channel_id")

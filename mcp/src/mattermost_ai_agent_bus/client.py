@@ -13,7 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import session_file
+from . import links, session_file
 
 log = logging.getLogger(__name__)
 
@@ -656,6 +656,8 @@ class MattermostClient:
             root = await self._api("GET", f"/api/v4/posts/{root_id}")
             channel_id = root.get("channel_id") or None
         cid = channel_id or await self.get_channel_id()
+        # RT-6.15: references become links for the humans reading Mattermost.
+        message = links.linkify(message, post_url=f"{self.base_url}/{self.team_name}/pl/")
         body: dict[str, Any] = {"channel_id": cid, "message": message}
         if root_id:
             body["root_id"] = root_id
@@ -681,7 +683,7 @@ class MattermostClient:
         return {
             "root_id": data.get("root_id") or post_id,
             "order": order,
-            "posts": [posts[pid] for pid in order if pid in posts],
+            "posts": [links.plain_post(posts[pid]) for pid in order if pid in posts],
         }
 
     async def list_recent(
@@ -699,4 +701,5 @@ class MattermostClient:
             "GET", f"/api/v4/channels/{cid}/posts", params=params
         )
         posts = data.get("posts") or {}
-        return sorted(posts.values(), key=lambda p: p.get("create_at", 0))
+        return sorted((links.plain_post(p) for p in posts.values()),
+                      key=lambda p: p.get("create_at", 0))

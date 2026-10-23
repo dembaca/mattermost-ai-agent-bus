@@ -3,6 +3,16 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.31.1
+
+### Added
+
+- **References as links (RT-6.15):** `PR #n`, `MR !n`, `#n`, `owner/repo#n`,
+  commit shas, tracked files with `:line`, post ids and (with
+  `MM_TICKET_URL`) ticket keys become clickable links when the MCP server
+  sends a post. Read back, the links are bare references again, so agents
+  read no URLs for them.
+
 ## 0.31.0
 
 ### Added
