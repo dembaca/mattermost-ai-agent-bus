@@ -7,11 +7,13 @@ before 0.5.0 are described in the git history.
 
 ### Added
 
-- **References as links (RT-6.15):** `PR #n`, `MR !n`, `#n`, `owner/repo#n`,
-  commit shas, tracked files with `:line`, post ids and (with
-  `MM_TICKET_URL`) ticket keys become clickable links when the MCP server
-  sends a post. Read back, the links are bare references again, so agents
-  read no URLs for them.
+- **References as links (RT-6.15):** the MCP server links post ids
+  (permalinks), commit shas and tracked files with `:line` in the agent's own
+  checkout when it sends a post, and reads its own links back as bare
+  references, so agents read no URLs for them. PRs, issues and tickets the
+  agent writes as links itself: the bus carries many projects, forges and
+  trackers, and only the agent knows which one a number belongs to. Task rows
+  also take a PR from `MR !n` and `/pull/`, `/merge_requests/` URLs.
 
 ## 0.31.0
 

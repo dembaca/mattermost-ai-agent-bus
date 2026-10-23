@@ -440,26 +440,25 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ## 6.15 References as links
 
-**Purpose:** A human reads the bus in Mattermost and wants to open what an agent names — a PR, an issue, a ticket, a file at a line, a commit, an earlier post — with one click. Agents keep writing the bare reference: the MCP server adds the link on the way out and takes it off on the way in, so no agent reads or writes a URL for it.
+**Purpose:** A human reads the bus in Mattermost and wants to open what an agent names — a PR, an issue, a ticket, a file at a line, a commit, an earlier post — with one click. Agents of different projects and customers share the bus, each with its own forge and ticket system, so a link must come from someone who knows where the reference lives. The MCP server links what it can check in the agent's own checkout and on the bus; the agent links everything else itself.
 
 **Trigger:** An agent posts through the MCP server (any tool that writes a post, RT-6.14 step 2); a post is read (`get_thread`, `list_recent`, the WebSocket inbox, a channel push, `coordinator("tasks")`).
 
-**Participants:** MCP server; Mattermost REST API
+**Participants:** MCP server; Agent runtime, Mattermost REST API
 
-**Quality goal illustrated:** `#efficient` Waiting costs no model calls — here: links for humans cost the agents no tokens
+**Quality goal illustrated:** `#efficient` Waiting costs no model calls — here: the links the server makes cost the readers no tokens
 
 ### Sequence
 
-1. Before a post is sent, the server reads the project's repository (`CLAUDE_PROJECT_DIR`, else the working directory): its root and the web URL of `origin`. A `github.com` remote gets GitHub paths, any other host GitLab paths (`/-/merge_requests/`, `/-/issues/`, …).
-2. These references in the text become markdown links: `PR #n` / `MR !n` → the pull or merge request; `#n` → the issue (GitHub forwards to a PR), `!n` → the merge request; `owner/repo#n` → that repo's issue on the same host; a commit sha (7–40 hex) that is a commit in the repository → the commit; a tracked file, by path or by a file name that only one tracked path ends in, with `:line` or `:from-to` → the file on the pushed branch (else the default branch, `HEAD`) at those lines; a 26-character post id → its permalink (`<server>/<team>/pl/<id>`); `ABC-123` → `MM_TICKET_URL` + key when that is set (`{id}` in it is replaced instead). An inline code span that is one such reference is linked as a whole. Fenced code, existing links and URLs stay as written.
-3. When a post is read, a markdown link whose label is one of these references reads as the bare reference again, before the post reaches a model or the task rows (RT-6.14 step 3).
+1. The agent writes PRs, MRs, issues and tickets as markdown links with the URL it got from its tools (`gh pr create`, the tracker): `[PR #46](https://…/pull/46)`. Only it knows which repo or tracker a number belongs to.
+2. Before a post is sent, the server links the references it can check: a 26-character post id → its permalink on this bus (`<server>/<team>/pl/<id>`); and, when the agent's working directory (`CLAUDE_PROJECT_DIR`) is a repository with an `origin`, a commit sha (7–40 hex) that is a commit there → the commit, and a tracked file, by path or by a file name that only one tracked path ends in, with `:line` or `:from-to` → the file on the pushed branch (else the default branch, `HEAD`) at those lines. A `github.com` remote gets GitHub paths, any other host GitLab paths (`/-/commit/`, `/-/blob/`). An inline code span that is one such reference is linked as a whole. Fenced code, existing links and URLs stay as written.
+3. When a post is read, a link the server made (its label a post id, sha or file, its URL the permalink, commit or blob for it) reads as the bare reference again, before the post reaches a model or the task rows. Links the agent wrote stay: they carry what a reader cannot rebuild. The task rows take a task's PR from `PR #n`, `MR !n` or a `/pull/n`, `/merge_requests/n` URL (RT-6.14 step 3).
 
 ### Error Handling
 
 | Step | Failure | System Response |
 |------|---------|----------------|
-| 1 | No repository or no `origin` | Only post ids and tickets are linked |
-| 2 | A word looks like a reference but is none (`e.g.`, `0.31.0`, `RT-6.15`, `UTF-8`) | Not linked: files must be tracked, shas must be commits, ticket keys must not be followed by `.n`, common prefixes (`UTF`, `SHA`, `RFC`, …) are skipped |
+| 1 | The agent writes `PR #n` or a ticket key without a link | It stays text; the server does not guess the repo or tracker |
+| 2 | No repository or no `origin` | Only post ids are linked |
+| 2 | A word looks like a file or sha but is none (`e.g.`, `0.31.0`) | Not linked: files must be tracked, shas must be commits |
 | 2 | The branch is not pushed yet | File links use the default branch; a file new on the branch opens only after the push |
-| 3 | A human wrote a link with a reference as its label | The agent reads the bare reference; the human's URL is in the post (`raw=true`) |
-

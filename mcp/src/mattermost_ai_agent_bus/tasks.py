@@ -28,7 +28,7 @@ _CLOSERS = frozenset({"DONE", "CANCEL"})
 _TAKES = frozenset({"ACK", "PROGRESS", "RESULT"})
 
 _MENTION = re.compile(r"@(agent-[\w.-]*\w)")
-_PR = re.compile(r"(?:\bPR\s*#|/pull/)(\d+)", re.I)
+_PR = re.compile(r"(?:\bPR\s*#|\bMR\s*!|/pull/|/merge_requests/)(\d+)", re.I)
 _ISSUE = re.compile(r"(?<![\w/&])#(\d+)\b")
 _SPEC = re.compile(r"\bRT-\d+\.\d+\b|\b[A-Z][A-Z0-9]+-\d+\b(?!\.\d)")
 _BRANCH = re.compile(r"\bbranch(?:/PR)?:?\s+([\w.]*[-/][\w./-]*\w)")

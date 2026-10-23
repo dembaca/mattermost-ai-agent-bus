@@ -1,10 +1,10 @@
-"""RT-6.15: references in posts become links for humans, plain text for agents."""
+"""RT-6.15: what the server can check becomes a link for humans, plain text for agents."""
 
 import subprocess
 
 import pytest
 
-from mattermost_ai_agent_bus import links, slim
+from mattermost_ai_agent_bus import links, slim, tasks
 
 PL = "https://mm.example/agents/pl/"
 POST_ID = "if61sbeu1b88xf6wjpimzuh8uy"
@@ -42,58 +42,53 @@ def test_web_url_of_a_remote(remote, web):
     assert links.web_url(remote) == web
 
 
-def test_github_references(repo):
-    """RT-6.15: PRs, issues, files with lines and commits link to the forge."""
+def test_files_commits_and_posts_are_linked(repo):
+    """RT-6.15 step 2: files tracked in the checkout, its commits, posts on this bus."""
     sha = repo()
     gh = "https://github.com/dembaca/bus"
-    out = links.linkify(f"PR #57 fixes #40 and o/x#3; see mcp/src/server.py:12-20, "
-                        f"`server.py:7`, README.md and {sha[:9]}.", post_url=PL)
-    assert f"[PR #57]({gh}/pull/57)" in out
-    assert f"[#40]({gh}/issues/40)" in out
-    assert "[o/x#3](https://github.com/o/x/issues/3)" in out
+    out = links.linkify(f"see mcp/src/server.py:12-20, `server.py:7`, README.md, "
+                        f"{sha[:9]} and {POST_ID}.", post_url=PL)
     assert f"[mcp/src/server.py:12-20]({gh}/blob/HEAD/mcp/src/server.py#L12-L20)" in out
     assert f"[`server.py:7`]({gh}/blob/HEAD/mcp/src/server.py#L7)" in out
     assert f"[README.md]({gh}/blob/HEAD/README.md)" in out
     assert f"[{sha[:9]}]({gh}/commit/{sha[:9]})" in out
+    assert f"[{POST_ID}]({PL}{POST_ID})" in out
 
 
 def test_gitlab_paths(repo):
     repo("git@gitlab.example:g/bus.git")
-    out = links.linkify("MR !12, #4, README.md:3-5")
-    assert "[MR !12](https://gitlab.example/g/bus/-/merge_requests/12)" in out
-    assert "[#4](https://gitlab.example/g/bus/-/issues/4)" in out
-    assert "(https://gitlab.example/g/bus/-/blob/HEAD/README.md#L3-5)" in out
+    assert links.linkify("README.md:3-5") == \
+        "[README.md:3-5](https://gitlab.example/g/bus/-/blob/HEAD/README.md#L3-5)"
 
 
-def test_only_what_exists_is_linked(repo):
-    """RT-6.15: untracked files, unknown shas, versions and code stay as written."""
+def test_what_the_server_cannot_check_stays_as_written(repo):
+    """RT-6.15: PRs, issues and tickets may belong to any repo or tracker on the
+    bus; unknown files and shas, versions, mentions and code stay too."""
     repo()
-    text = ("missing.py:3, 0.31.0, RT-6.15, e.g. deadbee1, @agent-x, "
-            "https://github.com/o/r/pull/1, [#9](https://x), `#5 in code`\n"
-            "```\n#7 README.md\n```")
-    assert links.linkify(text) == text
+    text = ("PR #57, MR !12, #40, o/x#3, ABC-123, missing.py:3, 0.31.0, RT-6.15, e.g. "
+            f"deadbee1, @agent-x, <@{POST_ID}>, https://github.com/o/r/pull/1, "
+            "[#9](https://x), `#5 in code`\n```\nREADME.md\n```")
+    assert links.linkify(text, post_url=PL) == text
 
 
-def test_tickets_and_permalinks(repo, monkeypatch):
-    repo()
-    assert links.linkify("ABC-123") == "ABC-123"            # no tracker configured
-    monkeypatch.setenv("MM_TICKET_URL", "https://jira.example/browse/")
-    out = links.linkify(f"ABC-123 per {POST_ID}, not UTF-8 or <@{POST_ID}>", post_url=PL)
-    assert "[ABC-123](https://jira.example/browse/ABC-123)" in out
-    assert f"[{POST_ID}]({PL}{POST_ID})" in out
-    assert "UTF-8" in out and f"<@{POST_ID}>" in out
-
-
-def test_no_repo_links_nothing_of_it(tmp_path, monkeypatch):
+def test_no_checkout_links_posts_only(tmp_path, monkeypatch):
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
     monkeypatch.setattr(links, "_repo", None)
-    assert links.linkify("PR #57 README.md") == "PR #57 README.md"
+    assert links.linkify(f"README.md {POST_ID}", post_url=PL) == \
+        f"README.md [{POST_ID}]({PL}{POST_ID})"
 
 
-def test_agents_read_the_bare_references(repo):
-    """RT-6.15: what linkify adds, plain takes off — no extra tokens on read."""
+def test_agents_read_the_servers_links_bare_and_keep_their_own(repo):
+    """RT-6.15 step 3: what linkify adds, plain takes off; an agent's own links stay."""
     repo()
-    text = "PR #57: `server.py:7`, README.md, ticket ABC-1; [docs](https://x.example)"
+    own = "[PR #57](https://gitlab.example/g/r/-/merge_requests/57) · [ABC-1](https://jira.example/browse/ABC-1)"
+    text = f"`server.py:7`, README.md, {POST_ID}; {own}; [README.md](https://elsewhere.example/x)"
     assert links.plain(links.linkify(text, post_url=PL)) == text
-    lean = slim._one({"id": "p", "message": links.linkify(text)}, {}, {})
+    lean = slim._one({"id": "p", "message": links.linkify(text, post_url=PL)}, {}, {})
     assert lean["message"] == text
+
+
+def test_task_rows_read_linked_prs():
+    """RT-6.15 + RT-6.14: a PR the agent links is still the task's PR."""
+    assert set(tasks._PR.findall("RESULT [MR !12](https://gl.example/g/r/-/merge_requests/12)")) \
+        == {"12"}
