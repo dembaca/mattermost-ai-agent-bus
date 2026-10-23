@@ -272,7 +272,8 @@ class WebSocketInbox:
                     post = post_raw
                 else:
                     continue
-                links.plain_post(post)  # RT-6.15: read links as bare references
+                # RT-6.15: the bus's permalinks as bare ids, odd links written out.
+                links.read_post(post, getattr(self.client, "permalink_base", ""))
                 channel_type = data.get("channel_type")
                 channel = None
                 cid = post.get("channel_id")

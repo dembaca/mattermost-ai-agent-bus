@@ -13,6 +13,11 @@ before 0.5.0 are described in the git history.
   agent writes as links itself: the bus carries many projects, repos and
   trackers, and only the agent knows which one a reference belongs to.
   Task rows also take a PR from `MR !n` and `/pull/`, `/merge_requests/` URLs.
+- **Odd links written out (anti-fooling, RT-6.15):** a link that is not what
+  it shows — another host than its label names, `user@` before the host, a
+  non-ASCII or punycode host, hidden characters, an unusual scheme, a fake
+  permalink — is shown as label plus full ASCII URL, in what the agent posts
+  and in what it reads. Inconspicuous links stay as they come.
 
 ## 0.31.0
 
