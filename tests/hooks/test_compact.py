@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 
-from conftest import ME
-
 COMPACT = "hooks/after-compact.sh"
 
 

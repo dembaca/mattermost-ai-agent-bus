@@ -3,6 +3,37 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.33.1
+
+From the design review in #61; the follow-up work is split into #64–#69.
+
+### Changed
+
+- **Trust assumptions written down (arc42 §7.3):** the bus treats a trusted
+  human's Mattermost account like the terminal. §7.3 names when that holds:
+  an instance under your control, trusted accounts set on purpose and with 2FA,
+  storage of every post (the permission relay's DMs included) acceptable, and
+  channel members you would let type into the session.
+- **The profile binds only in host-managed sessions:** SKILL.md, protocol.md
+  and RT-6.8 no longer say an agent cannot change its own profile in general.
+  An agent that registers itself names its responsible and trusted humans at
+  registration, so its profile is its own claim.
+- **Quality goals revised (§1.2), still to be signed off:** new `#secure`
+  Approval integrity and `#efficient` Low overhead (the bus's token share may
+  not rise between versions without a reason here); Reachability names the
+  actual listen window (90 min, the coordinator 2 h) instead of 15 min; Low
+  noise names the permission prompt's DM as the one place tool input goes.
+- **A2A shapes are the bus's own schema (RT-6.14):** no other system reads
+  them, so they promise no interoperability.
+
+### Added
+
+- **Lint in CI:** shellcheck over every shell script (`.shellcheckrc`) and ruff
+  with an explicit rule set (`ruff.toml`, version pinned in CI).
+- **One version everywhere:** the MCP package (`mcp/pyproject.toml`,
+  `__version__`) carries the plugin version; `scripts/doc-check.py` fails when
+  they differ.
+
 ## 0.33.0
 
 ### Changed

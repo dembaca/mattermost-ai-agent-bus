@@ -284,6 +284,7 @@ mm_lease_sec() {
 # about a live session, so it does not count. Reachable: not offline, a live
 # status, not 💤.
 # Crown: reachable with a live 👑 — that agent coordinates.
+# shellcheck disable=SC2034  # ROSTER_JSON is this function's output, read by the callers
 mm_roster_json() {
   local cid="$1" users now
   mm_api GET "/api/v4/users?in_channel=${cid}&per_page=200" || return 1

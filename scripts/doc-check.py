@@ -13,6 +13,7 @@ docs against each other. This checks what it cannot see:
   rt-ids     every RT-6.x referenced anywhere exists as a Section 6 scenario,
              and every scenario is referenced by at least one test in tests/ or mcp/tests/
   changelog  the plugin version has an entry in CHANGELOG.md
+  versions   the MCP package (pyproject.toml, __version__) has the plugin version
 
 Exit 0 when clean, 1 on any error. Stdlib only.
 """
@@ -36,6 +37,8 @@ SEC6 = ARC42 / "06-runtime-view.md"
 DOC_MAP = ROOT / "docs" / "doc-map.toml"
 PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
 CHANGELOG = ROOT / "CHANGELOG.md"
+PYPROJECT = ROOT / "mcp" / "pyproject.toml"
+PKG_INIT = ROOT / "mcp" / "src" / "mattermost_ai_agent_bus" / "__init__.py"
 
 # Files that may mention RT ids without being a reference (the checker itself).
 RT_SCAN_EXCLUDE = ("scripts/doc-check.py",)
@@ -153,6 +156,18 @@ def check_changelog() -> None:
         error(CHANGELOG, None, f"no entry for plugin version {version}")
 
 
+# --- versions -------------------------------------------------------------------
+
+def check_versions() -> None:
+    version = json.loads(PLUGIN.read_text())["version"]
+    pyproject = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
+    if pyproject != version:
+        error(PYPROJECT, None, f"version {pyproject}, plugin is {version}")
+    m = re.search(r'^__version__ = "([^"]+)"', PKG_INIT.read_text(), re.MULTILINE)
+    if not m or m.group(1) != version:
+        error(PKG_INIT, None, f"__version__ {m.group(1) if m else 'missing'}, plugin is {version}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--base", help="git ref to diff against for the doc map")
@@ -165,6 +180,7 @@ def main() -> int:
     check_blocks()
     check_rt_ids()
     check_changelog()
+    check_versions()
 
     gh = os.environ.get("GITHUB_ACTIONS") == "true"
     for path, line, msg in errors:

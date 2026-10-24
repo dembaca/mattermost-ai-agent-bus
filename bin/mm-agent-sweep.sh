@@ -110,6 +110,8 @@ for f in "$STATE_DIR"/*.env; do
     echo "would unregister ${name}  (from $(basename "$f"))"
     continue
   fi
+  # Each subshell loads one bot's session file, so it cannot leak into the next.
+  # shellcheck disable=SC2030,SC2031
   if err="$( (
       export MM_AGENT_SESSION_FILE="$f"
       mm_load_session_file || exit 1

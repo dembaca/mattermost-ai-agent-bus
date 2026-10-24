@@ -26,7 +26,8 @@ if [[ -z "$SID" ]]; then
   echo '{"continue":true}'
   exit 0
 fi
-export MM_AGENT_SESSION_FILE="$(mm_state_dir)/cursor-${SID}.env"
+MM_AGENT_SESSION_FILE="$(mm_state_dir)/cursor-${SID}.env"
+export MM_AGENT_SESSION_FILE
 
 # shellcheck disable=SC1090
 eval "$("${ROOT}/bin/mm-agent-session.sh" start "cursor-${SID:0:8}")"
