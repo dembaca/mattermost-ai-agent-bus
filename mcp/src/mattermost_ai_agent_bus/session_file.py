@@ -24,11 +24,31 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .client import SessionInfo
+
+DEFAULT_AGENT_PREFIX = "agent-"
+
+
+def agent_prefix(values: Mapping[str, str] | None = None) -> str:
+    """The registrar's bot username prefix (its BOT_USERNAME_PREFIX, arc42 §7.1).
+
+    MM_AGENT_PREFIX when set; else MM_BOT_USERNAME minus the name it was
+    registered with (MM_REG_BOT_NAME); else "agent-". ``values`` is the
+    environment by default, or a session file's keys. Must match
+    mm_agent_prefix in bin/mm-agent-lib.sh.
+    """
+    v = os.environ if values is None else values
+    if v.get("MM_AGENT_PREFIX"):
+        return v["MM_AGENT_PREFIX"]
+    user, name = v.get("MM_BOT_USERNAME", ""), v.get("MM_REG_BOT_NAME", "")
+    if name and len(user) > len(name) and user.endswith(name):
+        return user[: -len(name)]
+    return DEFAULT_AGENT_PREFIX
 
 
 def state_dir() -> Path:
@@ -63,6 +83,7 @@ def write(info: SessionInfo, team: str, channel: str) -> Path:
         f"MATTERMOST_URL={info.url}",
         f"MM_REG_BOT_NAME={info.name}",
         f"MM_BOT_USERNAME={info.username}",
+        f"MM_AGENT_PREFIX={info.prefix}",
         f"MM_BOT_USER_ID={info.user_id}",
         f"MM_BOT_TOKEN={info.bot_token}",
         f"MATTERMOST_TOKEN={info.bot_token}",

@@ -99,6 +99,12 @@ class SessionInfo:
     user_id: str
     bot_token: str
 
+    @property
+    def prefix(self) -> str:
+        """The registrar's username prefix, learned from this registration."""
+        return session_file.agent_prefix(
+            {"MM_BOT_USERNAME": self.username, "MM_REG_BOT_NAME": self.name})
+
 
 @dataclass
 class MattermostClient:
@@ -260,6 +266,7 @@ class MattermostClient:
         os.environ["MATTERMOST_URL"] = info.url
         os.environ["MM_REG_BOT_NAME"] = info.name
         os.environ["MM_BOT_USERNAME"] = info.username
+        os.environ["MM_AGENT_PREFIX"] = info.prefix
         os.environ["MM_BOT_USER_ID"] = info.user_id
         os.environ["MM_BOT_TOKEN"] = info.bot_token
         os.environ["MATTERMOST_TOKEN"] = info.bot_token
@@ -330,7 +337,7 @@ class MattermostClient:
                 if now - path.stat().st_mtime < keep:
                     continue
                 resp = await self._http().delete(
-                    f"{self.register_url}/{name.removeprefix('agent-')}",
+                    f"{self.register_url}/{name.removeprefix(session_file.agent_prefix(data))}",
                     headers={"Authorization": f"Bearer {token}"},
                 )
             except (OSError, httpx.HTTPError) as exc:
@@ -386,7 +393,7 @@ class MattermostClient:
         short = name or (self.session.name if self.session else os.environ.get("MM_REG_BOT_NAME"))
         if not short:
             raise RuntimeError("no agent name; pass name or call session_start first")
-        short = short.removeprefix("agent-")
+        short = short.removeprefix(session_file.agent_prefix())
         if not self.register_url:
             raise RuntimeError("MM_REGISTER_URL is required for session_end")
         bearer = self.reg_secret or self.token
@@ -417,7 +424,8 @@ class MattermostClient:
         Runs from the process exit handler, where no event loop is available.
         Session bots are ephemeral by design, so this covers both our own
         ``session_start`` and a bot the host registered and handed over via
-        MM_BOT_TOKEN; only ``agent-*`` bots are touched, never a human. Best
+        MM_BOT_TOKEN; only ``agent-*`` bots (the registrar's prefix,
+        session_file.agent_prefix) are touched, never a human. Best
         effort, never raises; returns a short outcome for the log.
         """
         if not self.token or not self.register_url:
@@ -450,9 +458,10 @@ class MattermostClient:
                     me.raise_for_status()
                     user = me.json()
                     username = user.get("username", "")
-                    if not username.startswith("agent-"):
+                    prefix = session_file.agent_prefix()
+                    if not username.startswith(prefix):
                         return f"{username!r} is not an agent bot; left alone"
-                    short = username.removeprefix("agent-")
+                    short = username.removeprefix(prefix)
                     # Gone before unregistered, so a failed delete does not
                     # leave a bot that looks available.
                     http.put(

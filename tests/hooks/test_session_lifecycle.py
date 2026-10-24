@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+
+from conftest import ROOT
 
 START = "adapters/corral/10-mm-session-start.sh"
 HOST = {"MM_BOT_TOKEN": None, "MM_BOT_USER_ID": None, "MM_TEAM_ID": None,
@@ -27,6 +31,7 @@ def test_project_channel_registers_and_contributes_no_secret(mm, run):
     assert env["MM_BOT_TOKEN"] == "bot-token-for-tests"
     assert env["MM_PROJECT_CHANNEL"] == "proj-x"
     assert "MM_REG_SECRET" not in env and "MM_REG_BOT_NAME" not in env
+    assert env["MM_AGENT_PREFIX"] == "agent-"
     assert "test-secret" not in r.stdout
     assert any(p.endswith("/members") for m, p, _ in mm.writes if m == "POST")
 
@@ -125,3 +130,31 @@ def test_agent_note_names_humans_without_mentioning_them(mm, run):
     assert "Responsible for you: dembaca." in note
     assert "Trusted humans on the bus: dembaca, kollegin." in note and "ask_human" in note
     assert "@dembaca" not in note and "@kollegin" not in note
+
+
+def test_the_registrar_prefix_reaches_the_sandbox(mm, run):
+    """RT-6.1 step 5, arc42 §7.1: only the host knows the registered name, so it
+    derives the prefix and hands it over; the name itself stays withheld."""
+    mm.prefix = "bot-"
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
+    assert r.code == 0, r.stderr
+    env = json.loads(r.stdout)["env"]
+    assert env["MM_AGENT_PREFIX"] == "bot-" and env["MM_BOT_USERNAME"].startswith("bot-")
+    assert "MM_REG_BOT_NAME" not in env
+    assert "MM_AGENT_PREFIX=bot-" in (run.state_dir / "sess-abc123.env").read_text()
+
+
+def test_shell_prefix_helper(tmp_path):
+    """arc42 §7.1: mm_agent_prefix, the same rule as session_file.agent_prefix."""
+    def prefix(**env: str) -> str:
+        return subprocess.run(
+            ["bash", "-c", f'source "{ROOT}/bin/mm-agent-lib.sh"; mm_agent_prefix'],
+            env={"PATH": os.environ["PATH"], "HOME": str(tmp_path), **env},
+            capture_output=True, text=True, timeout=10).stdout
+
+    assert prefix() == "agent-"
+    assert prefix(MM_BOT_USERNAME="bot-mac-1", MM_REG_BOT_NAME="mac-1") == "bot-"
+    assert prefix(MM_BOT_USERNAME="bot-mac-1", MM_REG_BOT_NAME="other") == "agent-"
+    assert prefix(MM_BOT_USERNAME="mac-1", MM_REG_BOT_NAME="mac-1") == "agent-"
+    assert prefix(MM_AGENT_PREFIX="ai-", MM_BOT_USERNAME="bot-mac-1",
+                  MM_REG_BOT_NAME="mac-1") == "ai-"

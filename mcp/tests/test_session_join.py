@@ -374,11 +374,11 @@ def test_no_take_over_without_a_session_id(monkeypatch):
     assert _adopting_client().adopt_sync() is None
 
 
-def _other_session(name, *, pid, age_sec):
+def _other_session(name, *, pid, age_sec, extra=""):
     d = session_file.state_dir()
     d.mkdir(parents=True, exist_ok=True)
     p = d / f"mcp-sid-{name}.env"
-    p.write_text(f"MM_REG_BOT_NAME={name}\nMM_BOT_TOKEN=tok-{name}\nMM_SESSION_PID={pid}\n")
+    p.write_text(f"MM_REG_BOT_NAME={name}\nMM_BOT_TOKEN=tok-{name}\nMM_SESSION_PID={pid}\n{extra}")
     import time
     t = time.time() - age_sec
     os.utime(p, (t, t))
@@ -427,3 +427,84 @@ async def test_session_start_returns_the_bot_it_already_has():
     info = await c.session_start("proj")
     assert info is INFO and c.reused
     assert ("POST", "/register/v1/agents") not in calls
+
+
+# --- any registrar prefix (arc42 §7.1) ---------------------------------------
+
+def test_agent_prefix_is_learned_from_the_registration():
+    """MM_AGENT_PREFIX wins; else the username minus the registered name; else agent-."""
+    ap = session_file.agent_prefix
+    assert ap({}) == "agent-"
+    assert ap({"MM_BOT_USERNAME": "bot-mac-1", "MM_REG_BOT_NAME": "mac-1"}) == "bot-"
+    assert ap({"MM_BOT_USERNAME": "bot-mac-1", "MM_REG_BOT_NAME": "other"}) == "agent-"
+    assert ap({"MM_BOT_USERNAME": "mac-1", "MM_REG_BOT_NAME": "mac-1"}) == "agent-"
+    assert ap({"MM_AGENT_PREFIX": "ai-", "MM_BOT_USERNAME": "bot-mac-1",
+               "MM_REG_BOT_NAME": "mac-1"}) == "ai-"
+
+
+def test_agent_prefix_reads_the_environment(monkeypatch):
+    monkeypatch.setenv("MM_BOT_USERNAME", "bot-mac-1")
+    monkeypatch.setenv("MM_REG_BOT_NAME", "mac-1")
+    assert session_file.agent_prefix() == "bot-"
+    monkeypatch.setenv("MM_AGENT_PREFIX", "ai-")
+    assert session_file.agent_prefix() == "ai-"
+
+
+def test_a_registration_hands_its_prefix_to_the_hooks():
+    c = MattermostClient(base_url="https://mm.example", token="t")
+    c._take(SessionInfo(url=INFO.url, name="mac-1", username="bot-mac-1",
+                        user_id="uid1", bot_token="tok"))
+    assert os.environ["MM_AGENT_PREFIX"] == "bot-"
+    assert session_file.parse(session_file.session_file_path())["MM_AGENT_PREFIX"] == "bot-"
+
+
+def test_shutdown_host_registered_session_with_another_prefix(monkeypatch):
+    """The host hands the prefix over; the registrar gets the bare name."""
+    seen = []
+
+    def handler(req):
+        seen.append((req.method, req.url.path))
+        if req.url.path == "/api/v4/users/me":
+            return httpx.Response(200, json={"id": "u9", "username": "bot-vtpm-b87c"})
+        return httpx.Response(204)
+
+    _patch_http(monkeypatch, handler)
+    c, _ = _shutdown_client(handler, own_session=False)
+    assert "left alone" in c.shutdown_sync()  # agent-: not a bus bot
+    monkeypatch.setenv("MM_AGENT_PREFIX", "bot-")
+    c, _ = _shutdown_client(handler, own_session=False)
+    assert c.shutdown_sync() == "unregistered vtpm-b87c"
+    assert seen[-1] == ("DELETE", "/register/v1/agents/vtpm-b87c")
+
+
+async def test_session_end_sends_the_bare_name_with_another_prefix(monkeypatch):
+    monkeypatch.setenv("MM_AGENT_PREFIX", "bot-")
+    deleted = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        deleted.append(req.url.path)
+        return httpx.Response(204)
+
+    c = MattermostClient(base_url="https://mm.example", token="t",
+                         register_url="https://mm.example/register/v1/agents")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await c.session_end("bot-mac-1")
+    assert deleted == ["/register/v1/agents/mac-1"]
+
+
+async def test_reaping_strips_the_prefix_the_session_file_names(monkeypatch):
+    """RT-6.10: each file's own prefix, whatever the registrar used."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-new")
+    gone = _other_session("bot-old", pid="999999", age_sec=2 * 86400,
+                          extra="MM_AGENT_PREFIX=bot-\n")
+    deleted = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        deleted.append(req.url.path)
+        return httpx.Response(204)
+
+    c = MattermostClient(base_url="https://mm.example",
+                         register_url="https://mm.example/register/v1/agents")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    assert await c.reap_stale_sessions() == ["bot-old"]
+    assert deleted == ["/register/v1/agents/old"] and not gone.exists()

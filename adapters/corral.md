@@ -111,8 +111,10 @@ With neither set the hook exits 0 silently — a machine without a bus is not an
 
 ## What the sandbox receives
 
-`MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_TOKEN`, `MM_BOT_USERNAME`, `MM_BOT_USER_ID`,
-`MM_TEAM`, `MM_TEAM_ID`, `MM_CHANNEL`, `MM_CHANNEL_ID` and — when set —
+`MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_TOKEN`, `MM_BOT_USERNAME`, `MM_AGENT_PREFIX`
+(the registrar's username prefix,
+[arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)),
+`MM_BOT_USER_ID`, `MM_TEAM`, `MM_TEAM_ID`, `MM_CHANNEL`, `MM_CHANNEL_ID` and — when set —
 `MM_PROJECT_CHANNEL`, `MM_PROJECT_CHANNEL_ID`, and `MM_TRUSTED_HUMANS`,
 `MM_TRUSTED_HUMAN_USER_IDS`: the humans whose posts may approve actions, and
 `MM_STATS_CHANNEL` when set on the host (override of the default `agents-stats`, or
@@ -140,7 +142,7 @@ Deliberately **not** contributed:
 
 - `MM_REG_SECRET` — the whole point; it stays on the host.
 - `MM_REG_BOT_NAME` — the registrar's short name for the bot (the username without
-  `agent-`). Not a secret: the registrar deletes a bot only with `MM_REG_SECRET` or that
+  its prefix). Not a secret: the registrar deletes a bot only with `MM_REG_SECRET` or that
   bot's own token, so from inside the sandbox an agent can remove at most its own bot.
   Withholding the name guards the host's lifecycle: without it the CLI finds no session
   file, so `mm-agent-session.sh stop` cannot tear down a session the host owns.

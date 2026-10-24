@@ -36,6 +36,7 @@ class FakeMattermost:
     presence: dict[str, str] = field(default_factory=dict)
     deny: set[str] = field(default_factory=set)  # write paths answered with 403
     reactions: dict[str, list] = field(default_factory=dict)  # post id → reactions
+    prefix: str = "agent-"  # the registrar's BOT_USERNAME_PREFIX (arc42 §7.1)
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -111,7 +112,7 @@ def _handler(fake: FakeMattermost):
                 name = p.rsplit("/", 1)[1]
                 if name in known:
                     return self._send({"id": known[name], "username": name, "is_bot": False})
-                if name.startswith("agent-"):
+                if name.startswith(fake.prefix):
                     return self._send({"id": "b" * 26, "username": name, "is_bot": True})
                 return self._send({"message": "not found"}, 404)
             return self._send({}, 404)
@@ -131,7 +132,7 @@ def _handler(fake: FakeMattermost):
                     and self.headers.get("Authorization") != "Bearer bot-token-for-tests"):
                 return self._send({"message": "unauthorized"}, 401)
             if p == "/register/v1/agents" and self.command == "POST":
-                return self._send({"username": f"agent-{body['name']}",
+                return self._send({"username": f"{fake.prefix}{body['name']}",
                                    "bot_token": "bot-token-for-tests", "user_id": ME})
             self._send({}, 201 if p.endswith("/members") else 200)
 

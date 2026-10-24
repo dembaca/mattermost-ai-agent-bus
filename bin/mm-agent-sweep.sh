@@ -19,9 +19,9 @@
 #   1. Session files whose process is gone. Each holds the bot's own token,
 #      which the registrar accepts for deleting that bot — so this needs no
 #      MM_REG_SECRET, the normal case on a gopass setup.
-#   2. With MM_REG_SECRET set, agent-* accounts with no session file at all.
-#      Required rather than convenient: a bot token targeting another agent is
-#      answered 401.
+#   2. With MM_REG_SECRET set, agent-* accounts (the registrar's prefix) with
+#      no session file at all. Required rather than convenient: a bot token
+#      targeting another agent is answered 401.
 #
 # Per-bot state files next to them (asks-, coord-, listen-, presence-, turn-, update-<uid>.env,
 # stats-<uid>.jsonl) hold no token and are not sessions. Last, the sweep removes
@@ -71,13 +71,29 @@ is_live() {
 STATE_RE='^(asks|coord|listen|presence|turn|update)-[a-z0-9]{26}\.env$|^stats-[a-z0-9]{26}\.jsonl$'
 is_state_file() { [[ "$(basename "$1")" =~ $STATE_RE ]]; }
 
+# The registrar's username prefix (arc42 §7.1): this shell's own bot tells it,
+# else the first session file that does, else the default "agent-".
+PREFIX="$(mm_agent_prefix)"
+if [[ -z "${MM_AGENT_PREFIX:-}" && -z "${MM_REG_BOT_NAME:-}" ]]; then
+  shopt -s nullglob
+  for f in "$STATE_DIR"/*.env; do
+    is_state_file "$f" && continue
+    [[ -n "$(field "$f" MM_AGENT_PREFIX)$(field "$f" MM_REG_BOT_NAME)" ]] || continue
+    PREFIX="$(MM_AGENT_PREFIX="$(field "$f" MM_AGENT_PREFIX)" \
+      MM_BOT_USERNAME="$(field "$f" MM_BOT_USERNAME)" \
+      MM_REG_BOT_NAME="$(field "$f" MM_REG_BOT_NAME)" mm_agent_prefix)"
+    break
+  done
+  shopt -u nullglob
+fi
+
 # --- 1. session files --------------------------------------------------------
 shopt -s nullglob
 for f in "$STATE_DIR"/*.env; do
   is_state_file "$f" && continue
   name="$(field "$f" MM_REG_BOT_NAME)"
   # Files from before MM_REG_BOT_NAME carry only the username.
-  [[ -n "$name" ]] || { name="$(field "$f" MM_BOT_USERNAME)"; name="${name#agent-}"; }
+  [[ -n "$name" ]] || { name="$(field "$f" MM_BOT_USERNAME)"; name="${name#"$PREFIX"}"; }
   [[ -n "$name" ]] || { note "skip $(basename "$f") (no bot name)"; continue; }
 
   pid="$(field "$f" MM_SESSION_PID)"
@@ -150,7 +166,7 @@ if [[ -n "${MM_REG_SECRET:-}" && -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]];
      [[ "$MM_API_STATUS" == "200" ]]; then
     while read -r uname; do
       [[ -n "$uname" ]] || continue
-      short="${uname#agent-}"
+      short="${uname#"$PREFIX"}"
       # Never touch a session we just classified as live, nor ourselves.
       skip=0
       for a in ${ACTIVE_NAMES+"${ACTIVE_NAMES[@]}"}; do
@@ -164,14 +180,14 @@ if [[ -n "${MM_REG_SECRET:-}" && -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]];
         echo "would unregister ${uname}  (orphan, no session file)"
         continue
       fi
-      if "$BIN/mm-agent-unregister.sh" "$short" >/dev/null 2>&1; then
+      if MM_AGENT_PREFIX="$PREFIX" "$BIN/mm-agent-unregister.sh" "$short" >/dev/null 2>&1; then
         note "unregistered ${uname}"
         removed=$((removed + 1))
       else
         note "FAILED ${uname}"
         kept=$((kept + 1))
       fi
-    done < <(jq -r '.[] | select(.username | startswith("agent-")) | select(.delete_at == 0) | .username' <<<"$MM_API_BODY")
+    done < <(jq -r --arg p "$PREFIX" '.[] | select(.username | startswith($p)) | select(.delete_at == 0) | .username' <<<"$MM_API_BODY")
   fi
 elif [[ "$APPLY" -eq 1 ]]; then
   note "(set MM_REG_SECRET to also sweep orphans that have no session file)"

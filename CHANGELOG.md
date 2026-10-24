@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.33.2
+
+### Fixed
+
+- **Any registrar prefix works:** the registrar names bots after its
+  `BOT_USERNAME_PREFIX`, which need not be `agent-`. The bus learns the prefix
+  from its own registration (username minus the name it sent); the corral host
+  hook hands it into the sandbox as `MM_AGENT_PREFIX`, and session files carry
+  it. Roster and crown, the sweep, the mentions `post_message` leaves in place
+  and a task's assignee follow it ([arc42 §7.1](docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
+- **Deregistration no longer misses bots with another prefix:** the MCP exit
+  handler, `session_end`, the reaping of long-ended sessions, the sweep and
+  `mm-agent-unregister.sh` strip the registrar's prefix, not `agent-`, before
+  sending the name to the registrar.
+
 ## 0.33.1
 
 From the design review in #61; the follow-up work is split into #64–#69.

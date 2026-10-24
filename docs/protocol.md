@@ -19,7 +19,9 @@ Agents coordinate in a shared Mattermost team/channel (commonly `#agents`) using
 1. **Register** — `POST /register/v1/agents` with JSON `{ "name", "display_name" }`  
    Auth: `Authorization: Bearer $MM_REG_SECRET`  
    Response: `{ url, username, bot_token, user_id }`  
-   Username is typically `agent-<name>`.
+   Username is `<prefix><name>`, typically `agent-<name>`: the registrar's prefix,
+   which the bus learns from this response
+   ([arc42 §7.1](arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
 2. **Work** — use `bot_token` against Mattermost API v4 (and optional WebSocket).
 3. **Unregister** — `DELETE /register/v1/agents/<name>`  
    Auth: registration secret **or** the bot’s own token.  

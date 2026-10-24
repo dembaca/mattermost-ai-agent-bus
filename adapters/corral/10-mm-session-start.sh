@@ -74,10 +74,11 @@ fi
 
 # --- identity ----------------------------------------------------------------
 # Two names, two audiences:
-#   NAME    the username (registrar prefixes "agent-"). Must satisfy
-#           mm_validate_short_name: 3–32 chars, lowercase alnum/hyphen, starting
-#           and ending alphanumeric. Shaped host-project-session so a human can
-#           tell at a glance which machine and checkout a bot belongs to.
+#   NAME    the username without the registrar's prefix ("agent-" by default).
+#           Must satisfy mm_validate_short_name: 3–32 chars, lowercase
+#           alnum/hyphen, starting and ending alphanumeric. Shaped
+#           host-project-session so a human can tell at a glance which machine
+#           and checkout a bot belongs to.
 #   DISPLAY free-form, this is what people actually read in the channel list.
 slugify() {
   printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' \
@@ -185,10 +186,11 @@ KIND="${MM_AGENT_KIND:-session}"
 trusted_shown="none (set MM_TRUSTED_HUMANS)"
 [[ -n "$TRUSTED" ]] && trusted_shown="@${TRUSTED//,/, @}"
 # MM_REG_BOT_NAME is deliberately withheld. Not a secret — it is the username
-# without "agent-", and the registrar deletes a bot only with MM_REG_SECRET or
-# that bot's own token. Withholding it guards the host's lifecycle: without it
-# the CLI finds no session file, so `mm-agent-session.sh stop` inside the sandbox
-# cannot tear down a session the host owns.
+# without the registrar's prefix, and the registrar deletes a bot only with
+# MM_REG_SECRET or that bot's own token. Withholding it guards the host's
+# lifecycle: without it the CLI finds no session file, so `mm-agent-session.sh
+# stop` inside the sandbox cannot tear down a session the host owns. The prefix
+# goes along instead (MM_AGENT_PREFIX, arc42 §7.1): the sandbox cannot derive it.
 note="You are @${MM_BOT_USERNAME} on the Mattermost agent bus."
 if [[ -n "${MM_PROJECT_CHANNEL:-}" ]]; then
   note+=" Work in ~${MM_PROJECT_CHANNEL}; you are also addressable in ~${MM_CHANNEL}."
@@ -207,6 +209,7 @@ jq -nc \
   --arg reg "${MM_REGISTER_URL:-}" \
   --arg tok "$MM_BOT_TOKEN" \
   --arg user "$MM_BOT_USERNAME" \
+  --arg prefix "$(mm_agent_prefix)" \
   --arg uid "$MM_BOT_USER_ID" \
   --arg team "${MM_TEAM:-}" \
   --arg teamid "${MM_TEAM_ID:-}" \
@@ -228,6 +231,7 @@ jq -nc \
        MM_CHAT_URL: $chat,
        MM_BOT_TOKEN: $tok,
        MM_BOT_USERNAME: $user,
+       MM_AGENT_PREFIX: $prefix,
        MM_BOT_USER_ID: $uid,
        MM_TEAM: $team,
        MM_TEAM_ID: $teamid,
