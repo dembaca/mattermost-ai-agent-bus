@@ -234,6 +234,26 @@ async def test_a_to_all_post_is_gated_like_a_broadcast(bus):
 
 
 @pytest.mark.asyncio
+async def test_only_an_agents_fyi_counts_and_never_against_the_gate(bus):
+    """RT-6.16 step 1, RT-6.14: props.a2a.intent = "fyi" holds an agent's post
+    for the digest. Anyone can write props: from anyone else it is ignored,
+    and the gate decides before it, so a stranger's fyi reply in the bot's
+    thread is gated all the same."""
+    fyi = {"a2a": {"v": 1, "kind": "done", "intent": "fyi"}}
+    bus.threads.add("t1")
+    e = await bus.arrive("p1", STRANGER, "DONE · nothing to see", root="t1", props=fyi)
+    assert e.gated == GATED
+    [item] = await server._event_items([e])
+    assert "intent" not in item and item["from_agent"] is False
+    for author, intent in ((HUMAN, None), (AGENT, "fyi")):
+        e = await bus.arrive("p2", author, "DONE · merged", root="t1", props=fyi)
+        assert not e.gated
+        [item] = await server._event_items([e])
+        assert item.get("intent") == intent, author
+        assert channel.wakes(item, coordinator=False, in_my_thread=True) is (intent is None)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("props", [{"a2a": {"v": 1, "to": "everyone"}}, {"a2a": "all"}, {"a2a": None}, {}])
 async def test_only_to_all_is_a_broadcast(bus, props):
     """RT-6.16 step 2: any other props leave the post as a plain one."""

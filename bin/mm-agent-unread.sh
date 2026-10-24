@@ -2,7 +2,7 @@
 # Is anyone waiting on this agent?
 #
 #   mm-agent-unread.sh count     # total unread mentions + DM messages (+ posts for all agents), one number
-#   mm-agent-unread.sh detail    # per-channel breakdown on stdout
+#   mm-agent-unread.sh detail    # per-channel breakdown on stdout, with how many are fyi
 #   mm-agent-unread.sh baseline  # mark every channel read: start from empty
 #
 # Run `baseline` once at session start. A fresh bot is not born with an empty
@@ -107,6 +107,7 @@ read -r TOTAL DETAIL <<<"$(jq -rs --argjson m "$MEMBERS" --argjson extra "$EXTRA
       | ($ch.type // "O") as $t
       | { id: $mem.channel_id,
           type: $t,
+          viewed: ($mem.last_viewed_at // 0),
           n: (if $t == "D" or $t == "G"
               then ((($ch.total_msg_count // 0) - ($mem.msg_count // 0)))
               else (($mem.mention_count // 0) + ($extra[$mem.channel_id] // 0)) end) }
@@ -115,12 +116,47 @@ read -r TOTAL DETAIL <<<"$(jq -rs --argjson m "$MEMBERS" --argjson extra "$EXTRA
   | "\($pending | map(.n) | add // 0) \($pending | @json)"
 ' <<<"$CHANNELS")"
 
+# The drain ranks what is pending (RT-6.14): per channel, how many of the
+# posts for this agent are an agent's fyi posts (props.a2a.intent; only an
+# agent's count, anyone can write props), which need no answer. For `detail`
+# only: one GET per pending channel (at most 5) and one user lookup.
+if [[ "$CMD" == "detail" && "${DETAIL:-[]}" != "[]" ]]; then
+  ME="${MM_BOT_USER_ID:-}"
+  NAME="${MM_BOT_USERNAME:-}"
+  if [[ -z "$ME" || -z "$NAME" ]] && mm_api GET "/api/v4/users/me" && [[ "$MM_API_STATUS" == "200" ]]; then
+    ME="$(jq -r '.id' <<<"$MM_API_BODY")"
+    NAME="$(jq -r '.username // empty' <<<"$MM_API_BODY")"
+  fi
+  floor_ms=$(( ($(date +%s) - 86400) * 1000 ))
+  FYI='[]'
+  while read -r cid type viewed; do
+    [[ "$cid" =~ ^[a-z0-9]{26}$ && "$viewed" =~ ^[0-9]+$ ]] || continue
+    since=$(( viewed > floor_ms ? viewed : floor_ms ))
+    mm_api GET "/api/v4/channels/${cid}/posts?since=${since}" && [[ "$MM_API_STATUS" == "200" ]] || continue
+    FYI="$(jq -c --argjson acc "$FYI" --arg c "$cid" --arg t "$type" --arg me "$ME" \
+        --arg name "$NAME" --argjson since "$since" '
+      $acc + [.posts // {} | .[] | select(.user_id != $me and (.type // "") == "" and .create_at > $since
+          and ((.props | objects | .a2a | objects | .intent) // "") == "fyi"
+          and ($t == "D" or $t == "G"
+               or (((.props | objects | .a2a | objects | .to) // "") == "all")
+               or ((.message // "") | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
+                   | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))))
+        | {c: $c, u: .user_id}]' <<<"$MM_API_BODY" 2>/dev/null || echo "$FYI")"
+  done < <(jq -r '.[:5][] | "\(.id) \(.type) \(.viewed)"' <<<"$DETAIL")
+  if [[ "$FYI" != "[]" ]]; then
+    AGENTS="$(mm_agent_ids "$(jq -c '[.[].u] | unique' <<<"$FYI")")"
+    DETAIL="$(jq -c --argjson f "$FYI" --argjson a "$AGENTS" '
+      map(.id as $c | .fyi = ([$f[] | select(.c == $c and (.u as $u | $a | index($u)) != null)] | length))' \
+      <<<"$DETAIL" 2>/dev/null || echo "$DETAIL")"
+  fi
+fi
+
 case "$CMD" in
   count)
     echo "${TOTAL:-0}"
     ;;
   detail)
-    echo "${DETAIL:-[]}" | jq -r '.[] | "\(.id)\t\(.type)\tpending=\(.n)"'
+    echo "${DETAIL:-[]}" | jq -r '.[] | "\(.id)\t\(.type)\tpending=\(.n)" + (if (.fyi // 0) > 0 then "\tfyi=\(.fyi)" else "" end)'
     ;;
   baseline)
     n=0

@@ -330,6 +330,66 @@ def test_drain_notices_a_post_to_all_agents(mm, run):
     assert run(STOP, MM_LISTEN_SEC="0").passed
 
 
+FYI = {"a2a": {"v": 1, "kind": "done", "intent": "fyi"}}
+PERSON = "q" * 26
+
+
+def fyi_authors(mm):
+    """OTHER is an agent; PERSON is a person who wrote the same props by hand."""
+    mm.users += [{"id": OTHER, "username": "agent-other", "is_bot": True},
+                 {"id": PERSON, "username": "agent-person", "is_bot": False}]
+
+
+def test_listener_holds_an_agents_fyi_post(mm, run):
+    """RT-6.14, RT-6.2 step 4: an agent's fyi post (DONE, RESULT, IDLE…) does not
+    wake one who only posted in its thread, nor the coordinator: it waits for
+    the digest. It wakes the author of the thread's root, who waits for it, and
+    whom it names. A person's props count for nothing."""
+    fyi_authors(mm)
+    mm.own_post("TASK · relay", 1000)
+    mine = mm.posts[0]["id"]
+    other_post(mm, "TASK · other work", user_id="y" * 26, age_s=60)
+    theirs = mm.posts[0]["id"]
+    mm.own_post("ACK", 2000)
+    mm.posts[0]["root_id"] = theirs
+    base = list(mm.posts)
+    cases = [
+        ({"root_id": theirs}, False), ({"root_id": mine}, True),
+        ({"root_id": theirs, "user_id": PERSON}, True),
+        ({"root_id": theirs, "message": "DONE · @agent-test rebase on main"}, True),
+    ]
+    for post, woken in cases:
+        mm.posts = list(base)
+        other_post(mm, **({"message": "DONE · merged", "props": FYI} | post))
+        assert ("for you" in listen(run, window=3).stdout) is woken, post
+    d = run.state_dir
+    (d / f"coord-{ME}.env").write_text(f"CROWN_UNTIL={int(time.time()) + 600}\n")
+    mm.posts = list(base)
+    other_post(mm, "IDLE · done: x", props=FYI)
+    assert "for you" not in listen(run, window=3).stdout
+    mm.posts = list(base)
+    other_post(mm, "IDLE · done: x", props=FYI)
+    r = listen(run, window=10, MM_LISTEN_DIGEST_SEC="1")
+    assert "1 post(s)" in r.stdout and "1 of them fyi" in r.stdout
+
+
+def test_drain_ranks_fyi_posts(mm, run):
+    """RT-6.14, RT-6.2 step 1: the drain says how many unread posts need action;
+    an agent's fyi post needs no answer. A person's props are not counted."""
+    fyi_authors(mm)
+    mm.unread_dm(3)
+    other_post(mm, "DONE · merged", props=FYI)
+    other_post(mm, "DONE · merged", props=FYI, user_id=PERSON)
+    other_post(mm, "can you review #5?")
+    r = run(STOP)
+    assert r.blocked and "3 unread message(s) on the Mattermost agent bus, 2 needing action" in r.reason
+    assert "fyi=1" in r.reason
+    mm.posts = []
+    other_post(mm, "can you review #5?")
+    r = run(STOP)
+    assert "3 unread message(s) on the Mattermost agent bus." in r.reason and "fyi" not in r.reason
+
+
 def test_trusted_humans_plain_post_is_for_the_coordinator(mm, run):
     """RT-6.2 step 4, RT-6.6: a human's post without a mention does not wake a
     member; the coordinator, which sees every post, routes it."""

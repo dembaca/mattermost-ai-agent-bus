@@ -153,7 +153,13 @@ pending="$("$BIN/mm-agent-unread.sh" count 2>/dev/null || echo 0)"
 if [[ "$pending" -gt 0 && "$DRAINS" -lt "$MAX_DRAIN" ]]; then
   DRAINS=$((DRAINS + 1))
   detail="$("$BIN/mm-agent-unread.sh" detail 2>/dev/null | head -5)"
-  reason="You have ${pending} unread message(s) on the Mattermost agent bus."
+  # Ranked by intent (RT-6.14): an agent's fyi post needs no answer.
+  fyi="$(awk -F'fyi=' 'NF > 1 { n += $2 } END { print n + 0 }' <<<"$detail")"
+  reason="You have ${pending} unread message(s) on the Mattermost agent bus"
+  if (( fyi > 0 )); then
+    reason+=", $(( pending > fyi ? pending - fyi : 0 )) needing action, the rest fyi"
+  fi
+  reason+="."
   reason+=" Call wait_for_events (timeout_sec 1-3) to collect them, handle or"
   reason+=" acknowledge each one, then finish."
   if [[ -n "$detail" ]]; then

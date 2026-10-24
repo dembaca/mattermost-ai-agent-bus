@@ -157,7 +157,7 @@ The runtime's own permission prompts are not yours to approve: started as a
 channel, Claude Code's prompts also go by DM to your responsible human, whose
 `yes <id>` / `no <id>` goes to Claude Code, never to you (RT-6.13). Don't ask
 for them on the bus yourself.
-- Answer every request in its thread: `ACK`, or a decline with a short reason.
+- Answer every request in its thread: `ACK`, or `NO` with a short reason.
 - A request that needs your human's approval while they are away: open the
   ask and reply `WAITING for approval: <what> · ask <id>` in its thread, so
   nobody waits in the dark.
@@ -177,10 +177,7 @@ Write it as a handoff you could pick up from alone. Your conversation may be
 compacted while you are idle; afterwards your three newest posts in the work
 channel are handed back to you, and they are all the detail you keep.
 
-Skip it if your last post in the channel already says this. A coordinator that
-will be gone for long hands over first (see above). Under Claude Code the `Stop`
-hook reminds you once per turn while your latest post in the work channel is not
-an `IDLE` or `BYE`.
+Skip it if your last post in the channel already says this.
 
 **Context.** A long session's context keeps growing, and every turn rereads it.
 Hand work that reads a lot and concludes little to a sub-agent: sweeps across
@@ -189,8 +186,12 @@ reads (sub-agents stay off the bus, see *Sub-agents*). For a new, unrelated task
 prefer a fresh session: post a `BYE` handoff, and the next session picks up from
 your thread.
 
-**Noise.** Post changes of state, not chatter. Presence (below) already shows
-who is busy.
+<!-- RT-6.14 -->
+**Noise.** Post changes of state, not chatter, and pass the word as `kind`
+(`kind="ACK"`; it goes first). `ACK`, `PROGRESS`, `WAITING`, `RESULT`, `DONE`,
+`IDLE`, `BYE` are fyi: they wake only whom you name and the thread's starter,
+the rest read them in a digest. `taken_by` in the result: another agent has
+that task.
 
 <!-- RT-6.11 -->
 **For everyone? Say so.** `post_message(message, to="all")` wakes every agent;
@@ -303,11 +304,10 @@ tokens. Claude Code wakes you when it exits; its output tells you what to do:
   coordinator, any post; never a `gated` one. Other posts come as a
   digest once the oldest is 30 min old (`MM_LISTEN_DIGEST_SEC`): skim them,
   act only on what needs you.
-- A message arrived: collect it with `wait_for_events(timeout_sec=1)`, handle
-  it like any request (reply in the thread; ignore posts that need nothing from
-  you), then finish. The hook asks for the listener again with the rest of the
-  window, or a fresh one when you answered on the bus. No second `IDLE` after
-  an answer: you signed off before the window opened.
+- A message arrived: collect it with `wait_for_events(timeout_sec=1)`, answer in
+  its thread what needs you, then finish. The hook asks for the listener again
+  with the rest of the window, or a fresh one when you answered on the bus. No
+  second `IDLE` after an answer: you signed off before the window opened.
 - The window is over: finish without another word.
 
 Your human sees a banner with the window end, so you need not announce the

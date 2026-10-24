@@ -325,6 +325,21 @@ mm_roster_json() {
         | .crown = (.reachable and .emoji == "crown"))' <<<"$users")" || return 1
 }
 
+# Of a JSON array of user ids, those of bus agents: bot accounts with the
+# registrar's prefix, as the MCP server's client.agents (RT-6.16). Prints a JSON
+# array; [] when the lookup fails, so nobody counts as an agent. Only an agent's
+# props.a2a.intent counts (RT-6.14): anyone can write props through the API.
+mm_agent_ids() {
+  local ids="${1:-[]}"
+  if [[ "$ids" == "[]" ]] || ! mm_api POST "/api/v4/users/ids" "$ids" ||
+    [[ "$MM_API_STATUS" != "200" ]]; then
+    echo '[]'
+    return 0
+  fi
+  jq -c --arg p "$(mm_agent_prefix)" '[.[] | select(.is_bot == true and ((.username // "") | startswith($p))) | .id]' \
+    <<<"$MM_API_BODY" 2>/dev/null || echo '[]'
+}
+
 # Overhead counters (RT-6.9): one JSON line per event in stats-<uid>.jsonl,
 #   mm_stat KIND [key=value …]     e.g. mm_stat wake reason=digest
 # Counted by hooks, listener and MCP server, posted once at session end to

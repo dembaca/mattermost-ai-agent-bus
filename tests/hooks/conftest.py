@@ -125,6 +125,8 @@ def _handler(fake: FakeMattermost):
             fake.writes.append((self.command, p, body))
             if p in fake.deny:
                 return self._send({"message": "no permission"}, 403)
+            if p == "/api/v4/users/ids":
+                return self._send([u for u in fake.users if u["id"] in body])
             if p == "/api/v4/users/status/ids":
                 return self._send([{"user_id": u, "status": fake.presence.get(u, "offline")}
                                    for u in body])

@@ -1,6 +1,7 @@
 """RT-6.12: bus events pushed into the session as a Claude Code channel."""
 
 import asyncio
+import time
 
 import anyio
 import pytest
@@ -256,6 +257,8 @@ def test_a_post_for_all_agents_says_so_in_the_push():
     meta = channel.notification(_post("main is red") | {"to": "all"})["meta"]
     assert meta["to"] == "all"
     assert "to" not in channel.notification(_post("main is red"))["meta"]
+    # RT-6.14 step 8: an fyi post that does wake (a mention, a DM) says it needs no answer.
+    assert channel.notification(_post("DONE", kind="dm") | {"intent": "fyi"})["meta"]["intent"] == "fyi"
 
 
 def test_wake_rules_match_the_listener():
@@ -277,6 +280,37 @@ def test_wake_rules_match_the_listener():
     assert wakes(_post("IDLE done x"), coordinator=True)
     assert not wakes(_post("IDLE done x"))
     assert not wakes(_post("mail me at a@all.example"))
+
+
+def test_an_fyi_post_wakes_only_whom_it_names():
+    """RT-6.14, RT-6.12 step 3: an agent's fyi post (DONE, RESULT, IDLE…) wakes
+    no coordinator and no one who only posted in the thread; it does wake
+    whom it names (mention, DM, to all) and the author of the thread's root."""
+    fyi = {"intent": "fyi", "from_agent": True}
+
+    def wakes(item, **kw):
+        return channel.wakes(item, coordinator=kw.get("coordinator", False),
+                             in_my_thread=kw.get("in_my_thread", False), my_root=kw.get("my_root", False))
+    assert not wakes(_post("IDLE · done") | fyi, coordinator=True)
+    assert not wakes(_post("DONE", root="r") | fyi, in_my_thread=True)
+    assert wakes(_post("DONE", root="r") | fyi, in_my_thread=True, my_root=True)
+    assert wakes(_post("DONE", root="r") | fyi, coordinator=True, in_my_thread=True, my_root=True)
+    for item in (_post("DONE", kind="mention"), _post("DONE", kind="dm"), _post("DONE") | {"to": "all"}):
+        assert wakes(item | fyi)
+    assert not wakes(_post("DONE", kind="dm") | fyi | {"gated": "from x"})
+    # Without an fyi intent (a person's post, older versions) nothing changes.
+    assert wakes(_post("DONE", root="r"), in_my_thread=True)
+    assert wakes(_post("IDLE · done"), coordinator=True)
+
+
+def test_the_digest_lists_fyi_posts_last():
+    """RT-6.14, RT-6.12 step 3: the digest says how many posts are fyi and
+    lists them after the ones that may need the agent."""
+    items = [_post("DONE · merged") | {"intent": "fyi"}, _post("who knows the CI token rules?")]
+    lines = channel.digest(items, time.time())["content"].splitlines()
+    assert "none addressed to you, the last 1 fyi." in lines[0]
+    assert "who knows" in lines[1] and "DONE" in lines[2]
+    assert "fyi" not in channel.digest(items[1:], time.time())["content"].splitlines()[0]
 
 
 @pytest.mark.anyio

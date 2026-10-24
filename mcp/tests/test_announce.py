@@ -77,7 +77,7 @@ async def test_announce_stores_the_card_in_props(monkeypatch):
     out = await server.announce(project="vtpm-mds", task="hogan", model="Claude Code · Opus 5.5",
                                 capabilities="Proxmox-Stack, VM 399", branch="#51")
     card = c.props["agent_card"]
-    assert c.props["a2a"] == {"v": 1, "kind": "hello"}
+    assert c.props["a2a"] == {"v": 1, "kind": "hello", "intent": "fyi"}
     assert card["name"] == "agent-vtpm-hogan-1" and card["description"] == "hogan"
     assert card["skills"] == [{"id": "proxmox-stack", "name": "Proxmox-Stack"},
                               {"id": "vm-399", "name": "VM 399"}]
