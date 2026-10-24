@@ -53,6 +53,28 @@ def test_report_aggregates_per_version(mm, run):
 
 
 
+def test_the_prompt_hook_names_the_transcript(mm, run):
+    """RT-6.9 step 1: where Claude Code books the tokens, for the summary."""
+    run(PROMPT, stdin=json.dumps({"prompt": "hi", "transcript_path": "/x/s.jsonl"}))
+    assert {"k": "transcript", "path": "/x/s.jsonl"}.items() <= events(run)[-1].items()
+
+
+def test_report_shows_tokens_per_version(mm, run):
+    """RT-6.9 step 3: sessions with token counts get a second table, in
+    input-token equivalents."""
+    tok = {"req": 100, "bus_req": 10, "fixed": 1500,
+           "all": {"in": 0, "read": 1_000_000, "w5m": 0, "w1h": 0, "out": 20_000},
+           "bus": {"in": 0, "read": 100_000, "w5m": 0, "w1h": 0, "out": 2_000}}
+    mm.posts[:0] = [{"id": "s-tok", "user_id": "x" * 26, "create_at": 1, "message": "STATS " + json.dumps(
+        {"v": "0.32.0", "min": 120, "turns": 5, "static": 28000, "tok": tok})}]
+    rows = {r["version"]: r for r in json.loads(run(REPORT, "report", "agents-stats", "--json").stdout)}
+    t = rows["0.32.0"]["tok"]
+    assert (t["all"], t["bus"], t["bus_share_pct"]) == (200_000, 20_000, 10.0)
+    assert (t["req_per_h"], t["bus_req_per_h"], t["bus_per_h"], t["fixed"]) == (50, 5.0, 10_000, 1500)
+    out = run(REPORT, "report", "agents-stats").stdout
+    assert "bus tok/h" in out and "10%" in out
+
+
 def test_off_counts_nothing(mm, run):
     run(PROMPT, MM_STATS_CHANNEL="off")
     assert events(run) == []

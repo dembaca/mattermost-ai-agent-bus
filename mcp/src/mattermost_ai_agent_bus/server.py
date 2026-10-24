@@ -18,7 +18,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import a2a, asks, channel, lease, permission, slim, stats, tasks
+from . import a2a, asks, channel, lease, overhead, permission, slim, stats, tasks
 from .client import MattermostClient
 from .websocket_inbox import WebSocketInbox
 
@@ -911,8 +911,8 @@ async def _run_as_channel() -> None:
 _exit_handled = False
 
 
-def _static_chars() -> int:
-    """Skill + instructions + tool docs: in the context of every turn."""
+def _fixed() -> overhead.Fixed:
+    """Instructions, tool docs and skill, each in characters (RT-6.9)."""
     skill = Path(__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
     tools = (bus_info, announce, get_me, post_message, reply_in_thread, ask_human,
              resolve_ask, coordinator, get_thread, list_recent, wait_for_events)
@@ -920,8 +920,18 @@ def _static_chars() -> int:
         tools += (session_start, session_end)
     if PUSH:
         tools += (channel_ok,)
-    docs = [f.__doc__ for f in tools]
-    return stats.static_chars(skill, mcp.instructions or "", docs)
+    try:
+        skill_chars = len(skill.read_text())
+    except OSError:
+        skill_chars = 0
+    return overhead.Fixed(len(mcp.instructions or ""), sum(len(f.__doc__ or "") for f in tools),
+                          skill_chars)
+
+
+def _static_chars() -> int:
+    """Skill + instructions + tool docs: in the context of every turn."""
+    f = _fixed()
+    return f.instructions + f.tools + f.skill
 
 
 def _cleanup_on_exit() -> None:
@@ -938,7 +948,7 @@ def _cleanup_on_exit() -> None:
         log.info("exit cleanup: %s", _client.shutdown_sync())
         return
     try:  # before unregistering: the bot must still exist to post
-        data = stats.summary(VERSION, _static_chars())
+        data = stats.summary(VERSION, _static_chars(), _fixed())
         if data:
             log.info("overhead stats: %s", stats.post_sync(_client, data))
     except Exception as exc:  # noqa: BLE001 — never block teardown

@@ -17,6 +17,10 @@ mm_load_hook_session || true
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 
 mm_stat turn
+# Where Claude Code books each request's tokens: the MCP server measures the
+# bus's share from it at session end (RT-6.9).
+transcript="$(jq -r '.transcript_path // ""' <<<"${MM_HOOK_INPUT:-}" 2>/dev/null)" || transcript=""
+[[ -z "$transcript" ]] || mm_stat transcript "path=$transcript"
 
 # A new turn: forget what the Stop hook checked in the last one.
 state="$(mm_turn_state_file 2>/dev/null)" && rm -f "$state"

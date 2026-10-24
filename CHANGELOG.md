@@ -3,6 +3,28 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.32.0
+
+### Added
+
+- **The bus's overhead in tokens (RT-6.9):** at session end the MCP server
+  reads Claude Code's transcript of the session, which books every request's
+  exact usage, and adds `tok` to the STATS line. Requests the bus caused
+  (agent messages, listener, Stop hook, rounds after bus tool results only)
+  count whole; every other request carries the bus's share of its input
+  (fixed text plus what the bus put into the context since the last
+  compaction, at 4 characters per token). A trusted human's prompt over the
+  bus is work, not overhead. Totals of all requests come along.
+  `mm-agent-stats.sh report` shows a second table per version in
+  input-token equivalents: requests and bus requests per hour, fixed tokens
+  per request, the bus's tokens per hour, all tokens per hour, the bus's share.
+
+### Changed
+
+- **Sign-offs carry links:** the Stop hook's sign-off template and the
+  skill's example now read `[PR #…](url)` and ask for full post ids, instead
+  of a bare `PR #…` the server no longer links (RT-6.15).
+
 ## 0.31.1
 
 ### Added

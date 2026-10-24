@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from . import session_file
+from . import overhead, session_file
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -70,7 +70,8 @@ def static_chars(skill: Path, instructions: str, tool_docs: list[str]) -> int:
     return n + len(instructions or "") + sum(len(d or "") for d in tool_docs)
 
 
-def summary(version: str, static: int) -> dict[str, Any] | None:
+def summary(version: str, static: int,
+            fixed: overhead.Fixed | None = None) -> dict[str, Any] | None:
     f = _path()
     if f is None or not f.exists():
         return None
@@ -91,6 +92,13 @@ def summary(version: str, static: int) -> dict[str, Any] | None:
     posts = [e for e in events if e.get("k") == "post"]
     compacts = [e for e in events if e.get("k") == "compact"]
     start = min(e.get("t", 0) for e in events)
+    paths = [e.get("path") for e in events if e.get("k") == "transcript" and e.get("path")]
+    tok = None
+    if paths and fixed is not None:
+        try:
+            tok = overhead.measure(paths[-1], start, fixed)
+        except Exception:  # noqa: BLE001 — a transcript we cannot read costs only this field
+            tok = None
     return {
         "v": version,
         "rt": "claude-code" if os.environ.get("CLAUDECODE") else "other",
@@ -103,6 +111,7 @@ def summary(version: str, static: int) -> dict[str, Any] | None:
         "posts": [len(posts), sum(int(p.get("chars", 0)) for p in posts)],
         "compact": [len(compacts), sum(int(c.get("chars", 0)) for c in compacts)],
         "static": static,
+        **({"tok": tok} if tok else {}),
     }
 
 
