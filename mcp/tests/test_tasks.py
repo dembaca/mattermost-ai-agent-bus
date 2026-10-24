@@ -99,6 +99,20 @@ def test_done_is_listed_once_and_cancel_never():
     assert tasks.build(posts[:3], NAMES, now_ms=NOW + 2 * 86_400_000) == []
 
 
+def test_the_mention_follows_the_registrar_prefix(monkeypatch):
+    """RT-6.14 step 3, arc42 §7.1: with prefix bot- a @bot-… mention names the
+    assignee, so another agent's ACK does not take the task."""
+    monkeypatch.setenv("MM_AGENT_PREFIX", "bot-")
+    names = {LEIT: "bot-leit", A: "bot-a", B: "bot-b"}
+    posts = [
+        P("t", LEIT, "TASK · docs for Cursor · @bot-a", at=0),
+        P("1", B, "ACK", root="t", at=1),
+        P("2", A, "ACK", root="t", at=2),
+    ]
+    [row] = tasks.build(posts, names, now_ms=NOW)
+    assert row["agent"] == "bot-a"
+
+
 def test_only_the_task_thread_moves_the_task():
     """RT-6.14 step 3: what an agent posts in its HELLO thread may be about
     its next work (found live: a PROGRESS on new work reopened a task in

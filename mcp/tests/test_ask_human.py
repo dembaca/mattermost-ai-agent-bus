@@ -272,3 +272,24 @@ async def test_one_question_per_ask(monkeypatch):
     assert c.posted == []
     await server.ask_human(need="Merge #62 now?", context="Review passed; CI is green.")
     assert len(c.posted) == 1
+
+
+class _AskedClient(_NamingClient):
+    """Remembers which names it was asked about."""
+
+    asked: set = set()
+
+    async def humans_among(self, names):
+        self.asked = set(names)
+        return await super().humans_among(names)
+
+
+@pytest.mark.asyncio
+async def test_agents_stay_mentioned_with_any_registrar_prefix(monkeypatch):
+    """RT-6.11, arc42 §7.1: with prefix bot- a bot-… agent is never looked up
+    as a person and keeps its mention; a human's name still turns plain."""
+    monkeypatch.setenv("MM_AGENT_PREFIX", "bot-")
+    c = _AskedClient()
+    out, humans = await server._unmention(c, "@bot-mac-1 please review, @dembaca FYI")
+    assert out == "@bot-mac-1 please review, dembaca FYI" and humans == ["dembaca"]
+    assert c.asked == {"dembaca"}

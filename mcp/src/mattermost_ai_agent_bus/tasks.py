@@ -13,7 +13,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from . import a2a, asks
+from . import a2a, asks, session_file
 
 WINDOW_DAYS = 14
 DONE_KEEP_MS = 24 * 3600 * 1000
@@ -27,12 +27,16 @@ _ASSIGNEE = frozenset({"ACK", "PROGRESS", "BLOCKED", "WAITING", "RESULT", "DONE"
 _CLOSERS = frozenset({"DONE", "CANCEL"})
 _TAKES = frozenset({"ACK", "PROGRESS", "RESULT"})
 
-_MENTION = re.compile(r"@(agent-[\w.-]*\w)")
 _PR = re.compile(r"(?:\bPR\s*#|\bMR\s*!|/pull/|/merge_requests/)(\d+)", re.I)
 _ISSUE = re.compile(r"(?<![\w/&])#(\d+)\b")
 _SPEC = re.compile(r"\bRT-\d+\.\d+\b|\b[A-Z][A-Z0-9]+-\d+\b(?!\.\d)")
 _BRANCH = re.compile(r"\bbranch(?:/PR)?:?\s+([\w.]*[-/][\w./-]*\w)")
 _LEAD = re.compile(r"^[^\w@#]*(TASK|DELEGATE)\b[\s·:–-]*")
+
+
+def _mentions(message: str) -> list[str]:
+    """Agents a post @-mentions: names with the registrar's prefix (arc42 §7.1)."""
+    return re.findall(rf"@({re.escape(session_file.agent_prefix())}[\w.-]*\w)", message)
 
 
 def since_ms(now: float | None = None) -> int:
@@ -102,7 +106,7 @@ def build(
                 "task": p["id"], "title": title(msg), "by": who(p), "agent": None,
                 "status": "open", "spec": ", ".join(dict.fromkeys(refs).keys()) or None,
                 "pr": None, "branch": None, "updated": p.get("create_at", 0),
-                "_candidates": [m for m in _MENTION.findall(msg) if m != who(p)],
+                "_candidates": [m for m in _mentions(msg) if m != who(p)],
             }
     for p in order:
         if p.get("root_id") in tasks:

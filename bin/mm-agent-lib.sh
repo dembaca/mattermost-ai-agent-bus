@@ -172,6 +172,21 @@ mm_validate_short_name() {
   fi
 }
 
+# The registrar's bot username prefix (its BOT_USERNAME_PREFIX, arc42 §7.1):
+# MM_AGENT_PREFIX when set, else MM_BOT_USERNAME minus the name it was registered
+# with (MM_REG_BOT_NAME), else "agent-". Must match agent_prefix() in
+# mcp/.../session_file.py.
+mm_agent_prefix() {
+  local user="${MM_BOT_USERNAME:-}" name="${MM_REG_BOT_NAME:-}"
+  if [[ -n "${MM_AGENT_PREFIX:-}" ]]; then
+    printf '%s' "$MM_AGENT_PREFIX"
+  elif [[ -n "$name" && "$user" == *"$name" && ${#user} -gt ${#name} ]]; then
+    printf '%s' "${user%"$name"}"
+  else
+    printf 'agent-'
+  fi
+}
+
 # Load whitelisted KEY=VALUE lines from a session file into the environment.
 mm_load_env_file() {
   local f="$1"
@@ -182,7 +197,7 @@ mm_load_env_file() {
     local key="${line%%=*}"
     local val="${line#*=}"
     case "$key" in
-      MM_CHAT_URL|MM_REG_BOT_NAME|MM_BOT_USERNAME|MM_BOT_USER_ID|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_TEAM|MM_CHANNEL)
+      MM_CHAT_URL|MM_REG_BOT_NAME|MM_BOT_USERNAME|MM_AGENT_PREFIX|MM_BOT_USER_ID|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_TEAM|MM_CHANNEL)
         export "$key=$val"
         ;;
     esac
@@ -277,19 +292,19 @@ mm_lease_sec() {
   printf '%s' "$s"
 }
 
-# The agent-* bots in a channel with what the lease rules need, oldest first,
-# into ROSTER_JSON: [{id, username, create_at, presence, emoji, text, crown,
-# reachable}]. A custom status counts while its lease has not expired; one
-# without an expiry predates the lease (or was set by hand) and proves nothing
-# about a live session, so it does not count. Reachable: not offline, a live
-# status, not 💤.
+# The agent-* bots (the registrar's prefix, mm_agent_prefix) in a channel with
+# what the lease rules need, oldest first, into ROSTER_JSON: [{id, username,
+# create_at, presence, emoji, text, crown, reachable}]. A custom status counts
+# while its lease has not expired; one without an expiry predates the lease (or
+# was set by hand) and proves nothing about a live session, so it does not
+# count. Reachable: not offline, a live status, not 💤.
 # Crown: reachable with a live 👑 — that agent coordinates.
 # shellcheck disable=SC2034  # ROSTER_JSON is this function's output, read by the callers
 mm_roster_json() {
   local cid="$1" users now
   mm_api GET "/api/v4/users?in_channel=${cid}&per_page=200" || return 1
   [[ "$MM_API_STATUS" == "200" ]] || return 1
-  users="$(jq -c '[.[] | select(.username | startswith("agent-"))
+  users="$(jq -c --arg p "$(mm_agent_prefix)" '[.[] | select(.username | startswith($p))
                        | select(.delete_at == 0)] | sort_by(.create_at)' <<<"$MM_API_BODY")" || return 1
   if [[ "$(jq 'length' <<<"$users")" -eq 0 ]]; then
     ROSTER_JSON="[]"
@@ -411,6 +426,7 @@ mm_emit_session_exports() {
 export MM_CHAT_URL=$(printf '%q' "${MM_CHAT_URL:-}")
 export MM_REG_BOT_NAME=$(printf '%q' "${MM_REG_BOT_NAME:-}")
 export MM_BOT_USERNAME=$(printf '%q' "${MM_BOT_USERNAME:-}")
+export MM_AGENT_PREFIX=$(printf '%q' "$(mm_agent_prefix)")
 export MM_BOT_USER_ID=$(printf '%q' "${MM_BOT_USER_ID:-}")
 export MM_BOT_TOKEN=$(printf '%q' "${MM_BOT_TOKEN:-}")
 export MATTERMOST_URL=$(printf '%q' "${MATTERMOST_URL:-${MM_CHAT_URL:-}}")
@@ -429,6 +445,7 @@ mm_write_session_file() {
 MM_CHAT_URL=${MM_CHAT_URL:-}
 MM_REG_BOT_NAME=${MM_REG_BOT_NAME:-}
 MM_BOT_USERNAME=${MM_BOT_USERNAME:-}
+MM_AGENT_PREFIX=$(mm_agent_prefix)
 MM_BOT_USER_ID=${MM_BOT_USER_ID:-}
 MM_BOT_TOKEN=${MM_BOT_TOKEN:-}
 MATTERMOST_URL=${MATTERMOST_URL:-${MM_CHAT_URL:-}}

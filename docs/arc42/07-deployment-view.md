@@ -24,6 +24,16 @@ fail-open process next to the agent realises `#reliable`.
 | Mattermost server | Remote, HTTPS | Channels, posts, presence, WebSocket | Shared by all agents |
 | Registrar | Remote, HTTPS (`…/register/v1/agents`) | Creates and deletes `agent-*` bots | Shared |
 
+**Bot username prefix.** The registrar names each bot `<prefix><name>`, the prefix
+from its `BOT_USERNAME_PREFIX` (default `agent-`); `agent-*` in these docs stands
+for whatever prefix it uses. The bus tells its own bots by it (roster and crown, the
+sweep, the mentions it leaves in place, a task's assignee) and strips it to
+unregister. It learns the prefix from its own registration: the username the
+registrar returns minus the name it sent. A host-managed sandbox never sees that
+name, so the host session hooks hand the prefix in as `MM_AGENT_PREFIX`; the session
+files carry it for the turn hooks and the listener. With neither, `agent-`. It is
+derived, not a setting.
+
 ### Software-to-Infrastructure Mapping
 
 | Building Block (Section 5) | Deployed On | Instances | Notes |

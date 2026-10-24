@@ -16,7 +16,8 @@ if [[ -z "$NAME" ]]; then
   echo "  or set MM_REG_BOT_NAME; requires MM_REG_SECRET or MM_BOT_TOKEN" >&2
   exit 2
 fi
-NAME="${NAME#agent-}"
+PREFIX="$(mm_agent_prefix)"
+NAME="${NAME#"$PREFIX"}"
 
 if [[ -z "$TOKEN" ]]; then
   echo "MM_REG_SECRET or MM_BOT_TOKEN required" >&2
@@ -36,4 +37,4 @@ if [[ "$CODE" != "200" && "$CODE" != "204" && "$CODE" != "404" ]]; then
   echo "unregister failed http=${CODE}: ${BODY}" >&2
   exit 1
 fi
-echo "unregistered agent-${NAME} (http=${CODE})"
+echo "unregistered ${PREFIX}${NAME} (http=${CODE})"

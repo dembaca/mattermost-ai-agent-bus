@@ -9,13 +9,13 @@ DEAD_PID = "999999"  # far above any pid in use on a test machine
 
 
 def session(run, name: str, *, token: str = "bot-token-for-tests", pid: str = DEAD_PID,
-            legacy: bool = False) -> str:
+            legacy: bool = False, prefix: str = "agent-") -> str:
     d = run.state_dir
     d.mkdir(parents=True, exist_ok=True)
     f = d / f"{name}.env"
     lines = ["# ephemeral session — do not commit",
              f"{'MM_BOT_NAME' if legacy else 'MM_REG_BOT_NAME'}={name}",
-             f"MM_BOT_USERNAME=agent-{name}", f"MM_BOT_TOKEN={token}",
+             f"MM_BOT_USERNAME={prefix}{name}", f"MM_BOT_TOKEN={token}",
              f"MM_SESSION_PID={pid}"]
     f.write_text("\n".join(lines) + "\n")
     return f.name
@@ -130,3 +130,15 @@ def test_a_bot_kept_for_claude_continue_waits_out_the_grace_period(mm, run):
     assert (run.state_dir / recent).exists() and not (run.state_dir / old).exists()
     forced = run(SWEEP, "--apply", "--force", MM_BOT_TOKEN=None)
     assert "unregistered hogan-vtpm-aaa1" in forced.stderr
+
+
+def test_orphans_are_found_by_the_registrar_prefix(mm, run):
+    """arc42 §7.1: without a bot of its own the sweep learns the prefix from a
+    session file; only bots with that prefix can be orphans."""
+    session(run, "live-one", pid=str(os.getpid()), prefix="bot-")
+    mm.agent("o" * 26, "bot-orphan", 1000)
+    mm.agent("f" * 26, "agent-foreign", 1000)
+    r = run(SWEEP, MM_REG_SECRET="s")
+    assert "would unregister bot-orphan" in r.stdout and "agent-foreign" not in r.stdout
+    run(SWEEP, "--apply", MM_REG_SECRET="s")
+    assert deletes(mm) == ["/register/v1/agents/orphan"]

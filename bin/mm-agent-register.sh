@@ -64,6 +64,9 @@ fi
 export MM_CHAT_URL="$URL"
 export MM_REG_BOT_NAME="$NAME"
 export MM_BOT_USERNAME="$USER_NAME"
+# The registrar's username prefix, learned from this registration (arc42 §7.1).
+MM_AGENT_PREFIX="$(MM_AGENT_PREFIX='' mm_agent_prefix)"
+export MM_AGENT_PREFIX
 export MM_BOT_USER_ID="$USER_ID"
 export MM_BOT_TOKEN="$BOT_TOKEN"
 export MATTERMOST_URL="$URL"

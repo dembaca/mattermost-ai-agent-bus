@@ -36,6 +36,7 @@ if [[ -n "${CURSOR_ENV_FILE:-}" ]]; then
     echo "MM_CHAT_URL=${MM_CHAT_URL}"
     echo "MM_REG_BOT_NAME=${MM_REG_BOT_NAME}"
     echo "MM_BOT_USERNAME=${MM_BOT_USERNAME}"
+    echo "MM_AGENT_PREFIX=${MM_AGENT_PREFIX}"
     echo "MM_BOT_USER_ID=${MM_BOT_USER_ID}"
     echo "MM_BOT_TOKEN=${MM_BOT_TOKEN}"
     echo "MATTERMOST_URL=${MATTERMOST_URL}"

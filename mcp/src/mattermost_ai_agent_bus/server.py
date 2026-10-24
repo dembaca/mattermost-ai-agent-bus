@@ -18,7 +18,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import a2a, asks, channel, lease, overhead, permission, slim, stats, tasks
+from . import a2a, asks, channel, lease, overhead, permission, session_file, slim, stats, tasks
 from .client import MattermostClient
 from .websocket_inbox import WebSocketInbox
 
@@ -363,7 +363,8 @@ async def _unmention(client: MattermostClient, text: str) -> tuple[str, list[str
     names stay as written. Fails open: if the lookup fails, the text is unchanged.
     """
     names = {m.group(1) for m in _MENTION_RE.finditer(text)}
-    names = {n for n in names if n.lower() not in _BROADCAST and not n.lower().startswith("agent-")}
+    agent = session_file.agent_prefix().lower()
+    names = {n for n in names if n.lower() not in _BROADCAST and not n.lower().startswith(agent)}
     if not names:
         return text, []
     try:

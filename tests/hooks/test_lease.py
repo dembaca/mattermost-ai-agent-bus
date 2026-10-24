@@ -126,3 +126,21 @@ def test_roster_json_for_the_mcp_server(mm, run):
     assert [(r["username"], r["coordinator"]) for r in rows] == [
         ("agent-young", True), ("agent-old", False)]
     assert rows[1]["emoji"] == "hammer_and_wrench"
+
+
+def test_roster_and_crown_follow_the_registrar_prefix(mm, run):
+    """RT-6.6, arc42 §7.1: the bus's bots are the ones with the registrar's
+    prefix, handed in as MM_AGENT_PREFIX or derived from the session's own bot."""
+    mm.agent(OLDER, "bot-old", 1000, "hammer_and_wrench")
+    mm.agent(YOUNGER, "bot-young", 3000, "crown")
+    mm.agent("x" * 26, "agent-other", 2000, "hammer_and_wrench")
+
+    def names(**env) -> list[str]:
+        return [l.split("\t")[0] for l in run(ROSTER, **env).stdout.splitlines()]
+
+    assert names(MM_AGENT_PREFIX="bot-") == ["bot-young", "bot-old"]
+    assert run(LEASE, "who", MM_AGENT_PREFIX="bot-").stdout.strip() == "bot-young"
+    derived = {"MM_BOT_USERNAME": "bot-me", "MM_REG_BOT_NAME": "me"}
+    assert run(LEASE, "who", **derived).stdout.strip() == "bot-young"
+    assert names() == ["agent-other"]
+    assert run(LEASE, "who").stdout.strip() == "agent-other"
