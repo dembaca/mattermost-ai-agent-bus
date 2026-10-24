@@ -47,7 +47,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      # Warnings and errors only: info and style notes differ between
+      # shellcheck versions, and the runner's is not the one on our machines.
       - name: shell scripts (shellcheck, .shellcheckrc)
-        run: git ls-files -z '*.sh' '*.sh.example' | xargs -0 shellcheck
+        run: git ls-files -z '*.sh' '*.sh.example' | xargs -0 shellcheck -S warning
       - name: Python (ruff, ruff.toml)
         run: uvx ruff@0.17.2 check

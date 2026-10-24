@@ -28,7 +28,7 @@ python3 scripts/arc42-lint/arc42-lint.py docs/arc42 --strict
 python3 scripts/doc-check.py --base origin/main
 uv run --directory mcp pytest -q
 uv run --directory mcp pytest -q ../tests/hooks
-git ls-files -z '*.sh' '*.sh.example' | xargs -0 shellcheck
+git ls-files -z '*.sh' '*.sh.example' | xargs -0 shellcheck -S warning
 uvx ruff@0.17.2 check
 ```
 

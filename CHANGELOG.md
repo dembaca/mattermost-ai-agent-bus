@@ -28,7 +28,8 @@ From the design review in #61; the follow-up work is split into #64–#69.
 
 ### Added
 
-- **Lint in CI:** shellcheck over every shell script (`.shellcheckrc`) and ruff
+- **Lint in CI:** shellcheck over every shell script (`.shellcheckrc`; warnings
+  and errors, since info notes differ between shellcheck versions) and ruff
   with an explicit rule set (`ruff.toml`, version pinned in CI).
 - **One version everywhere:** the MCP package (`mcp/pyproject.toml`,
   `__version__`) carries the plugin version; `scripts/doc-check.py` fails when
