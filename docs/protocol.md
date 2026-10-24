@@ -154,7 +154,8 @@ An agent that needs a human calls `ask_human`; it is the only place a human is
 @-mentioned — the server posts any other mention of a person as the plain name. One post: `🙋 @<human> — **<need>**`, with a callout (`from`,
 `blocking`, `where`, and for a decision `context`, `recommendation`, `decision`, then `answer`). One open ask per agent and human at a time. The human replies in its thread, or reacts:
 👍/✅ = yes, 👎/❌ = no. A reaction on an open ask reaches the agent as
-`{kind: reaction, emoji, answer, ask}` and wakes an idle one; `resolve_ask` puts ✅
+`{kind: reaction, emoji, answer, ask}` and wakes an idle one; a yes approves only
+within 24 h of the ask, a later answer comes with `expired: true`; `resolve_ask` puts ✅
 on the ask once it is settled
 ([arc42 §6.11](arc42/06-runtime-view.md#611-asking-a-human)).
 

@@ -5,12 +5,14 @@ A human answers an ask by replying in its thread or with a reaction (👍/✅ ye
 and the listener would never notice one; this file tells them which posts to
 look at. It lives next to the other per-bot state, asks-<uid>.env:
 
-    ASK=<post_id> <epoch> <human>  an open ask, and whom it asks
+    ASK=<post_id> <epoch> <human> <root_id>  an open ask, whom it asks (- for
+                                             nobody), the thread it is in
     SEEN=<post_id>:<user_id>:<emoji>   a reaction already handed to the agent
 
 The background listener (bin/mm-agent-listen.sh) wakes the agent for any
 reaction on an open ask that is not SEEN. resolve() drops the ask and its SEEN
-lines. Asks older than MAX_AGE_SEC are forgotten.
+lines. A yes approves only within APPROVAL_SEC of the ask: a later answer is
+handed to the agent as expired. Asks older than MAX_AGE_SEC are forgotten.
 """
 
 from __future__ import annotations
@@ -22,6 +24,9 @@ from pathlib import Path
 from . import session_file
 
 MAX_AGE_SEC = 7 * 86400
+# A yes approves only this long after the ask (RT-6.11): a day later the
+# situation it names may have changed. Kept until MAX_AGE_SEC to say so.
+APPROVAL_SEC = 86400
 
 YES = frozenset({"+1", "thumbsup", "white_check_mark", "heavy_check_mark",
                  "ballot_box_with_check"})
@@ -47,6 +52,7 @@ def _read(uid: str) -> tuple[dict[str, float], set[str]]:
 
 
 def _read_all(uid: str) -> tuple[dict[str, float], set[str], dict[str, str]]:
+    """Open asks with their time, the SEEN keys, and "<human> <root_id>" per ask."""
     asks: dict[str, float] = {}
     whom: dict[str, str] = {}
     seen: set[str] = set()
@@ -67,7 +73,7 @@ def _read_all(uid: str) -> tuple[dict[str, float], set[str], dict[str, str]]:
             if pid and now - when < MAX_AGE_SEC:
                 asks[pid] = when
                 if len(parts) > 2:
-                    whom[pid] = parts[2]
+                    whom[pid] = " ".join(parts[2:4])
         elif key == "SEEN" and val:
             seen.add(val)
     return asks, seen, whom
@@ -99,18 +105,28 @@ def is_open(uid: str, post_id: str) -> bool:
     return post_id in _read(uid)[0]
 
 
-def add(uid: str, post_id: str, human: str = "") -> None:
+def add(uid: str, post_id: str, human: str = "", root_id: str = "") -> None:
     asks, seen, whom = _read_all(uid)
     asks[post_id] = time.time()
-    if human:
-        whom[post_id] = human.lower()
+    if human or root_id:
+        whom[post_id] = f"{human.lower() or '-'} {root_id}".rstrip()
     _write(uid, asks, seen, whom)
 
 
 def open_to(uid: str, human: str) -> list[str]:
     """Open asks of this bot to that human: one at a time (RT-6.11)."""
     asks, _, whom = _read_all(uid)
-    return [pid for pid in asks if whom.get(pid) == human.lower()]
+    return [pid for pid in asks if whom.get(pid, "").split(" ")[0] == human.lower()]
+
+
+def expired(uid: str, post_id: str, at: float = 0, *, thread: bool = False) -> bool:
+    """An answer given at `at` (default now) to that open ask — with thread, to
+    the asks in the thread with that root — comes too late to approve (RT-6.11)."""
+    asks, _, whom = _read_all(uid)
+    when = at or time.time()
+    hits = [t for pid, t in asks.items()
+            if pid == post_id or (thread and whom.get(pid, "").split(" ")[1:] == [post_id])]
+    return bool(hits) and all(when - t >= APPROVAL_SEC for t in hits)
 
 
 def seen_key(post_id: str, user_id: str, emoji: str) -> str:

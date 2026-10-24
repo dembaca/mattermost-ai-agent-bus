@@ -226,6 +226,8 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
     for key in ("trusted_human", "ask", "emoji", "answer"):
         if item.get(key):
             meta[key] = str(item[key])
+    if item.get("expired"):
+        meta["expired"] = "true"  # RT-6.11: too late to approve
     return {"content": inert(str(post.get("message", ""))), "meta": meta}
 
 

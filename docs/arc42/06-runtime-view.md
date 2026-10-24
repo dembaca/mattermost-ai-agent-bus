@@ -321,15 +321,15 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Participants:** MCP server, Shell CLI; Agent runtime, Mattermost REST API, Mattermost WebSocket, Developer / operator
 
-**Quality goal illustrated:** `#usable` Low noise — a mention of a human means "I need you", and nothing else does
+**Quality goal illustrated:** `#usable` Low noise — a mention of a human means "I need you", and nothing else does; `#secure` Approval integrity — a yes approves only within 24 h of the ask
 
 ### Sequence
 
 1. The agent calls `ask_human(need, context, recommendation, decision, where, blocking, answers)`. One question per ask: with more than one `?` in `need` and `context` the server posts nothing and asks for the most important question first; the next follows once this one is answered, since an answer often settles it. A decision comes with the situation in 1–3 sentences, the agent's recommendation and the decision written out, so the human answers in a word; a 👍 approves the decision as written. The MCP server posts one message in the work channel, top-level unless a thread is given: `🙋 @<human> — **<need>**` (the mention in the text, so Mattermost notifies; only the first sentence of `need` is the bold title, the rest goes to the front of `context`, and `**` in it is dropped), and a callout (message attachment, red when blocking, amber otherwise) with `from`, `blocking`, `where` and `answer` (the choices, then `👍 = yes · 👎 = no · or reply in this thread`). The human defaults to the responsible one. No other post mentions a human: `post_message`, `reply_in_thread` and the note of `resolve_ask` turn an @-mention of a person (a non-bot account) into the plain name and report it as `unmentioned`; `announce` and the corral host note name humans without @. A post by `post_message` or `reply_in_thread` that names a trusted human while the agent has no open ask to them is posted unchanged; the result carries `unasked` (those names) and a hint to call `ask_human` or link the open ask, since a line that waits on a human without an ask notifies nobody. The ask belongs to the agent that carries out the action (the PR author or whoever merges, whoever starts a live run); reviewers and the coordinator link it instead of asking, and the coordinator asks only when that agent cannot. A human's answer in an agent's terminal approves only that agent's own action. Agents may talk to each other directly: `post_message(to=<agent>)` posts in the DM channel of the two bots and refuses a person (`ask_human`) or an unknown name; the outcome goes to the channel in one line.
-2. The server records the post as an open ask in `asks-<uid>.env` in the state directory, with the human it asks.
+2. The server records the post as an open ask in `asks-<uid>.env` in the state directory, with the human it asks and the thread it is in.
 3. The human replies in the thread (delivered like any reply) or reacts. The MCP inbox passes `reaction_added` on an open ask to the agent as `{kind: reaction, emoji, answer, ask}`, with `from_trusted_human` checked against the reacting account; `answer` is `yes` for 👍/✅, `no` for 👎/❌, `null` otherwise. Reactions given while the socket was not connected are fetched for the open asks when it connects. A delivered reaction is recorded as `SEEN`.
 4. An idle agent's background listener looks at the open asks every poll (`GET /posts/<id>/reactions`) and wakes it for any reaction by someone else that is not `SEEN` (RT-6.2).
-5. A `yes` from a trusted human approves exactly what the ask names (RT-6.8). When the ask is settled the agent calls `resolve_ask`: ✅ on the post — open asks are the ones without — the ask and its `SEEN` lines removed, optionally a reply in its thread.
+5. A `yes` from a trusted human approves exactly what the ask names (RT-6.8), and only within 24 h of the ask: a day later the situation it names may have changed. A trusted human's later reaction on the ask, or reply in its thread, reaches the agent with `expired: true` (as a channel push, `expired="true"`), the answer as given; it approves nothing, and the agent resolves the ask and asks again. What counts is when the human answered (the server's time of the reaction or reply), not when the agent collects it. In a thread that holds several of the agent's asks, a reply is late only when all of them are. When the ask is settled the agent calls `resolve_ask`: ✅ on the post — open asks are the ones without — the ask and its `SEEN` lines removed, optionally a reply in its thread.
 
 ### Error Handling
 
@@ -342,7 +342,8 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 3 | Reaction on any post that is not an open ask | Ignored: it is a remark, never an answer or an approval |
 | 3 | Reaction by someone not trusted | Delivered with `from_trusted_human: false`: information, not an approval |
 | 3 | An emoji other than the agreed ones | `answer: null`; the agent reads it as a remark and may ask in the thread |
-| 4 | An ask never resolved | Forgotten after 7 days; the listener stops looking at it |
+| 4 | An ask never resolved | Forgotten after 7 days: the listener stops looking at it, and a reply in its thread arrives as any reply, without `expired`; the 24 h rule still holds for the agent |
+| 5 | An ask unanswered for 24 h | A yes to it approves nothing; `ask_human` to the same human names it as too old: the agent resolves it, then asks again |
 | — | A reaction was the only answer before 0.25.0 | Nobody saw it: Mattermost raises no unread counter for reactions, and the inbox handled only `posted` |
 
 ---
@@ -392,7 +393,13 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 ### Sequence
 
 1. On by default: in channel mode the MCP server declares `claude/channel/permission` next to `claude/channel` whenever a trusted human is configured (`MM_TRUSTED_HUMANS`, the ids the host passes, or `MM_OWNER`; RT-6.8). No trusted human, no capability: Claude Code relays nothing and the terminal is the only place to answer. `bus_info` shows `permission_relay`.
-2. The server DMs the prompt to the responsible human (RT-6.8), if they are trusted: tool name, `description` and `input_preview` as code blocks (both come from the model's tool call), the id, and how to answer. It goes by DM, not to the work channel: the preview is the call's arguments, with only well-known secrets masked by Claude Code, and posts in the work channel reach every agent's context. A DM is still stored on the Mattermost server like any post (retention, search, exports, admin access, backups): data the terminal shows only to the developer (Section 7.3). The prompt post counts as an open ask (RT-6.11) to nobody in particular, so a reaction on it reaches the inbox without holding up the agent's own asks.
+2. The server DMs the prompt to the responsible human (RT-6.8), if they are trusted: tool name, `description` and the preview as code blocks (both come from the model's tool call), the id, and how to answer. It goes by DM, not to the work channel, since posts there reach every agent's context. A DM is still stored on the Mattermost server like any post (retention, search, exports, admin access, backups), so the preview carries what a decision needs and no file content. From Claude Code's `input_preview` (JSON-shaped, each top-level field cut to 3,500 characters, well-known secrets masked by Claude Code, which stays) it shows:
+   - for `Bash`, the command in full: there is no decision without it;
+   - for tools that carry file content (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`), the path and other short fields, each content field (`content`, `old_string`, `new_string`, `new_source`, `edits`) only as its size: `‹1234 chars›`, with `, 56 lines` where line breaks reach the server (Claude Code folds them to spaces since 2.1.211), the part Claude Code elided counted in;
+   - for any other tool, values up to 200 characters on one line as they are, a longer or multi-line string only as its size;
+   - a preview that does not parse as JSON (Claude Code cut an array or object): as it came for `Bash` or when it is short and from no file tool; otherwise only the paths found in it and its size.
+
+   The prompt post counts as an open ask (RT-6.11) to nobody in particular, so a reaction on it reaches the inbox without holding up the agent's own asks.
 3. The human answers `yes <id>` or `no <id>` (`y`/`n`, any case) in the DM or anywhere the bot reads, or reacts 👍/✅ or 👎/❌ on the prompt post.
 4. Once the channel is confirmed, the pusher takes such an event out before the wake rules (RT-6.12 step 3) when it comes from a trusted human (server-verified author) and names an open id: it sends `notifications/claude/channel/permission` with `allow` or `deny`, replies under the prompt `✅ allowed by <human>` or `⛔ denied by <human>`, and resolves the ask. The agent never sees the verdict. The terminal dialog stays open meanwhile; the first answer wins and applies to this one call only.
 
@@ -404,9 +411,10 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 2 | The responsible human is not a trusted one | Not relayed: only a trusted human's verdict counts; a log line says so |
 | 2 | Posting fails (bus down) | Logged; the terminal dialog is still open |
 | 3 | Another agent or an untrusted person answers `yes <id>` | Not `from_trusted_human`: a post like any other, data for the agent, never sent to Claude Code |
-| 3 | A trusted `yes <id>` with an id that is not open | In the DM a short reply ("answered in the terminal, or more than a day old"); elsewhere it passes on untouched, it may be another agent's prompt |
+| 3 | A trusted `yes <id>` with an id that is not open | In the DM a short reply ("answered in the terminal, or more than 24 h old"); elsewhere it passes on untouched, it may be another agent's prompt |
+| 3 | A verdict more than 24 h after the prompt | The id is no longer open, as a yes on an ask approves only within 24 h (RT-6.11): `yes <id>` gets the reply above; 👍/👎 on the old prompt post reaches the agent as a reaction to an ask, marked `expired` |
 | 3 | Another emoji on the prompt post | A remark: no verdict, no wake-up |
-| 4 | The terminal answered first | Claude Code sends no event; the id stays open for a day and a later verdict is dropped by Claude Code. The reply says the verdict applies unless the terminal answered first |
+| 4 | The terminal answered first | Claude Code sends no event; the id stays open for 24 h and a later verdict is dropped by Claude Code. The reply says the verdict applies unless the terminal answered first |
 | — | Auto mode | The classifier decides most calls, so no dialog opens and nothing is relayed |
 | — | Prompts about sandbox, secrets or permissions | Claude Code does not mark them, so they cannot be filtered: they are relayed like any other. Anyone trusted can approve any tool call of this session from Mattermost: trust only humans you would hand the terminal to |
 | — | Project trust or MCP server consent dialogs | Not relayed by Claude Code: terminal only |

@@ -3,6 +3,48 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.35.0
+
+More from the review in #61:
+
+- how long a yes approves, and what a permission prompt puts on the server
+  (#67, from #61 §2 and §5.8).
+
+### Changed
+
+- **A yes approves for 24 h (RT-6.11):** a yes on an ask approves only within
+  24 h of the ask; a day later the situation it names may have changed. A
+  trusted human's later reaction on the ask, or reply in its thread, reaches the agent with
+  `expired: true` (`expired="true"` as a channel push), the answer as given:
+  it approves nothing, and the agent resolves the ask and asks again. What
+  counts is when the human answered, not when the agent collects it. An ask now
+  records the thread it is in, so a reply there is judged too; with several of
+  the agent's asks in one thread, only once all of them are older. `ask_human`
+  to a human whose open ask is more than 24 h old says so instead of only
+  "wait for the answer". Asks are still forgotten after 7 days.
+- **Permission prompts carry no file content (RT-6.13):** the DM to the
+  responsible human, which Mattermost keeps like any post (retention, search,
+  admin access, backups), now shows a `Bash` command in full and, for `Write`,
+  `Edit`, `MultiEdit` and `NotebookEdit`, the path and short fields with each
+  content field only as its size (`‹1234 chars›`, lines where Claude Code left
+  them). Other tools show values up to 200 characters on one line; longer or
+  multi-line strings only as their size. A preview Claude Code cut inside an
+  array shows only for `Bash` or when short, otherwise its paths and size.
+  Claude Code's masking of well-known secrets stays.
+- **A verdict on a permission prompt holds as long as a yes on an ask:** 24 h,
+  one constant for both; the DM reply to a later `yes <id>` says so.
+- §1.2 (`#secure` Approval integrity: "within 24 h") and §7.3 (what the
+  prompt still puts on the server) say what the change holds. SKILL.md, the
+  MCP instructions and the `ask_human` and `wait_for_events` docs say an old
+  yes approves nothing.
+- **Fixed text:** SKILL.md stays within its size (every turn reads it).
+
+### Fixed
+
+- **A `yes <id>` to a prompt past its lifetime reached the agent** as a plain
+  post: the id was looked up before old prompts were dropped, and the verdict
+  then failed. It now gets the "not open" reply in the DM.
+
 ## 0.34.0
 
 Who may wake an agent (#64, from #61 §3, §5.3 and §5.5).
