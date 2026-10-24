@@ -251,6 +251,13 @@ def _post(message, kind="watched_channel", trusted=False, root=""):
                      "message": message}}
 
 
+def test_a_post_for_all_agents_says_so_in_the_push():
+    """RT-6.11 step 3: the tag tells the agent the post was for everyone."""
+    meta = channel.notification(_post("main is red") | {"to": "all"})["meta"]
+    assert meta["to"] == "all"
+    assert "to" not in channel.notification(_post("main is red"))["meta"]
+
+
 def test_wake_rules_match_the_listener():
     """RT-6.12 step 2: the listener's rules (RT-6.2) decide what wakes at once."""
     def wakes(item, coordinator=False, in_my_thread=False):
@@ -263,6 +270,9 @@ def test_wake_rules_match_the_listener():
     assert not wakes(_post("deploy now?", trusted=True))
     assert wakes(_post("deploy now?", trusted=True), coordinator=True)
     assert wakes(_post("Heads up @channel: main is red."))
+    # What agents write instead (RT-6.11): props.a2a.to = "all", no @ in the text.
+    assert wakes(_post("main is red") | {"to": "all"})
+    assert not wakes(_post("main is red") | {"to": "all", "gated": "from x"})
     assert wakes(_post("done", root="r"), in_my_thread=True)
     assert wakes(_post("IDLE done x"), coordinator=True)
     assert not wakes(_post("IDLE done x"))

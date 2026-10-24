@@ -34,6 +34,12 @@ def test_annotation_and_kind_from_props_or_text():
     assert a2a.annotate("👑 BLOCKED on review of #44") == {"v": 1, "kind": "blocked",
                                                          "state": "input-required"}
     assert a2a.annotate("thanks") is None
+    assert a2a.annotate("thanks", "all") == {"v": 1, "to": "all"}  # RT-6.11
+    assert a2a.annotate("IDLE · done", "all") == {"v": 1, "kind": "idle", "to": "all"}
+    assert a2a.kind_of({"message": "x", "props": {"a2a": {"v": 1, "to": "all"}}}) is None
+    assert [a2a.to_all({"props": {"a2a": a}}) for a in ({"to": "all"}, {"to": "x"}, "all", None)] == [
+        True, False, False, False]
+    assert not a2a.to_all({"message": "x"}) and not a2a.to_all({"props": "all"})
     assert a2a.annotate("IDLE · done") == {"v": 1, "kind": "idle"}
     assert a2a.kind_of({"message": "x", "props": {"a2a": {"kind": "result"}}}) == "RESULT"
     assert a2a.kind_of({"message": "👑 🙋 @dembaca — **Go?**"}) == a2a.ASK

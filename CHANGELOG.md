@@ -8,7 +8,30 @@ before 0.5.0 are described in the git history.
 More from the review in #61:
 
 - how long a yes approves, and what a permission prompt puts on the server
-  (#67, from #61 §2 and §5.8).
+  (#67, from #61 §2 and §5.8);
+- how agents wake each other, without `@channel` (#66, from #61 §5.6).
+
+### Added
+
+- **Wake all agents with `to="all"` (RT-6.11, RT-6.2):** `post_message` and
+  `reply_in_thread` take `to="all"` (`post_message`'s `to` already named an
+  agent for a DM; `reply_in_thread` takes only `all`). It writes
+  `props.a2a.to = "all"`, beside `kind` when the first word is a bus
+  convention, and needs no @ in the text. Every consumer treats it like an
+  `@channel` by that author: the inbox marks the event `to: all` (a channel
+  push attribute too), the channel push and the background listener wake for
+  it at once, the others hold it for the digest as before; humans see an
+  ordinary post and are not notified. A human's `@channel` keeps waking
+  agents. A post by someone not trusted with `to: "all"` is gated like their
+  `@channel` (RT-6.16): no answer, the channel marked read. The props never
+  make the author an agent: classes come from the account only.
+- **The counters find it:** such a post holds no `@channel`, so Mattermost
+  raises no mention counter. `mm-agent-unread.sh` (the Stop hook's drain and
+  the listener's counter check) looks, in each channel with unread posts, for
+  one by someone else with `to: "all"` since the bot last viewed the channel
+  (at most a day back) that the server did not gate, and counts it with the
+  mentions. The listener's post check wakes for it too. One extra GET, only
+  while a channel has unread posts.
 
 ### Changed
 
@@ -37,10 +60,30 @@ More from the review in #61:
   prompt still puts on the server) say what the change holds. SKILL.md, the
   MCP instructions and the `ask_human` and `wait_for_events` docs say an old
   yes approves nothing.
-- **Fixed text:** SKILL.md stays within its size (every turn reads it).
+- **Fixed text:** SKILL.md stays within its size (every turn reads it). The
+  MCP instructions grow by one sentence (about 110 characters) for `to="all"`:
+  an agent needs it before its first broadcast, and SKILL.md has no room left
+  (§1.2 `#efficient` Low overhead: growth only with a reason).
+- **No agent post notifies every human (RT-6.11):** the server writes
+  `@channel`, `@here` and `@all` in `post_message`, `reply_in_thread`, the
+  note of `resolve_ask`, the fields of `ask_human` and the HELLO of `announce`
+  as the plain words `channel`, `here`, `all`, the way it already wrote a
+  person's name; the result says so (`unmentioned`, with a hint to
+  `to="all"`). It does so when the user lookup fails, too. Not inside a word
+  (a mail address) or in backticks. Posts through `mm-agent-post.sh` do not
+  pass the server and stay as written; so does `@channel` in a human's post.
+- §6.11 (new step 6), §6.2, §6.12, §6.14, §6.16 and `docs/protocol.md` say
+  how a post for all agents is written and noticed. SKILL.md, the MCP
+  instructions and the `post_message` and `reply_in_thread` docs name
+  `to="all"` instead of `@channel`; two paragraphs of SKILL.md are tightened
+  to keep it within its size.
 
 ### Fixed
 
+- **An agent could notify every human** with `@channel`, `@here` or `@all` in
+  any post: the server turned only people's names into plain text (RT-6.11).
+  The fields of `ask_human` and the HELLO of `announce` were not looked at
+  at all.
 - **A `yes <id>` to a prompt past its lifetime reached the agent** as a plain
   post: the id was looked up before old prompts were dropped, and the verdict
   then failed. It now gets the "not open" reply in the DM.

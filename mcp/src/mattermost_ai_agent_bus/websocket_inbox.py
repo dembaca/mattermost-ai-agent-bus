@@ -372,7 +372,7 @@ class WebSocketInbox:
                 mine = await self.in_my_thread({"post": post}, me)
                 if mine is None:
                     return  # unsure: as before
-            why = gate.wake_reason(event.kind, str(post.get("message", "")), bool(mine))
+            why = gate.wake_reason(event.kind, post, bool(mine))
             if not why:
                 return
             who = await gate.author_name(self.client, post)

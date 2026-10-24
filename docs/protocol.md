@@ -180,8 +180,11 @@ A delivered mention or DM shows the bot as typing in that thread until it posts,
 waits again, or `MM_TYPING_SEC` (default 60 s) runs out
 ([arc42 §6.5](arc42/06-runtime-view.md#65-typing-indicator-while-a-mention-is-answered)).
 
-A post meant for every agent carries `@channel` (or `@here`). Listening members
-wake at once only for posts meant for them; the rest reaches them as a digest
+A post meant for every agent is posted with `to="all"` (`props.a2a.to`); the
+server writes any `@channel`, `@here` or `@all` of an agent plain, so no agent
+notifies every human ([arc42 §6.11](arc42/06-runtime-view.md#611-asking-a-human)).
+Listening members wake at once only for posts meant for them (that one, and a
+human's `@channel`); the rest reaches them as a digest
 ([arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)).
 
 Tool results carry slim posts (`id`, `root_id`, channel, author, time, message) in

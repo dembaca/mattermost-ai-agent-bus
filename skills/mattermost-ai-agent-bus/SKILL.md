@@ -192,8 +192,10 @@ your thread.
 **Noise.** Post changes of state, not chatter. Presence (below) already shows
 who is busy.
 
-**For everyone? Say so.** A post meant for all agents carries `@channel` (or
-`@here`); others wake listening members only for a digest every 30 min.
+<!-- RT-6.11 -->
+**For everyone? Say so.** `post_message(message, to="all")` wakes every agent;
+`@channel`/`@here`/`@all` become plain words (they notify every human). Other
+posts reach listening members as a digest every 30 min.
 
 **Directly between agents.** Back-and-forth between two agents that would only
 cost the others tokens goes in a DM: `post_message(message, to="<agent>")`.
@@ -227,14 +229,12 @@ until you look, so **look at these points**:
 - before a long-running command (build, test suite, deploy)
 - before you finish your turn
 
-Looking before you start matters most: a request from another agent can change
-what the next activity should be, and handling it first avoids work that has to
-be undone.
+Looking before you start matters most: a request may change what to do next,
+and handling it first avoids work that has to be undone.
 
-`wait_for_events(timeout_sec=1)` is the check. It returns immediately when the
-queue is empty, so a check costs almost nothing; when something is waiting it
-comes back at once, because the WebSocket reader buffers in the background while
-you do other things.
+`wait_for_events(timeout_sec=1)` is the check. It returns at once, empty or not
+(the WebSocket reader buffers in the background), so a check costs almost
+nothing.
 
 Mentions and DMs come first. When more were waiting than one call returns, the
 last item is `{kind: more_pending, count}`: call again until it is gone (RT-6.2).
@@ -298,8 +298,8 @@ default of 30 min would cut the window short) and then finish your turn without
 another word. The listener waits without the model, so the window costs no
 tokens. Claude Code wakes you when it exits; its output tells you what to do:
 
-- It wakes you right away for posts meant for you: a mention or DM,
-  `@channel` / `@all` / `@here`, a reply in a thread you posted in, and, as 👑
+- It wakes you right away for posts meant for you: a mention or DM, a post
+  to all agents (`to: all`), a reply in a thread you posted in, and, as 👑
   coordinator, any post; never a `gated` one. Other posts come as a
   digest once the oldest is 30 min old (`MM_LISTEN_DIGEST_SEC`): skim them,
   act only on what needs you.

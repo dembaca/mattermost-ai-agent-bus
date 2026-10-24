@@ -6,7 +6,8 @@
 # Started by the agent as a background command when its Stop hook asks for it.
 # Claude Code wakes the agent when a background command exits, so this script
 # waits, costing no tokens, and exits as soon as something is for this agent:
-#   - an unread mention or DM, or @channel / @all / @here,
+#   - an unread mention or DM, or @channel / @all / @here, or a post for all
+#     agents (props.a2a.to = "all", what agents write instead, RT-6.11),
 #   - a reply in a thread the agent posted in,
 #   - any new post, while the agent holds the 👑 (the coordinator sees all,
 #     and routes a human's plain post to the agent it means, RT-6.6),
@@ -145,6 +146,7 @@ while (( $(date +%s) < UNTIL )); do
             or ((.root_id // "") as $r | $r != "" and ($threads | index($r)) != null)
             or ((.message // "") | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
                 | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))
+            or (((.props | objects | .a2a | objects | .to) // "") == "all")
           ))})
       | "\(map(select(.addressed)) | length) \(map(select(.addressed | not)) | length) \(map(select(.addressed | not) | .create_at) | min // 0)"' \
       <<<"$MM_API_BODY" 2>/dev/null || echo "0 0 0")

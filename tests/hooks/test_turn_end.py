@@ -240,10 +240,10 @@ def test_listener_wakes_on_a_dm(mm, run):
 OTHER = "z" * 26
 
 
-def other_post(mm, message, root_id="", user_id=OTHER, age_s=0):
+def other_post(mm, message, root_id="", user_id=OTHER, age_s=0, props=None):
     mm.posts.insert(0, {"id": f"o{len(mm.posts)}", "user_id": user_id, "root_id": root_id,
                         "create_at": int((time.time() - age_s) * 1000) + 2000,
-                        "message": message, "type": ""})
+                        "message": message, "type": "", "props": props})
 
 
 def listen(run, window=4, **env):
@@ -272,6 +272,62 @@ def test_listener_wakes_when_addressed(mm, run):
         other_post(mm, **post)
         r = listen(run, **env)
         assert "for you" in r.stdout, post
+
+
+TO_ALL = {"a2a": {"v": 1, "to": "all"}}
+
+
+def test_listener_wakes_for_a_post_to_all_agents(mm, run):
+    """RT-6.2 step 4, RT-6.11: agents write props.a2a.to = "all" instead of
+    @channel, so the text names nobody; other props, whatever their shape, are
+    a plain post, and one the MCP server gated wakes nobody (RT-6.16)."""
+    for props, woken in ((TO_ALL, True), ({"a2a": {"to": "everyone"}}, False),
+                         ({"a2a": "all"}, False), ("all", False), (None, False)):
+        mm.posts = []
+        other_post(mm, "main is red, hold merges", props=props)
+        assert ("for you" in listen(run, window=3).stdout) is woken, props
+    gate_file = run.state_dir / f"gate-{ME}.env"
+    gate_file.parent.mkdir(parents=True, exist_ok=True)
+    mm.posts = []
+    other_post(mm, "main is red", props=TO_ALL)
+    gate_file.write_text(f"GATED={mm.posts[0]['id']} {int(time.time())}\n")
+    assert "nothing new" in listen(run, window=3).stdout
+
+
+def unread_channel(mm, viewed_ms=0, unread=True):
+    """The work channel as the bot's counters show it: a post unread, no mention."""
+    mm.members.append({"channel_id": PROJECT, "msg_count": 0 if unread else 3,
+                       "mention_count": 0, "last_viewed_at": viewed_ms})
+    mm.channels.append({"id": PROJECT, "type": "O", "total_msg_count": 3})
+
+
+def test_drain_notices_a_post_to_all_agents(mm, run):
+    """RT-6.2 step 1, RT-6.11: a post for all agents holds no @channel, so no
+    mention counter moves; the drain finds it in the channel's unread posts. Not
+    a plain post, an own one, one the bot viewed since, or one the server gated."""
+    unread_channel(mm)
+    other_post(mm, "main is red, hold merges", props=TO_ALL)
+    r = run(STOP)
+    assert r.blocked and "1 unread message(s)" in r.reason
+    mm.posts = []
+    other_post(mm, "main is red")
+    other_post(mm, "IDLE · done", props=TO_ALL, user_id=ME)
+    other_post(mm, "odd", props={"a2a": "all"})
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+    mm.posts = []
+    other_post(mm, "main is red", props=TO_ALL)
+    mm.members, mm.channels = [], []
+    unread_channel(mm, viewed_ms=int(time.time() * 1000) + 60_000)
+    assert run(STOP, MM_LISTEN_SEC="0").passed  # read since
+    mm.members, mm.channels = [], []
+    unread_channel(mm, unread=False)
+    assert run(STOP, MM_LISTEN_SEC="0").passed  # no unread post: not even looked at
+    mm.members, mm.channels = [], []
+    unread_channel(mm)
+    gate_file = run.state_dir / f"gate-{ME}.env"
+    gate_file.parent.mkdir(parents=True, exist_ok=True)
+    gate_file.write_text(f"GATED={mm.posts[0]['id']} {int(time.time())}\n")
+    assert run(STOP, MM_LISTEN_SEC="0").passed
 
 
 def test_trusted_humans_plain_post_is_for_the_coordinator(mm, run):

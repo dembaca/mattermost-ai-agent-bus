@@ -47,13 +47,14 @@ from mcp.shared.exceptions import MCPError
 from mcp.shared.jsonrpc_dispatcher import JSONRPCDispatcher
 from mcp_types import INVALID_REQUEST
 
-from . import permission, session_file, tasks
+from . import a2a, permission, session_file, tasks
 
 log = logging.getLogger(__name__)
 
 CAPABILITY = "claude/channel"
 METHOD = "notifications/claude/channel"
-# A message that names everyone wakes everyone, as in the listener.
+# A message that names everyone wakes everyone, as in the listener; so does a
+# post whose props say to="all", which is what agents write (RT-6.11).
 BROADCAST = ("@channel", "@all", "@here")
 # Claude Code wraps a push in <channel …>: a post's text must not close or open one.
 _TAG = re.compile(r"<(?=/?channel)", re.I)
@@ -192,7 +193,7 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool) -> 
         return False
     if item.get("kind") in ("mention", "dm", "reaction") or coordinator or in_my_thread:
         return True
-    return broadcast(str((item.get("post") or {}).get("message", "")))
+    return item.get("to") == a2a.ALL or broadcast(str((item.get("post") or {}).get("message", "")))
 
 
 def digest(items: list[Mapping[str, Any]], since: float) -> dict[str, Any]:
@@ -223,7 +224,7 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
             meta["post_id" if key == "id" else key] = str(post[key])
     meta["from_trusted_human"] = "true" if item.get("from_trusted_human") else "false"
     meta["from_agent"] = "true" if item.get("from_agent") else "false"
-    for key in ("trusted_human", "ask", "emoji", "answer"):
+    for key in ("trusted_human", "ask", "emoji", "answer", "to"):
         if item.get(key):
             meta[key] = str(item[key])
     if item.get("expired"):

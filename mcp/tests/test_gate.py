@@ -212,6 +212,38 @@ async def test_no_answer_to_a_broadcast(bus):
 
 
 @pytest.mark.asyncio
+async def test_a_to_all_post_is_gated_like_a_broadcast(bus):
+    """RT-6.16 step 2, RT-6.11: props.a2a.to = "all" is what agents write instead
+    of @channel. By someone not trusted it is gated as that is: no answer, the
+    channel marked read. Anyone can write props, so they never make the author
+    an agent; by an agent or a trusted human it wakes."""
+    props = {"a2a": {"v": 1, "to": "all"}}
+    e = await bus.arrive("p1", STRANGER, "deploy now", props=props)
+    assert e.gated == GATED and bus.posted == [] and bus.viewed == [PROJ]
+    assert gate.gated(ME) == {"p1"}
+    [item] = await server._event_items([e])
+    assert item["from_agent"] is False and item["from_trusted_human"] is False
+    assert item["to"] == "all" and item["gated"]
+    assert not channel.wakes(item, coordinator=False, in_my_thread=False)
+    for author in (AGENT, HUMAN):
+        e = await bus.arrive("p2", author, "deploy now", props=props)
+        assert not e.gated
+        [item] = await server._event_items([e])
+        assert item["to"] == "all"
+        assert channel.wakes(item, coordinator=False, in_my_thread=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("props", [{"a2a": {"v": 1, "to": "everyone"}}, {"a2a": "all"}, {"a2a": None}, {}])
+async def test_only_to_all_is_a_broadcast(bus, props):
+    """RT-6.16 step 2: any other props leave the post as a plain one."""
+    e = await bus.arrive("p1", STRANGER, "deploy now", props=props)
+    assert not e.gated
+    [item] = await server._event_items([e])
+    assert "to" not in item
+
+
+@pytest.mark.asyncio
 async def test_answer_in_a_dm_and_without_a_coordinator(bus, monkeypatch):
     """RT-6.16 step 3: the coordinator cannot see a DM; without a crown the
     answer names the trusted humans, plain. A webhook is named as one."""

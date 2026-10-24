@@ -24,7 +24,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import channel, lease, session_file
+from . import a2a, channel, lease, session_file
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -59,14 +59,15 @@ async def author_classes(client: MattermostClient, posts: list[dict[str, Any]]) 
     return [author_class(p, trusted, agents) for p in posts]
 
 
-def wake_reason(kind: str, message: str, in_my_thread: bool) -> str:
+def wake_reason(kind: str, post: Mapping[str, Any], in_my_thread: bool) -> str:
     """Why the post would wake a worker (RT-6.2 step 4): mention, dm, thread or
-    broadcast; '' for a post that only goes into the digest."""
+    broadcast (@channel in the text, or props to="all"); '' for a post that
+    only goes into the digest."""
     if kind in ("mention", "dm"):
         return kind
     if in_my_thread:
         return "thread"
-    return "broadcast" if channel.broadcast(message) else ""
+    return "broadcast" if a2a.to_all(post) or channel.broadcast(str(post.get("message", ""))) else ""
 
 
 async def author_name(client: MattermostClient, post: Mapping[str, Any]) -> str:
