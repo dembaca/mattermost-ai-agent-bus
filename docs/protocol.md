@@ -218,4 +218,6 @@ Prefer WebSocket for interactive agents; poll is fine for cron-style loops.
   They are listed on the host (`MM_TRUSTED_HUMANS`); nobody is trusted by default.
   Every trusted account becomes an approval key: protect it with 2FA. What this
   assumes about the instance and its accounts:
-  [arc42 §7.3](arc42/07-deployment-view.md#73-trust-assumptions).
+  [arc42 §7.3](arc42/07-deployment-view.md#73-trust-assumptions). Whose post
+  may wake an agent at all:
+  [arc42 §6.16](arc42/06-runtime-view.md#616-who-may-wake-an-agent).

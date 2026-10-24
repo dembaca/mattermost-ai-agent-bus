@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from typing import Any
 
 from . import a2a, asks, session_file
@@ -79,11 +79,13 @@ def build(
     names: Mapping[str, str],
     *,
     now_ms: int | None = None,
+    untrusted: Collection[str] = (),
 ) -> list[dict[str, Any]]:
     """The tasks of the work channel: top-level TASK / DELEGATE posts and
     their threads, newest change last. Only the task's own thread moves it:
     an agent's HELLO thread speaks of whatever it does next, too. Rows leave
-    out what is unknown."""
+    out what is unknown. A root in `untrusted` (post ids by someone the
+    agent does not trust, RT-6.16) is no task."""
     now_ms = now_ms or int(time.time() * 1000)
     order = _live(posts)
 
@@ -99,7 +101,7 @@ def build(
             continue
         if kind == "ASSIGNMENTS":
             last_assignments = p.get("create_at", 0)
-        elif kind in ("TASK", "DELEGATE"):
+        elif kind in ("TASK", "DELEGATE") and p.get("id") not in untrusted:
             msg = str(p.get("message", ""))
             refs = [*_SPEC.findall(msg), *(f"#{n}" for n in _ISSUE.findall(msg))]
             tasks[p["id"]] = {

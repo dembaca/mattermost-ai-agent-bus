@@ -127,6 +127,7 @@ class MattermostClient:
         default_factory=dict, repr=False, init=False
     )
     _usernames: dict[str, str] = field(default_factory=dict, repr=False, init=False)
+    _bots: set[str] = field(default_factory=set, repr=False, init=False)
     _is_human: dict[str, bool] = field(default_factory=dict, repr=False, init=False)
     session: SessionInfo | None = field(default=None, repr=False, init=False)
     _trusted: dict[str, str] | None = field(default=None, repr=False, init=False)
@@ -575,7 +576,17 @@ class MattermostClient:
         if missing:
             for u in await self._api("POST", "/api/v4/users/ids", json=missing):
                 self._usernames[u["id"]] = u.get("username", "")
+                if u.get("is_bot"):
+                    self._bots.add(u["id"])
         return {i: self._usernames[i] for i in user_ids if i in self._usernames}
+
+    async def agents(self, user_ids: set[str]) -> set[str]:
+        """The ids among ``user_ids`` of bus agents: bot accounts with the
+        registrar's prefix, agent-* by default (RT-6.16, arc42 §7.1). A person
+        may name their account agent-x; it stays a person."""
+        names = await self.usernames(user_ids)
+        prefix = session_file.agent_prefix()
+        return {i for i, n in names.items() if i in self._bots and n.startswith(prefix)}
 
     async def direct_channel_with_bot(self, username: str) -> str:
         """The DM channel id between this bot and another bot. Refuses people

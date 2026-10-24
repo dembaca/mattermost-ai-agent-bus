@@ -12,6 +12,9 @@
 #     and routes a human's plain post to the agent it means, RT-6.6),
 #   - a reaction to one of its open asks (asks-<uid>.env, RT-6.11) that the
 #     agent has not been handed yet.
+# A post the MCP server gated (GATED in gate-<uid>.env: by someone the agent
+# does not trust, already answered, RT-6.16) is not for it; the server also
+# marked its channel read, so it raises no counter here.
 # Other posts wake it only for a digest, once the oldest of them is
 # MM_LISTEN_DIGEST_SEC (default 1800 s) old: every wake-up is a full model turn,
 # and a busy channel would otherwise wake every member for every post.
@@ -59,6 +62,7 @@ DIGEST="${MM_LISTEN_DIGEST_SEC:-1800}"
 [[ "$DIGEST" =~ ^[0-9]+$ ]] || DIGEST=1800
 COORD="$(mm_bot_state_file coord "$ME" 2>/dev/null)" || COORD=""
 ASKS="$(mm_bot_state_file asks "$ME" 2>/dev/null)" || ASKS=""
+GATE="$(mm_bot_state_file gate "$ME" 2>/dev/null)" || GATE=""
 
 # Who am I to a post: the username (for @mentions in the text) and the threads
 # this agent posted in, read once — the agent is idle while this runs.
@@ -127,17 +131,21 @@ while (( $(date +%s) < UNTIL )); do
     coordinator=false
     c_until="$(sed -n 's/^CROWN_UNTIL=//p' "$COORD" 2>/dev/null | head -1)"
     [[ "$c_until" =~ ^[0-9]+$ ]] && (( c_until > $(date +%s) )) && coordinator=true
+    gated='[]'
+    if [[ -n "$GATE" && -f "$GATE" ]]; then
+      gated="$(sed -n 's/^GATED=\([^ ]*\).*/\1/p' "$GATE" | jq -R . | jq -sc . 2>/dev/null || echo '[]')"
+    fi
     # ?since= also returns posts edited since then; look only at new ones.
     read -r addressed others oldest < <(jq -r --arg me "$ME" --arg name "$MY_NAME" \
         --argjson t "$since_ms" --argjson threads "$MY_THREADS" \
-        --argjson coord "$coordinator" '
+        --argjson coord "$coordinator" --argjson gated "$gated" '
       [.posts // {} | .[] | select(.user_id != $me and (.type // "") == "" and .create_at >= $t)]
-      | map(. + {addressed: (
+      | map(. + {addressed: ((.id as $id | $gated | index($id)) == null and (
             $coord
             or ((.root_id // "") as $r | $r != "" and ($threads | index($r)) != null)
             or ((.message // "") | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
                 | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))
-          )})
+          ))})
       | "\(map(select(.addressed)) | length) \(map(select(.addressed | not)) | length) \(map(select(.addressed | not) | .create_at) | min // 0)"' \
       <<<"$MM_API_BODY" 2>/dev/null || echo "0 0 0")
     if [[ "${addressed:-0}" =~ ^[0-9]+$ ]] && (( addressed > 0 )); then

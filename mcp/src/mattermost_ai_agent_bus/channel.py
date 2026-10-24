@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -54,6 +55,8 @@ CAPABILITY = "claude/channel"
 METHOD = "notifications/claude/channel"
 # A message that names everyone wakes everyone, as in the listener.
 BROADCAST = ("@channel", "@all", "@here")
+# Claude Code wraps a push in <channel …>: a post's text must not close or open one.
+_TAG = re.compile(r"<(?=/?channel)", re.I)
 
 
 PLUGIN = "plugin:mattermost-ai-agent-bus@"
@@ -170,24 +173,39 @@ def check(code: str) -> dict[str, Any]:
     }
 
 
+def broadcast(message: str) -> bool:
+    """The message names everyone: @channel, @all or @here."""
+    return any(w.rstrip(".,:;!?") in BROADCAST for w in message.lower().split())
+
+
+def inert(text: str) -> str:
+    """A post's text as push content: `<channel` and `</channel` lose their `<`
+    (RT-6.16), so a body can neither end the tag it comes in nor fake one."""
+    return _TAG.sub("‹", text)
+
+
 def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool) -> bool:
     """The listener's rules (RT-6.2): what is for this agent is pushed at once.
-    A human's plain post wakes only the coordinator, which routes it (RT-6.6)."""
+    A human's plain post wakes only the coordinator, which routes it (RT-6.6);
+    a post the inbox gated wakes nobody here (RT-6.16)."""
+    if item.get("gated"):
+        return False
     if item.get("kind") in ("mention", "dm", "reaction") or coordinator or in_my_thread:
         return True
-    words = str((item.get("post") or {}).get("message", "")).lower().split()
-    return any(w.rstrip(".,:;!?") in BROADCAST for w in words)
+    return broadcast(str((item.get("post") or {}).get("message", "")))
 
 
 def digest(items: list[Mapping[str, Any]], since: float) -> dict[str, Any]:
-    """Held posts as one push: each cut short, with what an answer needs."""
+    """Held posts as one push: each cut short, with what an answer needs.
+    A gated post (RT-6.16) is marked as not trusted."""
     lines = []
     for item in items:
         post = item.get("post") or {}
         # Other agents' status posts: their first line is enough (RT-6.14).
-        text = " ".join(tasks.compact(str(post.get("message", ""))).split())
+        text = inert(" ".join(tasks.compact(str(post.get("message", ""))).split()))
         where = f"post {post.get('id', '')}" + (f", thread {post['root_id']}" if post.get("root_id") else "")
-        lines.append(f"- [{post.get('at', '')}] {post.get('author', '')} ({where}): {text[:300]}")
+        mark = "(not trusted) " if item.get("gated") else ""
+        lines.append(f"- {mark}[{post.get('at', '')}] {post.get('author', '')} ({where}): {text[:300]}")
     head = (f"Digest: {len(items)} post(s) on the bus since {time.strftime('%H:%M', time.localtime(since))}, "
             "none addressed to you. Act only on what needs you, then finish your turn "
             "without another word.")
@@ -204,10 +222,11 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
         if post.get(key):
             meta["post_id" if key == "id" else key] = str(post[key])
     meta["from_trusted_human"] = "true" if item.get("from_trusted_human") else "false"
+    meta["from_agent"] = "true" if item.get("from_agent") else "false"
     for key in ("trusted_human", "ask", "emoji", "answer"):
         if item.get(key):
             meta[key] = str(item[key])
-    return {"content": str(post.get("message", "")), "meta": meta}
+    return {"content": inert(str(post.get("message", ""))), "meta": meta}
 
 
 class Pusher:
