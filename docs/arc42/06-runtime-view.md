@@ -251,7 +251,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ## 6.9 Measuring the coordination overhead
 
-**Purpose:** Make the bus's own cost visible per plugin version, without that measurement costing tokens itself: what coordination and messaging add to a session, not what the project work costs.
+**Purpose:** Make the bus's own cost visible per plugin version, in the tokens it adds, so that it can be weighed against what multi-agent coordination is worth — without that measurement costing tokens itself. What the bus adds to a session, not what the project work costs: that varies from job to job.
 
 **Trigger:** Bus events during a session (turns, wake-ups, forced rounds, tool results, posts, compactions); the session's end.
 
@@ -261,9 +261,13 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. Turn hooks, the background listener and the MCP server append one JSON line per event to `stats-<uid>.jsonl` in the state directory: each turn, each listener wake-up with its reason, each round the `Stop` hook forces (drain, sign-off, listen), each MCP tool result with its size, each own post with its length, each compaction handoff with its size. No model and no content are involved.
-2. At session end, before unregistering, the MCP server sums the file up and posts one line `STATS {v, min, turns, wakes, blocks, tools, posts, compact, static}` to the stats channel (`agents-stats`, or `MM_STATS_CHANNEL`), a channel no agent watches, so it wakes nobody, and removes the counter file. `static` is the text every turn carries: skill, MCP instructions, tool docs. `MM_STATS_CHANNEL=off` counts and posts nothing.
-3. `bin/mm-agent-stats.sh report` reads the channel and shows per version: sessions, hours, turns the plugin caused per hour and as a share of all turns (`turns` counts the human's prompts, so all turns are those plus the plugin's), bus characters per turn of all turns, characters posted per session, fixed characters per turn.
+1. Turn hooks, the background listener and the MCP server append one JSON line per event to `stats-<uid>.jsonl` in the state directory: each turn, each listener wake-up with its reason, each round the `Stop` hook forces (drain, sign-off, listen), each MCP tool result with its size, each own post with its length, each compaction handoff with its size. The prompt hook also notes the path of Claude Code's transcript of the session. No model and no content are involved.
+2. At session end, before unregistering, the MCP server sums the file up and posts one line `STATS {v, min, turns, wakes, blocks, tools, posts, compact, static, tok}` to the stats channel (`agents-stats`, or `MM_STATS_CHANNEL`), a channel no agent watches, so it wakes nobody, and removes the counter file. `static` is the text every turn carries: skill, MCP instructions, tool docs. `tok` comes from the transcript, where Claude Code books every model request of the main thread with its exact usage (input, cache read, cache write 5 min / 1 h, output); only requests since the session's first event count:
+   - **Requests the bus caused** count whole, exactly: turns started by an agent's message over the channel, by the listener or by the `Stop` hook, and rounds whose only input is the result of bus tools. A turn a trusted human starts over the bus is work: it stands for a prompt typed in the terminal.
+   - **Every other request** carries the bus's share of its input: the fixed text (MCP instructions; tool docs unless the tools are deferred, then the schemas once loaded; the skill once loaded) plus what the bus put into the context since the last compaction (bus tool calls and results, pushed messages, hook texts), at 4 characters per token, split over the request's input types; of the output only the bus tool calls the model wrote.
+   - `tok = {req, bus_req, fixed, all, bus}`: requests, those the bus caused, the fixed text in tokens, and the token types of all requests and of the bus's part. Other runtimes have no such transcript and send no `tok`.
+   `MM_STATS_CHANNEL=off` counts and posts nothing.
+3. `bin/mm-agent-stats.sh report` reads the channel and shows per version: sessions, hours, turns the plugin caused per hour and as a share of all turns (`turns` counts the human's prompts, so all turns are those plus the plugin's), bus characters per turn of all turns, characters posted per session, fixed characters per turn. Versions with `tok` get a second table in input-token equivalents (cache read 0.1, cache write 1.25 / 2, output 5): requests per hour, requests the bus caused per hour, fixed tokens per request, the bus's tokens per hour, all tokens per hour, and the bus's share.
 
 ### Error Handling
 
@@ -271,7 +275,9 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 |------|---------|----------------|
 | 1 | State directory not writable, bot id unknown | The event is not counted; the session is not affected |
 | 2 | Stats channel missing, not joinable, or the post fails | Logged by the MCP server; teardown goes on, and the counter file is removed anyway so it cannot pile up |
-| — | Model tokens of a turn | Not measured: only the runtime knows them. The report counts the turns the bus causes; their size depends on the context at that moment |
+| 2 | Transcript missing or unreadable, or another runtime | No `tok`; the counters of step 1 are posted as before |
+| 2 | The bus's share of a request is an estimate | Characters at 4 per token against the request's exact input; requests the bus caused are exact |
+| 2 | Subagents' requests | Not counted: they do not use the bus |
 
 ---
 

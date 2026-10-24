@@ -10,6 +10,9 @@
 # (the human's prompts plus those the plugin caused), bus data put into the context per turn (tool results + compaction handoff),
 # characters posted per session, and the fixed text in every turn (skill,
 # instructions, tool docs). Characters, not tokens: roughly 4 per token.
+# Claude Code sessions since 0.32.0 add a token table from their transcripts:
+# requests per hour, those the bus caused, the fixed text per request, the bus's
+# tokens per hour and its share of all, in input-token equivalents.
 # Read-only; needs a bot token and reads at most the last 2000 posts.
 set -euo pipefail
 
@@ -18,7 +21,7 @@ LIB="$(cd "$(dirname "$0")" && pwd)/mm-agent-lib.sh"
 source "$LIB"
 
 CMD="${1:-}" CHANNEL="" JSON=0
-[[ "$CMD" == report ]] || { sed -n '2,15p' "$0"; exit 2; }
+[[ "$CMD" == report ]] || { sed -n '2,18p' "$0"; exit 2; }
 shift
 for a in "$@"; do
   case "$a" in
@@ -48,7 +51,25 @@ done
 
 report="$(jq -c '
   def sum(f): map(f) | add // 0;
-  group_by(.v) | map({
+  # Input-token equivalents: what a token type costs against an uncached input token.
+  def eq(t): (t["in"] // 0) + (t.read // 0) * 0.1 + (t.w5m // 0) * 1.25
+             + (t.w1h // 0) * 2 + (t.out // 0) * 5;
+  def per_h(x; h): if h > 0 then (x / h | round) else null end;
+  group_by(.v) | map((map(select(.tok)) | if length == 0 then null else {
+      sessions: length,
+      hours: (sum(.min) / 60),
+      req: sum(.tok.req),
+      bus_req: sum(.tok.bus_req),
+      fixed: (sum(.tok.fixed) / length | round),
+      all: sum(eq(.tok.all)),
+      bus: sum(eq(.tok.bus))
+    } | . + {
+      req_per_h: per_h(.req; .hours),
+      bus_req_per_h: (if .hours > 0 then (.bus_req / .hours * 10 | round / 10) else null end),
+      bus_per_h: per_h(.bus; .hours),
+      all_per_h: per_h(.all; .hours),
+      bus_share_pct: (if .all > 0 then (.bus * 1000 / .all | round / 10) else null end)
+    } end) as $tok | {
     version: .[0].v,
     sessions: length,
     hours: (sum(.min) / 60 * 10 | round / 10),
@@ -56,7 +77,8 @@ report="$(jq -c '
     plugin_turns: sum(((.wakes // {}) | add // 0) + ((.blocks // {}) | add // 0)),
     bus_chars: sum(((.tools // {}) | map(.[1]) | add // 0) + ((.compact // [0, 0])[1])),
     post_chars: sum((.posts // [0, 0])[1]),
-    static: (map(.static) | max)
+    static: (map(.static) | max),
+    tok: $tok
   } | . + {
     plugin_turns_per_h: (if .hours > 0 then (.plugin_turns / .hours * 10 | round / 10) else null end),
     all_turns: (.turns + .plugin_turns)
@@ -76,4 +98,14 @@ fi
   jq -r '.[] | [.version, .sessions, .hours, (.plugin_turns_per_h // "–"),
                 ((.plugin_share_pct // "–") | tostring + "%"), (.bus_chars_per_turn // "–"),
                 .post_chars_per_session, .static] | @tsv' <<<"$report"
+} | column -t -s $'\t'
+# Tokens from the transcript (Claude Code sessions since 0.32.0), in input-token
+# equivalents: cache read 0.1, cache write 1.25 (5 min) / 2 (1 h), output 5.
+[[ "$(jq '[.[] | select(.tok)] | length' <<<"$report")" -gt 0 ]] || exit 0
+echo
+{
+  printf 'version\tsessions\thours\trequests/h\tbus requests/h\tfixed tok/request\tbus tok/h\tall tok/h\tbus share\n'
+  jq -r '.[] | select(.tok) | .version as $v | .tok | [$v, .sessions, (.hours * 10 | round / 10),
+                (.req_per_h // "–"), (.bus_req_per_h // "–"), .fixed, (.bus_per_h // "–"),
+                (.all_per_h // "–"), ((.bus_share_pct // "–") | tostring + "%")] | @tsv' <<<"$report"
 } | column -t -s $'\t'
