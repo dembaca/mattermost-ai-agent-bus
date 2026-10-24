@@ -1,0 +1,3 @@
+# Follow `source` into mm-agent-lib.sh next to the script, as CI does.
+source-path=SCRIPTDIR
+external-sources=true

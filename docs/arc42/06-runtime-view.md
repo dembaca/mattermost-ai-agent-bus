@@ -224,12 +224,12 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Participants:** Host session hooks, MCP server; Agent runtime, Mattermost REST API, Mattermost WebSocket, Developer / operator
 
-**Quality goal illustrated:** `#secure` Secret confinement (the registration secret stays on the host; only an authenticated trusted human can approve)
+**Quality goal illustrated:** `#secure` Secret confinement (the registration secret stays on the host), `#secure` Approval integrity (only an authenticated trusted human can approve)
 
 ### Sequence
 
 1. At session start the Host session hooks resolve the trusted humans from `MM_TRUSTED_HUMANS` on the host (comma-separated usernames, looked up with the bot token) and hand `MM_TRUSTED_HUMANS` / `MM_TRUSTED_HUMAN_USER_IDS` to the sandbox. Nothing is inferred: `MM_REG_SECRET` is the registrar's shared secret, nobody's personal token. Without host hooks the MCP server reads the same list.
-   The host also names the **responsible** human (`MM_RESPONSIBLE_HUMAN`, default the first trusted one) and the kind (`MM_AGENT_KIND`: `session` or `autonomous`). All three go along with the registration (IF-01); the registrar, holding the admin token, writes `for @… · trusts @…` into the bot's description, shown in its profile. A bot cannot edit its own profile, so others can rely on it more than on the `for:` / `trusts:` lines the agent puts in its `HELLO`.
+   The host also names the **responsible** human (`MM_RESPONSIBLE_HUMAN`, default the first trusted one) and the kind (`MM_AGENT_KIND`: `session` or `autonomous`). All three go along with the registration (IF-01); the registrar, holding the admin token, writes `for @… · trusts @…` into the bot's description, shown in its profile. A bot cannot edit its own profile and a host-managed agent holds no registration secret, so others can rely on it more than on the `for:` / `trusts:` lines the agent puts in its `HELLO`. An agent that registers itself (RT-6.10) names both at registration: there the profile is that agent's claim (Section 7.3).
 2. The agent asks in the request's thread, or keeps waiting with `WAITING for my human's approval: <what>`.
 3. The MCP server marks each delivered event `from_trusted_human` when the post's author id is a trusted human's, and names them in `trusted_human`. Mattermost authenticates the author, so no post can fake this.
 4. A `from_trusted_human` post that is a DM or a reply in that thread, names the action and comes after the question approves that one action. The agent says in the thread what it does now and whose approval it is, then acts. An approval that contradicts the agent's own human in the session does not count.
@@ -257,7 +257,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Participants:** Turn hooks, Shell CLI, MCP server; Agent runtime, Mattermost REST API, Developer / operator
 
-**Quality goal illustrated:** `#usable` Low noise (measured instead of assumed)
+**Quality goal illustrated:** `#efficient` Low overhead (measured instead of assumed)
 
 ### Sequence
 
@@ -355,7 +355,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Participants:** MCP server, Turn hooks; Agent runtime, Mattermost WebSocket, Developer / operator
 
-**Quality goal illustrated:** `#efficient` Waiting costs no model calls — and with a channel, not even the turns that start and end a listen window
+**Quality goal illustrated:** `#efficient` Low overhead — waiting costs no model calls, and with a channel not even the turns that start and end a listen window
 
 ### Sequence
 
@@ -387,12 +387,12 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Participants:** MCP server; Agent runtime, Mattermost REST API, Mattermost WebSocket, Developer / operator
 
-**Quality goal illustrated:** `#usable` Reachability, `#secure` (only an authenticated trusted human can answer)
+**Quality goal illustrated:** `#usable` Reachability, `#secure` Approval integrity (only an authenticated trusted human can answer)
 
 ### Sequence
 
 1. On by default: in channel mode the MCP server declares `claude/channel/permission` next to `claude/channel` whenever a trusted human is configured (`MM_TRUSTED_HUMANS`, the ids the host passes, or `MM_OWNER`; RT-6.8). No trusted human, no capability: Claude Code relays nothing and the terminal is the only place to answer. `bus_info` shows `permission_relay`.
-2. The server DMs the prompt to the responsible human (RT-6.8), if they are trusted: tool name, `description` and `input_preview` as code blocks (both come from the model's tool call), the id, and how to answer. It goes by DM, not to the work channel: the preview is the call's arguments, with only well-known secrets masked by Claude Code, and posts in the work channel reach every agent's context. The prompt post counts as an open ask (RT-6.11) to nobody in particular, so a reaction on it reaches the inbox without holding up the agent's own asks.
+2. The server DMs the prompt to the responsible human (RT-6.8), if they are trusted: tool name, `description` and `input_preview` as code blocks (both come from the model's tool call), the id, and how to answer. It goes by DM, not to the work channel: the preview is the call's arguments, with only well-known secrets masked by Claude Code, and posts in the work channel reach every agent's context. A DM is still stored on the Mattermost server like any post (retention, search, exports, admin access, backups): data the terminal shows only to the developer (Section 7.3). The prompt post counts as an open ask (RT-6.11) to nobody in particular, so a reaction on it reaches the inbox without holding up the agent's own asks.
 3. The human answers `yes <id>` or `no <id>` (`y`/`n`, any case) in the DM or anywhere the bot reads, or reacts 👍/✅ or 👎/❌ on the prompt post.
 4. Once the channel is confirmed, the pusher takes such an event out before the wake rules (RT-6.12 step 3) when it comes from a trusted human (server-verified author) and names an open id: it sends `notifications/claude/channel/permission` with `allow` or `deny`, replies under the prompt `✅ allowed by <human>` or `⛔ denied by <human>`, and resolves the ask. The agent never sees the verdict. The terminal dialog stays open meanwhile; the first answer wins and applies to this one call only.
 
@@ -415,13 +415,13 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ## 6.14 Agent cards and task states (A2A shapes)
 
-**Purpose:** The MCP server, not the model, keeps track of who is on the bus and which task is in which state, so the coordinator gets an overview without reading the channel and bystanders read less. The bus takes the data shapes of A2A 1.0 (AgentCard, TaskState) the way Cotal does: shapes only, no A2A transport, no new tool, nothing new pushed into a session.
+**Purpose:** The MCP server, not the model, keeps track of who is on the bus and which task is in which state, so the coordinator gets an overview without reading the channel and bystanders read less. The bus takes the data shapes of A2A 1.0 (AgentCard, TaskState) the way Cotal does: shapes only, no A2A transport, no new tool, nothing new pushed into a session. They are the bus's own schema for its state: no other system reads these props, so they promise no interoperability.
 
 **Trigger:** An agent posts through the MCP server (`announce`, `post_message`, `reply_in_thread`, `ask_human`, `resolve_ask`, a permission prompt); an agent calls `coordinator("tasks")` or `coordinator("roster")`; the coordinator posts `ASSIGNMENTS`; events reach a bystander (digest, `wait_for_events`).
 
 **Participants:** MCP server, Shell CLI; Agent runtime, Mattermost REST API
 
-**Quality goal illustrated:** `#efficient` Waiting costs no model calls — here: knowing the state of the work costs no reading of history
+**Quality goal illustrated:** `#efficient` Low overhead — here: knowing the state of the work costs no reading of history
 
 ### Sequence
 
@@ -453,7 +453,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Participants:** MCP server; Agent runtime, Mattermost REST API
 
-**Quality goal illustrated:** `#efficient` Waiting costs no model calls — here: permalinks cost the readers no tokens, an odd link costs only its own URL
+**Quality goal illustrated:** `#efficient` Low overhead — here: permalinks cost the readers no tokens, an odd link costs only its own URL
 
 ### Sequence
 

@@ -34,8 +34,12 @@ own short-lived bot identity.
 |:--------:|-------------|-------------------|
 | 1 | `#reliable` Never wedges a coding session | Mattermost, the registrar or `jq` unavailable: every hook exits 0 within its timeout (Stop 10 s, UserPromptSubmit 5 s) and the session runs as if no bus existed |
 | 2 | `#secure` Secret confinement | In a host-managed session `MM_REG_SECRET` is absent from the sandbox environment in 100 % of sessions, so an agent can create no bot and remove none but its own; no bot outlives its session unnoticed (`mm-agent-sweep.sh` finds every leftover) |
-| 3 | `#usable` Reachability | A mention to a working agent is collected before its turn ends; in a project channel a mention arriving within 15 min after the turn ends is answered without human action |
-| 4 | `#usable` Low noise | A session without a project channel posts nothing and registers no bot, unless the human tells the agent to do so (or sets `MM_REGISTER=always`); status changes carry no prompt, file or task content |
+| 3 | `#secure` Approval integrity | Only a trusted human approves, server-verified by account, and only the one action named: a yes on an ask (RT-6.11), a verdict on a permission prompt (RT-6.13) or a written approval of a proposal (RT-6.8). A post or reaction by an agent or by anyone else approves nothing, whatever it says |
+| 4 | `#usable` Reachability | A mention to a working agent is collected before its turn ends; in a project channel a mention arriving within the listen window after the turn ends (`MM_LISTEN_SEC`, 90 min; the coordinator 2 h) is answered without human action |
+| 5 | `#usable` Low noise | A session without a project channel posts nothing and registers no bot, unless the human tells the agent to do so (or sets `MM_REGISTER=always`); in the work channel, status changes carry no prompt, file or task content. Tool input leaves the session in one place only: a permission prompt, by DM to the responsible human (RT-6.13) |
+| 6 | `#efficient` Low overhead | A listening agent makes no model request until a message for it arrives; the bus's share of a session's tokens in the RT-6.9 report does not rise from one plugin version to the next without a reason in `CHANGELOG.md`. A fixed ceiling follows once a few versions carry token data |
+
+Where these goals rest on assumptions about the Mattermost instance and its accounts, Section 7.3 names them.
 
 See Section 10 for detailed quality scenarios (not yet written).
 

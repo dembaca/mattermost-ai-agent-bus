@@ -74,3 +74,16 @@ a versioned plugin directory, the corral home's plugins and the session's workdi
 | Reachability | Agent checks + `Stop` hook (drain, listen window with a background listener, no model calls) | Same | Agent checks before each new activity and before the turn ends; listen window with one-shot timers and backoff (each wake-up a turn) | Agent checks only |
 
 Without turn hooks nothing holds a turn open or reminds the agent, so the skill and the MCP `instructions` make the check before each new activity mandatory there ([SKILL.md, *Staying reachable*](../../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable)).
+
+---
+
+## 7.3 Trust Assumptions
+
+The bus treats a trusted human's Mattermost account like the session's terminal (`#secure` Approval integrity, Section 1.2). That holds only under the assumptions below; where one of them fails, enable the bus there only with the limit in mind.
+
+| Assumption | Holds when | Where it breaks |
+|------------|------------|-----------------|
+| A trusted account is as safe as the terminal | The instance is under your control, `MM_TRUSTED_HUMANS` is set on purpose (nobody is trusted by default), and every listed account has 2FA | A shared or taken-over account approves any action of every session that trusts it, tool calls included (RT-6.13) |
+| What reaches Mattermost may be stored there | The instance's retention, search, exports, admin access and backups are acceptable for every post, DMs included | The permission relay DMs tool input (a command, a file's content) to the responsible human (RT-6.13); the terminal shows it only to the developer |
+| The profile says whom an agent answers to | Host-managed session: the registrar writes `for @… · trusts @…` and the agent holds no registration secret (Section 7.1) | A session that registers itself holds `MM_REG_SECRET` and names its responsible and trusted humans at registration (RT-6.10, Section 7.2): the registrar writes what the caller names, nobody verifies it |
+| Everyone who can post in the channel may steer the agents | One human per channel, or only people you would let type into the session | Any channel member wakes an agent with a mention, and the agent reads the text. Only approvals are verified by the server; that other posts are data is a rule for the agent, not a technical barrier |

@@ -13,7 +13,8 @@ if [[ -z "$SID" ]]; then
   echo '{"continue":true}'
   exit 0
 fi
-export MM_AGENT_SESSION_FILE="$(mm_state_dir)/cursor-${SID}.env"
+MM_AGENT_SESSION_FILE="$(mm_state_dir)/cursor-${SID}.env"
+export MM_AGENT_SESSION_FILE
 if [[ -f "$MM_AGENT_SESSION_FILE" ]]; then
   # stdout is Cursor's JSON channel; stop prints shell `unset` lines there.
   "${ROOT}/bin/mm-agent-session.sh" stop >/dev/null || true

@@ -17,7 +17,9 @@ is not done until the docs say what the code now does:
   (MCP server behaviour). A new scenario needs a test.
 - **Describe once, link elsewhere.** README, adapter docs and `docs/protocol.md`
   link to the arc42 section instead of restating behaviour.
-- **Version bump → CHANGELOG.md entry** for that version.
+- **Version bump → CHANGELOG.md entry** for that version, and the same version in
+  `mcp/pyproject.toml`, `mcp/src/…/__init__.py` and `mcp/uv.lock` (doc-check
+  compares the first two).
 
 ## Before you push
 
@@ -26,6 +28,8 @@ python3 scripts/arc42-lint/arc42-lint.py docs/arc42 --strict
 python3 scripts/doc-check.py --base origin/main
 uv run --directory mcp pytest -q
 uv run --directory mcp pytest -q ../tests/hooks
+git ls-files -z '*.sh' '*.sh.example' | xargs -0 shellcheck -S warning
+uvx ruff@0.17.2 check
 ```
 
 `scripts/arc42-lint/` is vendored from MSiccDev/arc42-toolkit — do not edit it;

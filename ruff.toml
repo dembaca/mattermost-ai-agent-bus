@@ -1,0 +1,10 @@
+# The MCP server, the tests and own scripts. An explicit rule set, so a newer
+# ruff does not change what CI checks: CI pins the version as well.
+extend-exclude = ["scripts/arc42-lint"]  # vendored, not ours to lint
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B"]
+
+[lint.per-file-ignores]
+# `l` for a line in short comprehensions reads fine there.
+"**/tests/**" = ["E741"]
