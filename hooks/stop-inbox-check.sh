@@ -133,10 +133,22 @@ go_idle() {
 
 # Latest own post in the work channel: sets LAST_MSG and LAST_AT (epoch ms).
 # Without the 👑 the MCP server puts before a coordinator's posts (RT-6.6).
+# Whoever posts as the agent keeps it in last-<uid>.env (RT-6.2, ownpost.py,
+# mm-agent-post.sh): no request then. Without that file (an older server, an
+# agent that never posted) the channel's last 100 posts are read.
 LAST_MSG="" LAST_AT=0
 my_last_post() {
-  local cid
+  local cid lf k v at="" msg=""
   [[ -n "${MM_BOT_USER_ID:-}" ]] || return 1
+  if lf="$(mm_bot_state_file last 2>/dev/null)" && [[ -f "$lf" ]]; then
+    while IFS='=' read -r k v; do
+      case "$k" in AT) at="$v" ;; MSG) msg="$v" ;; esac
+    done <"$lf"
+    if [[ "$at" =~ ^[0-9]+$ && -n "$msg" ]]; then
+      LAST_AT="$at" LAST_MSG="$msg"
+      return 0
+    fi
+  fi
   cid="$(mm_work_channel_id 2>/dev/null)" || return 1
   mm_api GET "/api/v4/channels/${cid}/posts?per_page=100" &&
     [[ "$MM_API_STATUS" == "200" ]] || return 1

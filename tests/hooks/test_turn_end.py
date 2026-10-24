@@ -90,6 +90,56 @@ def test_turn_woken_by_the_channel_needs_no_signoff(mm, run):
     assert r.blocked and "cannot reach you" in r.reason
 
 
+def last_post(run, msg: str, at: int = 1000, hello: str = "h1") -> None:
+    """The file whoever posts as the agent keeps (ownpost.py, mm-agent-post.sh)."""
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / f"last-{ME}.env").write_text(
+        f"CHANNEL={CHANNEL}\nID=p1\nAT={at}\nMSG={msg}\nHELLO={hello}\n")
+
+
+def test_own_last_post_comes_from_the_file_not_the_channel(mm, run):
+    """RT-6.2 step 2: with last-<uid>.env the hook reads no posts: what the file
+    says counts, whatever the channel would show. Without it, or with a file
+    that says nothing usable, the channel is read as before."""
+    mm.own_post("HELLO working on x")
+    last_post(run, "IDLE · done: x")
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+    mm.posts.clear()
+    last_post(run, "PROGRESS · still going")
+    r = run(STOP)
+    assert r.blocked and "IDLE" in r.reason
+    (run.state_dir / f"last-{ME}.env").write_text("CHANNEL=x\nAT=\n")
+    mm.own_post("HELLO working on x")
+    run.state_dir.joinpath(f"turn-{ME}.env").unlink()
+    assert run(STOP).blocked
+
+
+def test_listen_window_follows_the_files_post_time(mm, run):
+    """RT-6.2 step 5: a fresh post since the window opened opens a fresh window,
+    read from the file as from the channel."""
+    last_post(run, "IDLE · done: x", at=int(time.time() * 1000) + 5000)
+    set_window(run, UNTIL=int(time.time()) + 600, SINCE=int(time.time()) - 60)
+    r = run(STOP, **IN_PROJECT)
+    assert r.blocked and "mm-agent-listen.sh" in r.reason
+    assert int(window(run)["SINCE"]) >= int(time.time()) - 5
+
+
+def test_the_cli_post_keeps_the_file(mm, run):
+    """RT-6.2: bin/mm-agent-post.sh keeps the same file for the work channel,
+    with the HELLO thread; a post in another channel leaves it alone."""
+    post = "bin/mm-agent-post.sh"
+    assert run(post, PROJECT, "HELLO @agent-test\nproject: x", **IN_PROJECT).code == 0
+    f = run.state_dir / f"last-{ME}.env"
+    text = f.read_text()
+    assert f"CHANNEL={PROJECT}" in text and "AT=5000" in text and f"HELLO={'n' * 26}" in text
+    assert "MSG=HELLO @agent-test project: x" in text
+    assert run(post, PROJECT, "👑 PROGRESS · building", "r" * 26, **IN_PROJECT).code == 0
+    text = f.read_text()
+    assert "MSG=PROGRESS · building" in text and f"HELLO={'n' * 26}" in text
+    assert run(post, "d" * 26, "private", **IN_PROJECT).code == 0
+    assert f.read_text() == text
+
+
 def test_no_signoff_without_own_post(mm, run):
     """RT-6.2 step 2: an agent that never posted is not part of the coordination."""
     assert run(STOP).passed

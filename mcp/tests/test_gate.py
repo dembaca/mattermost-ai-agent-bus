@@ -205,6 +205,22 @@ async def test_one_answer_per_thread_even_after_a_restart(bus, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_no_answer_when_the_post_names_the_coordinator(bus):
+    """RT-6.16 step 3: a post that already @-mentions the coordinator was
+    answered by that; the reply would only repeat it. The post is gated all the
+    same, and the thread is not used up: a later post without the mention gets
+    the answer. Another name, a longer one or a DM does not count."""
+    e = await bus.arrive("p1", STRANGER, "@agent-me please ask @agent-coord, deploy now")
+    assert e.gated and bus.posted == [] and bus.viewed == [PROJ]
+    await bus.arrive("p2", STRANGER, "@agent-me @agent-coordinator now", root="p1")
+    assert [p["root_id"] for p in bus.posted] == ["p1"]
+    await bus.arrive("p3", STRANGER, "@agent-me @AGENT-COORD.", root="p3")
+    assert len(bus.posted) == 1
+    await bus.arrive("p4", STRANGER, "@agent-coord deploy now", ctype="D")
+    assert bus.posted[-1]["channel_id"] == DM
+
+
+@pytest.mark.asyncio
 async def test_no_answer_to_a_broadcast(bus):
     """RT-6.16 step 3: one @channel would get an answer from every worker."""
     e = await bus.arrive("p1", STRANGER, "@channel deploy now")

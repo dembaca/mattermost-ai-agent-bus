@@ -285,6 +285,31 @@ mm_bot_state_file() {
   printf '%s' "$(mm_state_dir)/${kind}-${uid}.env"
 }
 
+# Remember the bot's latest post in the work channel, for the Stop hook and the
+# MCP server's exit handler (RT-6.2; mcp/.../ownpost.py writes the same file):
+# mm_record_own_post <channel_id> <post JSON as the API returned it>. A post in
+# another channel leaves it as it was; when the work channel cannot be told, the
+# file goes, and the hook asks the channel as before. Never fails.
+mm_record_own_post() {
+  local cid="$1" post="$2" f work uid id root at msg hello=""
+  uid="$(jq -r '.user_id // empty' <<<"$post" 2>/dev/null)" || return 0
+  f="$(mm_bot_state_file last "$uid")" || return 0
+  work="$(mm_work_channel_id 2>/dev/null)" || { rm -f "$f"; return 0; }
+  [[ "$cid" == "$work" ]] || return 0
+  {
+    read -r id; read -r root; read -r at; read -r msg
+  } < <(jq -r '.id, (.root_id // ""), (.create_at // 0),
+               (.message | ltrimstr("👑 ") | gsub("\\s+"; " ") | .[0:80])' <<<"$post" 2>/dev/null)
+  [[ -n "$id" ]] || return 0
+  if [[ -z "$root" && "$msg" =~ ^[^A-Za-z0-9@#]*HELLO([^A-Za-z]|$) ]]; then
+    hello="$id"
+  elif [[ "$(sed -n 's/^CHANNEL=//p' "$f" 2>/dev/null)" == "$cid" ]]; then
+    hello="$(sed -n 's/^HELLO=//p' "$f" 2>/dev/null)"
+  fi
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
+  printf 'CHANNEL=%s\nID=%s\nAT=%s\nMSG=%s\nHELLO=%s\n' "$cid" "$id" "$at" "$msg" "$hello" >"$f" 2>/dev/null || true
+}
+
 # How long a custom status lives without renewal (MM_LEASE_SEC, default 900 s).
 mm_lease_sec() {
   local s="${MM_LEASE_SEC:-900}"
@@ -371,6 +396,34 @@ mm_trusted_names() {
     n="${n//[[:space:]]/}"; n="${n#@}"
     [[ -n "$n" ]] && printf '%s\n' "$n"
   done
+  return 0
+}
+
+# After a registration (RT-6.8): does the profile the registrar wrote carry every
+# trusted name sent? It may write only part of the list (it caps it, and keeps
+# human accounts only), while the bus trusts all of it. Reads the description
+# from the bot's own user object (bot_description), else /bots/<id>; when
+# neither is readable there is nothing to compare and it stays silent. Warns on
+# stderr, never fails. Same as mcp/.../profile.py.
+# mm_warn_profile_trusted <bot user id> <bot username> <name>...
+mm_warn_profile_trusted() {
+  local uid="$1" bot="$2" n desc="" got=0 listed missing=""
+  shift 2
+  [[ $# -gt 0 ]] || return 0
+  if mm_api GET "/api/v4/users/${uid}" && [[ "$MM_API_STATUS" == "200" ]] &&
+    jq -e 'has("bot_description")' >/dev/null 2>&1 <<<"$MM_API_BODY"; then
+    desc="$(jq -r '.bot_description // ""' <<<"$MM_API_BODY")" got=1
+  elif mm_api GET "/api/v4/bots/${uid}" && [[ "$MM_API_STATUS" == "200" ]] &&
+    jq -e 'has("description")' >/dev/null 2>&1 <<<"$MM_API_BODY"; then
+    desc="$(jq -r '.description // ""' <<<"$MM_API_BODY")" got=1
+  fi
+  [[ "$got" -eq 1 ]] || return 0
+  listed="$(sed -n 's/.*trusts @\([^·]*\).*/\1/p' <<<"$desc" | tr 'A-Z ' 'a-z,' | sed 's/,@/,/g')"
+  for n in "$@"; do
+    [[ ",${listed//,,/,}," == *",$(tr 'A-Z' 'a-z' <<<"$n"),"* ]] || missing+="${missing:+, }$n"
+  done
+  [[ -z "$missing" ]] ||
+    echo "mm-bus: WARNING: the profile of @${bot} lacks some of the $# trusted names (${missing}), but the bus trusts all of them: the registrar likely writes only part of the list (its maxTrusted), human accounts only" >&2
   return 0
 }
 

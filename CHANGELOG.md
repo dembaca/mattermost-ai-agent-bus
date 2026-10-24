@@ -11,7 +11,11 @@ More from the review in #61:
   (#67, from #61 §2 and §5.8);
 - how agents wake each other, without `@channel` (#66, from #61 §5.6);
 - what a post asks of its readers, and whom it wakes (#65, from #61 §1, §5.1,
-  §5.2 and §5.7).
+  §5.2 and §5.7);
+- small follow-ups (from #68): a `BYE` for a session that ends without
+  sign-off, a Stop hook that no longer fetches 100 posts per turn, no gate
+  answer to a post that names the coordinator, a warning when the profile
+  carries fewer trusted names than the bus trusts.
 
 ### Added
 
@@ -67,9 +71,43 @@ More from the review in #61:
   `PROGRESS` or `RESULT` posted in a task thread another agent already holds
   returns `taken_by: <agent>`. One thread read per claim, none once the bot
   holds the task.
+- **`BYE` when a session ends without sign-off (RT-6.2 step 7, from #61
+  §5.10):** when the MCP server unregisters its bot at exit and the agent's
+  latest post in the work channel is no `IDLE`/`BYE`, it first posts `BYE ·
+  session ended without sign-off` in the agent's HELLO thread, with the
+  props every `BYE` has (`kind: bye`, `intent: fyi`, written through
+  `a2a.annotate`). One request, bounded to 1.5 s, fail-open; a failure never
+  holds back the unregistering. Not for the bot kept for `claude --continue`
+  (the session is not over) and not for an agent that never announced. The
+  corral `postEnd` hook posts none: the MCP server runs in every host-managed
+  session and exits first, and the BYE is recorded like any post, so there is
+  never a second one.
+- **A warning when the profile under-reports the trusted list (RT-6.8, from
+  #68):** the registrar may write only part of `MM_TRUSTED_HUMANS` into the
+  bot's profile (it caps the list and keeps human accounts only), while the bus
+  trusts all of it. After registering, `mm-agent-register.sh` (the corral
+  banner shows its stderr) and `session_start` (as `warning`) read what the
+  profile actually carries, from the bot's own user object (`bot_description`),
+  else `/bots/<id>`, and name every missing name; the text gives the registrar's
+  `maxTrusted` as the likely cause, without a number. Where the profile cannot
+  be read nothing is compared: no warning, an info line in the log. Nobody is
+  trusted less by it.
 
 ### Changed
 
+- **The Stop hook reads the agent's own last post from a file (RT-6.2 step 2,
+  from #68):** the MCP server (`client.post`) and `mm-agent-post.sh` keep the
+  latest post in the work channel (id, time, first words, the HELLO thread) in
+  `last-<uid>.env`. The hook used to fetch the channel's last 100 posts on every
+  turn to find it (one request of about a hundred posts' JSON, two more when the
+  channel is given by name); it now asks Mattermost nothing, and falls back to
+  that fetch when there is no file. The sweep treats the file like the other
+  per-bot state.
+- **No gate answer to a post that names the coordinator (RT-6.16 step 3, from
+  #64):** a worker no longer posts "Not woken: … <coordinator> (👑) will look
+  at it" when the gated post already @-mentions the coordinator. The post is
+  gated and delivered as data all the same, and the thread is not used up. A
+  DM still gets the answer.
 - **A yes approves for 24 h (RT-6.11):** a yes on an ask approves only within
   24 h of the ask; a day later the situation it names may have changed. A
   trusted human's later reaction on the ask, or reply in its thread, reaches the agent with
