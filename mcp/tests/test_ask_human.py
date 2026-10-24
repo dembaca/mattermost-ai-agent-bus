@@ -13,6 +13,8 @@ ASK = "a" * 26
 
 
 class _Client:
+    session = None
+
     def __init__(self):
         self.posted = []
         self.reacted = []
@@ -159,7 +161,29 @@ async def test_a_post_without_human_mentions_is_untouched(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.post_message("@agent-cursor-1 please HANDOVER, then release"))
     assert c.posted[0]["message"] == "@agent-cursor-1 please HANDOVER, then release"
-    assert "unmentioned" not in out
+    assert "unmentioned" not in out and "unasked" not in out
+
+
+@pytest.mark.asyncio
+async def test_naming_a_human_without_an_ask_gets_a_hint(monkeypatch):
+    """RT-6.11: "merge waits on dembaca" reaches nobody; the result says to ask."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.reply_in_thread("r1", "review ok · merge: Dembaca decides"))
+    assert c.posted[0]["message"] == "review ok · merge: Dembaca decides"  # posted all the same
+    assert out["unasked"] == ["dembaca"] and "call ask_human now" in out["hint"]
+    out = json.loads(await server.post_message("IDLE · open: go from dembaca for #190"))
+    assert out["unasked"] == ["dembaca"]
+
+
+@pytest.mark.asyncio
+async def test_no_hint_with_an_open_ask_or_without_the_name(monkeypatch):
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    for text in ("merged #190", "branch dembaca-x, file a.dembaca, mail dembaca@x.de"):
+        assert "unasked" not in json.loads(await server.post_message(text))
+    asks.add(BOT, ASK, "dembaca")
+    assert "unasked" not in json.loads(await server.post_message("merge waits on dembaca, ask " + ASK))
 
 
 @pytest.mark.asyncio

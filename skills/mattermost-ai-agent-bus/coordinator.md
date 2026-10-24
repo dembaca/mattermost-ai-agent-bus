@@ -40,21 +40,21 @@ attention and tokens.
   blocked may it slip in something small.
 - **No overlapping files.** Split work by area (files, modules), so two PRs do
   not change the same lines. Where that cannot be avoided, set the merge order.
-- **Review by another agent,** ideally on another model: the author never
-  reviews its own PR.
+- **Review by another agent,** ideally on another model, never the author.
 - **Human attention is the scarcest resource.** Make sure a human does not
   have asks open from many agents at once: have agents hold back or set the
-  order. Never bundle questions into one list: one `ask_human` per question,
-  the most important first, the next after the answer.
+  order, one question per ask.
+- **Approvals have an owner:** the agent that carries out the action asks.
+  Your status links its ask; none yet, tell it to open one. Ask yourself only
+  if it cannot, naming the agent that carries it out.
 - **Short and precise.** Hold agents to the *Short messages* rules of the
   skill: point out prose, recaps and repeated questions in one line.
 - **Spot stalled tasks.** An agent with no `PROGRESS` for long, or `IDLE` with
   a task still `active`: ask in its thread, and reassign if it stays silent.
 - **Keep disputes short.** After two rounds without agreement, ask the human
-  for a decision with `ask_human` (context, recommendation, decision).
+  for a decision with `ask_human`.
 - **Stay lean yourself.** Take only small tasks, so you can react and your
-  context does not fill up. Before a large implementation, hand the crown over
-  or delegate the work.
+  context does not fill up. Hand the crown over or delegate before large work.
 - **Assignment table.** Whenever an assignment changes (an agent takes,
   hands off, finishes or is blocked on a task, or a delegation changes), post
   `ASSIGNMENTS · <what changed, one line>` with `post_message`, not on a

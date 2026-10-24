@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.33.0
+
+### Changed
+
+- **Waiting on a human means an open ask (RT-6.11):** `post_message` and
+  `reply_in_thread` look for trusted humans named in the text. If the agent
+  has no open ask to one of them, the post goes out unchanged and the result
+  carries `unasked` and a hint to call `ask_human` or link the open ask.
+  Lines like "merge waits on dembaca" no longer pass for a question.
+- **The agent that carries out an action asks for it:** the skill, the
+  coordinator guide and the MCP instructions say so. Reviewers and the
+  coordinator link that ask instead of asking; the coordinator asks only when
+  that agent cannot. `WAITING …` lines and the post before acting name the
+  ask. A human's answer in a terminal approves only that agent's own action.
+
 ## 0.32.0
 
 ### Added

@@ -134,7 +134,9 @@ mcp = MCPServer(
            "new activity: without turn hooks (Cursor, OpenCode) nothing else delivers "
            "messages to you. ")
         + "Need something from a human? ask_human — the only place to @-mention "
-        "one. Never create channels or teams."
+        "one; the agent that carries out an action asks for it, the others link "
+        "its ask. A line that waits on a human without an ask reaches nobody. "
+        "Never create channels or teams."
     ),
     lifespan=_lifespan,
     version=VERSION,
@@ -376,10 +378,37 @@ async def _unmention(client: MattermostClient, text: str) -> tuple[str, list[str
     return out, sorted(humans)
 
 
-def _with_unmentioned(result: dict[str, Any], removed: list[str]) -> dict[str, Any]:
+async def _unasked(client: MattermostClient, text: str, uid: str) -> list[str]:
+    """Trusted humans a post names while this bot has no open ask to them (RT-6.11).
+
+    "Merge waits on dembaca" reaches nobody: only an ask notifies the person.
+    The post still goes out; the result tells the agent to ask, or to link the
+    ask that is open. Fails open: no hint if the lookup fails.
+    """
+    try:
+        trusted = [n for n in (await client.trusted_humans()).values() if n]
+    except Exception as exc:  # noqa: BLE001 — never block a post over this
+        log.info("ask check skipped: %s", exc)
+        return []
+    named = [n for n in trusted
+             if re.search(rf"(?<![\w.@-]){re.escape(n)}(?![\w@-]|\.\w)", text, re.I)]
+    return sorted(n for n in named if not (uid and asks.open_to(uid, n)))
+
+
+def _with_unmentioned(result: dict[str, Any], removed: list[str],
+                      unasked: list[str] | None = None) -> dict[str, Any]:
+    hints = []
     if removed:
         result["unmentioned"] = removed
-        result["hint"] = "humans are @-mentioned only by ask_human; use it when you need them"
+        hints.append("humans are @-mentioned only by ask_human; use it when you need them")
+    if unasked:
+        result["unasked"] = unasked
+        hints.append(
+            f"you name {', '.join(unasked)} with no open ask of yours: if this waits on them "
+            "(an approval, a decision), call ask_human now; the agent that carries out the "
+            "action asks, the others link its ask")
+    if hints:
+        result["hint"] = "; ".join(hints)
     return result
 
 
@@ -484,7 +513,8 @@ async def post_message(
         props=_a2a_props(message),
     )
     await _posted(client, post)
-    return _out("post_message", _with_unmentioned(await slim.post(client, post), removed))
+    return _out("post_message", _with_unmentioned(await slim.post(client, post), removed,
+                                                  await _unasked(client, message, uid)))
 
 
 @mcp.tool()
@@ -499,15 +529,17 @@ async def reply_in_thread(
     _done_typing()
     client = _get_client()
     message, removed = await _unmention(client, message)
+    uid = await _my_id(client)
     stats.record("post", chars=len(message))
     post = await client.post(
-        lease.with_crown(message, await _my_id(client)),
+        lease.with_crown(message, uid),
         channel_id=channel_id or None,
         root_id=root_id,
         props=_a2a_props(message),
     )
     await _posted(client, post)
-    return _out("reply_in_thread", _with_unmentioned(await slim.post(client, post), removed))
+    return _out("reply_in_thread", _with_unmentioned(await slim.post(client, post), removed,
+                                                      await _unasked(client, message, uid)))
 
 
 @mcp.tool()
