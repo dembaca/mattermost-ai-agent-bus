@@ -3,7 +3,7 @@
 ## Overview
 
 Fifteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
-with drain, sign-off and listen window (reachability, quality goal 3), a listen
+with drain, sign-off and listen window (reachability, quality goal 4), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and

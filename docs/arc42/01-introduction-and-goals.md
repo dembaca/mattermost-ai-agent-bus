@@ -28,7 +28,6 @@ own short-lived bot identity.
 
 > Top quality requirements of highest importance to major stakeholders.
 > All architectural decisions must support these goals.
-> ⚠️ **Draft derived from the code — must be reviewed and signed off by the maintainer (1.3).**
 
 | Priority | Quality Goal | Concrete Scenario |
 |:--------:|-------------|-------------------|
@@ -55,4 +54,4 @@ See Section 10 for detailed quality scenarios (not yet written).
 | People reading the channel | Mattermost | See at a glance who works on what, without chatter |
 | Operator of Mattermost and the registrar | — | Bots are ephemeral; the registration secret can be rotated |
 
-**Quality goal sign-off:** Maintainer
+**Quality goal sign-off:** Maintainer, 2026-10-24 (after the design review, #61)
