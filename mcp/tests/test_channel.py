@@ -80,7 +80,8 @@ def test_notification_carries_message_and_routing():
     meta = params["meta"]
     assert meta == {"kind": "mention", "post_id": "p1", "root_id": "r1", "channel": "agents",
                     "author": "dembaca", "at": "2026-10-20 09:00",
-                    "from_trusted_human": "true", "trusted_human": "dembaca"}
+                    "from_trusted_human": "true", "from_agent": "false",
+                    "trusted_human": "dembaca"}
     # Claude Code drops attributes whose key is not an identifier, and wants strings.
     assert all(k.isidentifier() and isinstance(v, str) for k, v in meta.items())
 

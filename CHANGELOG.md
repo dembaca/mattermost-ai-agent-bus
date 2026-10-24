@@ -3,6 +3,47 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.34.0
+
+Who may wake an agent (#64, from #61 §3, §5.3 and §5.5).
+
+### Added
+
+- **Wake gate (RT-6.16):** with trusted humans configured, a post by anyone
+  else (a person not on the list, a bot that is no `agent-*` bot, any webhook
+  post) that would wake a worker — a mention, a DM, a reply in its thread,
+  `@channel` — no longer does. The worker's MCP server answers in the thread
+  itself, once per thread and without the model: `Not woken: <author> is not on
+  my trusted list. <coordinator> (👑) will look at it.` (in a DM: ask in the
+  work channel; with no coordinator: ask the trusted humans, by plain name),
+  but not to `@channel`. It marks the channel read, so neither the Stop hook
+  nor the listener wakes for it, and hands the post over as data only: last in
+  `wait_for_events` with `gated` saying why, no typing indicator, and in a
+  channel session only in the digest, marked `(not trusted)`. The listener
+  skips post ids listed in the new `gate-<uid>.env`. The coordinator is never
+  gated: it answers what is open or next and takes no work from such a post;
+  `coordinator("tasks")` and the `ASSIGNMENTS` table leave out a `TASK` by
+  someone not trusted. Without a trusted list, or with the MCP server down,
+  nothing changes.
+- **`from_agent`** on every event, next to `from_trusted_human`: the author is
+  a bot account named `agent-*` (a person named `agent-x` is not).
+
+### Changed
+
+- **Webhook posts are never `from_trusted_human`:** anyone with a hook's URL
+  posts as the account that made it.
+- **Channel pushes neutralise `<channel` and `</channel`** in a post's text
+  (and in the digest), so a body can neither close the tag Claude Code wraps
+  it in nor open one.
+- SKILL.md, coordinator.md and the MCP instructions say who wakes whom; §1.2
+  (`#secure` Approval integrity) and §7.3 name what the gate holds and what it
+  does not (an injected agent can still pass a request on as its own).
+  `mm-agent-sweep.sh` counts `gate-<uid>.env` as per-bot state.
+- **Fixed text:** SKILL.md stays within its size (every turn reads it).
+  coordinator.md, read only by the crown holder, grows by about 90 characters
+  for its new rule on posts that are not trusted (§1.2 `#efficient` Low
+  overhead: growth only with a reason).
+
 ## 0.33.2
 
 ### Fixed

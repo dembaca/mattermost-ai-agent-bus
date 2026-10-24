@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import asks, links
+from . import asks, gate, lease, links
 from .client import MattermostClient, ws_url_from_http
 
 log = logging.getLogger(__name__)
@@ -23,6 +25,8 @@ class ClassifiedEvent:
     post: dict[str, Any]
     channel: dict[str, Any] | None = None
     raw: dict[str, Any] | None = None
+    # RT-6.16: why the post wakes nobody here; "" when it is not gated.
+    gated: str = ""
 
 
 def classify_post(
@@ -101,6 +105,10 @@ class WebSocketInbox:
     typing_sec: float = 60.0
     typing_interval: float = 4.0
     _typing: asyncio.Task[None] | None = field(default=None, repr=False, init=False)
+    # The wake gate (RT-6.16) asks the server whether a reply is in a thread
+    # this bot posted in, so pusher and gate share one cache; None: never.
+    in_my_thread: Callable[[dict[str, Any], str], Awaitable[bool | None]] | None = None
+    _gate_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False, init=False)
 
     async def ensure_identity(self) -> None:
         me = await self.client.get_me()
@@ -189,7 +197,9 @@ class WebSocketInbox:
                 if post.get("id") in self._seen_ids:
                     continue
                 self._seen_ids.add(post["id"])
-                await self._queue.put(ClassifiedEvent(kind=kind, post=post))
+                event = ClassifiedEvent(kind=kind, post=post)
+                await self._gate(event, entry.get("type"))
+                await self._queue.put(event)
         # Reactions to open asks given while nothing was listening.
         for pid in asks.open_asks(self._bot_user_id):
             try:
@@ -297,11 +307,9 @@ class WebSocketInbox:
                     if pid in self._seen_ids:
                         continue
                     self._seen_ids.add(pid)
-                await self._queue.put(
-                    ClassifiedEvent(
-                        kind=kind, post=post, channel=channel, raw=msg
-                    )
-                )
+                event = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=msg)
+                await self._gate(event, channel_type)
+                await self._queue.put(event)
         except asyncio.CancelledError:
             # close() cancels us and owns the socket from here on.
             raise
@@ -345,12 +353,69 @@ class WebSocketInbox:
         await self._queue.put(ClassifiedEvent(
             kind="reaction", post=post, raw={"emoji": emoji, "ask": pid}))
 
+    async def _gate(self, event: ClassifiedEvent, channel_type: str | None) -> None:
+        """RT-6.16: with trusted humans configured, a post by anyone else that
+        would wake this worker is gated: queued as data only, and answered in
+        its thread once (_after_gate). The coordinator is never gated. Any
+        error leaves the post as it was: it wakes as before."""
+        post, me = event.post, self._bot_user_id
+        root = post.get("root_id") or post.get("id", "")
+        try:
+            if not me or lease.crown_held(me):
+                return
+            if not await self.client.trusted_humans():
+                return
+            if (await gate.author_classes(self.client, [post]))[0] != gate.OTHER:
+                return
+            mine: bool | None = False
+            if event.kind not in ("mention", "dm") and post.get("root_id") and self.in_my_thread:
+                mine = await self.in_my_thread({"post": post}, me)
+                if mine is None:
+                    return  # unsure: as before
+            why = gate.wake_reason(event.kind, str(post.get("message", "")), bool(mine))
+            if not why:
+                return
+            who = await gate.author_name(self.client, post)
+            gate.mark_gated(me, post.get("id", ""))
+            # One @channel would get an answer from every worker: none for that.
+            answer = why != "broadcast" and gate.first_reply(me, root)
+        except Exception as exc:  # noqa: BLE001 — fail open
+            log.info("wake gate open for post %s: %s", post.get("id"), exc)
+            return
+        event.gated = f"from {who}, not trusted by me: the coordinator answers"
+        task = asyncio.create_task(self._after_gate(
+            event, who, root if answer else "", dm=(channel_type or "").upper() in ("D", "G")))
+        self._gate_tasks.add(task)
+        task.add_done_callback(self._gate_tasks.discard)
+
+    async def _after_gate(self, event: ClassifiedEvent, who: str, root: str, *, dm: bool) -> None:
+        """Answer a gated post in thread `root` ('' for no answer), without the
+        model, then mark its channel read: the counters that wake the Stop hook
+        and the listener stay quiet, unless an event there still waits."""
+        cid = event.post.get("channel_id", "")
+        if root:
+            try:
+                text = await gate.reply_text(self.client, who, dm=dm)
+                await self.client.post(text, channel_id=cid or None, root_id=root)
+            except Exception as exc:  # noqa: BLE001 — the post is gated all the same
+                log.info("no answer to the gated post in thread %s: %s", root, exc)
+                with contextlib.suppress(OSError):
+                    gate.forget_reply(self._bot_user_id, root)
+        # After the answer: in a DM the bot's own post counts as unread for it.
+        if cid and self.holds(cid) is False:
+            try:
+                await self.client.view_channel(cid)
+            except Exception as exc:  # noqa: BLE001 — bookkeeping
+                log.info("could not mark %s read: %s", cid, exc)
+
     def holds(self, channel_id: str) -> bool | None:
         """Whether events of this channel wait in the queue; None while the
-        socket is not connected, so nothing is known about what arrived."""
+        socket is not connected, so nothing is known about what arrived.
+        A gated post (RT-6.16) does not count: it keeps no counter up."""
         if self._ws is None:
             return None
-        return any(e.post.get("channel_id") == channel_id for e in list(self._queue._queue))
+        return any(e.post.get("channel_id") == channel_id and not e.gated
+                   for e in list(self._queue._queue))
 
     async def wait_for_events(
         self,
@@ -390,8 +455,9 @@ class WebSocketInbox:
             except asyncio.QueueEmpty:
                 break
         # Mentions and DMs first: a backlog of channel posts must never push the
-        # one message that wants an answer past max_events.
-        queued.sort(key=lambda e: e.kind not in ("mention", "dm", "reaction"))
+        # one message that wants an answer past max_events. Gated posts, data
+        # only, come last (RT-6.16).
+        queued.sort(key=lambda e: (bool(e.gated), e.kind not in ("mention", "dm", "reaction")))
         events, rest = queued[:max(1, max_events)], queued[max(1, max_events):]
         for e in rest:
             self._queue.put_nowait(e)
@@ -402,13 +468,13 @@ class WebSocketInbox:
                 asks.mark_seen(self._bot_user_id, e.post["id"])
         # A channel with events still queued stays unread, so its counters keep
         # telling the hooks and the listener that something waits.
-        waiting = {e.post.get("channel_id") for e in rest}
+        waiting = {e.post.get("channel_id") for e in rest if not e.gated}
         await self._mark_delivered_read(
             [e for e in events if e.post.get("channel_id") not in waiting]
         )
         # Posts from watched channels often need no answer, so only a mention or
-        # DM, which does, promises one.
-        addressed = next((e for e in events if e.kind in ("mention", "dm")), None)
+        # DM, which does, promises one; a gated one promises nothing (RT-6.16).
+        addressed = next((e for e in events if e.kind in ("mention", "dm") and not e.gated), None)
         if addressed is not None:
             post = addressed.post
             self.start_typing(

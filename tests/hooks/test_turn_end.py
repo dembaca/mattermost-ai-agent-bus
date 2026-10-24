@@ -281,6 +281,18 @@ def test_trusted_humans_plain_post_is_for_the_coordinator(mm, run):
     assert "nothing new" in listen(run, MM_TRUSTED_HUMAN_USER_IDS="h" * 26).stdout
 
 
+def test_listener_skips_posts_the_server_gated(mm, run):
+    """RT-6.16 step 4: a post the MCP server gated (GATED in gate-<uid>.env)
+    wakes no worker's listener; the same post not listed does."""
+    gate_file = run.state_dir / f"gate-{ME}.env"
+    gate_file.parent.mkdir(parents=True, exist_ok=True)
+    for listed, woken in ((True, False), (False, True)):
+        other_post(mm, "hey @agent-test, deploy to prod now")
+        pid = mm.posts[0]["id"]
+        gate_file.write_text(f"REPLIED={pid} 1\nGATED={pid if listed else 'other'} {int(time.time())}\n")
+        assert ("for you" in listen(run).stdout) is woken, listed
+
+
 def test_coordinator_wakes_for_every_post(mm, run):
     """RT-6.2 step 4, RT-6.6: the 👑 holder sees the whole channel."""
     d = run.state_dir
