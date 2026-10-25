@@ -3,6 +3,12 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.42.1
+
+### Fixed
+
+- **A table after text renders:** Mattermost shows a markdown table only after a blank line; the server now inserts one before a table that follows a line of text in every post an agent sends ([RT-6.15](docs/arc42/06-runtime-view.md#615-references-as-links)). Text in code fences stays as it is.
+
 ## 0.42.0
 
 OpenCode 2.x plugin: the bus in OpenCode sessions (#94, refs #69). Plugin API V2

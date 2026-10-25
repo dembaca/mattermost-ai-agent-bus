@@ -137,14 +137,22 @@ def _bash(script, **env):
     )
 
 
-FIND = f'source "{REPO}/bin/mm-agent-lib.sh"; mm_bus_file mcp; echo "[$MM_BOT_TOKEN]"'
+FIND = f'source "{REPO}/bin/mm-agent-lib.sh"; mm_bus_file; echo "[$MM_BOT_TOKEN]"'
+
+
+def _endpoint(session_path):
+    """The endpoint file the server writes next to its session file, same key:
+    the file mm_bus_file looks for."""
+    path = session_path.with_name(session_path.name.replace("mcp-", "endpoint-", 1))
+    path.write_text("")
+    return path
 
 
 def test_hooks_find_the_file_the_server_names():
     """RT-6.10, RT-6.17 step 2: Python and bash derive the same file name —
     otherwise hooks stay inert. The shell finds the file; it never loads the
     token from it (no token in an agent's shell)."""
-    path = session_file.write(INFO, "agents", "agents")
+    path = _endpoint(session_file.write(INFO, "agents", "agents"))
     r = _bash(FIND, MM_BOT_TOKEN="", MATTERMOST_TOKEN="")
     assert r.stdout.strip() == f"{path}[]", r.stderr
     assert "mm_load_hook_session" not in (REPO / "bin" / "mm-agent-lib.sh").read_text()
@@ -203,7 +211,7 @@ def test_a_shell_in_a_subdirectory_walks_up_to_the_workspace(tmp_path):
     """RT-6.17 step 2: no variable names the workspace (OpenCode's shell): the
     shell walks up from its real directory to the server's file. A named
     workspace is taken as it is, with no walk."""
-    path = session_file.write(INFO, "agents", "agents")  # keyed on CLAUDE_PROJECT_DIR=tmp_path
+    path = _endpoint(session_file.write(INFO, "agents", "agents"))  # keyed on CLAUDE_PROJECT_DIR=tmp_path
     sub = tmp_path / "src" / "deep"
     sub.mkdir(parents=True)
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
@@ -302,7 +310,7 @@ def test_two_sessions_in_one_checkout_keep_their_own_bot(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-two")
     second = session_file.write(other, "agents", "agents")
     assert first != second and first.exists() and second.exists()
-    for sid, path in (("sess-one", first), ("sess-two", second)):
+    for sid, path in (("sess-one", _endpoint(first)), ("sess-two", _endpoint(second))):
         r = _bash(FIND, MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_CODE_SESSION_ID=sid)
         assert r.stdout.strip() == f"{path}[]", r.stderr
     session_file.remove()  # sess-two ends; sess-one keeps its file
@@ -320,10 +328,10 @@ def test_hook_takes_the_session_id_from_its_input(monkeypatch):
     """RT-6.10: without CLAUDE_CODE_SESSION_ID in the environment the hook payload's
     session_id keys the lookup."""
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-one")
-    path = session_file.write(INFO, "agents", "agents")
+    path = _endpoint(session_file.write(INFO, "agents", "agents"))
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
     r = subprocess.run(
-        ["bash", "-c", f'source "{REPO}/bin/mm-agent-lib.sh"; mm_read_hook_input; mm_bus_file mcp'],
+        ["bash", "-c", f'source "{REPO}/bin/mm-agent-lib.sh"; mm_read_hook_input; mm_bus_file'],
         input='{"session_id": "sess-one"}', capture_output=True, text=True,
         env={**os.environ, "MM_BOT_TOKEN": "", "MATTERMOST_TOKEN": ""}, cwd=REPO,
     )

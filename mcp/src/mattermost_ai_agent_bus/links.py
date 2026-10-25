@@ -107,9 +107,32 @@ def _bare(text: str) -> str:
     return text.replace(url, _ascii(url)) if _odd_host(url) else text
 
 
+_FENCE = re.compile(r"\s*(`{3,}|~{3,})")
+_ROW = re.compile(r"\s*\|")
+_RULE = re.compile(r"\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*")
+
+
+def _tables(message: str) -> str:
+    """Mattermost renders a table only after a blank line: give it one."""
+    lines, out, fence = message.split("\n"), [], ""
+    for i, line in enumerate(lines):
+        if m := _FENCE.match(line):
+            mark = m[1]
+            if not fence:
+                fence = mark
+            elif mark[0] == fence[0] and len(mark) >= len(fence):
+                fence = ""
+        elif (not fence and out and out[-1].strip() and not _ROW.match(out[-1])
+              and _ROW.match(line) and i + 1 < len(lines) and _RULE.fullmatch(lines[i + 1])):
+            out.append("")
+        out.append(line)
+    return "\n".join(out)
+
+
 def send(message: str, *, post_url: str) -> str:
     """A post as the human sees it: post ids as permalinks to `post_url` + id,
-    odd links written out."""
+    odd links written out, a blank line before a table."""
+    message = _tables(message)
     def one(m: re.Match[str]) -> str:
         if m["id"]:
             return f"[{m['id']}]({post_url}{m['id']})" if post_url else m["id"]
