@@ -11,7 +11,8 @@ instead, served next to the WebSocket inbox in the server's event loop:
     GET  /v1/last-post      {at, message}: the own latest post in the work channel
     GET  /v1/posts          {posts: [{id, user_id, root_id, create_at, type,
                             message, to, intent, fyi, gated}]}, work channel
-                            (or ?channel=ID|NAME), newest first (?limit=N, at
+                            (or ?channel=ID|NAME of the project or default
+                            channel, else 403), newest first (?limit=N, at
                             most 200, or ?since=MS)
     GET  /v1/ask-reactions  {fresh}: reactions to open asks not handed over yet
     POST /v1/presence       {state: working|idle|listening|bus, label?, until?} → {ok}
@@ -33,8 +34,11 @@ The hooks find endpoint and key in MM_BUS_ENDPOINT / MM_BUS_KEY, else in the
 discovery file ``endpoint-sid-<key>.env`` (0600) in the state dir, keyed like the
 session file (session_file.keyed_path: the Claude Code session, else the
 workspace), with the bot's id once known; it is removed when the server ends.
-A workspace-keyed file of another server that still runs is not overwritten:
-one MCP server per workspace (warning()). The host process of a keyless corral session
+A file of another server that still runs is not overwritten: one MCP server
+per workspace, and per Claude Code session id (a harness started from a Claude
+Code shell inherits it; the file names each server's MCP client, warning()).
+No file is keyed on /, the home directory or above it (session_file.unkeyed):
+the server waits for the client's roots or a variable naming the workspace. The host process of a keyless corral session
 (RT-6.18, hosted.py) serves it with the session's key from preStart and writes
 no file: the sandbox has both in its environment.
 
@@ -84,7 +88,7 @@ MAX_LABEL = 64
 # A listen window ends within Claude Code's 2 h limit; a day is ample.
 MAX_UNTIL_AHEAD_SEC = 86400
 MAX_POSTS = 200
-_REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found",
+_REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
             413: "Payload Too Large", 502: "Bad Gateway", 503: "Service Unavailable"}
 
 Reply = tuple[int, dict[str, Any]]
@@ -94,6 +98,10 @@ _UID = re.compile(r"[a-z0-9]{26}")
 
 class BadRequest(ValueError):
     pass
+
+
+class Forbidden(ValueError):
+    """A request the key does not cover: a 403."""
 
 
 def _answers(endpoint: str) -> bool:
@@ -129,6 +137,10 @@ class HookAPI:
         self._writes = False
         # Another live server owns this workspace's file (RT-6.17 error handling).
         self.conflict: dict[str, Any] | None = None
+        # The directory no file is keyed on (/, home or above), while it is the key.
+        self.unkeyed = ""
+        # The MCP client's name (clientInfo), written into the file.
+        self.client = ""
 
     async def start(self, *, write_file: bool = True) -> str:
         """Listen on 127.0.0.1 and (by default) write the discovery file."""
@@ -145,35 +157,61 @@ class HookAPI:
         moves to its name, if another live server does not own that one."""
         if not self._writes or self._server is None or self._file == file_path():
             return
-        self.remove_file()
+        # The new file first, then the old one goes: a shell never finds neither.
+        old, self._file = self._file, None
         try:
             self._write_file(self._uid or None)
         except OSError as exc:
             log.warning("hook API: endpoint file not written: %s", exc)
+        if old is not None and old != self._file:
+            self._unlink_own(old)
+
+    def note_client(self, name: str) -> None:
+        """The MCP client's name from the handshake: into the file, while it is
+        this server's, so a second server can say whose file it is."""
+        self.client = " ".join(str(name).split())[:64]
+        if self._file is None:
+            return
+        try:
+            if session_file.parse(self._file).get("MM_BUS_KEY") == self.key:
+                self._write_file(self._uid or None)
+        except OSError as exc:
+            log.info("hook API: endpoint file not updated: %s", exc)
 
     def warning(self) -> str:
         """Why the hooks and shell scripts here do not reach this server, or ''."""
+        if self.unkeyed:
+            return (f"no endpoint file: the workspace would be {self.unkeyed}, which is / or "
+                    "the home directory (or above it), so the hooks and shell scripts here "
+                    "find no server until the MCP client names its workspace (roots). Set "
+                    "MM_WORKSPACE in the server's env or start it in the project (RT-6.17)")
         if not self.conflict:
             return ""
-        return (f"another MCP server (pid {self.conflict['pid']}) of this workspace owns "
-                f"{self.conflict['file']}: the hooks and shell scripts here reach that one, "
-                "not this one. Run one MCP server per workspace: close the other window or "
-                "instance, then restart this one (RT-6.17)")
+        other = self.conflict.get("client", "")
+        who = f"pid {self.conflict['pid']}" + (f", client {other}" if other else "")
+        text = (f"another MCP server ({who}) owns {self.conflict['file']}: the hooks and "
+                "shell scripts here reach that one, not this one. ")
+        if not Path(self.conflict["file"]).name.startswith(f"{FILE_PREFIX}-sid-"):
+            return text + ("Run one MCP server per workspace: close the other window or "
+                           "instance, then restart this one (RT-6.17)")
+        mine = f" (this server's client is {self.client})" if self.client and self.client != other else ""
+        return text + (f"It has the same CLAUDE_CODE_SESSION_ID{mine}: a harness started from "
+                       "a Claude Code shell inherits it. Start that harness with "
+                       "`env -u CLAUDE_CODE_SESSION_ID …` (RT-6.17)")
 
     def _foreign(self, path: Path) -> dict[str, Any] | None:
-        """The file of another server that still runs, in a workspace-keyed
-        place: a second server in the same workspace must not take the first
-        one's hooks and scripts. A session-id file is the same Claude Code
-        session's, whose newer server takes over (`claude --continue`)."""
-        if path.name.startswith(f"{FILE_PREFIX}-sid-"):
-            return None
+        """The file of another server that still runs: a second server in the
+        same workspace, or a harness started from a Claude Code shell with its
+        session id, must not take the first one's hooks and scripts. A newer
+        server of the same session (`claude --continue`) takes the file over:
+        the old one is gone by then."""
         data = session_file.parse(path)
         pid = data.get("MM_BUS_PID", "")
         if not data or data.get("MM_BUS_KEY") == self.key or not _pid_alive(pid):
             return None
         if not _answers(data.get("MM_BUS_ENDPOINT", "")):
             return None  # a crash left it behind; its pid may be reused
-        return {"file": str(path), "pid": int(pid)}
+        return {"file": str(path), "pid": int(pid), "client": data.get("MM_BUS_CLIENT", "")}
 
     def _write_file(self, uid: str | None = None) -> None:
         # The bot's id too (not secret): the prompt hook stops the listener and
@@ -181,6 +219,11 @@ class HookAPI:
         uid = os.environ.get("MM_BOT_USER_ID", "") if uid is None else uid
         self._uid = uid if _UID.fullmatch(uid) else ""
         path = file_path()
+        self.unkeyed = session_file.unkeyed()
+        if self.unkeyed:
+            self.conflict = None
+            log.warning("hook API: %s", self.warning())
+            return
         self.conflict = self._foreign(path)
         if self.conflict:
             log.warning("hook API: %s", self.warning())
@@ -192,7 +235,8 @@ class HookAPI:
         with os.fdopen(fd, "w") as fh:
             fh.write(f"MM_BUS_ENDPOINT={self.endpoint}\nMM_BUS_KEY={self.key}\n"
                      f"MM_BUS_PID={os.getpid()}\n"
-                     + (f"MM_BOT_USER_ID={self._uid}\n" if self._uid else ""))
+                     + (f"MM_BOT_USER_ID={self._uid}\n" if self._uid else "")
+                     + (f"MM_BUS_CLIENT={self.client}\n" if self.client else ""))
         os.replace(tmp, path)
         self._file = path
 
@@ -212,8 +256,10 @@ class HookAPI:
         """Remove the discovery file while it is still this server's: one that
         took the session over (`claude --continue`) may have written its own."""
         path, self._file = self._file, None
-        if path is None:
-            return
+        if path is not None:
+            self._unlink_own(path)
+
+    def _unlink_own(self, path: Path) -> None:
         try:
             if session_file.parse(path).get("MM_BUS_KEY") == self.key:
                 path.unlink()
@@ -291,6 +337,8 @@ class HookAPI:
             reply = await asyncio.wait_for(self._run(route, client, query, payload), ROUTE_TIMEOUT_SEC)
         except (BadRequest, InvalidId) as exc:  # InvalidId: refused before any request (#81)
             return 400, {"error": str(exc)}
+        except Forbidden as exc:
+            return 403, {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 — Mattermost failed: the hook fails open
             log.info("hook API %s %s: %s", method, url.path, type(exc).__name__)
             return 502, {"error": "bus unreachable"}
@@ -381,19 +429,40 @@ def _slim(post: Mapping[str, Any], agents: set[str], gated: set[str]) -> dict[st
     }
 
 
+async def watched(client: MattermostClient) -> set[str]:
+    """The channels the bus watches: the work channel, the project channel and
+    the default channel. Never a DM or group channel."""
+    ids = {await client.work_channel_id()}
+    ids |= {v for v in (os.environ.get("MM_PROJECT_CHANNEL_ID", ""),
+                        os.environ.get("MM_CHANNEL_ID", "")) if _UID.fullmatch(v)}
+    for name in {getattr(client, "project_channel_name", ""), getattr(client, "channel_name", "")}:
+        if name:
+            try:
+                ids.add(await client.get_channel_id(name))
+            except Exception as exc:  # noqa: BLE001 — a channel that is not there
+                log.info("hook API: channel %s not resolved: %s", name, type(exc).__name__)
+    return ids
+
+
 async def _channel(client: MattermostClient, chan: str) -> str:
-    """The work channel, or the one named (an id, or a name in the bot's team)."""
+    """The work channel, or the one named (an id, or a name in the bot's team)
+    when the bus watches it (watched()): the key reads no DM, no group and no
+    other channel the bot is in (arc42 §7.3)."""
     if not chan:
         return await client.work_channel_id()
     if _UID.fullmatch(chan):
-        return chan
-    name = mm_name(chan, "channel")  # InvalidId: a 400, before any request
-    try:
-        return await client.get_channel_id(name)
-    except Exception as exc:
-        if getattr(getattr(exc, "response", None), "status_code", None) == 404:
-            raise BadRequest(f"no channel {chan} in the team") from exc
-        raise
+        cid = chan
+    else:
+        name = mm_name(chan, "channel")  # InvalidId: a 400, before any request
+        try:
+            cid = await client.get_channel_id(name)
+        except Exception as exc:
+            if getattr(getattr(exc, "response", None), "status_code", None) == 404:
+                raise BadRequest(f"no channel {chan} in the team") from exc
+            raise
+    if cid not in await watched(client):
+        raise Forbidden("channel: only the work, project and default channel")
+    return cid
 
 
 async def posts(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:

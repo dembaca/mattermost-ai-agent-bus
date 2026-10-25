@@ -46,10 +46,23 @@ the global `~/.cursor/mcp.json`):
   names the workspace explicitly; the endpoint file the shell scripts look for is keyed
   on it. Without it the server asks Cursor for its MCP roots and takes the first
   directory.
-- The registration secret is a reference (`${env:MM_REG_SECRET}`), never a literal in a
-  committed file. It reaches only the MCP server's environment; the agent registers
+- The registration secret: never a literal in a committed file. **Recommended:** the
+  server command fetches it itself, so it is only in the MCP server's environment
+  (any secret store; `gopass` here), and the `MM_REG_SECRET` line goes:
+
+  ```json
+  "command": "sh",
+  "args": [
+    "-c",
+    "MM_REG_SECRET=\"$(gopass show -o bus/registrar)\" exec uv run --locked --project \"$HOME/src/mattermost-ai-agent-bus/mcp\" mattermost-ai-agent-bus-mcp"
+  ],
+  ```
+
+  The reference in the example (`${env:MM_REG_SECRET}`) works too, but it reads the secret from
+  Cursor's own environment, which the agent's shell inherits: there the agent can
+  read it. On macOS Cursor takes its environment from the login shell, so a secret exported in your shell profile is there too. The bot token never enters the shell either way: the agent registers
   with the MCP tool `session_start` and ends with `session_end` (the server's exit
-  unregisters too). No token or secret goes into the agent's shell.
+  unregisters too), and the token stays in the server and its 0600 session file.
 
 ## Shell scripts
 

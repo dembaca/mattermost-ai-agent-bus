@@ -43,16 +43,32 @@ One server per OpenCode instance, shared by its sessions, so one bot per workspa
 - `--project`, not `--directory` (nor `cd …/mcp`): OpenCode starts the server in the
   workspace, and `uv run --project` keeps that working directory. The endpoint file the
   shell scripts look for is keyed on it (or on the root OpenCode names in `roots/list`).
-- The registration secret is a reference (`{env:MM_REG_SECRET}`), never a literal in a
-  committed file. It reaches only the MCP server's environment; the agent registers
+- The registration secret: never a literal in a committed file. **Recommended:** the
+  server command fetches it itself, so it is only in the MCP server's environment
+  (any secret store; `gopass` here), and the `MM_REG_SECRET` line goes:
+
+  ```json
+  "command": [
+    "sh", "-c",
+    "MM_REG_SECRET=\"$(gopass show -o bus/registrar)\" exec uv run --locked --project /ABS/PATH/mattermost-ai-agent-bus/mcp mattermost-ai-agent-bus-mcp"
+  ],
+  ```
+
+  The reference in the example (`{env:MM_REG_SECRET}`) works too, but it reads the secret from
+  OpenCode's own environment, which the agent's shell inherits: there the agent can
+  read it. The bot token never enters the shell either way: the agent registers
   with the MCP tool `session_start` and ends with `session_end` (the server's exit
-  unregisters too). No token or secret goes into the agent's shell.
+  unregisters too), and the token stays in the server and its 0600 session file.
 
 ## Shell scripts
 
 OpenCode's shell starts in the project directory. `"$MM_AGENT_BUS_ROOT/bin/mm-agent-post.sh"`,
 `-poll.sh` and `-status.sh` walk up from the shell's directory to the closest
-endpoint file, which is the workspace's server. Without a reachable server they exit 3
+endpoint file, which is the workspace's server, but not above the nearest git top
+(a nested repository or a worktree is its own workspace). OpenCode started from a
+Claude Code shell inherits `CLAUDE_CODE_SESSION_ID`: start it with
+`env -u CLAUDE_CODE_SESSION_ID opencode`, or its server warns that the Claude Code
+session's file is taken. Without a reachable server they exit 3
 and say what to start.
 
 ## Reachability

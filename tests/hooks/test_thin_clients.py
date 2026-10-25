@@ -53,6 +53,30 @@ def test_reply_and_the_old_form(mm, run):
     assert {"channel_id": PROJECT, "root_id": root}.items() <= posted(mm).items()
 
 
+@pytest.mark.parametrize("message", ["- done: built it", "-1 test left", "--- end", "--kindly"])
+def test_a_message_may_start_with_a_dash(mm, run, message):
+    """RT-6.17: only the known options are options; a message starting with
+    "-" is posted as it is, in the new form and the 0.36 form."""
+    r = run(POST, message)
+    assert r.code == 0, r.stderr
+    assert posted(mm)["message"] == message
+    assert run(POST, PROJECT, message).code == 0
+    assert {"channel_id": PROJECT, "message": message}.items() <= posted(mm).items()
+
+
+def test_option_names_as_messages_and_a_lone_dash(mm, run):
+    """RT-6.17: "--" ends the options; in the 0.36 form CHANNEL MESSAGE [ROOT]
+    nothing after the channel id is an option, and "-" is the text, not stdin."""
+    assert run(POST, "--", "--help").code == 0 and posted(mm)["message"] == "--help"
+    assert run(POST, PROJECT, "--root", stdin="not read\n").code == 0
+    assert {"channel_id": PROJECT, "message": "--root"}.items() <= posted(mm).items()
+    assert run(POST, PROJECT, "-", stdin="not read\n").code == 0 and posted(mm)["message"] == "-"
+    assert run(POST, "-", stdin="from stdin\n").code == 0 and posted(mm)["message"] == "from stdin"
+    n = len(mm.writes)
+    assert run(POST, "--chanel", "x", "hello").code == 2  # a typo is no message
+    assert len(mm.writes) == n
+
+
 def test_a_refused_post_says_why(mm, run):
     """RT-6.14: the refusal of post_message, on stderr, exit 1; nothing posted."""
     r = run(POST, "--kind", "SHOUT", "hello")
@@ -73,7 +97,9 @@ def test_poll_prints_new_posts_oldest_first(mm, run):
     lines = [json.loads(x) for x in r.stdout.splitlines()]
     assert [x["id"] for x in lines] == ["p1", "p2"] and lines[0]["to"] == "all"
     assert {"user_id", "root_id", "create_at", "intent", "fyi", "gated"} <= set(lines[0])
-    assert run(POLL, "--once", "--channel", "proj-x").code == 0
+    assert run(POLL, "--once", "--channel", "proj-x", MM_PROJECT_CHANNEL="proj-x").code == 0
+    r = run(POLL, "--once", "--channel", "o" * 26)  # a DM, say: not a channel the bus watches
+    assert r.code == 1 and "HTTP 403" in r.stderr
     assert run(POLL, "--team", "x").code == 2
 
 
@@ -228,3 +254,42 @@ def test_a_second_server_in_the_workspace_leaves_the_first_ones_file(mm, ws):
         assert found(state, ws / "one") == a.endpoint
     with server(mm, state, ws / "one") as c:
         assert not c.conflict and found(state, ws / "one") == c.endpoint
+
+
+def test_the_walk_stops_at_the_repository(mm, ws, run):
+    """RT-6.17 step 2: walking up from $PWD stops at the nearest git top. A
+    repository nested in another workspace, or a worktree under a checkout,
+    never reaches the outer workspace's server: exit 3."""
+    state, outer = ws / "state", ws / "one"
+    nested, worktree = outer / "src" / "deep", outer / "wt"
+    (nested / ".git").mkdir()
+    worktree.mkdir()
+    (worktree / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n")
+    with server(mm, state, outer) as a:
+        assert found(state, outer / "src") == a.endpoint
+        assert found(state, nested) == "" and found(state, worktree) == ""
+        r = run(POST, "hello", bus=None, cwd=str(nested))
+        assert r.code == 3 and "start the MCP server of this session" in r.stderr
+    assert not [w for w in mm.writes if w[1] == "/api/v4/posts"]
+
+
+def test_a_symlinked_workspace(mm, ws):
+    """RT-6.17 step 2: server and shell key on the real path, whichever name
+    of the workspace each one is given."""
+    state, link = ws / "state", ws / "link"
+    link.symlink_to(ws / "one", target_is_directory=True)
+    with server(mm, state, ws / "plugin" / "mcp", MM_WORKSPACE=str(link)) as a:
+        assert found(state, ws / "plugin", CURSOR_PROJECT_DIR=str(link)) == a.endpoint
+        assert found(state, ws / "plugin", CURSOR_PROJECT_DIR=str(ws / "one")) == a.endpoint
+        assert found(state, link / "src" / "deep") == a.endpoint
+    with server(mm, state, link) as b:
+        assert found(state, ws / "one" / "src") == b.endpoint
+
+
+def test_no_server_keyed_on_the_home_directory(mm, ws):
+    """RT-6.17 step 2: a server started in $HOME writes no endpoint file
+    there, so no shell below finds it; its warning says why."""
+    state = ws / "state"  # the server's and the shell's HOME is ws
+    with server(mm, state, ws) as a:
+        assert a.unkeyed and "MM_WORKSPACE" in a.warning()
+        assert found(state, ws) == "" and found(state, ws / "one" / "src") == ""

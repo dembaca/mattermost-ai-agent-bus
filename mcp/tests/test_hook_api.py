@@ -249,7 +249,10 @@ async def test_the_file_names_endpoint_and_key_and_goes_at_exit(api, monkeypatch
     await a.close()
     assert not f.exists()
     b, _ = await api(FakeClient(), write_file=True)
+    b._server.close()  # `claude --continue`: the old server is gone, its file not yet
+    await b._server.wait_closed()
     c, _ = await api(FakeClient(), write_file=True)
+    assert not c.conflict
     await b.close()
     assert session_file.parse(f)["MM_BUS_KEY"] == c.key
     await c.close()
@@ -304,6 +307,8 @@ async def test_the_file_learns_the_bot_id(api, monkeypatch):
     assert session_file.parse(f)["MM_BUS_KEY"] == a.key
     assert stat.S_IMODE(os.stat(f).st_mode) == 0o600
     monkeypatch.setenv("MM_BOT_USER_ID", OTHER)
+    # a looks gone to b (`claude --continue`), so b takes the session's file over.
+    monkeypatch.setattr(hookapi, "_answers", lambda endpoint: False)
     b, _ = await api(FakeClient(), write_file=True)
     assert session_file.parse(f)["MM_BOT_USER_ID"] == OTHER
     await h.get("/v1/me")   # a's file is b's now: a leaves it alone
@@ -454,17 +459,99 @@ async def test_post_and_reply_run_the_tools_code(api, monkeypatch):
     assert (await h.post("/v1/post", json={"message": "x"})).status_code == 503
 
 
-async def test_posts_of_another_channel(api):
-    """RT-6.17: mm-agent-poll.sh --channel reads another channel by id."""
+async def test_posts_only_of_the_channels_the_bus_watches(api, monkeypatch):
+    """RT-6.17, arc42 §7.3: mm-agent-poll.sh --channel reads the work, the
+    project or the default channel, by id or name; a DM, a group channel or
+    another channel the bot is in is a 403, read from nowhere."""
+    proj, default = "p" * 26, "d" * 26
+    monkeypatch.setenv("MM_CHANNEL_ID", default)
+    monkeypatch.delenv("MM_PROJECT_CHANNEL_ID", raising=False)
     c = FakeClient(posts=[post("p1", "hi")])
+    c.project_channel_name, c.channel_name = "proj-x", "agents"
+    names = {"proj-x": proj, "agents": default, "elsewhere": "e" * 26}
     seen = []
+
+    async def get_channel_id(name=None):
+        return names[name]
 
     async def channel_posts(cid, *, per_page=None, since_ms=None):
         seen.append(cid)
         return list(c.posts)
 
-    c.channel_posts = channel_posts
+    c.get_channel_id, c.channel_posts = get_channel_id, channel_posts
     _, h = await api(c)
-    assert (await h.get(f"/v1/posts?channel={OTHER}&since=1")).status_code == 200
-    assert seen == [OTHER]
+    for chan in (proj, default, "proj-x", "c" * 26):
+        assert (await h.get(f"/v1/posts?channel={chan}&since=1")).status_code == 200
+    assert seen == [proj, default, proj, "c" * 26]
+    dm, group = "x" * 26, "g" * 26
+    for chan in (dm, group, "elsewhere"):
+        r = await h.get(f"/v1/posts?channel={chan}&since=1")
+        assert r.status_code == 403 and "work, project and default" in r.json()["error"]
     assert (await h.get("/v1/posts?channel=../x")).status_code == 400
+    assert len(seen) == 4
+
+
+async def test_a_harness_with_an_inherited_session_id_leaves_the_file(api, monkeypatch):
+    """RT-6.17 error handling: a harness started from a Claude Code shell
+    (codex exec, opencode) inherits CLAUDE_CODE_SESSION_ID. Its server leaves
+    the live server's file alone and names both clients in its warning."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    a, _ = await api(FakeClient(), write_file=True)
+    a.note_client("claude-code")
+    f = hookapi.file_path()
+    assert session_file.parse(f)["MM_BUS_CLIENT"] == "claude-code"
+    b, _ = await api(FakeClient(), write_file=True)
+    b.note_client("codex-mcp-client")
+    assert session_file.parse(f)["MM_BUS_KEY"] == a.key
+    w = b.warning()
+    assert "client claude-code" in w and "codex-mcp-client" in w
+    assert "env -u CLAUDE_CODE_SESSION_ID" in w and not a.warning()
+
+
+async def test_rekey_writes_the_new_file_before_the_old_one_goes(api, monkeypatch, tmp_path):
+    """RT-6.17 step 2: when the roots name the workspace, the file moves; a
+    shell looking meanwhile finds the old file or the new one, never neither."""
+    for var in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PROJECT_DIR", "MM_WORKSPACE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(session_file, "_roots_dir", None)
+    one, two = tmp_path / "one", tmp_path / "two"
+    one.mkdir(), two.mkdir()
+    monkeypatch.chdir(one)
+    a, _ = await api(FakeClient(), write_file=True)
+    old = hookapi.file_path()
+    assert old.exists()
+    order, real = [], os.replace
+
+    def replace(src, dst):
+        real(src, dst)
+        order.append(("new written, old still there", old.exists()))
+
+    monkeypatch.setattr(os, "replace", replace)
+    assert session_file.set_roots_dir(str(two.resolve()))
+    a.rekey()
+    assert order == [("new written, old still there", True)]
+    assert not old.exists() and session_file.parse(hookapi.file_path())["MM_BUS_KEY"] == a.key
+
+
+async def test_no_file_keyed_on_home_or_above(api, monkeypatch, tmp_path):
+    """RT-6.17 step 2: a server started in the home directory (or /) keys no
+    endpoint file there, where a shell anywhere below would find it; it waits
+    for the client's roots and says so (bus_info's warning)."""
+    for var in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PROJECT_DIR", "MM_WORKSPACE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(session_file, "_roots_dir", None)
+    home, proj = tmp_path / "home", tmp_path / "home" / "proj"
+    proj.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(home)
+    a, _ = await api(FakeClient(), write_file=True)
+    assert not hookapi.file_path().exists() and not list(session_file.state_dir().glob("endpoint-*"))
+    assert "MM_WORKSPACE" in a.warning() and str(home.resolve()) in a.warning()
+    monkeypatch.chdir("/")
+    assert session_file.unkeyed() == "/"
+    monkeypatch.chdir(home)
+    assert session_file.set_roots_dir(str(proj.resolve()))
+    a.rekey()
+    assert hookapi.file_path().exists() and not a.warning()
+    monkeypatch.setenv("MM_WORKSPACE", str(home))
+    assert session_file.unkeyed() == ""  # a variable that names it is taken

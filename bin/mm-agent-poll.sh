@@ -5,7 +5,8 @@
 #   mm-agent-poll.sh [--channel ID|NAME] [--interval SEC] [--since-ms MS] [--once]
 #
 # Default channel: the work channel (MM_PROJECT_CHANNEL, else MM_CHANNEL); a
-# NAME is looked up in the bot's team. Default start: one minute ago. Each line
+# NAME is looked up in the bot's team. Only the work, project and default
+# channel can be read, never a DM or group channel (the server's 403, exit 1). Default start: one minute ago. Each line
 # is one post as GET /v1/posts gives it: id, user_id, root_id, create_at, type,
 # message, to (all: for all agents), intent, fyi, gated. An edited post is not
 # printed again. Collecting what is for you (and marking it read) is the MCP
@@ -63,9 +64,9 @@ while true; do
         SINCE_MS="$ts"
       fi
     done < <(jq -c '.posts | sort_by(.create_at)[]' <<<"$MM_BUS_BODY")
-  elif [[ "$reached" -eq 0 || "$MM_BUS_STATUS" == 400 ]]; then
+  elif [[ "$reached" -eq 0 || "$MM_BUS_STATUS" == 400 || "$MM_BUS_STATUS" == 403 ]]; then
     mm_bus_explain
-    [[ "$MM_BUS_STATUS" == 400 ]] && exit 1
+    [[ "$MM_BUS_STATUS" == 400 || "$MM_BUS_STATUS" == 403 ]] && exit 1
     exit 3
   fi
   [[ "$ONCE" -eq 1 ]] && break

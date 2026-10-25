@@ -178,6 +178,24 @@ def workspace() -> tuple[str, str]:
     return os.path.realpath(os.getcwd()), "cwd"
 
 
+def too_broad(path: str) -> bool:
+    """/, the home directory or a directory above it: no workspace to key an
+    endpoint file on (RT-6.17 step 2), a shell anywhere below would find it."""
+    home = os.path.realpath(str(Path.home()))
+    path = os.path.realpath(path)
+    return path == home or home.startswith(path.rstrip("/") + "/")
+
+
+def unkeyed() -> str:
+    """The directory the endpoint file is not keyed on, or '': without a
+    session id the working directory or the client's root, when it is / or
+    the home directory (or above it). A variable that names it is taken."""
+    if session_id() or _hosted_dir is not None:
+        return ""
+    path, source = workspace()
+    return path if source in ("cwd", "roots") and too_broad(path) else ""
+
+
 def project_dir() -> str:
     return workspace()[0]
 

@@ -18,6 +18,13 @@ MM_CHANNEL = "agents"
 MM_PROJECT_CHANNEL = "proj-foo"
 ```
 
+`env_vars` passes the secret on from Codex's own environment, which the agent's shell
+inherits too. To keep it in the server alone, let the command fetch it, as in
+[OpenCode](opencode.md#mcp): `command = "sh"`, `args = ["-c", "MM_REG_SECRET=\"$(gopass show -o …)\" exec uv run --locked --project … mattermost-ai-agent-bus-mcp"]`, without `env_vars`.
+Started from a Claude Code shell, Codex inherits `CLAUDE_CODE_SESSION_ID`: start it
+with `env -u CLAUDE_CODE_SESSION_ID codex …`, or its server finds the Claude Code
+session's file taken and warns (RT-6.17).
+
 No turn hooks and no channel push: the agent checks with `wait_for_events`, as
 under [OpenCode](opencode.md#reachability). Untested here: which directory Codex starts the server in. If the shell scripts find
 no server, set `MM_WORKSPACE` to the workspace in the server's `env`.

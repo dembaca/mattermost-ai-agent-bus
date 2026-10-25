@@ -282,6 +282,8 @@ async def _note_client(ctx: Any, call_next: Any) -> Any:
             name = info.get("name") if isinstance(info, dict) else None
             if isinstance(name, str):
                 stats.set_client(name)
+                if _hook_api is not None:
+                    _hook_api.note_client(name)
         elif ctx.method == "notifications/initialized":
             _learn_roots_soon(ctx.session)
     except Exception as exc:  # noqa: BLE001 — the handshake goes on; rt from the environment

@@ -29,6 +29,22 @@ Every harness runs the MCP server; the shell scripts are its clients (#69).
   session's MCP server.** Without one they exit 3 and say what to start; no
   token fallback. `mm-agent-poll.sh --team` is gone (the bot's team);
   `mm-agent-status.sh offline` by hand is gone (the server sets it at the end).
+- **`mm-agent-post.sh` prints the server's slim post**, not Mattermost's:
+  `id`, `root_id` (a reply), `channel` (the name, not `channel_id`), `author`,
+  `at` (readable, not `create_at` in ms), `message`, and hints such as
+  `unmentioned`. Read `id` and `message` as before; take `channel`/`at`
+  instead of `channel_id`/`create_at`.
+- **`mm-agent-poll.sh` prints slim posts:** `id`, `user_id`, `root_id`,
+  `create_at`, `type`, `message`, `to`, `intent`, `fyi`, `gated` — no
+  `props`, `metadata` or `update_at`; a2a props come as `to` / `intent`.
+  `--channel` reads only the work, project and default channel (403 otherwise).
+- **`mm-agent-post.sh` posts with `post_message`'s rules:** a human's
+  @-mention becomes the plain name and `@channel`/`@here`/`@all` plain words.
+  To reach a human use the MCP tool `ask_human`; to wake every agent `--to all`.
+- **A message `-` reads stdin** in the new form (`mm-agent-post.sh -`); in the
+  0.36 form `CHANNEL_ID - [ROOT_ID]` it is still the text `-`.
+- **Exit codes:** 1 a refused post or a 400, 2 usage, 3 no reachable server of
+  this session — no longer curl's codes. Scripts that tested curl's codes test these.
 
 ### Changed
 
@@ -46,7 +62,23 @@ Every harness runs the MCP server; the shell scripts are its clients (#69).
   else the session id, else `CLAUDE_PROJECT_DIR` / `CURSOR_PROJECT_DIR` /
   `MM_WORKSPACE` exactly, else the closest file walking up from `$PWD`. A
   second server in the same workspace does not overwrite a live first one's
-  file and warns in `session_start` / `bus_info`.
+  file and warns in `session_start` / `bus_info`. The walk from `$PWD` stops
+  at the nearest git top (a nested repository or a worktree under a checkout
+  never reaches the outer workspace's server), and no endpoint file is keyed
+  on `/`, the home directory or above it: such a server waits for the client's
+  roots and says so in `bus_info`. A live server's file is not overwritten for
+  a session id either: a harness started from a Claude Code shell
+  (`codex exec`, `opencode`) inherits `CLAUDE_CODE_SESSION_ID`; its warning
+  names both MCP clients (the endpoint file now carries `MM_BUS_CLIENT`) and
+  says to start it with `env -u CLAUDE_CODE_SESSION_ID`. When the roots move
+  the file, the new one is written before the old one goes.
+- **`mm-agent-post.sh` options:** only `--channel`, `--root`, `--to`, `--kind`,
+  `-h`/`--help` and `--` are options, so messages such as `- done`, `-1 left`
+  or `---` are posted (0.40.0 drafts refused them); in the 0.36 form nothing
+  after the channel id is an option.
+- **`GET /v1/posts?channel=`** reads only the channels the bus watches (work,
+  project, default), never a DM or group channel: `403`. §7.3 names what a
+  holder of a session's `MM_BUS_KEY` can do.
 - **`mm-agent-status.sh` never hands over to another bot's server:** with
   `MM_BOT_USER_ID` set the server must name that bot (since 0.38 a server found
   by directory was asked whatever bot it served).
@@ -66,12 +98,18 @@ Every harness runs the MCP server; the shell scripts are its clients (#69).
   server with a command that reads it itself ([adapters/claude.md](adapters/claude.md)).
 - **Cursor:** remove the `sessionStart` / `sessionEnd` hooks of the examples;
   configure the MCP server as in [adapters/cursor.md](adapters/cursor.md):
-  `uv run --project …/mcp`, `env.MM_WORKSPACE = "${workspaceFolder}"`,
-  `MM_REG_SECRET` as `${env:MM_REG_SECRET}`.
+  `uv run --project …/mcp`, `env.MM_WORKSPACE = "${workspaceFolder}"`, and a
+  server command that fetches `MM_REG_SECRET` itself (`sh -c
+  'MM_REG_SECRET="$(gopass show -o …)" exec uv run …'`). `${env:MM_REG_SECRET}`
+  works too but needs the secret in Cursor's environment, so the agent's shell
+  has it.
 - **OpenCode:** configure the MCP server as in
   [adapters/opencode.md](adapters/opencode.md): `uv run --project …/mcp` (not
-  `cd …/mcp`), `MM_REG_SECRET` as `{env:MM_REG_SECRET}`; stop exporting it in
-  the agent's shell.
+  `cd …/mcp`) in a command that fetches `MM_REG_SECRET` itself, then remove it
+  from the environment you start OpenCode with. `{env:MM_REG_SECRET}` reads it
+  from that environment, which the agent's shell inherits.
+- **Scripts that call `mm-agent-post.sh` / `mm-agent-poll.sh`:** see Breaking
+  for the output keys and exit codes.
 - **Codex:** [adapters/codex.md](adapters/codex.md).
 - **corral:** nothing; rerun `bin/mm-agent-host-install.sh` as for any update.
 

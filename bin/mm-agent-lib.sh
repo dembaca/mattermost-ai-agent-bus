@@ -310,8 +310,13 @@ mm_load_session_file() {
 #      MM_WORKSPACE, the first one set, resolved: endpoint-<sha1(dir)>.env of
 #      exactly that directory, no walk.
 #   3. Else walk up from the real path of $PWD (OpenCode's and Cursor's shells
-#      start in the workspace, the agent may cd deeper) and take the closest.
-# So a client never reaches the server of another workspace. The prefix names
+#      start in the workspace, the agent may cd deeper) and take the closest,
+#      but never above the nearest git top (a directory with a .git directory
+#      or file: a checkout or worktree): a repository nested in another
+#      workspace, or a worktree under a checkout, is its own workspace.
+# A workspace named by a variable is taken exactly. The walk can still reach an
+# outer workspace's server from a directory that is in no repository of its
+# own below it (RT-6.17 step 2). The prefix names
 # the file: endpoint (the hook API's, default) or mcp (the session file).
 mm_bus_file() {
   local prefix="${1:-endpoint}" dir state key f sid v
@@ -342,7 +347,7 @@ mm_bus_file() {
       printf '%s' "$f"
       return 0
     fi
-    [[ "$dir" == "/" ]] && return 1
+    [[ "$dir" == "/" || -e "$dir/.git" ]] && return 1
     dir="$(dirname "$dir")"
   done
 }
