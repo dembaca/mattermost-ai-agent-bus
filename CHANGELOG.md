@@ -13,10 +13,15 @@ OpenCode plugin: the bus in OpenCode sessions (#94, refs #69).
   1.x): the MCP server and the skill configured by the plugin, presence per
   turn, drain and sign-off when a session goes idle, a wake-up while idle when
   the bus has something for the agent (a stall event for the coordinator
-  included, RT-6.19), the handoff state after a compaction
+  included, RT-6.19) — within the Stop hook's listen window and its gates,
+  👂 meanwhile, never while another session works, and with backoff for a
+  counter the woken turn cannot clear —, the handoff state after a compaction
   ([RT-6.20](docs/arc42/06-runtime-view.md#620-opencode-turn-cycle-through-its-plugin)).
 - **Hook API:** `GET /v1/turn-end`, `/v1/wake`, `/v1/handoff`, so the server
   decides and words it.
+- The plugin finds only its own server: the one it configures keys its files
+  on `MM_WORKSPACE` (OpenCode's directory) with the Claude Code session
+  variables blanked, so OpenCode started from a Claude Code shell is safe.
 
 ## 0.41.0
 

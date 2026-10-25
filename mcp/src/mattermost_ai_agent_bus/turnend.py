@@ -11,6 +11,7 @@ words in every harness. Pure functions over what the hook API routes read
 
 from __future__ import annotations
 
+import os
 import re
 import time
 from collections.abc import Iterable, Mapping
@@ -20,6 +21,12 @@ from typing import Any
 # as stale (MAX_DRAIN in the Stop hook).
 MAX_DRAIN = 3
 _SIGNED_OFF = re.compile(r"^(IDLE|BYE)([^A-Za-z]|$)")
+_BYE = re.compile(r"^BYE([^A-Za-z]|$)")
+# The listen window after a turn (RT-6.2 step 3): the Stop hook's defaults and
+# cap, so an agent stays reachable as long in every harness.
+LISTEN_SEC = 5400
+LISTEN_COORD_SEC = 7200
+MAX_LISTEN_SEC = 7200
 _MENTION = re.compile(r"@[a-z0-9_.-]+")
 _BROADCAST = ("@channel", "@all", "@here")
 COLLECT = "Collect them with wait_for_events(timeout_sec=1)"
@@ -50,6 +57,37 @@ def needs_signoff(last_message: str, *, asked: bool, by_bus: bool, push: bool) -
     if asked or not last_message or (by_bus and push):
         return False
     return not _SIGNED_OFF.match(last_message)
+
+
+def listen_sec(*, coordinator: bool) -> int:
+    """MM_LISTEN_SEC, or MM_LISTEN_COORD_SEC while the agent holds the 👑
+    (RT-6.6); at most MAX_LISTEN_SEC, 0 turns the window off."""
+    name, default = ("MM_LISTEN_COORD_SEC", LISTEN_COORD_SEC) if coordinator else ("MM_LISTEN_SEC", LISTEN_SEC)
+    raw = os.environ.get(name, "").strip()
+    return min(int(raw) if raw.isdigit() else default, MAX_LISTEN_SEC)
+
+
+def listens(last_message: str, *, project: bool) -> bool:
+    """The listen gates (RT-6.2 step 3): a project channel, the agent has
+    posted in the work channel, and its latest post there is no BYE."""
+    return project and bool(last_message) and not _BYE.match(last_message)
+
+
+def listen_window(last_message: str, last_at_ms: int, *, project: bool, coordinator: bool,
+                  since: int, now: float | None = None) -> tuple[int, int]:
+    """The listen window after a turn as (start, end) in epoch s, (0, 0) for
+    none: the running one (started at `since`) goes on unless the agent posted
+    since it started, else a new one starts now — as the Stop hook keeps it."""
+    sec = listen_sec(coordinator=coordinator)
+    if sec <= 0 or not listens(last_message, project=project):
+        return 0, 0
+    now = time.time() if now is None else now
+    start = since if 0 < since and last_at_ms // 1000 <= since else int(now)
+    return (start, start + sec) if start + sec > now else (0, 0)
+
+
+def no_wake() -> dict[str, Any]:
+    return {"wake": False, "reason": "", "count": 0, "text": ""}
 
 
 def signoff(*, push: bool) -> dict[str, Any]:
@@ -115,7 +153,7 @@ def wake(posts: Iterable[Mapping[str, Any]], recent: Iterable[Mapping[str, Any]]
                         + (f", {fyi} of them fyi" if fyi else "")
                         + ", none addressed to you. Skim them with wait_for_events(timeout_sec=1); "
                           "act only on what needs you, then finish your turn."}
-    return {"wake": False, "reason": "", "count": 0, "text": ""}
+    return no_wake()
 
 
 def wake_pending(count: int) -> dict[str, Any]:

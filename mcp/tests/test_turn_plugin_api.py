@@ -1,12 +1,14 @@
 """RT-6.20 a turn plugin (OpenCode) asks the hook API what the Stop hook,
 the listener and the compaction hook decide (docs/arc42/06-runtime-view.md)."""
 
+import hashlib
+import os
 import time
 
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import hookapi, lease, session_file, stall, turnend, unread
+from mattermost_ai_agent_bus import hookapi, lease, ownpost, session_file, stall, turnend, unread
 
 UID = "u" * 26
 OTHER = "o" * 26
@@ -127,13 +129,14 @@ async def test_wake_says_what_the_listener_would(api, unread_rows, monkeypatch):
     fyi = {"a2a": {"v": 1, "kind": "done", "intent": "fyi"}}
     mine = post("h", "HELLO · agent-me", user=UID, at=now - 60_000)
     client = FakeClient(agents={OTHER}, posts=[mine])
+    client.project_channel_name = "proj"
     h = await api(client)
-    since = now - 30_000
+    since, until = now - 30_000, int(time.time()) + 600
     assert (await h.get("/v1/wake")).status_code == 400
-    assert (await h.get(f"/v1/wake?since={since}")).json() == {
+    assert (await h.get(f"/v1/wake?since={since}&until={until}")).json() == {
         "wake": False, "reason": "", "count": 0, "text": ""}
     unread_rows[:] = [("dm", 1)]
-    got = (await h.get(f"/v1/wake?since={since}")).json()
+    got = (await h.get(f"/v1/wake?since={since}&until={until}")).json()
     assert got["reason"] == "dm" and got["text"].startswith(
         "Mattermost: 1 unread mention(s) or DM(s) for you. Collect them with wait_for_events")
     unread_rows.clear()
@@ -141,46 +144,125 @@ async def test_wake_says_what_the_listener_would(api, unread_rows, monkeypatch):
     d.mkdir(parents=True, exist_ok=True)
     (d / f"asks-{UID}.env").write_text(f"ASK={ASK} {int(time.time())}\n")
     client._reactions = {ASK: [{"user_id": PERSON, "emoji_name": "+1"}]}
-    assert (await h.get(f"/v1/wake?since={since}")).json()["reason"] == "reaction"
+    assert (await h.get(f"/v1/wake?since={since}&until={until}")).json()["reason"] == "reaction"
     client._reactions = {}
     # An agent's fyi reply in my thread wakes me: I started it.
     client.posts = [post("r1", "DONE · merged", root="h", at=now - 1000, props=fyi), mine]
-    assert (await h.get(f"/v1/wake?since={since}")).json()["reason"] == "addressed"
+    assert (await h.get(f"/v1/wake?since={since}&until={until}")).json()["reason"] == "addressed"
     # A plain post nobody names: not at once, a digest once it is old.
     client.posts = [post("p", "anyone?", at=now - 1000), mine]
-    assert (await h.get(f"/v1/wake?since={since}")).json()["wake"] is False
+    assert (await h.get(f"/v1/wake?since={since}&until={until}")).json()["wake"] is False
     monkeypatch.setenv("MM_LISTEN_DIGEST_SEC", "0")
-    got = (await h.get(f"/v1/wake?since={since}")).json()
+    got = (await h.get(f"/v1/wake?since={since}&until={until}")).json()
     assert got["reason"] == "digest" and "1 post(s) in the work channel since" in got["text"]
     monkeypatch.setenv("MM_LISTEN_DIGEST_SEC", "1800")
     # Named, or for all agents: at once; gated: never at once.
     client.posts = [post("n", "@agent-me. please look", at=now - 1000), mine]
-    assert (await h.get(f"/v1/wake?since={since}")).json()["reason"] == "addressed"
+    assert (await h.get(f"/v1/wake?since={since}&until={until}")).json()["reason"] == "addressed"
     (d / f"gate-{UID}.env").write_text(f"GATED=n {int(time.time())}\n")
-    assert (await h.get(f"/v1/wake?since={since}")).json()["wake"] is False
+    assert (await h.get(f"/v1/wake?since={since}&until={until}")).json()["wake"] is False
     # The coordinator sees every post (RT-6.6).
     client.posts = [post("p", "what is next?", at=now - 1000), mine]
     monkeypatch.setattr(lease, "crown_until", lambda uid: int(time.time()) + 600)
-    assert (await h.get(f"/v1/wake?since={since}")).json()["reason"] == "addressed"
+    assert (await h.get(f"/v1/wake?since={since}&until={until}")).json()["reason"] == "addressed"
 
 
 async def test_a_stall_event_drains_and_wakes_like_a_message(api, unread_rows, monkeypatch):
     """RT-6.20 with RT-6.19: a stall event waiting in the inbox counts as
     /v1/pending counts it — the turn end drains it, an idle session wakes for it."""
-    h = await api(FakeClient(posts=[post("b", "IDLE · done: x", user=UID)]))
+    client = FakeClient(posts=[post("b", "IDLE · done: x", user=UID)])
+    client.project_channel_name = "proj"
+    h = await api(client)
     monkeypatch.setattr(stall, "waiting", lambda: True)
     got = (await h.get("/v1/turn-end?push=1")).json()
     assert got["action"] == "drain" and got["pending"] == 1 and "Pending per channel" not in got["reason"]
-    assert (await h.get(f"/v1/turn-end?push=1&drains={turnend.MAX_DRAIN}")).json() == {"action": "idle"}
-    since = int(time.time() * 1000)
-    got = (await h.get(f"/v1/wake?since={since}")).json()
+    assert (await h.get(f"/v1/turn-end?push=1&drains={turnend.MAX_DRAIN}")).json()["action"] == "idle"
+    since, until = int(time.time() * 1000), int(time.time()) + 600
+    got = (await h.get(f"/v1/wake?since={since}&until={until}")).json()
     assert got["wake"] is True and got["reason"] == "stall" and "wait_for_events" in got["text"]
     unread_rows[:] = [("dm", 2)]
-    got = (await h.get(f"/v1/wake?since={since}")).json()
+    got = (await h.get(f"/v1/wake?since={since}&until={until}")).json()
     assert got["reason"] == "dm" and got["count"] == 3
     monkeypatch.setattr(stall, "waiting", lambda: False)
     unread_rows.clear()
-    assert (await h.get(f"/v1/wake?since={since}")).json()["wake"] is False
+    assert (await h.get(f"/v1/wake?since={since}&until={until}")).json()["wake"] is False
+
+
+async def test_wake_only_in_the_listen_window_and_its_gates(api, unread_rows, monkeypatch):
+    """RT-6.20 (RT-6.2 step 3): the turn end opens the Stop hook's listen
+    window — a project channel, an own post in the work channel, not BYE,
+    MM_LISTEN_SEC (the 👑 MM_LISTEN_COORD_SEC) — and /v1/wake wakes only inside it."""
+    now = int(time.time())
+    client = FakeClient(posts=[post("b", "IDLE · done: x", user=UID, at=(now - 100) * 1000)])
+    h = await api(client)
+    unread_rows[:] = [("dm", 1)]
+    q = f"since={now * 1000}&until={now + 600}"
+    # Not a project channel: no window, no wake, even for a DM.
+    assert (await h.get(f"/v1/turn-end?push=1&drains={turnend.MAX_DRAIN}")).json() == {"action": "idle"}
+    assert (await h.get(f"/v1/wake?{q}")).json()["wake"] is False
+    client.project_channel_name = "proj"
+    got = (await h.get(f"/v1/turn-end?push=1&drains={turnend.MAX_DRAIN}")).json()
+    assert got["listen_since"] >= now and got["listen_until"] - got["listen_since"] == turnend.LISTEN_SEC
+    assert (await h.get(f"/v1/wake?{q}")).json()["reason"] == "dm"
+    # The window is over: nothing wakes.
+    assert (await h.get(f"/v1/wake?since={now * 1000}&until={now - 1}")).json()["wake"] is False
+    # A running window goes on unless the agent posted since it started.
+    start = now - 50
+    got = (await h.get(f"/v1/turn-end?push=1&drains=3&listen_since={start}")).json()
+    assert (got["listen_since"], got["listen_until"]) == (start, start + turnend.LISTEN_SEC)
+    got = (await h.get(f"/v1/turn-end?push=1&drains=3&listen_since={now - 200}")).json()
+    assert got["listen_since"] >= now
+    got = (await h.get(f"/v1/turn-end?push=1&drains=3&listen_since={now - turnend.LISTEN_SEC - 1}")).json()
+    assert got["listen_since"] >= now  # it posted after that one started: a new one
+    monkeypatch.setattr(lease, "crown_until", lambda uid: now + 600)
+    got = (await h.get("/v1/turn-end?push=1&drains=3")).json()
+    assert got["listen_until"] - got["listen_since"] == turnend.LISTEN_COORD_SEC
+    monkeypatch.setattr(lease, "crown_until", lambda uid: 0)
+    monkeypatch.setenv("MM_LISTEN_SEC", "0")
+    assert (await h.get("/v1/turn-end?push=1&drains=3")).json() == {"action": "idle"}
+    monkeypatch.setenv("MM_LISTEN_SEC", "99999")
+    got = (await h.get("/v1/turn-end?push=1&drains=3")).json()
+    assert got["listen_until"] - got["listen_since"] == turnend.MAX_LISTEN_SEC
+    # BYE ends the session's part: no window, no wake; never posted: neither.
+    client.posts = [post("b", "BYE · done", user=UID)]
+    assert (await h.get("/v1/turn-end?push=1&drains=3")).json() == {"action": "idle"}
+    assert (await h.get(f"/v1/wake?{q}")).json()["wake"] is False
+    client.posts = [post("a", "hi")]
+    assert (await h.get(f"/v1/wake?{q}")).json()["wake"] is False
+    for bad in ("since=1", "since=1&until=x", "until=1"):
+        assert (await h.get(f"/v1/wake?{bad}")).status_code == 400
+    assert (await h.get("/v1/turn-end?listen_since=x")).status_code == 400
+
+
+async def test_wake_reads_the_own_threads_once_until_the_agent_posts(api, unread_rows):
+    """RT-6.20: an idle session asks every few seconds; its own threads are
+    read again only once it posted (ownpost.py) or after OWN_TTL_SEC."""
+    now = int(time.time())
+    client = FakeClient(posts=[post("h", "HELLO · agent-me", user=UID, at=(now - 100) * 1000)])
+    client.project_channel_name = "proj"
+    h = await api(client)
+    q = f"since={now * 1000}&until={now + 600}"
+    for _ in range(3):
+        assert (await h.get(f"/v1/wake?{q}")).json()["wake"] is False
+    assert client.calls.count(("posts", hookapi.MAX_POSTS, None)) == 1
+    ownpost.record(UID, "c" * 26, post("n", "IDLE · done: y", user=UID, at=now * 1000))
+    assert (await h.get(f"/v1/wake?{q}")).json()["wake"] is False
+    assert client.calls.count(("posts", hookapi.MAX_POSTS, None)) == 2
+
+
+def test_empty_session_variables_count_as_unset(monkeypatch, tmp_path):
+    """RT-6.20: the OpenCode plugin blanks CLAUDE_CODE_SESSION_ID and
+    CLAUDE_PROJECT_DIR a Claude Code shell passed on, and names MM_WORKSPACE:
+    the server keys its endpoint file on that workspace, where the plugin looks."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", " ")
+    monkeypatch.setenv("MM_WORKSPACE", str(ws))
+    key = hashlib.sha1(os.path.realpath(ws).encode()).hexdigest()[:16]
+    assert session_file.session_id() == ""
+    assert session_file.workspace() == (os.path.realpath(ws), "MM_WORKSPACE")
+    assert session_file.keyed_path("endpoint") == session_file.state_dir() / f"endpoint-{key}.env"
 
 
 def test_wake_rules_match_the_listener():

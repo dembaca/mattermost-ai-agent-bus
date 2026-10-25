@@ -8,10 +8,11 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { after, before, beforeEach, test } from "node:test"
+import { after, afterEach, before, beforeEach, mock, test } from "node:test"
 import { fileURLToPath } from "node:url"
 
-import plugin, { addToConfig, busFile, busRoot, MARK, MattermostAgentBus, SERVER } from "../plugin/mattermost-agent-bus.ts"
+import plugin, { addToConfig, busFile, busRoot, MARK, MattermostAgentBus, pollMs, SERVER, WAKE_BACKOFF_MAX_MS,
+  WAKE_BACKOFF_MS, wakeBackoffMs } from "../plugin/mattermost-agent-bus.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = dirname(dirname(HERE))
@@ -28,6 +29,15 @@ let server: Server
 let endpoint = ""
 
 const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
+const nowSec = () => Math.floor(Date.now() / 1000)
+// The timer and the clock are mocked: one poll is 5 s of the plugin's time.
+const poll = async (times = 1, ms = 5000) => {
+  for (let i = 0; i < times; i++) {
+    mock.timers.tick(ms)
+    await settle()
+  }
+}
+const idleIn = (window = 5400) => () => ({ action: "idle", listen_since: nowSec(), listen_until: nowSec() + window })
 
 before(async () => {
   for (const v of ["CLAUDE_CODE_SESSION_ID", "CLAUDE_PROJECT_DIR", "CURSOR_PROJECT_DIR", "MM_WORKSPACE",
@@ -63,14 +73,17 @@ after(() => {
 
 beforeEach(() => {
   calls = []
-  answers = { "/v1/presence": { ok: true }, "/v1/stat": { ok: true }, "/v1/turn-end": { action: "idle" },
+  answers = { "/v1/presence": { ok: true }, "/v1/stat": { ok: true }, "/v1/turn-end": idleIn(),
               "/v1/wake": { wake: false }, "/v1/handoff": { context: "" } }
   const dir = join(tmp, "state", "mm-agent-bus")
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
   process.env.XDG_STATE_HOME = join(tmp, "state")
   writeFileSync(join(dir, `endpoint-${sha16(ws)}.env`), `MM_BUS_ENDPOINT=${endpoint}\nMM_BUS_KEY=${KEY}\nMM_BUS_PID=1\n`)
+  mock.timers.enable({ apis: ["setInterval", "Date"], now: Date.now() })
 })
+
+afterEach(() => mock.timers.reset())
 
 function fakeClient(parents: Record<string, string | undefined> = {}) {
   const sent: any[] = []
@@ -88,11 +101,12 @@ function fakeClient(parents: Record<string, string | undefined> = {}) {
 
 async function start(opts: Record<string, unknown> = {}, parents: Record<string, string | undefined> = {}) {
   const fake = fakeClient(parents)
-  const hooks: any = await MattermostAgentBus({ client: fake.client, directory: ws } as any, { pollSec: 0.05, ...opts })
+  const hooks: any = await MattermostAgentBus({ client: fake.client, directory: ws } as any, { pollSec: 5, ...opts })
   return { hooks, ...fake }
 }
 
 const human = (text = "hi") => ({ message: {}, parts: [{ type: "text", text }] })
+const idle = (hooks: any, id = "s1") => hooks.event({ event: { type: "session.idle", properties: { sessionID: id } } })
 const marked = (sent: any) => ({ message: {}, parts: sent.body.parts })
 const paths = () => calls.map((c) => c.method + " " + c.path)
 
@@ -101,21 +115,28 @@ test("the module is a V1 plugin: default {id, server}", () => {
   assert.equal(plugin.server, MattermostAgentBus)
 })
 
-test("RT-6.20: finds the session's server like mm_bus_file does", () => {
+test("RT-6.20: finds only its own server: the file keyed on OpenCode's directory", () => {
   const env = { XDG_STATE_HOME: join(tmp, "state") }
   const want = join(tmp, "state", "mm-agent-bus", `endpoint-${sha16(ws)}.env`)
-  assert.equal(busFile(env, join(ws, "sub", "deeper")), want)
-  assert.equal(busFile({ ...env, MM_WORKSPACE: join(ws, "sub") }, ws), null) // a variable is taken exactly
-  assert.equal(busFile({ ...env, CLAUDE_CODE_SESSION_ID: "abc" }, ws), null)
+  assert.equal(busFile(env, ws), want)
+  assert.equal(busFile(env, join(ws, "sub", "deeper")), null) // no walk-up
+  // A Claude Code shell's session and project lead elsewhere: not looked at.
   writeFileSync(join(tmp, "state", "mm-agent-bus", `endpoint-sid-${sha16("abc")}.env`), "x=y\n")
-  assert.match(busFile({ ...env, CLAUDE_CODE_SESSION_ID: " abc\n" }, ws)!, /endpoint-sid-/)
-  mkdirSync(join(ws, "sub", ".git"), { recursive: true }) // a nested repository: its own workspace
-  assert.equal(busFile(env, join(ws, "sub", "deeper")), null)
-  rmSync(join(ws, "sub", ".git"), { recursive: true })
-  // The shell's own rule agrees (bin/mm-agent-lib.sh).
-  const shell = execFileSync("bash", ["-c", `source "${REPO}/bin/mm-agent-lib.sh"; cd "$1" && mm_bus_file`, "x",
-    join(ws, "sub", "deeper")], { env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env } }).toString()
+  const claude = { ...env, CLAUDE_CODE_SESSION_ID: "abc", CLAUDE_PROJECT_DIR: join(ws, "sub"), MM_WORKSPACE: join(ws, "sub") }
+  assert.equal(busFile(claude, ws), want)
+  // The name the server and the shell write (bin/mm-agent-lib.sh) for that workspace.
+  const shell = execFileSync("bash", ["-c", `source "${REPO}/bin/mm-agent-lib.sh"; cd "$1" && mm_bus_file`, "x", ws],
+    { env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env } }).toString()
   assert.equal(shell, want)
+})
+
+test("RT-6.20: an idle session asks at most every 5 s; the same counter backs off to 30 min", () => {
+  assert.equal(pollMs({}, {}), 15_000)
+  assert.equal(pollMs({}, { MM_LISTEN_POLL_SEC: "20" }), 20_000)
+  assert.equal(pollMs({ pollSec: 0.05 }, {}), 5000)
+  assert.equal(pollMs({}, { MM_LISTEN_POLL_SEC: "x" }), 15_000)
+  assert.deepEqual([0, 1, 2, 3, 10].map(wakeBackoffMs), [WAKE_BACKOFF_MS, 2 * WAKE_BACKOFF_MS, 4 * WAKE_BACKOFF_MS,
+    8 * WAKE_BACKOFF_MS, WAKE_BACKOFF_MAX_MS])
 })
 
 test("RT-6.20: config adds the MCP server and the skill, never over the user's", () => {
@@ -126,21 +147,25 @@ test("RT-6.20: config adds the MCP server and the skill, never over the user's",
   symlinkSync(join(REPO, "opencode", "plugin", "mattermost-agent-bus.ts"), join(link, "bus.ts"))
   assert.equal(busRoot({}, {}, join(link, "bus.ts")), REPO) // a symlinked plugin finds its checkout
   const cfg: any = {}
-  addToConfig(cfg, {}, root)
-  assert.deepEqual(cfg.mcp[SERVER], { type: "local", environment: {},
+  // Its server's files are keyed on OpenCode's directory, never on a Claude Code session it was started from.
+  const keyed = { CLAUDE_CODE_SESSION_ID: "", CLAUDE_PROJECT_DIR: "", MM_WORKSPACE: ws }
+  assert.equal(addToConfig(cfg, {}, root, ws), false)
+  assert.deepEqual(cfg.mcp[SERVER], { type: "local", environment: keyed,
     command: ["uv", "run", "--locked", "--project", join(REPO, "mcp"), "mattermost-ai-agent-bus-mcp"] })
   assert.deepEqual(cfg.skills.paths, [join(REPO, "skills")])
-  addToConfig(cfg, {}, root)
+  addToConfig(cfg, {}, root, ws)
   assert.equal(cfg.skills.paths.length, 1)
   const own: any = { mcp: { bus: { type: "local", command: ["sh", "-c", "exec uv run mattermost-ai-agent-bus-mcp"] } } }
-  addToConfig(own, {}, root)
+  assert.equal(addToConfig(own, {}, root, ws), true) // by hand, without MM_WORKSPACE: the plugin may warn
   assert.deepEqual(Object.keys(own.mcp), ["bus"])
+  own.mcp.bus.environment = { MM_WORKSPACE: ws }
+  assert.equal(addToConfig(own, {}, root, ws), false)
   const off: any = {}
-  addToConfig(off, { mcp: false }, root)
+  assert.equal(addToConfig(off, { mcp: false }, root, ws), false)
   assert.deepEqual(off.mcp, {})
   const cmd: any = {}
-  addToConfig(cmd, { command: ["my-bus"], environment: { MM_TEAM: "t" } }, null)
-  assert.deepEqual(cmd.mcp[SERVER], { type: "local", command: ["my-bus"], environment: { MM_TEAM: "t" } })
+  addToConfig(cmd, { command: ["my-bus"], environment: { MM_TEAM: "t" } }, null, ws)
+  assert.deepEqual(cmd.mcp[SERVER], { type: "local", command: ["my-bus"], environment: { ...keyed, MM_TEAM: "t" } })
   assert.equal(cmd.skills, undefined)
 })
 
@@ -152,7 +177,7 @@ test("RT-6.20: a turn: working, drain at the end, then idle", async () => {
   calls = []
   answers["/v1/turn-end"] = { action: "drain", reason: "You have 1 unread …", banner: "📨 Collecting 1" }
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
-  assert.match(calls[0].path, /^\/v1\/turn-end\?drains=0&signoff_asked=0&by_bus=0&push=1$/)
+  assert.match(calls[0].path, /^\/v1\/turn-end\?drains=0&signoff_asked=0&by_bus=0&push=1&listen_since=0$/)
   assert.deepEqual(calls[1].body, { k: "block", kind: "drain" })
   assert.deepEqual(toasts, ["📨 Collecting 1"])
   assert.equal(sent.length, 1)
@@ -164,10 +189,11 @@ test("RT-6.20: a turn: working, drain at the end, then idle", async () => {
   await settle()
   assert.deepEqual(paths(), ["POST /v1/presence"])
   calls = []
-  answers["/v1/turn-end"] = { action: "idle" }
+  answers["/v1/turn-end"] = idleIn()
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
-  assert.match(calls[0].path, /drains=1&/)
-  assert.deepEqual(calls.slice(1).map((c) => c.body), [{ k: "turn_end" }, { state: "idle", label: "ws" }])
+  assert.match(calls[0].path, /drains=1&.*&listen_since=0$/)
+  // The listen window the server opened: 👂 until its end, as in Claude Code.
+  assert.deepEqual(calls.slice(1).map((c) => c.body), [{ k: "turn_end" }, { state: "listening", until: nowSec() + 5400 }])
   assert.equal(sent.length, 1)
   await hooks.dispose()
 })
@@ -176,18 +202,18 @@ test("RT-6.20: an idle session is woken when the bus has something, once", async
   const { hooks, sent } = await start()
   await hooks["chat.message"]({ sessionID: "s1" }, human())
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
-  await settle(150)
-  assert.ok(calls.some((c) => c.path.startsWith("/v1/wake?since=")))
+  await poll()
+  assert.ok(calls.some((c) => c.path === `/v1/wake?since=${Date.now() - 5000}&until=${nowSec() - 5 + 5400}`))
   assert.equal(sent.length, 0)
-  answers["/v1/wake"] = { wake: true, reason: "dm", text: "Mattermost: 1 unread mention(s) …" }
-  await settle(150)
+  answers["/v1/wake"] = { wake: true, reason: "dm", count: 1, text: "Mattermost: 1 unread mention(s) …" }
+  await poll()
   assert.equal(sent.length, 1)
   assert.deepEqual(sent[0].body.parts[0].metadata, { [MARK]: "wake" })
   assert.ok(calls.some((c) => c.body?.k === "wake" && c.body.reason === "dm"))
   // Busy now: no second wake while the turn runs; it counts as the bus's turn.
   calls = []
   await hooks["chat.message"]({ sessionID: "s1" }, marked(sent[0]))
-  await settle(150)
+  await poll(2)
   assert.equal(sent.length, 1)
   assert.ok(calls.some((c) => c.body?.k === "turn" && c.body.by === "bus"))
   assert.ok(!calls.some((c) => c.path.startsWith("/v1/wake")))
@@ -197,8 +223,108 @@ test("RT-6.20: an idle session is woken when the bus has something, once", async
   assert.match(calls[0].path, /by_bus=1/)
   await hooks.dispose()
   calls = []
-  await settle(150)
+  await poll(2)
   assert.ok(!calls.some((c) => c.path.startsWith("/v1/wake")), "stopped on dispose")
+})
+
+test("RT-6.20: a counter the woken turn cannot clear wakes again only after 1, 2, 4 … min", async () => {
+  const { hooks, sent } = await start()
+  await hooks["chat.message"]({ sessionID: "s1" }, human())
+  await settle()
+  answers["/v1/turn-end"] = idleIn(7200)
+  await idle(hooks)
+  answers["/v1/wake"] = { wake: true, reason: "dm", count: 2, text: "Mattermost: 2 unread …" }
+  const woken = async () => {
+    // The woken turn does nothing: the server lets it go idle (its drains are spent).
+    await hooks["chat.message"]({ sessionID: "s1" }, marked(sent[sent.length - 1]))
+    await settle()
+    answers["/v1/turn-end"] = { action: "idle", listen_since: 1, listen_until: nowSec() + 3600 }
+    calls = []
+    await idle(hooks)
+  }
+  await poll()
+  assert.equal(sent.length, 1)
+  await woken()
+  // A wake-started turn keeps the human turn's drain rounds and window start.
+  assert.match(calls[0].path, /by_bus=1&push=1&listen_since=\d+$/)
+  await poll(11) // 55 s: the same counter again, held back
+  assert.equal(sent.length, 1)
+  await poll(1)
+  assert.equal(sent.length, 2) // after a minute
+  await woken()
+  await poll(23)
+  assert.equal(sent.length, 2)
+  await poll(1)
+  assert.equal(sent.length, 3) // after two
+  await woken()
+  // Something else (another count) wakes at once; the human's message starts afresh.
+  answers["/v1/wake"] = { wake: true, reason: "dm", count: 3, text: "Mattermost: 3 unread …" }
+  await poll()
+  assert.equal(sent.length, 4)
+  await hooks.dispose()
+})
+
+test("RT-6.20: no wake-up while another session works, outside the window or after an interrupt", async () => {
+  const { hooks, sent } = await start()
+  answers["/v1/wake"] = { wake: true, reason: "addressed", count: 1, text: "Mattermost: 1 new post(s) …" }
+  await hooks["chat.message"]({ sessionID: "s1" }, human())
+  await hooks["chat.message"]({ sessionID: "s2" }, human())
+  await settle()
+  await idle(hooks, "s1")
+  calls = []
+  await poll(2) // s2 is at work: its human is there
+  assert.equal(sent.length, 0)
+  assert.ok(!calls.some((c) => c.path.startsWith("/v1/wake")))
+  answers["/v1/turn-end"] = { action: "idle" } // no window (not a project channel, BYE, MM_LISTEN_SEC=0)
+  await idle(hooks, "s2")
+  await poll(2)
+  assert.equal(sent.length, 0) // s2 went idle last, without a window; s1 is not the one woken
+  assert.ok(!calls.some((c) => c.path.startsWith("/v1/wake")))
+  // A message makes its session the current one.
+  answers["/v1/turn-end"] = idleIn(10)
+  await hooks["chat.message"]({ sessionID: "s1" }, human())
+  await settle()
+  await idle(hooks, "s1")
+  await poll()
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0].path.id, "s1")
+  // The window ends: no more wake-ups.
+  await hooks["chat.message"]({ sessionID: "s1" }, marked(sent[0]))
+  await settle()
+  answers["/v1/wake"] = { wake: false }
+  answers["/v1/turn-end"] = { action: "idle", listen_since: nowSec() - 100, listen_until: nowSec() + 7 }
+  await idle(hooks, "s1")
+  calls = []
+  await poll()
+  assert.ok(calls.some((c) => c.path.startsWith("/v1/wake")))
+  calls = []
+  await poll(3)
+  assert.ok(!calls.some((c) => c.path.startsWith("/v1/wake")))
+  // Interrupted: OpenCode reports idle twice; neither checks, and nothing wakes it.
+  answers["/v1/turn-end"] = idleIn()
+  await hooks["chat.message"]({ sessionID: "s1" }, human())
+  await settle()
+  await hooks.event({ event: { type: "session.error", properties: { sessionID: "s1", error: { name: "MessageAbortedError" } } } })
+  calls = []
+  await idle(hooks, "s1")
+  await idle(hooks, "s1")
+  await poll(2)
+  assert.deepEqual(paths(), ["POST /v1/presence"])
+  assert.equal(sent.length, 1)
+  await hooks.dispose()
+})
+
+test("RT-6.20: a hand-configured server without MM_WORKSPACE that cannot be found: one warning", async () => {
+  const { hooks, toasts } = await start()
+  await hooks.config({ mcp: { bus: { type: "local", command: ["mattermost-ai-agent-bus-mcp"] } } })
+  rmSync(join(tmp, "state", "mm-agent-bus"), { recursive: true, force: true })
+  await hooks["chat.message"]({ sessionID: "s1" }, human())
+  await settle()
+  await idle(hooks)
+  await settle()
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0], /MM_WORKSPACE/)
+  await hooks.dispose()
 })
 
 test("RT-6.20: subagent sessions, interrupted turns and no server change nothing", async () => {
@@ -228,7 +354,7 @@ test("RT-6.20: subagent sessions, interrupted turns and no server change nothing
   calls = []
   await hooks["chat.message"]({ sessionID: "s1" }, human())
   await hooks.event({ event: { type: "session.idle", properties: { sessionID: "s1" } } })
-  await settle(150)
+  await poll(2)
   assert.deepEqual(calls, [])
   assert.equal(sent.length, 0)
   await hooks.dispose()
