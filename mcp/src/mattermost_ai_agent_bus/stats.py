@@ -85,13 +85,14 @@ def transcript(path: str) -> str | None:
 
     The host process of a keyless session (RT-6.18) got the path from the
     agent's side: it reads only a file whose real path lies under the host's
-    ~/.claude/projects/, else measures nothing.
+    ~/.claude/projects/, else measures nothing. session_file.read_transcript
+    checks the opened file once more.
     """
     if not session_file.hosted():
         return path
     try:
         real = os.path.realpath(path)
-        root = os.path.realpath(Path.home() / ".claude" / "projects")
+        root = session_file.claude_projects()
     except (OSError, ValueError):
         return None
     return real if real.startswith(root + os.sep) else None

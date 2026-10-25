@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import a2a, asks, channel, gate, lease, ownpost, session_file, stats, unread
+from .client import InvalidId
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -223,7 +224,7 @@ class HookAPI:
             return 503, {"error": "no bus session"}
         try:
             reply = await asyncio.wait_for(self._run(route, client, query, payload), ROUTE_TIMEOUT_SEC)
-        except BadRequest as exc:
+        except (BadRequest, InvalidId) as exc:  # InvalidId: refused before any request (#81)
             return 400, {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 — Mattermost failed: the hook fails open
             log.info("hook API %s %s: %s", method, url.path, type(exc).__name__)

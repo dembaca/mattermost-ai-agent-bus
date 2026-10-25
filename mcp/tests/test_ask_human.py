@@ -149,7 +149,7 @@ async def test_posts_never_mention_a_human(monkeypatch):
     c = _NamingClient()
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.reply_in_thread(
-        "r1", "@dembaca gave the coordination to @agent-mac-1; APPROVE from @Dembaca "
+        "r1".ljust(26, "0"), "@dembaca gave the coordination to @agent-mac-1; APPROVE from @Dembaca "
               "in thread, @kollegin too. @channel heads-up, mail a@b.de, `@dembaca` in code"))
     msg = c.posted[0]["message"]
     assert msg == ("dembaca gave the coordination to @agent-mac-1; APPROVE from Dembaca "
@@ -173,7 +173,7 @@ async def test_posts_never_notify_everyone(monkeypatch):
     assert c.posted[0]["message"] == PLAIN
     assert out["unmentioned"] == ["all", "channel", "here"]
     assert 'to="all"' in out["hint"] and "ask_human" not in out["hint"]
-    await server.reply_in_thread("r1", EVERYONE)
+    await server.reply_in_thread("r1".ljust(26, "0"), EVERYONE)
     await server.resolve_ask(ASK, note=EVERYONE)
     assert [p["message"] for p in c.posted[1:]] == [PLAIN, PLAIN]
 
@@ -216,7 +216,7 @@ async def test_to_all_wakes_every_agent_through_the_props(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.post_message("main is red, hold merges", to="all"))
     await server.post_message("IDLE · done: x", to="All")
-    await server.reply_in_thread("r1", "freeze lifted", to="all")
+    await server.reply_in_thread("r1".ljust(26, "0"), "freeze lifted", to="all")
     assert [p["props"] for p in c.posted] == [
         {"a2a": {"v": 1, "to": "all"}},
         {"a2a": {"v": 1, "kind": "idle", "intent": "fyi", "to": "all"}},
@@ -224,7 +224,7 @@ async def test_to_all_wakes_every_agent_through_the_props(monkeypatch):
     assert "unmentioned" not in out
     await server.post_message("anyone seen #46?")
     assert c.posted[-1]["props"] is None
-    assert "to must be" in json.loads(await server.reply_in_thread("r1", "hi", to="agent-x"))["refused"]
+    assert "to must be" in json.loads(await server.reply_in_thread("r1".ljust(26, "0"), "hi", to="agent-x"))["refused"]
 
 
 @pytest.mark.asyncio
@@ -241,7 +241,7 @@ async def test_naming_a_human_without_an_ask_gets_a_hint(monkeypatch):
     """RT-6.11: "merge waits on dembaca" reaches nobody; the result says to ask."""
     c = _NamingClient()
     monkeypatch.setattr(server, "_get_client", lambda: c)
-    out = json.loads(await server.reply_in_thread("r1", "review ok · merge: Dembaca decides"))
+    out = json.loads(await server.reply_in_thread("r1".ljust(26, "0"), "review ok · merge: Dembaca decides"))
     assert c.posted[0]["message"] == "review ok · merge: Dembaca decides"  # posted all the same
     assert out["unasked"] == ["dembaca"] and "call ask_human now" in out["hint"]
     out = json.loads(await server.post_message("IDLE · open: go from dembaca for #190"))

@@ -41,11 +41,47 @@ Keyless corral session: the bot token stays on the host (#81, #69).
 - **`mm-agent-sweep.sh`** leaves a session alone while its host process runs
   and removes the files of host processes whose session ended.
 
+### Security (second review of #81)
+
+- **No credential in any process environment on the host
+  ([§7.3](docs/arc42/07-deployment-view.md#73-trust-assumptions)):** on macOS
+  a corral sandbox can read the initial environment of every process of the
+  same user (`KERN_PROCARGS2`). The host hooks no longer export the bot token
+  or the registration secret: helpers get them on fd 3 (`MM_BOT_TOKEN_FD`,
+  `MM_REG_SECRET_FD`, read by `mm-agent-lib.sh`), jq reads token and key from
+  pipes, curl from stdin. `mm-agent-register.sh` no longer exports the token.
+  A secret from the login environment is not passed on, and the start hook
+  warns: keep it in gopass. Residual: a session's `MM_BUS_KEY` is readable by
+  other sandboxes; the root fix belongs in corral's sandbox profile.
+- **Host hooks only from the installed copy
+  ([§7.1](docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)):**
+  both hooks check where they run from before sourcing anything (symlinks and
+  the Python included); under `~/.claude` (the marketplace clone), a corral
+  home or the session's workdir `preStart` contributes only
+  `MM_BUS_UNAVAILABLE` and `postEnd` runs nothing. The marketplace-clone
+  `exec` mode is gone.
+- **`mm-agent-host-install.sh`** copies only what is committed (`git archive
+  HEAD`) and refuses uncommitted changes, untracked files and symlinks in the
+  copied paths, and a source under `$CORRAL_WORKDIR`.
+- **Transcripts** are opened non-blocking, must be regular files of at most
+  64 MiB, and on the host their real path is checked again from the open
+  descriptor.
+- **Mattermost ids** in API paths must be 26 lowercase letters and digits,
+  names free of path characters; anything else is refused (tool result, `400`
+  from the hook API) before a request goes out.
+- `postEnd` no longer signals a host process without a recorded start time;
+  host files are named by the validated session key throughout.
+
 ### Upgrade
 
 - Rerun `bin/mm-agent-host-install.sh` on the host, from a clone you
   reviewed: the host process runs that code with the bot token. Without its
-  Python environment corral sessions get no bus.
+  Python environment corral sessions get no bus. If corral's `exec` points at
+  the marketplace clone, point it at
+  `~/.local/share/mm-agent-bus/current/adapters/corral/` instead: hooks from
+  the clone now refuse to run.
+- Move `MM_REG_SECRET` out of the login environment into gopass
+  (`MM_REG_SECRET_GOPASS`).
 - Update the plugin in the sandboxes (`/plugin update`, then restart): a
   plugin older than 0.39.0 does not know the relay, so a keyless session gets
   no MCP bus until it is updated.

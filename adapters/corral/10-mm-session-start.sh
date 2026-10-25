@@ -12,9 +12,12 @@
 # Spec: RT-6.1 and RT-6.18 in docs/arc42/06-runtime-view.md.
 set -euo pipefail
 
-BIN="$(cd "$(dirname "$0")/../../bin" && pwd)"
-# shellcheck source=../../bin/mm-agent-lib.sh
-source "$BIN/mm-agent-lib.sh"
+# No credential in any process environment (arc42 §7.3): on macOS a sandbox can
+# read the initial environment of every process of this user. One that arrived
+# in ours stays visible in this process, but no child gets it: the token comes
+# from the registration, the secret goes to helpers on an fd only.
+unset MM_BOT_TOKEN MATTERMOST_TOKEN CDPATH
+export -n MM_REG_SECRET 2>/dev/null || true
 
 log() { echo "mm-bus: $*" >&2; }
 
@@ -26,10 +29,8 @@ no_bus() {
   local why="$1"
   log "no bus for this session, the token stays on the host: ${why}"
   if [[ "$REGISTERED" -eq 1 ]]; then
-    "$BIN/mm-agent-status.sh" offline >/dev/null 2>&1 || true
-    # With the bot's own token first, which the registrar always accepts for it.
-    if MM_REG_SECRET="" "$BIN/mm-agent-unregister.sh" "$NAME" >/dev/null 2>&1 ||
-      "$BIN/mm-agent-unregister.sh" "$NAME" >/dev/null 2>&1; then
+    mm_with_token "$BIN/mm-agent-status.sh" offline >/dev/null 2>&1 || true
+    if unregister_again; then
       rm -f "$MM_AGENT_SESSION_FILE"
     else
       log "WARNING: could not unregister ${NAME} again; postEnd retries"
@@ -44,34 +45,66 @@ no_bus() {
   exit 0
 }
 
-
-# --- where these hooks run from ----------------------------------------------
-# They run on the host with the registration secret, so the scripts they source
-# and start must be out of every sandbox's reach (arc42 §7.1). corral approves
-# only this file by content. Warn, do not refuse: refusing would silently take
-# the bus away. The host's marketplace clone
-# (~/.claude/plugins/marketplaces/mattermost-ai-agent-bus) is a deliberate
-# choice: a stable path that `/plugin update` moves, so no warning for it.
-ROOT="$(cd "$BIN/.." && pwd)"
-FROM_MARKETPLACE=0
-case "$ROOT" in
-  "$HOME"/.claude/plugins/marketplaces/*) FROM_MARKETPLACE=1 ;;
-  */.cache/corral/home-*|*/.claude/plugins/*)
-    log "WARNING: hooks run from the plugin directory ${ROOT}, which any sandbox can change — install them with bin/mm-agent-host-install.sh from a checkout you reviewed, or point exec at ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus to follow plugin updates by choice" ;;
-esac
-if [[ -n "${CORRAL_WORKDIR:-}" && "$ROOT/" == "$(cd "$CORRAL_WORKDIR" 2>/dev/null && pwd)/"* ]]; then
-  log "WARNING: hooks run from this session's own workdir ${ROOT}, which the agent can change — install them with bin/mm-agent-host-install.sh from a checkout you reviewed"
+# --- where this hook runs from (arc42 §7.1) ------------------------------------
+# It runs on the host with the registration secret and starts the session's MCP
+# server with the bot token, so nothing of its tree may be in a sandbox's reach.
+# corral approves only this file by content; what it sources and starts is the
+# tree around it. Checked here, inline, before anything of that tree is sourced
+# or run: the path corral ran, every symlink on the way to this file, the real
+# tree and the Python it would start (and its symlinks) must all lie outside
+# every corral home, ~/.claude (the plugin's marketplace clone and cache, which
+# sandboxes write) and the session's workdir. A symlink in such a place could
+# be pointed at another tree.
+seen=()
+self="$0"
+while :; do
+  seen+=("$(cd "$(dirname "$self")" 2>/dev/null && pwd)/")
+  [[ -L "$self" && "${#seen[@]}" -lt 40 ]] || break
+  link="$(readlink "$self")"
+  [[ "$link" == /* ]] || link="$(dirname "$self")/$link"
+  self="$link"
+done
+ROOT="$(cd -P "$(dirname "$self")/../.." && pwd -P)"
+BIN="$ROOT/bin"
+HOST_PY="$ROOT/mcp/.venv/bin/python"
+seen+=("$ROOT/")
+py="$HOST_PY" hops=0
+while [[ -L "$py" && "$hops" -lt 40 ]]; do
+  link="$(readlink "$py")"
+  [[ "$link" == /* ]] || link="$(dirname "$py")/$link"
+  py="$link" hops=$((hops + 1))
+  seen+=("$py")
+done
+if py_dir="$(cd -P "$(dirname "$py")" 2>/dev/null && pwd -P)"; then
+  seen+=("$py_dir/")
 fi
+unsafe=""
+for r in "$HOME/.cache/corral" "$HOME/.claude" "${CORRAL_WORKDIR:-}"; do
+  [[ -n "$r" ]] || continue
+  real="$(cd -P "$r" 2>/dev/null && pwd -P)" || real="$r"
+  for p in "${seen[@]}"; do
+    if [[ "$p" == "$r/"* || "$p" == "$real/"* ]]; then unsafe="${p%/}"; fi
+  done
+done
+if [[ -n "$unsafe" ]]; then
+  no_bus "the host hooks run from ${unsafe}, which a sandbox can change — install them from a reviewed clone with bin/mm-agent-host-install.sh and point corral's exec at ~/.local/share/mm-agent-bus/current/adapters/corral/"
+fi
+
+# shellcheck source=../../bin/mm-agent-lib.sh
+source "$BIN/mm-agent-lib.sh"
+
+# Unregister the bot this run registered: with its own token first, which the
+# registrar always accepts for it, then with the registration secret.
+unregister_again() {
+  mm_with_token "$BIN/mm-agent-unregister.sh" "$NAME" >/dev/null 2>&1 ||
+    { [[ -n "${MM_REG_SECRET:-}" ]] && mm_with_secret "$BIN/mm-agent-unregister.sh" "$NAME" >/dev/null 2>&1; }
+}
+
 # Version only: the installed plugins include the corral homes, which a sandbox
 # writes, so the notice names no path and does not tell where to install from.
 if command -v jq >/dev/null 2>&1 && want="$(mm_newest_plugin_version)" &&
    mm_version_newer "$(mm_tree_version "$ROOT")" "$want"; then
-  have="$(mm_tree_version "$ROOT")"
-  if [[ "$FROM_MARKETPLACE" -eq 1 ]]; then
-    log "host hooks (marketplace) are ${have}, the installed plugin is ${want} — run /plugin update"
-  else
-    log "host hooks are ${have}, plugin ${want} is installed — reinstall them from a checkout you reviewed: mm-agent-host-install.sh --from <checkout>"
-  fi
+  log "host hooks are $(mm_tree_version "$ROOT"), plugin ${want} is installed — reinstall them from a clone you reviewed: mm-agent-host-install.sh --from <clone>"
 fi
 
 # --- wanted at all? ----------------------------------------------------------
@@ -83,15 +116,15 @@ if ! why="$(mm_registration_wanted)"; then
 fi
 
 # --- secret, gopass preferred ------------------------------------------------
-# gopass first: the secret then lives in neither a shell env nor a config file.
+# gopass: the secret then lives in no environment and no config file; here it
+# is a variable this hook does not export (arc42 §7.3).
 if [[ -n "${MM_REG_SECRET_GOPASS:-}" ]] && command -v gopass >/dev/null 2>&1; then
-  if ! MM_REG_SECRET="$(gopass show -o "$MM_REG_SECRET_GOPASS" 2>/dev/null)"; then
+  if ! MM_REG_SECRET="$(gopass show -o "$MM_REG_SECRET_GOPASS" 2>/dev/null)" || [[ -z "$MM_REG_SECRET" ]]; then
     log "gopass could not read '$MM_REG_SECRET_GOPASS' — no bot for this session"
     exit 0
   fi
-  export MM_REG_SECRET
 elif [[ -n "${MM_REG_SECRET:-}" ]]; then
-  log "using MM_REG_SECRET from the environment"
+  log "WARNING: MM_REG_SECRET comes from the login environment, where other corral sandboxes can read it (arc42 §7.3) — keep it in gopass and set MM_REG_SECRET_GOPASS instead"
 else
   # No bus configured on this machine. Stay out of the way rather than failing
   # every corral run.
@@ -105,7 +138,6 @@ fi
 
 # The session's MCP server runs from this tree, on the host (RT-6.18): without
 # its Python environment there is nothing to keep the token, so no bot at all.
-HOST_PY="$ROOT/mcp/.venv/bin/python"
 [[ -x "$HOST_PY" ]] ||
   no_bus "the MCP server has no Python environment on the host (${ROOT}/mcp/.venv) — rerun bin/mm-agent-host-install.sh (needs uv), then restart the session"
 
@@ -142,20 +174,27 @@ DISPLAY="Claude Code · ${PROJECT_RAW} @ ${host_raw%%.*}"
 
 # One session file per corral session; the shared default would be clobbered by
 # concurrent sessions.
+# Host files are named by SESSION_KEY: corral's session id when it is a safe
+# file name, else this hook's pid.
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
-MM_AGENT_SESSION_FILE="${STATE_DIR}/${CORRAL_SESSION_ID:-$$}.env"
+SESSION_KEY="${CORRAL_SESSION_ID:-$$}"
+[[ "$SESSION_KEY" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || SESSION_KEY="$$"
+MM_AGENT_SESSION_FILE="${STATE_DIR}/${SESSION_KEY}.env"
 export MM_AGENT_SESSION_FILE
 
 # --- register ----------------------------------------------------------------
-# Capture the export lines from stdout; the script's own diagnostics are on
-# stderr and pass through to corral's banner untouched.
-if ! exports="$("$BIN/mm-agent-register.sh" --exports "$NAME" "$DISPLAY")"; then
+# Capture the lines from stdout; the script's own diagnostics are on stderr and
+# pass through to corral's banner untouched. Every helper gets its credential
+# on fd 3 (mm_with_secret, mm_with_token), never in its environment or argv
+# (arc42 §7.3); the token comes back as a plain assignment, not exported.
+if ! exports="$(mm_with_secret "$BIN/mm-agent-register.sh" --exports "$NAME" "$DISPLAY")"; then
   log "registration failed — continuing without a bot"
   exit 0
 fi
 eval "$exports"
+export -n MM_BOT_TOKEN MATTERMOST_TOKEN
 
 if [[ -z "${MM_BOT_TOKEN:-}" ]]; then
   log "registrar returned no token — continuing without a bot"
@@ -167,12 +206,11 @@ REGISTERED=1
 # From here on a failure must not leak the bot account we just created.
 cleanup_and_fail() {
   log "$1"
-  "$BIN/mm-agent-unregister.sh" "$NAME" >/dev/null 2>&1 || true
-  rm -f "$MM_AGENT_SESSION_FILE"
+  if unregister_again; then rm -f "$MM_AGENT_SESSION_FILE"; fi
   exit 1
 }
 
-if ! chan_exports="$("$BIN/mm-agent-channels.sh" resolve)"; then
+if ! chan_exports="$(mm_with_token "$BIN/mm-agent-channels.sh" resolve)"; then
   cleanup_and_fail "channel resolution failed — unregistered ${NAME} again"
 fi
 eval "$chan_exports"
@@ -186,12 +224,12 @@ printf 'MM_SESSION_PID=%s\n' "$PPID" >>"$MM_AGENT_SESSION_FILE"
 # a welcome DM *as the bot* to whoever created it, and the bot's own post counts
 # as unread for the bot. Nothing can ever deliver that (classify_post ignores
 # own posts), so the Stop hook would block on an undrainable message.
-"$BIN/mm-agent-unread.sh" baseline || true
+mm_with_token "$BIN/mm-agent-unread.sh" baseline || true
 
 # Show up as present from the first moment. Without this a fresh bot sits at
 # whatever Mattermost infers from (non-existent) activity, which reads as
 # offline to anyone looking at the member list.
-"$BIN/mm-agent-status.sh" idle "$PROJECT_RAW" || true
+mm_with_token "$BIN/mm-agent-status.sh" idle "$PROJECT_RAW" || true
 
 # --- trusted humans ----------------------------------------------------------
 # The humans this session answers to on the bus (RT-6.8): their posts may carry
@@ -291,8 +329,6 @@ ENV_JSON="$(jq -nc \
 # listener call its hook API (MM_BUS_ENDPOINT), both with a per-session key
 # (MM_BUS_KEY). Fail closed: if it does not come up, the session gets no bus at
 # all, never the token — the bot is unregistered again and the banner says why.
-SESSION_KEY="${CORRAL_SESSION_ID:-$$}"
-[[ "$SESSION_KEY" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || SESSION_KEY="$$"
 HOST_READY="${STATE_DIR}/${SESSION_KEY}.host.json"
 HOST_LOG="${STATE_DIR}/${SESSION_KEY}.host.log"
 # The process's own state directory, chosen here: never one the sandbox names.
@@ -344,20 +380,22 @@ chmod 700 "$STATE_DIR/hosted"
 # PYTHON* variables, no user site on its path), from the host tree, with an
 # environment of the host's own basics only (no PYTHON*, UV_*, DYLD_*,
 # BASH_ENV). Key, token and settings go on stdin as one JSON line, never in
-# an argv; the registration secret not at all. It detaches itself and returns
+# an argv or environment (jq reads both from fds fed by the builtin printf);
+# the registration secret not at all. It detaches itself and returns
 # once it listens; nothing of it may hold this hook's stdout or stderr.
 host_env=(HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin")
 for v in USER LOGNAME LANG LC_ALL LC_CTYPE TMPDIR; do
   if [[ -n "${!v:-}" ]]; then host_env+=("${v}=${!v}"); fi
 done
 HOST_PID="" HOST_PORT="" HOST_HOOK=""
-if MM_BUS_KEY="$BUS_KEY" jq -nc --argjson base "$ENV_JSON" '
-     {key: env.MM_BUS_KEY,
+if jq -nc --rawfile key /dev/fd/4 --rawfile tok /dev/fd/5 --argjson base "$ENV_JSON" '
+     {key: $key,
       env: ((env | with_entries(select(.key | test(
               "^(MM|MATTERMOST)_[A-Z0-9_]+$|^(CORRAL_WORKDIR|CORRAL_SESSION_ID|TZ|SSL_CERT_FILE|SSL_CERT_DIR)$|^(HTTPS?|NO|ALL)_PROXY$|^(https?|no|all)_proxy$")))
              | del(.MM_REG_SECRET, .MM_REG_SECRET_GOPASS, .MM_AGENT_SESSION_FILE,
                    .MM_REG_BOT_NAME, .MM_BUS_KEY, .MATTERMOST_TOKEN))
-            + $base + {MM_BOT_TOKEN: env.MM_BOT_TOKEN})}' |
+            + $base + {MM_BOT_TOKEN: $tok})}' \
+       4< <(printf '%s' "$BUS_KEY") 5< <(printf '%s' "$MM_BOT_TOKEN") |
     (cd "$ROOT/mcp" && exec env -i "${host_env[@]}" "$HOST_PY" -I -m mattermost_ai_agent_bus --host \
       --ready-file "$HOST_READY" --state-dir "$HOSTED_DIR" --log-file "$HOST_LOG" --watch-pid "$PPID") \
     >>"$HOST_LOG" 2>&1 &&
@@ -372,7 +410,8 @@ else
   no_bus "the MCP server did not start on the host (log: ${HOST_LOG}) — check the log, then restart the session"
 fi
 
-MM_BUS_KEY="$BUS_KEY" jq -nc \
+jq -nc \
+  --rawfile key /dev/fd/4 \
   --argjson env "$ENV_JSON" \
   --arg mcp "tcp://127.0.0.1:${HOST_PORT}" \
   --arg hook "$HOST_HOOK" \
@@ -380,9 +419,9 @@ MM_BUS_KEY="$BUS_KEY" jq -nc \
   --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}, ${RESPONSIBLE:+for @${RESPONSIBLE}, }trusted ${trusted_shown}; token stays on the host" \
   '{
      corralContributionVersion: 1,
-     env: ($env + {MM_BUS_ENDPOINT: $hook, MM_BUS_MCP_ENDPOINT: $mcp, MM_BUS_KEY: env.MM_BUS_KEY}),
+     env: ($env + {MM_BUS_ENDPOINT: $hook, MM_BUS_MCP_ENDPOINT: $mcp, MM_BUS_KEY: $key}),
      agentNotes: [$note],
      status: [$status]
-   }'
+   }' 4< <(printf '%s' "$BUS_KEY")
 
 log "session bot ${MM_BOT_USERNAME} ready, its MCP server on the host (pid ${HOST_PID})"

@@ -22,8 +22,8 @@ def _client(calls):
             return httpx.Response(200, json=[USERS[n] for n in body if n in USERS])
         if req.url.path == "/api/v4/channels/direct":
             return httpx.Response(201, json={"id": DM})
-        if req.url.path == "/api/v4/posts/rootindm":
-            return httpx.Response(200, json={"id": "rootindm", "channel_id": DM})
+        if req.url.path == "/api/v4/posts/rootindm000000000000000000":
+            return httpx.Response(200, json={"id": "rootindm000000000000000000", "channel_id": DM})
         if req.url.path == "/api/v4/posts":
             return httpx.Response(201, json={"id": "new", **body})
         return httpx.Response(404, json={})
@@ -55,9 +55,9 @@ async def test_reply_goes_where_its_root_is():
     """A reply to a DM stays in the DM: without channel_id the root decides,
     not the default channel (where Mattermost would refuse the root)."""
     calls = []
-    post = await _client(calls).post("ok", root_id="rootindm")
-    assert post["channel_id"] == DM and post["root_id"] == "rootindm"
-    assert ("/api/v4/posts/rootindm", None) in calls
+    post = await _client(calls).post("ok", root_id="rootindm000000000000000000")
+    assert post["channel_id"] == DM and post["root_id"] == "rootindm000000000000000000"
+    assert ("/api/v4/posts/rootindm000000000000000000", None) in calls
 
 
 @pytest.mark.asyncio

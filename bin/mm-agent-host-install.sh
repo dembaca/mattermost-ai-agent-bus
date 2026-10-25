@@ -5,14 +5,17 @@
 #   mm-agent-host-install.sh --from DIR      # from another checkout you reviewed
 #   mm-agent-host-install.sh --check         # compare host copy vs installed plugin
 #
-# Run it on the HOST, in a normal terminal — never inside corral — from a
-# checkout you reviewed that no session works in. corral's preStart/postEnd
+# Run it on the HOST, in a normal terminal — never inside corral — from a git
+# clone no session works in, after reviewing it (git log, git diff). corral's preStart/postEnd
 # hooks run on the host with the registration secret. corral approves the
 # `exec` file by its content, but not the scripts it sources and starts (bin/).
 # The installed plugin lives under the corral homes and ~/.claude, a checkout
 # may be a session's workdir; a sandbox can write all of them. So the source is
 # never looked up from what is installed: it is this script's own tree or
-# --from, and a source under ~/.cache/corral or ~/.claude is refused. This
+# --from, and a source under ~/.cache/corral, ~/.claude or $CORRAL_WORKDIR is
+# refused. Only what is committed is copied (git archive HEAD): a clone with
+# uncommitted changes or untracked files in the copied paths is refused, and
+# so is a symlink among them. This
 # copies adapters/corral/ and bin/ to MM_BUS_HOST_DIR (default
 # ~/.local/share/mm-agent-bus/current), which the sandbox neither sees nor
 # writes. Point corral's `exec` there once; rerun this after a plugin update.
@@ -36,7 +39,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="${2:-}"; shift 2 ;;
     --check) CHECK=1; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -75,6 +78,11 @@ FROM="$src"
 if sandbox_writable "$FROM"; then
   die "$FROM can be changed from inside a corral sandbox; run the installer from a checkout you reviewed, outside corral and outside every session's workdir (or pass --from <checkout>)"
 fi
+if [[ -n "${CORRAL_WORKDIR:-}" ]]; then
+  wd="$(cd -P "$CORRAL_WORKDIR" 2>/dev/null && pwd -P)" || wd="$CORRAL_WORKDIR"
+  [[ "$FROM/" != "$wd/"* ]] ||
+    die "$FROM is a corral session's workdir, which its agent can change; run the installer from a checkout you reviewed (or pass --from <checkout>)"
+fi
 for f in adapters/corral/10-mm-session-start.sh adapters/corral/90-mm-session-stop.sh \
          bin/mm-agent-lib.sh .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock \
          mcp/src/mattermost_ai_agent_bus/hosted.py; do
@@ -82,6 +90,22 @@ for f in adapters/corral/10-mm-session-start.sh adapters/corral/90-mm-session-st
 done
 [[ "$FROM" != "$(cd -P "$DEST" 2>/dev/null && pwd -P)" ]] ||
   die "source and target are the same directory; run it from a checkout, or pass --from <checkout>"
+
+# What is committed, nothing else: git archive of HEAD, so neither an untracked
+# file nor a change made after the review comes along. A clone whose copied
+# paths differ from HEAD is refused rather than silently installed without the
+# difference; the repository's fsmonitor hook is not run.
+git_() { git -c core.fsmonitor=false -C "$FROM" "$@"; }
+[[ "$(git_ rev-parse --show-toplevel 2>/dev/null)" == "$FROM" ]] ||
+  die "$FROM is not the top of a git clone; install from a clone you reviewed (git log, git diff)"
+paths=(bin adapters/corral .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock mcp/src)
+for f in mcp/README.md skills/mattermost-ai-agent-bus; do
+  if git_ cat-file -e "HEAD:$f" 2>/dev/null; then paths+=("$f"); fi
+done
+dirty="$(git_ status --porcelain --untracked-files=all -- "${paths[@]}")" ||
+  die "git status failed in $FROM"
+[[ -z "$dirty" ]] ||
+  die "$FROM has uncommitted changes or untracked files in what would be installed — commit or remove them, review, then rerun:"$'\n'"$dirty"
 
 # Copy next to the target, then swap: a session starting meanwhile sees either
 # the old or the new tree, never half of one.
@@ -92,20 +116,12 @@ parent="$(cd -P "$parent" && pwd -P)"
 DEST="$parent/$(basename "$DEST")"
 new="$(mktemp -d "$parent/.install.XXXXXX")"
 trap 'rm -rf "$new"' EXIT
-mkdir -p "$new/adapters" "$new/.claude-plugin"
-cp -R "$FROM/bin" "$new/bin"
-cp -R "$FROM/adapters/corral" "$new/adapters/corral"
-cp "$FROM/.claude-plugin/plugin.json" "$new/.claude-plugin/plugin.json"
 # The MCP server, for the host process (RT-6.18); the skill, whose size its
 # overhead stats count (RT-6.9).
-mkdir -p "$new/mcp" "$new/skills"
-cp "$FROM/mcp/pyproject.toml" "$FROM/mcp/uv.lock" "$new/mcp/"
-if [[ -f "$FROM/mcp/README.md" ]]; then cp "$FROM/mcp/README.md" "$new/mcp/"; fi
-cp -R "$FROM/mcp/src" "$new/mcp/src"
-find "$new/mcp" -name __pycache__ -prune -exec rm -rf {} +
-if [[ -d "$FROM/skills/mattermost-ai-agent-bus" ]]; then
-  cp -R "$FROM/skills/mattermost-ai-agent-bus" "$new/skills/"
-fi
+git_ archive --format=tar HEAD -- "${paths[@]}" | tar -x -C "$new" ||
+  die "could not copy HEAD of $FROM"
+links="$(find "$new" -type l -print)"
+[[ -z "$links" ]] || die "$FROM has symlinks in what would be installed; refused:"$'\n'"${links//$new\//}"
 chmod -R go-w "$new"
 chmod +x "$new"/adapters/corral/*.sh "$new"/bin/*.sh
 

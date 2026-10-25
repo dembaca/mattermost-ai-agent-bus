@@ -13,7 +13,7 @@ EXPORTS_ONLY=0
 
 usage() {
   echo "usage: $0 [--exports] <short-name> [display-name]" >&2
-  echo "  requires MM_REG_SECRET; uses MM_CHAT_URL / MM_REGISTER_URL" >&2
+  echo "  requires MM_REG_SECRET (or MM_REG_SECRET_FD); uses MM_CHAT_URL / MM_REGISTER_URL" >&2
   exit 2
 }
 
@@ -68,9 +68,12 @@ export MM_BOT_USERNAME="$USER_NAME"
 MM_AGENT_PREFIX="$(MM_AGENT_PREFIX='' mm_agent_prefix)"
 export MM_AGENT_PREFIX
 export MM_BOT_USER_ID="$USER_ID"
-export MM_BOT_TOKEN="$BOT_TOKEN"
 export MATTERMOST_URL="$URL"
-export MATTERMOST_TOKEN="$BOT_TOKEN"
+# Not exported: nothing this script starts needs the token in its environment
+# (curl gets it on stdin), and on the host none may have it (arc42 §7.3). The
+# session file and the export lines below read the variables.
+MM_BOT_TOKEN="$BOT_TOKEN"
+MATTERMOST_TOKEN="$BOT_TOKEN"
 
 # The registrar may have written fewer trusted names than were sent (RT-6.8).
 SENT_TRUSTED=()

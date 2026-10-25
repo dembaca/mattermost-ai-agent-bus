@@ -23,9 +23,11 @@ the messages for its own (RT-6.10).
 from __future__ import annotations
 
 import errno
+import fcntl
 import hashlib
 import os
 import stat
+import sys
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
@@ -84,6 +86,64 @@ def use_hosted_dir(path: Path) -> Path:
 def hosted() -> bool:
     """This process is the host side of a keyless session (RT-6.18)."""
     return _hosted_dir is not None
+
+
+# A transcript larger than this is not read at all (RT-6.18, RT-6.9).
+TRANSCRIPT_MAX = 64 << 20
+
+
+def claude_projects() -> str:
+    """The real path of ~/.claude/projects, where Claude Code keeps transcripts."""
+    return os.path.realpath(Path.home() / ".claude" / "projects")
+
+
+def _fd_path(fd: int) -> str | None:
+    """The path an open fd really names, or None where it cannot be told."""
+    try:
+        if sys.platform == "darwin":
+            buf = fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH", 50), bytes(1024))
+            return os.fsdecode(buf.split(b"\0", 1)[0]) or None
+        return os.readlink(f"/proc/self/fd/{fd}")
+    except (OSError, ValueError):
+        return None
+
+
+def read_transcript(path: str | os.PathLike[str]) -> str | None:
+    """A transcript's text, or None when it may not or cannot be read (RT-6.18).
+
+    The path came from the agent's side. Never through a symlink in its last
+    part, never a FIFO or device (opened non-blocking, a regular file only),
+    nothing over TRANSCRIPT_MAX. In the host process of a keyless session the
+    opened file must still lie under the host's ~/.claude/projects/: a
+    directory swapped for a symlink after a path check is caught here.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except (OSError, ValueError):
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > TRANSCRIPT_MAX:
+            return None
+        if hosted():
+            real = _fd_path(fd)
+            if not real or not real.startswith(claude_projects() + os.sep):
+                return None
+        chunks: list[bytes] = []
+        size = 0
+        while size <= TRANSCRIPT_MAX:
+            chunk = os.read(fd, min(1 << 20, TRANSCRIPT_MAX + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        if size > TRANSCRIPT_MAX:
+            return None
+        return b"".join(chunks).decode("utf-8")
+    except (OSError, ValueError):
+        return None
+    finally:
+        os.close(fd)
 
 
 def state_dir() -> Path:

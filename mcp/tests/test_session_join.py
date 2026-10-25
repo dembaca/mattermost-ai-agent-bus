@@ -14,7 +14,7 @@ from mattermost_ai_agent_bus.client import MattermostClient, SessionInfo, unique
 REPO = Path(__file__).resolve().parents[2]
 INFO = SessionInfo(
     url="https://mm.example", name="proj-ab12cd34", username="agent-proj-ab12cd34",
-    user_id="uid1", bot_token="tok-secret",
+    user_id="uid10000000000000000000000", bot_token="tok-secret",
 )
 
 
@@ -41,11 +41,11 @@ def _handler(join_status):
         calls.append((req.method, req.url.path))
         p = req.url.path
         if p == "/api/v4/teams/name/agents":
-            return httpx.Response(200, json={"id": "tid"})
-        if p == "/api/v4/teams/tid/channels/name/proj-chan":
-            return httpx.Response(200, json={"id": "cid"})
-        if p == "/api/v4/channels/cid/members":
-            assert json.loads(req.content) == {"user_id": "uid1"}
+            return httpx.Response(200, json={"id": "tid00000000000000000000000"})
+        if p == "/api/v4/teams/tid00000000000000000000000/channels/name/proj-chan":
+            return httpx.Response(200, json={"id": "cid00000000000000000000000"})
+        if p == "/api/v4/channels/cid00000000000000000000000/members":
+            assert json.loads(req.content) == {"user_id": "uid10000000000000000000000"}
             return httpx.Response(join_status, json={})
         if p.startswith("/api/v4/users/me/teams/"):
             return httpx.Response(200, json=[])
@@ -57,8 +57,8 @@ def _handler(join_status):
 async def test_joins_project_channel():
     h, calls = _handler(201)
     out = await _client(h).finish_session_setup()
-    assert out["project_channel"] == {"name": "proj-chan", "id": "cid", "joined": True}
-    assert ("POST", "/api/v4/channels/cid/members") in calls
+    assert out["project_channel"] == {"name": "proj-chan", "id": "cid00000000000000000000000", "joined": True}
+    assert ("POST", "/api/v4/channels/cid00000000000000000000000/members") in calls
 
 
 @pytest.mark.parametrize("status,needle", [(403, "private"), (404, "does not exist")])
@@ -72,7 +72,7 @@ async def test_join_failure_is_reported_not_raised(status, needle):
 async def test_missing_project_channel_is_reported():
     def h(req):
         if req.url.path == "/api/v4/teams/name/agents":
-            return httpx.Response(200, json={"id": "tid"})
+            return httpx.Response(200, json={"id": "tid00000000000000000000000"})
         return httpx.Response(404, json={})
 
     out = await _client(h).finish_session_setup()
@@ -83,7 +83,7 @@ async def test_no_project_channel_no_join():
     h, calls = _handler(201)
     out = await _client(h, project="").finish_session_setup()
     assert "project_channel" not in out
-    assert ("POST", "/api/v4/channels/cid/members") not in calls
+    assert ("POST", "/api/v4/channels/cid00000000000000000000000/members") not in calls
 
 
 async def test_welcome_dm_is_marked_read():
@@ -92,19 +92,19 @@ async def test_welcome_dm_is_marked_read():
     def handler(req: httpx.Request) -> httpx.Response:
         p = req.url.path
         if p.startswith("/api/v4/users/me/teams/"):
-            return httpx.Response(200, json=[{"channel_id": "dm1", "msg_count": 0,
+            return httpx.Response(200, json=[{"channel_id": "dm100000000000000000000000", "msg_count": 0,
                                               "mention_count": 0, "last_viewed_at": 0}])
         if p == "/api/v4/users/me/channels":
-            return httpx.Response(200, json=[{"id": "dm1", "type": "D", "total_msg_count": 1}])
+            return httpx.Response(200, json=[{"id": "dm100000000000000000000000", "type": "D", "total_msg_count": 1}])
         if p == "/api/v4/users/me":
-            return httpx.Response(200, json={"id": "uid1", "create_at": 0})
+            return httpx.Response(200, json={"id": "uid10000000000000000000000", "create_at": 0})
         if p == "/api/v4/channels/members/me/view":
             calls.append(("view", json.loads(req.content)["channel_id"]))
             return httpx.Response(200, json={})
         return plain(req)
 
     await _client(handler).finish_session_setup()
-    assert ("view", "dm1") in calls
+    assert ("view", "dm100000000000000000000000") in calls
 
 
 def test_unique_name_suffix_and_length():
@@ -182,7 +182,7 @@ async def test_session_file_failure_is_reported(monkeypatch, tmp_path):
 
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={
-            "username": "agent-x", "user_id": "uid1", "bot_token": "t"})
+            "username": "agent-x", "user_id": "uid10000000000000000000000", "bot_token": "t"})
 
     c = MattermostClient(base_url="https://mm.example", reg_secret="s",
                          register_url="https://mm.example/register/v1/agents")
@@ -195,7 +195,7 @@ async def test_session_file_failure_is_reported(monkeypatch, tmp_path):
 async def test_session_file_success_is_reported():
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={
-            "username": "agent-x", "user_id": "uid1", "bot_token": "t"})
+            "username": "agent-x", "user_id": "uid10000000000000000000000", "bot_token": "t"})
 
     c = MattermostClient(base_url="https://mm.example", reg_secret="s",
                          register_url="https://mm.example/register/v1/agents")
@@ -268,13 +268,13 @@ def test_shutdown_host_registered_session(monkeypatch):
     def handler(req):
         seen.append((req.method, req.url.path))
         if req.url.path == "/api/v4/users/me":
-            return httpx.Response(200, json={"id": "u9", "username": "agent-vtpm-b87c"})
+            return httpx.Response(200, json={"id": "u9000000000000000000000000", "username": "agent-vtpm-b87c"})
         return httpx.Response(204)
 
     _patch_http(monkeypatch, handler)
     c, _ = _shutdown_client(handler, own_session=False)
     assert c.shutdown_sync() == "unregistered vtpm-b87c"
-    assert ("PUT", "/api/v4/users/u9/status") in seen
+    assert ("PUT", "/api/v4/users/u9000000000000000000000000/status") in seen
     assert seen[-1] == ("DELETE", "/register/v1/agents/vtpm-b87c")
 
 
@@ -283,7 +283,7 @@ def test_shutdown_never_deletes_a_human(monkeypatch):
 
     def handler(req):
         seen.append(req.method)
-        return httpx.Response(200, json={"id": "u1", "username": "andreas"})
+        return httpx.Response(200, json={"id": "u1000000000000000000000000", "username": "andreas"})
 
     _patch_http(monkeypatch, handler)
     c, _ = _shutdown_client(handler, own_session=False)
@@ -359,7 +359,7 @@ def test_exit_keeps_the_bot_for_claude_continue(monkeypatch):
     c, _ = _shutdown_client(handler, own_session=True)
     assert c.shutdown_sync() == "kept proj-ab12cd34 for claude --continue"
     assert not any(m == "DELETE" for m, _ in seen)
-    assert ("PUT", "/api/v4/users/uid1/status") in seen  # offline, best effort
+    assert ("PUT", "/api/v4/users/uid10000000000000000000000/status") in seen  # offline, best effort
     assert path.exists() and path.stat().st_mtime > 1  # grace period starts now
 
 
@@ -370,7 +370,7 @@ def _adopting_client():
 
 def test_next_server_takes_the_bot_over(monkeypatch):
     """RT-6.10: same session id, token still accepted → same bot, no new name."""
-    _patch_http(monkeypatch, lambda req: httpx.Response(200, json={"id": "uid1"}))
+    _patch_http(monkeypatch, lambda req: httpx.Response(200, json={"id": "uid10000000000000000000000"}))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-one")
     session_file.write(INFO, "agents", "agents")
     c = _adopting_client()
@@ -421,7 +421,7 @@ async def test_session_start_reaps_bots_of_long_ended_sessions(monkeypatch):
             code = 401 if "old-dead" in req.url.path else 204
             return httpx.Response(code)
         return httpx.Response(200, json={
-            "username": "agent-x", "user_id": "uid9", "bot_token": "t"})
+            "username": "agent-x", "user_id": "uid90000000000000000000000", "bot_token": "t"})
 
     c = MattermostClient(base_url="https://mm.example", reg_secret="s",
                          register_url="https://mm.example/register/v1/agents")
@@ -440,7 +440,7 @@ async def test_session_start_returns_the_bot_it_already_has():
 
     def handler(req: httpx.Request) -> httpx.Response:
         calls.append((req.method, req.url.path))
-        return httpx.Response(200, json={"id": "uid1", "username": INFO.username})
+        return httpx.Response(200, json={"id": "uid10000000000000000000000", "username": INFO.username})
 
     c = _client(handler)
     c.token, c.reg_secret = INFO.bot_token, "s"
@@ -474,7 +474,7 @@ def test_agent_prefix_reads_the_environment(monkeypatch):
 def test_a_registration_hands_its_prefix_to_the_hooks():
     c = MattermostClient(base_url="https://mm.example", token="t")
     c._take(SessionInfo(url=INFO.url, name="mac-1", username="bot-mac-1",
-                        user_id="uid1", bot_token="tok"))
+                        user_id="uid10000000000000000000000", bot_token="tok"))
     assert os.environ["MM_AGENT_PREFIX"] == "bot-"
     assert session_file.parse(session_file.session_file_path())["MM_AGENT_PREFIX"] == "bot-"
 
@@ -486,7 +486,7 @@ def test_shutdown_host_registered_session_with_another_prefix(monkeypatch):
     def handler(req):
         seen.append((req.method, req.url.path))
         if req.url.path == "/api/v4/users/me":
-            return httpx.Response(200, json={"id": "u9", "username": "bot-vtpm-b87c"})
+            return httpx.Response(200, json={"id": "u9000000000000000000000000", "username": "bot-vtpm-b87c"})
         return httpx.Response(204)
 
     _patch_http(monkeypatch, handler)

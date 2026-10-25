@@ -18,47 +18,39 @@ bus only through the MCP tools, and cannot register or delete agents itself.
 ## Config
 
 **First install the hooks on the host**, in a normal terminal outside corral, from a
-checkout you reviewed that no session works in:
+git clone no session works in, after reviewing it:
 
 ```bash
 git clone https://github.com/dembaca/mattermost-ai-agent-bus ~/src/mattermost-ai-agent-bus
-cd ~/src/mattermost-ai-agent-bus    # later: git pull; review what changed, then rerun
-bin/mm-agent-host-install.sh        # or: mm-agent-host-install.sh --from <checkout>
+cd ~/src/mattermost-ai-agent-bus    # later: git pull; review it (git log -p, git diff), then rerun
+bin/mm-agent-host-install.sh        # or: mm-agent-host-install.sh --from <clone>
 ```
 
-The installer copies from the checkout it runs from, or from `--from DIR`. It never
-takes its source from the installed plugin, and refuses one under `~/.cache/corral/`
-or `~/.claude/`: a sandbox can write those
+The installer copies from the clone it runs from, or from `--from DIR`, and only what
+is committed there (`git archive HEAD`): a clone with uncommitted changes or untracked
+files in the copied paths is refused, and so is a symlink among them. It never takes
+its source from the installed plugin, and refuses one under `~/.cache/corral/`,
+`~/.claude/` or the session's workdir: a sandbox can write those
 ([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
-The host copy is only as trustworthy as the checkout you reviewed.
+The host copy is only as trustworthy as the clone you reviewed.
 
 It copies `adapters/corral/`, `bin/` and the MCP server (`mcp/`) to
 `~/.local/share/mm-agent-bus/current/`, where no sandbox can change them, prepares the
 server's Python environment there with `uv sync --locked` (needs `uv`; without it
 sessions get no bus), and prints the config below. The host process runs that code with
-the bot token. **Rerun it after every plugin update**, from the checkout updated to that
+the bot token. **Rerun it after every plugin update**, from the clone updated to that
 version; `mm-agent-host-install.sh --check` tells whether the host copy is current, and
 the start hook says so in the banner when it is not.
 
-**Or follow `/plugin update` without installing:** point both `exec` entries at the
-host's marketplace clone instead:
-
-```yaml
-exec: ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus/adapters/corral/10-mm-session-start.sh
-exec: ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus/adapters/corral/90-mm-session-stop.sh
-```
-
-Nothing to rerun after an update. The cost: corral no longer asks before new hook
-code runs, and since the corral homes share `~/.claude`, a sandboxed agent can change
-that code. Choose it where that is acceptable — see
-[arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed).
-
-**Otherwise never point `exec` at a plugin directory or at a checkout a session
-works in.** The hooks run on the host with the registration secret, and corral approves only the
-`exec` file by content, not the scripts it sources and starts. Both locations are
-writable from inside a sandbox
+**The installed copy is the only mode.** Pointing `exec` at the marketplace clone
+(`~/.claude/plugins/marketplaces/…`), another plugin directory or a checkout a session
+works in is not supported any more: the hooks run on the host with the registration
+secret and start the MCP server with the bot token, corral approves only the `exec`
+file by content, and all of those places are writable from inside a sandbox. Both
+hooks check where they run from before they source anything, symlinks included; from
+such a place the start hook refuses (the session gets no bus, and the banner says how
+to install) and the stop hook runs nothing
 ([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
-The start hook warns if it finds itself there.
 
 The bus is not repo-specific, so this belongs in the **global** config
 `~/.config/corral/config.yml`:
@@ -109,9 +101,16 @@ The registration secret, **gopass preferred**:
 
 ```bash
 export MM_REG_SECRET_GOPASS=path/to/mattermost/agent-registration-secret
-# or, if you have no gopass:
+# or, if you have no gopass (not recommended, see below):
 export MM_REG_SECRET="…"
 ```
+
+Keep the secret in gopass, not in the login environment: on macOS a corral sandbox can
+read the initial environment of every process of your user, and the hooks run with the
+environment corral starts them with. The hooks keep the secret and the bot token out of
+every process they start — helpers get them on a file descriptor
+([arc42 §7.3](../docs/arc42/07-deployment-view.md#73-trust-assumptions)) — but a value
+that arrives in their own environment is visible there; the start hook warns about it.
 
 With neither set the hook exits 0 silently — a machine without a bus is not an error.
 

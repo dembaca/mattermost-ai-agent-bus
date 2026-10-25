@@ -114,7 +114,7 @@ async def test_get_channel_id_caches_per_name(monkeypatch):
     async def fake_api(method, path, **kwargs):
         calls.append(path)
         if path.startswith("/api/v4/teams/name/"):
-            return {"id": "team1"}
+            return {"id": "team1000000000000000000000"}
         return {"id": f"cid-{path.rsplit('/', 1)[-1]}"}
 
     monkeypatch.setattr(c, "_api", fake_api)
@@ -149,7 +149,7 @@ async def test_unread_channels_never_read_before_the_bot_existed(monkeypatch):
         if path == "/api/v4/users/me":
             return {"id": "bot1", "create_at": 5000}
         if path.startswith("/api/v4/teams/name/"):
-            return {"id": "team1"}
+            return {"id": "team1000000000000000000000"}
         if path.endswith("/channels/members"):
             return [{"channel_id": "proj", "mention_count": 1, "last_viewed_at": 0},
                     {"channel_id": "dm1", "msg_count": 2, "last_viewed_at": 9000},

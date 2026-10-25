@@ -56,7 +56,7 @@ def test_post_goes_to_the_stats_channel(monkeypatch, state):
 
     def missing(request):
         if request.url.path.endswith("/teams/name/ai-agents"):
-            return httpx.Response(200, json={"id": "t1"})
+            return httpx.Response(200, json={"id": "t1000000000000000000000000"})
         return httpx.Response(404, json={})
 
     _mock_http(monkeypatch, missing)
@@ -69,18 +69,18 @@ def test_post_goes_to_the_stats_channel(monkeypatch, state):
     def handler(request):
         seen.append((request.method, request.url.path))
         if request.url.path.endswith("/teams/name/ai-agents"):
-            return httpx.Response(200, json={"id": "t1"})
+            return httpx.Response(200, json={"id": "t1000000000000000000000000"})
         if request.url.path.endswith("/channels/name/agents-stats"):
-            return httpx.Response(200, json={"id": "c9"})
+            return httpx.Response(200, json={"id": "c9000000000000000000000000"})
         if request.url.path == "/api/v4/posts":
             body = json.loads(request.content)
-            assert body["channel_id"] == "c9" and body["message"].startswith('STATS {"v":"0.21.0"')
+            assert body["channel_id"] == "c9000000000000000000000000" and body["message"].startswith('STATS {"v":"0.21.0"')
         return httpx.Response(201, json={})
 
     monkeypatch.setenv("MM_STATS_CHANNEL", "~agents-stats")
     _mock_http(monkeypatch, handler)
     assert stats.post_sync(client, data) == "posted"
-    assert ("POST", "/api/v4/channels/c9/members") in seen
+    assert ("POST", "/api/v4/channels/c9000000000000000000000000/members") in seen
     assert not (state / "mm-agent-bus" / f"stats-{UID}.jsonl").exists()
 
 

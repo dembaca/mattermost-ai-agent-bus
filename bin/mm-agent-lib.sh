@@ -27,6 +27,41 @@ mm_bot_token() {
   printf '%s' "$tok"
 }
 
+# Credentials on an inherited fd (arc42 §7.3). The corral host hooks never put
+# the bot token or the registration secret into any process environment or
+# argv: on macOS a sandbox can read every same-user process's initial
+# environment (KERN_PROCARGS2). They start a helper with MM_BOT_TOKEN_FD=3 or
+# MM_REG_SECRET_FD=3 and the value on that fd (mm_with_token, mm_with_secret);
+# sourcing this file reads it into a shell variable that is not exported, so
+# nothing this script starts sees it. Without the *_FD variables (the shell CLI)
+# the environment is used as before.
+mm_creds_from_fds() {
+  local v fdv fd from_fd=0
+  for v in MM_BOT_TOKEN MM_REG_SECRET; do
+    fdv="${v}_FD"
+    fd="${!fdv:-}"
+    [[ -n "$fd" ]] || continue
+    unset "$fdv"
+    from_fd=1
+    [[ "$fd" =~ ^[3-9]$ ]] || continue
+    IFS= read -r "${v?}" <&"$fd" || true
+    eval "exec ${fd}<&-"
+  done
+  if [[ "$from_fd" -eq 1 ]]; then
+    export -n MM_BOT_TOKEN MATTERMOST_TOKEN MM_REG_SECRET
+    MM_CREDS_FROM_FD=1
+  fi
+  return 0
+}
+mm_creds_from_fds
+
+# Run a command with the bot token / the registration secret on fd 3 only: the
+# value goes through a pipe from the shell's builtin printf, never through an
+# environment or an argv (arc42 §7.3). The caller must not export it.
+#   mm_with_token "$BIN/mm-agent-status.sh" offline
+mm_with_token() { MM_BOT_TOKEN_FD=3 "$@" 3< <(printf '%s\n' "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}"); }
+mm_with_secret() { MM_REG_SECRET_FD=3 "$@" 3< <(printf '%s\n' "${MM_REG_SECRET:-}"); }
+
 mm_state_dir() {
   printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
 }
@@ -549,16 +584,21 @@ mm_channel_push() {
   f="$(mm_bot_state_file channel "${1:-}")" && [[ -f "$f" ]]
 }
 
+# Lines for eval. With credentials from an fd (the corral host hooks) the token
+# lines are plain assignments: the caller keeps the token in a variable that
+# no process it starts inherits (arc42 §7.3). For the shell CLI they export.
 mm_emit_session_exports() {
+  local x=export
+  [[ "${MM_CREDS_FROM_FD:-0}" != 1 ]] || x=""
   cat <<EOF
 export MM_CHAT_URL=$(printf '%q' "${MM_CHAT_URL:-}")
 export MM_REG_BOT_NAME=$(printf '%q' "${MM_REG_BOT_NAME:-}")
 export MM_BOT_USERNAME=$(printf '%q' "${MM_BOT_USERNAME:-}")
 export MM_AGENT_PREFIX=$(printf '%q' "$(mm_agent_prefix)")
 export MM_BOT_USER_ID=$(printf '%q' "${MM_BOT_USER_ID:-}")
-export MM_BOT_TOKEN=$(printf '%q' "${MM_BOT_TOKEN:-}")
+${x:+$x }MM_BOT_TOKEN=$(printf '%q' "${MM_BOT_TOKEN:-}")
 export MATTERMOST_URL=$(printf '%q' "${MATTERMOST_URL:-${MM_CHAT_URL:-}}")
-export MATTERMOST_TOKEN=$(printf '%q' "${MATTERMOST_TOKEN:-${MM_BOT_TOKEN:-}}")
+${x:+$x }MATTERMOST_TOKEN=$(printf '%q' "${MATTERMOST_TOKEN:-${MM_BOT_TOKEN:-}}")
 export MM_AGENT_SESSION_FILE=$(printf '%q' "$(mm_session_file)")
 EOF
 }

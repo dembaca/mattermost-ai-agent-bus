@@ -103,9 +103,9 @@ def test_a_short_profile_is_warned_about(mm, run):
     r = run(START, MM_TRUSTED_HUMANS="dembaca,kollegin", **env)
     assert "lacks some of the 2 trusted names (kollegin)" in r.stderr and "maxTrusted" in r.stderr
     mm.bot_description = "for @dembaca · trusts @dembaca, @kollegin · via agent-registrar"
-    assert "WARNING" not in run(START, MM_TRUSTED_HUMANS="dembaca,Kollegin", **env).stderr
+    assert "lacks some" not in run(START, MM_TRUSTED_HUMANS="dembaca,Kollegin", **env).stderr
     mm.bot_description = None
-    assert "WARNING" not in run(START, MM_TRUSTED_HUMANS="dembaca,kollegin", **env).stderr
+    assert "lacks some" not in run(START, MM_TRUSTED_HUMANS="dembaca,kollegin", **env).stderr
 
 
 def test_autonomous_agent(mm, run):

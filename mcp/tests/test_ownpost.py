@@ -21,11 +21,11 @@ def client(monkeypatch):
 
     async def api(method, path, json=None, **_):
         if path == f"/api/v4/teams/name/{c.team_name}":
-            return {"id": "tid"}
-        if path == "/api/v4/teams/tid/channels/name/proj":
+            return {"id": "tid00000000000000000000000"}
+        if path == "/api/v4/teams/tid00000000000000000000000/channels/name/proj":
             return {"id": WORK}
         assert path == "/api/v4/posts"
-        return {"id": f"p{next(posts)}", "user_id": UID, "create_at": 1000 + len(json["message"]),
+        return {"id": f"p{next(posts)}".ljust(26, "0"), "user_id": UID, "create_at": 1000 + len(json["message"]),
                 **json}
 
     monkeypatch.setattr(c, "_api", api)
@@ -37,11 +37,11 @@ async def test_the_work_channel_post_is_remembered_with_its_hello(client):
     """Step 2: whoever posts as the agent keeps its latest post in the work
     channel; the HELLO thread stays known through later posts, in any thread."""
     await client.post("HELLO @agent-me\nproject: x", props={"a2a": a2a.annotate("HELLO")})
-    assert ownpost.read(UID) == {"CHANNEL": WORK, "ID": "p1", "AT": "1026",
-                                 "MSG": "HELLO @agent-me project: x", "HELLO": "p1"}
-    await client.post("👑 ACK · on it", root_id="p1", channel_id=WORK)
+    assert ownpost.read(UID) == {"CHANNEL": WORK, "ID": "p1000000000000000000000000", "AT": "1026",
+                                 "MSG": "HELLO @agent-me project: x", "HELLO": "p1000000000000000000000000"}
+    await client.post("👑 ACK · on it", root_id="p1000000000000000000000000", channel_id=WORK)
     last = ownpost.read(UID)
-    assert (last["ID"], last["MSG"], last["HELLO"]) == ("p2", "ACK · on it", "p1")
+    assert (last["ID"], last["MSG"], last["HELLO"]) == ("p2".ljust(26, "0"), "ACK · on it", "p1000000000000000000000000")
 
 
 @pytest.mark.asyncio
@@ -69,7 +69,7 @@ def _bye_client(monkeypatch, seen, status=200):
     return MattermostClient(base_url="https://mm.example", token="tok")
 
 
-def _file(msg, hello="p1"):
+def _file(msg, hello="p1000000000000000000000000"):
     ownpost.record(UID, WORK, {"id": "p9", "create_at": 1, "message": msg})
     if hello:
         ownpost.path(UID).write_text(ownpost.path(UID).read_text().replace("HELLO=", f"HELLO={hello}"))
@@ -83,7 +83,7 @@ def test_bye_goes_to_the_hello_thread_with_its_props(monkeypatch):
     assert ownpost.bye_sync(_bye_client(monkeypatch, seen), UID) == "BYE posted"
     [(method, path, body)] = seen
     assert (method, path) == ("POST", "/api/v4/posts")
-    assert body["root_id"] == "p1" and body["channel_id"] == WORK
+    assert body["root_id"] == "p1000000000000000000000000" and body["channel_id"] == WORK
     assert body["message"] == "BYE · session ended without sign-off"
     assert body["props"]["a2a"] == {"v": 1, "kind": "bye", "intent": "fyi"}
     assert ownpost.read(UID)["MSG"].startswith("BYE")  # a second handler adds none

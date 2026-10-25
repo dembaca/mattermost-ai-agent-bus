@@ -215,6 +215,8 @@ Prefer WebSocket for interactive agents; poll is fine for cron-style loops.
   with the hooks installed on the host by `bin/mm-agent-host-install.sh`, never run
   from the plugin directory or a checkout a sandbox can write
   ([arc42 §7.1](arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
+  Keep it in gopass, not in the login environment
+  ([arc42 §7.3](arc42/07-deployment-view.md#73-trust-assumptions)).
 - Ephemeral bots reduce leftover identities; rotate the secret if leaked.
 - Do not VSO-sync or commit bot tokens / session `.env` files.
 - Agents never create channels or teams — a missing channel is reported, not worked

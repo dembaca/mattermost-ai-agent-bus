@@ -1,10 +1,12 @@
 """RT-6.9: the bus's token overhead, measured from a Claude Code transcript."""
 
 import json
+import os
+import threading
 
 import pytest
 
-from mattermost_ai_agent_bus import overhead, stats
+from mattermost_ai_agent_bus import overhead, session_file, stats
 
 BUS = "mcp__plugin_mattermost-ai-agent-bus_mattermost-agent-bus__"
 FIXED = overhead.Fixed(instructions=400, tools=4000, skill=20000)
@@ -172,3 +174,60 @@ def test_never_through_a_symlink(tmp_path):
     assert overhead.measure(real, 0, FIXED) is not None
     (tmp_path / "link.jsonl").symlink_to(real)
     assert overhead.measure(tmp_path / "link.jsonl", 0, FIXED) is None
+
+
+def _small(tmp_path):
+    t = Transcript()
+    t.user("fix the bug", origin="human")
+    t.request()
+    return t
+
+
+def test_a_fifo_is_not_waited_for(tmp_path):
+    """RT-6.18 (security): a FIFO the agent plants as its transcript is opened
+    non-blocking and refused as no regular file; the reader never hangs."""
+    fifo = tmp_path / "t.jsonl"
+    os.mkfifo(fifo)
+    got: list[object] = []
+    reader = threading.Thread(target=lambda: got.append(overhead.measure(fifo, 0, FIXED)), daemon=True)
+    reader.start()
+    reader.join(5)
+    assert not reader.is_alive() and got == [None]
+
+
+def test_a_symlink_at_the_end_is_refused(tmp_path):
+    """RT-6.18 (security): never through a symlink in the last part of the path."""
+    real = _small(tmp_path).write(tmp_path / "t.jsonl")
+    (tmp_path / "link.jsonl").symlink_to(real)
+    assert session_file.read_transcript(real) is not None
+    assert session_file.read_transcript(tmp_path / "link.jsonl") is None
+
+
+def test_an_oversize_transcript_is_skipped(tmp_path, monkeypatch):
+    """RT-6.18 (security): a transcript over TRANSCRIPT_MAX is not read at all."""
+    path = _small(tmp_path).write(tmp_path / "t.jsonl")
+    assert overhead.measure(path, 0, FIXED) is not None
+    monkeypatch.setattr(session_file, "TRANSCRIPT_MAX", path.stat().st_size - 1)
+    assert overhead.measure(path, 0, FIXED) is None
+    monkeypatch.setattr(session_file, "TRANSCRIPT_MAX", path.stat().st_size)
+    assert overhead.measure(path, 0, FIXED) is not None
+
+
+def test_the_host_checks_the_opened_file_once_more(tmp_path, monkeypatch):
+    """RT-6.18 (security): in the host process of a keyless session, a directory
+    under ~/.claude/projects swapped for a symlink to elsewhere after the path
+    check (simulated: measured without stats.transcript) reads nothing; a real
+    transcript there still counts."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    projects = tmp_path / ".claude" / "projects"
+    (projects / "p").mkdir(parents=True)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    _small(tmp_path).write(outside / "t.jsonl")
+    (projects / "swapped").symlink_to(outside)
+    inside = _small(tmp_path).write(projects / "p" / "t.jsonl")
+    session_file.use_hosted_dir(tmp_path / "state" / "hosted" / "s")
+    assert overhead.measure(inside, 0, FIXED) is not None
+    assert overhead.measure(projects / "swapped" / "t.jsonl", 0, FIXED) is None
+    monkeypatch.setattr(session_file, "_fd_path", lambda fd: None)
+    assert overhead.measure(inside, 0, FIXED) is None  # cannot tell where it is: nothing

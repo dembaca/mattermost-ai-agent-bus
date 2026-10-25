@@ -20,12 +20,13 @@ the transcript has them anyway. Only the main thread counts (no subagents).
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from . import session_file
 
 BUS = "mattermost-agent-bus"          # in the MCP tool names
 CHANNEL = '<channel source="plugin:mattermost-ai-agent-bus:'
@@ -104,13 +105,11 @@ class _Count:
 
 def measure(path: str | Path, since: float, fixed: Fixed) -> dict[str, Any] | None:
     """Overhead and totals of the requests after `since`, or None without a transcript."""
-    try:
-        # Never through a symlink in its last part (RT-6.18).
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        with open(fd, encoding="utf-8") as fh:
-            lines = fh.read().splitlines()
-    except (OSError, ValueError):
+    # Never through a symlink, a FIFO or out of ~/.claude/projects (RT-6.18).
+    text = session_file.read_transcript(path)
+    if text is None:
         return None
+    lines = text.splitlines()
     resident = 0                      # bus characters in the context since the last compaction
     deferred = skill = by_bus = False
     pending: list[bool] = []          # tool results since the last request: bus or not

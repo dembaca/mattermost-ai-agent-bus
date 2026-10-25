@@ -21,7 +21,7 @@ from mcp.server.mcpserver import MCPServer
 from . import (
     a2a, asks, channel, gate, hookapi, lease, overhead, ownpost, permission, session_file, slim, stats, tasks,
 )
-from .client import MattermostClient, attachment_props
+from .client import InvalidId, MattermostClient, attachment_props, mm_id
 from .websocket_inbox import WebSocketInbox
 
 log = logging.getLogger(__name__)
@@ -531,6 +531,18 @@ def _refused(tool: str, reason: str, kinds: bool = False) -> str:
     return _out(tool, out)
 
 
+def _bad_id(**ids: str) -> str:
+    """Why the first of the given Mattermost ids (empty ones skipped) may not
+    go into an API path, else '' (#81): checked before anything is sent."""
+    for what, value in ids.items():
+        if value:
+            try:
+                mm_id(value, what)
+            except InvalidId as exc:
+                return str(exc)
+    return ""
+
+
 @mcp.tool()
 async def announce(
     project: str,
@@ -609,10 +621,15 @@ async def post_message(
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refused("post_message", str(exc), kinds=True)
+    if bad := _bad_id(channel=channel_id, post=root_id):
+        return _refused("post_message", bad)
     client = _get_client()
     everyone = to.strip().lower() == a2a.ALL
     if to.strip() and not everyone:
-        channel_id = await client.direct_channel_with_bot(to)
+        try:
+            channel_id = await client.direct_channel_with_bot(to)
+        except InvalidId as exc:
+            return _refused("post_message", str(exc))
     message, removed = await _unmention(client, message)
     uid = await _my_id(client)
     if (not root_id and not channel_id and a2a.word(message) == "ASSIGNMENTS"
@@ -651,6 +668,8 @@ async def reply_in_thread(
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refused("reply_in_thread", str(exc), kinds=True)
+    if bad := _bad_id(post=root_id or "-", channel=channel_id):
+        return _refused("reply_in_thread", bad)
     client = _get_client()
     everyone = to.strip().lower() == a2a.ALL
     if to.strip() and not everyone:
@@ -737,6 +756,8 @@ async def ask_human(
     their name without @.
     """
     _done_typing()
+    if bad := _bad_id(post=root_id):
+        return _refused("ask_human", bad)
     client = _get_client()
     me = await client.get_me()
     # Free text of the model: nothing but the ask itself may notify (RT-6.11).
@@ -798,6 +819,8 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
     for reactions to it, and with note replies in its thread.
     """
     _done_typing()
+    if bad := _bad_id(post=post_id or "-"):
+        return _refused("resolve_ask", bad)
     client = _get_client()
     me = await client.get_me()
     await client.add_reaction(post_id, "white_check_mark")
@@ -842,6 +865,8 @@ async def get_thread(post_id: str, raw: bool = False) -> str:
     Slim posts {id, root_id, channel, author, at, message}; raw=true for the
     full Mattermost JSON.
     """
+    if bad := _bad_id(post=post_id or "-"):
+        return _refused("get_thread", bad)
     client = _get_client()
     data = await client.thread(post_id)
     if raw:
@@ -858,6 +883,8 @@ async def list_recent(
     Slim posts {id, root_id, channel, author, at, message, replies}, system
     messages ("… added to the channel") left out; raw=true for everything.
     """
+    if bad := _bad_id(channel=channel_id):
+        return _refused("list_recent", bad)
     client = _get_client()
     posts = await client.list_recent(
         channel_id=channel_id or None,
