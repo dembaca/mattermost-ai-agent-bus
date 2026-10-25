@@ -117,6 +117,17 @@ def annotate(message: str = "", to: str = "", kind: str = "") -> dict[str, Any] 
     return out
 
 
+def props(message: str = "", to: str = "", kind: str = "",
+          card: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The props of a post the server writes: the agent's card on its HELLO,
+    props.a2a (annotate); None for a plain message."""
+    out: dict[str, Any] = {"agent_card": card} if card else {}
+    note = annotate(message, to, kind)
+    if note:
+        out["a2a"] = note
+    return out or None
+
+
 def intent_of(post: Mapping[str, Any]) -> str | None:
     """A post's intent, from its props only: older posts and people's have
     none. Anyone can write props through the API, so callers honour it only

@@ -22,8 +22,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
 from . import overhead, session_file
 
 if TYPE_CHECKING:
@@ -186,7 +184,7 @@ def summary(version: str, static: int,
     }
 
 
-def post_sync(client: MattermostClient, data: dict[str, Any], http: httpx.Client | None = None) -> str:
+def post_sync(client: MattermostClient, data: dict[str, Any]) -> str:
     """Post the summary to the stats channel, synchronously (exit handler).
 
     The counter file goes either way: on a server without the channel the
@@ -195,32 +193,14 @@ def post_sync(client: MattermostClient, data: dict[str, Any], http: httpx.Client
     name = channel()
     if not name or not client.token:
         return "off"
-    headers = {"Authorization": f"Bearer {client.token}"}
-    own = http is None
-    http = http or httpx.Client(timeout=5.0)
+    msg = "STATS " + json.dumps(data, separators=(",", ":"))
     try:
-        team = http.get(f"{client.base_url}/api/v4/teams/name/{client.team_name}", headers=headers)
-        team.raise_for_status()
-        ch = http.get(f"{client.base_url}/api/v4/teams/{team.json()['id']}/channels/name/{name}",
-                      headers=headers)
-        if ch.status_code == 404:
+        if not client.post_by_name_sync(name, msg, join=os.environ.get("MM_BOT_USER_ID") or _uid):
             return f"no channel ~{name}; nothing posted"
-        ch.raise_for_status()
-        cid = ch.json()["id"]
-        me = os.environ.get("MM_BOT_USER_ID") or _uid
-        if me:  # joining twice is harmless; a non-member cannot post
-            http.post(f"{client.base_url}/api/v4/channels/{cid}/members",
-                      headers=headers, json={"user_id": me})
-        msg = "STATS " + json.dumps(data, separators=(",", ":"))
-        resp = http.post(f"{client.base_url}/api/v4/posts", headers=headers,
-                         json={"channel_id": cid, "message": msg})
-        resp.raise_for_status()
         return "posted"
-    except (httpx.HTTPError, KeyError, ValueError) as exc:
+    except Exception as exc:  # noqa: BLE001 — exit handler: fail open
         return f"failed: {type(exc).__name__}"
     finally:
         f = _path()
         if f is not None:
             f.unlink(missing_ok=True)
-        if own:
-            http.close()

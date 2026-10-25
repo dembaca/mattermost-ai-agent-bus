@@ -32,3 +32,11 @@ The trust boundary is the first cut: only the host session hooks may see
 use one implementation of each API call. The MCP server is separate because it is
 long-lived (WebSocket inbox), while hooks are short-lived processes that must
 finish within their timeout.
+
+Inside the MCP server, Mattermost's state carriers (post props, custom status
+and crown, unread counters, the profile the registrar wrote) are read and
+written only in `client.py`, the one module that talks HTTP, `a2a.py` (the
+bus's props) and `lease.py` (status and crown, through the shell CLI). The
+rest of the server works with bus types (`model.py`) and posts, so a change of
+carrier stays in those three modules; `mcp/tests/test_adapter_boundary.py`
+checks it.

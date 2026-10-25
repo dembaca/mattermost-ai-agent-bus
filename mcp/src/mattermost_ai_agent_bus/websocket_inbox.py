@@ -83,10 +83,6 @@ class WebSocketInbox:
     )
     _bot_user_id: str = field(default="", repr=False, init=False)
     _bot_username: str = field(default="", repr=False, init=False)
-    # When the bot was created (ms). Nothing older can be for this session, so
-    # backfill never reads before it, even where Mattermost reports a channel
-    # as never viewed (last_viewed_at 0) right after the bot joined it.
-    _since_floor: int = field(default=0, repr=False, init=False)
     # Events still queued after the last wait_for_events returned max_events.
     pending: int = field(default=0, repr=False, init=False)
     # Post ids already queued. Backfill and the live stream overlap around the
@@ -114,7 +110,6 @@ class WebSocketInbox:
         me = await self.client.get_me()
         self._bot_user_id = me["id"]
         self._bot_username = me.get("username") or ""
-        self._since_floor = int(me.get("create_at") or 0)
         if not self.watched_channel_ids:
             # Watch the default channel (where the agent stays addressable) and the
             # project channel (where it works) — either may be where it is called.
@@ -171,15 +166,14 @@ class WebSocketInbox:
             log.warning("could not look for missed messages: %s", exc)
             return
         for entry in pending:
-            cid = entry["channel_id"]
-            # A fresh bot's channels can report last_viewed_at 0: read from the
-            # bot's creation then, not the channel's last 50 posts of history.
-            since = max(entry.get("last_viewed_at") or 0, self._since_floor)
+            cid = entry.channel_id
+            # Never before the bot existed (client.unread_channels), not the
+            # channel's last 50 posts of history.
             try:
                 posts = await self.client.list_recent(
                     channel_id=cid,
                     per_page=50,
-                    since_ms=since or None,
+                    since_ms=entry.since or None,
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("could not backfill channel %s: %s", cid, exc)
@@ -189,7 +183,7 @@ class WebSocketInbox:
                     post,
                     bot_user_id=self._bot_user_id,
                     bot_username=self._bot_username,
-                    channel_type=entry.get("type"),
+                    channel_type=entry.channel_type,
                     watched_channel_ids=self.watched_channel_ids,
                 )
                 if not kind:
@@ -198,7 +192,7 @@ class WebSocketInbox:
                     continue
                 self._seen_ids.add(post["id"])
                 event = ClassifiedEvent(kind=kind, post=post)
-                await self._gate(event, entry.get("type"))
+                await self._gate(event, entry.channel_type)
                 await self._queue.put(event)
         # Reactions to open asks given while nothing was listening.
         for pid in asks.open_asks(self._bot_user_id):

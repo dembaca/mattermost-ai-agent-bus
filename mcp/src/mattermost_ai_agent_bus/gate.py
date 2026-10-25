@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import a2a, channel, lease, session_file
+from .client import from_webhook
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -38,14 +39,9 @@ COORD_TTL_SEC = 60.0
 _coord: tuple[float, str] | None = None
 
 
-def webhook(post: Mapping[str, Any]) -> bool:
-    """Anyone with a hook's URL posts as the account that made the hook."""
-    return str((post.get("props") or {}).get("from_webhook", "")) == "true"
-
-
 def author_class(post: Mapping[str, Any], trusted: Mapping[str, str],
                  agents: set[str]) -> str:
-    if webhook(post):
+    if from_webhook(post):
         return OTHER
     uid = post.get("user_id", "")
     if uid in trusted:
@@ -72,7 +68,7 @@ def wake_reason(kind: str, post: Mapping[str, Any], in_my_thread: bool) -> str:
 
 
 async def author_name(client: MattermostClient, post: Mapping[str, Any]) -> str:
-    if webhook(post):
+    if from_webhook(post):
         return "a webhook"
     uid = post.get("user_id", "")
     return (await client.usernames({uid})).get(uid) or uid
@@ -88,7 +84,7 @@ async def coordinator_name(client: MattermostClient) -> str:
         rows = await lease.roster(client)
         if not rows:
             return ""
-        _coord = (now, next((str(r.get("username", "")) for r in rows if r.get("crown")), ""))
+        _coord = (now, next((r.username for r in rows if r.crown), ""))
     return _coord[1]
 
 

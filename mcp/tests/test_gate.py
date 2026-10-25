@@ -9,6 +9,7 @@ import pytest
 
 from mattermost_ai_agent_bus import channel, gate, server, session_file
 from mattermost_ai_agent_bus.client import MattermostClient
+from mattermost_ai_agent_bus.model import RosterEntry, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
 
 ME, HUMAN, STRANGER = "m" * 26, "h" * 26, "s" * 26
@@ -67,8 +68,8 @@ class Bus:
             raise AssertionError(f"unexpected {method} {path}")
 
         async def roster(_client):
-            rows = [{"username": "agent-me", "crown": False}]
-            return ([{"username": self.coordinator, "crown": True}] if self.coordinator else []) + rows
+            rows = [RosterEntry("agent-me")]
+            return ([RosterEntry(self.coordinator, crown=True)] if self.coordinator else []) + rows
 
         monkeypatch.setattr(self.client, "_api", api)
         monkeypatch.setattr(gate.lease, "roster", roster)
@@ -349,7 +350,7 @@ async def test_backfill_and_the_live_stream_are_gated(bus, monkeypatch):
            "message": "@agent-me while you were away"}
 
     async def unread():
-        return [{"channel_id": PROJ, "type": "O", "last_viewed_at": 1, "pending": 1}]
+        return [UnreadChannel(PROJ, since=1)]
 
     async def recent(**_):
         return [old]

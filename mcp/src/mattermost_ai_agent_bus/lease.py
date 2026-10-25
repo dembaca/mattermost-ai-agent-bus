@@ -13,11 +13,12 @@ import json
 import logging
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import session_file
+from .model import RosterEntry
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -28,6 +29,9 @@ LEASE_SCRIPT = Path(__file__).resolve().parents[3] / "bin" / "mm-agent-lease.sh"
 ROSTER_SCRIPT = LEASE_SCRIPT.with_name("mm-agent-roster.sh")
 CROWN = "👑"
 PENDING_POLL_SEC = 30.0
+# The lease's status emoji as a word, for a status without text.
+_STATUS = {"hammer_and_wrench": "working", "ear": "listening", "zzz": "idle",
+           "satellite_antenna": "bus"}
 
 
 def heartbeat_sec() -> float:
@@ -90,7 +94,7 @@ async def run(client: MattermostClient, command: str) -> str:
     return await _script(client, LEASE_SCRIPT, command)
 
 
-async def roster(client: MattermostClient) -> list[dict[str, Any]]:
+async def roster(client: MattermostClient) -> list[RosterEntry]:
     """The reachable agents of the work channel, coordinator first, by the
     rules of mm-agent-roster.sh (RT-6.6); [] when it cannot run."""
     out = await _script(client, ROSTER_SCRIPT, "--json")
@@ -98,7 +102,18 @@ async def roster(client: MattermostClient) -> list[dict[str, Any]]:
         rows = json.loads(out or "[]")
     except ValueError:
         return []
-    return rows if isinstance(rows, list) else []
+    return [entry(r) for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
+
+
+def entry(row: Mapping[str, Any]) -> RosterEntry:
+    """One row of mm-agent-roster.sh --json: the status word from the status
+    text (after "coordinator"), else from its emoji."""
+    text = [w.strip() for w in str(row.get("text", "")).split(" · ")]
+    if text and text[0] == "coordinator":
+        text = text[1:]
+    status = text[0] if text and text[0] else _STATUS.get(str(row.get("emoji", "")), "")
+    return RosterEntry(username=str(row.get("username") or ""), status=status,
+                       coordinator=bool(row.get("coordinator")), crown=bool(row.get("crown")))
 
 
 async def _script(client: MattermostClient, script: Path, *args: str) -> str:

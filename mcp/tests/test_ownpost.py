@@ -64,7 +64,7 @@ def _bye_client(monkeypatch, seen, status=200):
         return httpx.Response(status, json={"id": "bye1", "create_at": 5000, **seen[-1][2]})
 
     real = httpx.Client
-    monkeypatch.setattr("mattermost_ai_agent_bus.ownpost.httpx.Client",
+    monkeypatch.setattr("mattermost_ai_agent_bus.client.httpx.Client",
                         lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
     return MattermostClient(base_url="https://mm.example", token="tok")
 

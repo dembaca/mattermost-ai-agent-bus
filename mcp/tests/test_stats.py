@@ -41,6 +41,14 @@ def test_static_text_is_measured():
     assert server._static_chars() > 10000
 
 
+_REAL_CLIENT = httpx.Client
+
+
+def _mock_http(monkeypatch, handler):
+    monkeypatch.setattr("mattermost_ai_agent_bus.client.httpx.Client",
+                        lambda **kw: _REAL_CLIENT(transport=httpx.MockTransport(handler), **kw))
+
+
 def test_post_goes_to_the_stats_channel(monkeypatch, state):
     client = MattermostClient(base_url="https://chat.example", token="bot", team_name="ai-agents")
     stats.record("turn")
@@ -51,8 +59,8 @@ def test_post_goes_to_the_stats_channel(monkeypatch, state):
             return httpx.Response(200, json={"id": "t1"})
         return httpx.Response(404, json={})
 
-    assert stats.post_sync(client, data, http=httpx.Client(
-        transport=httpx.MockTransport(missing))).startswith("no channel ~agents-stats")
+    _mock_http(monkeypatch, missing)
+    assert stats.post_sync(client, data).startswith("no channel ~agents-stats")
     assert not (state / "mm-agent-bus" / f"stats-{UID}.jsonl").exists()  # does not pile up
     stats.record("turn")
 
@@ -70,8 +78,8 @@ def test_post_goes_to_the_stats_channel(monkeypatch, state):
         return httpx.Response(201, json={})
 
     monkeypatch.setenv("MM_STATS_CHANNEL", "~agents-stats")
-    http = httpx.Client(transport=httpx.MockTransport(handler))
-    assert stats.post_sync(client, data, http=http) == "posted"
+    _mock_http(monkeypatch, handler)
+    assert stats.post_sync(client, data) == "posted"
     assert ("POST", "/api/v4/channels/c9/members") in seen
     assert not (state / "mm-agent-bus" / f"stats-{UID}.jsonl").exists()
 

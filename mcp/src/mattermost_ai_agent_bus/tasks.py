@@ -14,6 +14,7 @@ from collections.abc import Collection, Mapping
 from typing import Any
 
 from . import a2a, asks, session_file
+from .model import RosterEntry
 
 WINDOW_DAYS = 14
 DONE_KEEP_MS = 24 * 3600 * 1000
@@ -187,11 +188,7 @@ def open_asks(posts: list[Mapping[str, Any]], names: Mapping[str, str]) -> list[
     return out
 
 
-_STATUS = {"hammer_and_wrench": "working", "ear": "listening", "zzz": "idle",
-           "satellite_antenna": "bus"}
-
-
-def roster(rows: list[Mapping[str, Any]], posts: list[Mapping[str, Any]],
+def roster(rows: list[RosterEntry], posts: list[Mapping[str, Any]],
            names: Mapping[str, str]) -> list[dict[str, Any]]:
     """One row per reachable agent: its lease status (mm-agent-roster.sh) and
     its newest card (HELLO props, else the HELLO text)."""
@@ -205,14 +202,10 @@ def roster(rows: list[Mapping[str, Any]], posts: list[Mapping[str, Any]],
             cards[card.get("name") or name] = card
     out = []
     for r in rows:
-        text = [w.strip() for w in str(r.get("text", "")).split(" · ")]
-        if text and text[0] == "coordinator":
-            text = text[1:]
-        status = text[0] if text and text[0] else _STATUS.get(str(r.get("emoji", "")), "")
-        card = cards.get(str(r.get("username", ""))) or {}
+        card = cards.get(r.username) or {}
         meta = card.get("meta") or {}
-        row = {"agent": r.get("username"), "status": status,
-               "coordinator": bool(r.get("coordinator")) or None,
+        row = {"agent": r.username, "status": r.status,
+               "coordinator": r.coordinator or None,
                "model": meta.get("model"), "role": meta.get("role"),
                "task": _first_line(str(card.get("description", "")), TITLE),
                "branch": meta.get("branch"),

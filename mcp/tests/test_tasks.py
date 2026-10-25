@@ -7,6 +7,7 @@ import time
 import pytest
 
 from mattermost_ai_agent_bus import a2a, channel, server, tasks
+from mattermost_ai_agent_bus.model import RosterEntry
 
 ME, LEIT, A, B, HUMAN = "m" * 26, "l" * 26, "a" * 26, "b" * 26, "h" * 26
 NAMES = {ME: "agent-me", LEIT: "agent-leit", A: "agent-a", B: "agent-b", HUMAN: "dembaca"}
@@ -157,10 +158,8 @@ def test_roster_merges_lease_and_card():
              P("hb", B, "HELLO @agent-b\nproject: bus · branch/PR: #9\ntask: review\n"
                         "model: Cursor · GPT\nfor: dembaca · trusts: –\ncapabilities: –\n"
                         "role: member", at=1)]
-    rows = [{"username": "agent-b", "emoji": "crown", "coordinator": True,
-             "text": "coordinator · working · bus"},
-            {"username": "agent-a", "emoji": "ear", "coordinator": False,
-             "text": "listening · until 14:00, then idle"}]
+    rows = [RosterEntry("agent-b", "working", coordinator=True, crown=True),
+            RosterEntry("agent-a", "listening")]
     assert tasks.roster(rows, posts, NAMES) == [
         {"agent": "agent-b", "status": "working", "coordinator": True, "model": "Cursor · GPT",
          "role": "member", "task": "review", "branch": "#9"},
@@ -265,7 +264,7 @@ async def test_coordinator_roster(bus, monkeypatch):
     bus(_leitstand_thread())
 
     async def rows(_client):
-        return [{"username": "agent-me", "emoji": "hammer_and_wrench", "text": "working · bus"}]
+        return [RosterEntry("agent-me", "working")]
     monkeypatch.setattr(server.lease, "roster", rows)
     out = json.loads(await server.coordinator("roster"))
     assert out == {"roster": [{"agent": "agent-me", "status": "working",

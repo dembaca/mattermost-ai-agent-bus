@@ -6,6 +6,7 @@ import time
 import pytest
 
 from mattermost_ai_agent_bus import lease
+from mattermost_ai_agent_bus.model import RosterEntry
 
 UID = "u" * 26
 
@@ -56,3 +57,30 @@ async def test_heartbeat_ticks_and_survives_errors(monkeypatch):
     await asyncio.sleep(0.05)
     task.cancel()
     assert calls.count("tick") >= 2
+
+
+def test_roster_rows_become_status_words():
+    """RT-6.14 step 4: the status text's word after "coordinator", else the
+    lease emoji's; the custom status stays in lease.py."""
+    rows = [{"username": "agent-b", "emoji": "crown", "coordinator": True, "crown": True,
+             "text": "coordinator · working · bus"},
+            {"username": "agent-a", "emoji": "ear", "text": ""},
+            {"username": "agent-c", "emoji": "zzz", "presence": "away", "reachable": True}]
+    assert [lease.entry(r) for r in rows] == [
+        RosterEntry("agent-b", "working", coordinator=True, crown=True),
+        RosterEntry("agent-a", "listening"),
+        RosterEntry("agent-c", "idle"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_roster_reads_mm_agent_roster_json(monkeypatch):
+    """RT-6.6: rows from mm-agent-roster.sh --json; anything else reads as none."""
+    out = '[{"username": "agent-a", "text": "working · bus"}, 3]'
+
+    async def script(*_):
+        return out
+    monkeypatch.setattr(lease, "_script", script)
+    assert await lease.roster(None) == [RosterEntry("agent-a", "working")]
+    out = "not json"
+    assert await lease.roster(None) == []

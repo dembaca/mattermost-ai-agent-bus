@@ -3,6 +3,25 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.36.2
+
+The MCP server's first step towards its own types (#69, #79). No behaviour
+changes.
+
+### Changed
+
+- **State carriers behind the adapter ([arc42 §5.1](docs/arc42/05-building-block-view.md#decomposition-rationale)):**
+  post props, custom status and crown, unread counters and the profile the
+  registrar wrote are read and written only in `client.py`, `a2a.py` and
+  `lease.py`; only `client.py` talks HTTP, the exit handler's `BYE` and
+  `STATS` posts included. The rest of the server gets bus types from the new
+  `model.py`: a roster entry with its status word (the lease emoji's word now
+  comes from `lease.py`) and an unread channel with the time to read from
+  (never before the bot existed, now in `client.py`). The bus's props come
+  from `a2a.props`, an ask's card from `client.attachment_props`.
+- **Checked:** `mcp/tests/test_adapter_boundary.py` fails on a carrier key,
+  `httpx` or `client._api` outside those modules.
+
 ## 0.36.1
 
 ### Security
