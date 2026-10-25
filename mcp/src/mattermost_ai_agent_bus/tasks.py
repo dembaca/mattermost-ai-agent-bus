@@ -163,11 +163,33 @@ def _apply(t: dict[str, Any], p: Mapping[str, Any], author: str) -> None:
     t["updated"] = p.get("create_at", t["updated"])
 
 
-def open_asks(posts: list[Mapping[str, Any]], names: Mapping[str, str]) -> list[dict[str, Any]]:
-    """Asks to humans still waiting: no yes/no reaction and no reply from the
-    human asked (RT-6.11)."""
+def ask_answered(ask: Mapping[str, Any], thread: Collection[Mapping[str, Any]],
+                 reactions: Collection[Mapping[str, Any]], names: Mapping[str, str],
+                 human: str, trusted: Collection[str] = ()) -> bool:
+    """Whether an ask to `human` is answered on Mattermost (RT-6.11, RT-6.19): a
+    yes/no reaction by that human or a trusted human (ids in `trusted`), or a
+    reply by that human in the ask's thread after it. A reaction by an agent or
+    anyone else changes nothing. `names` maps user ids, the reacting accounts
+    included, to usernames."""
+    human = human.lower()
+
+    def by_human(uid: str) -> bool:
+        return bool(human) and names.get(uid, "").lower() == human
+
+    for r in reactions:
+        u = str(r.get("user_id") or "")
+        if asks.answer_of(str(r.get("emoji_name") or "")) and (by_human(u) or u in trusted):
+            return True
+    root, at = str(ask.get("root_id") or ask.get("id")), int(ask.get("create_at") or 0)
+    return any(str(p.get("root_id") or p.get("id")) == root and int(p.get("create_at") or 0) > at
+               and not p.get("delete_at") and by_human(str(p.get("user_id") or "")) for p in thread)
+
+
+def open_asks(posts: list[Mapping[str, Any]], names: Mapping[str, str],
+              trusted: Collection[str] = ()) -> list[dict[str, Any]]:
+    """Asks to humans still waiting: not answered by the human asked or a
+    trusted human (ask_answered)."""
     order = _live(posts)
-    replied = {(p.get("root_id"), names.get(p.get("user_id", ""), "")) for p in order}
     out = []
     for p in order:
         if a2a.kind_of(p) != a2a.ASK:
@@ -176,9 +198,7 @@ def open_asks(posts: list[Mapping[str, Any]], names: Mapping[str, str]) -> list[
         human = re.search(r"🙋\s*@([\w.-]*\w)", msg)
         need = re.search(r"\*\*(.+?)\*\*", msg)
         reactions = (p.get("metadata") or {}).get("reactions") or []
-        if any(asks.answer_of(r.get("emoji_name", "")) for r in reactions):
-            continue
-        if human and (p["id"], human[1]) in replied:
+        if ask_answered(p, order, reactions, names, human[1] if human else "", trusted):
             continue
         row = {"ask": p["id"], "by": names.get(p.get("user_id", ""), ""),
                "human": human[1] if human else None,

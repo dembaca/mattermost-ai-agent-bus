@@ -7,6 +7,7 @@ import contextlib
 import json
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,7 +22,7 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class ClassifiedEvent:
-    kind: str  # mention | dm | watched_channel | reaction (to an open ask)
+    kind: str  # mention | dm | watched_channel | reaction (to an open ask) | stall (RT-6.19)
     post: dict[str, Any]
     channel: dict[str, Any] | None = None
     raw: dict[str, Any] | None = None
@@ -407,6 +408,16 @@ class WebSocketInbox:
             except Exception as exc:  # noqa: BLE001 — bookkeeping
                 log.info("could not mark %s read: %s", cid, exc)
 
+    def notify(self, kind: str, message: str) -> None:
+        """Queue an event the server raises itself, with no post behind it
+        (RT-6.19: a stall); delivered like any other."""
+        self._queue.put_nowait(ClassifiedEvent(kind=kind, post={
+            "id": "", "message": message, "create_at": int(time.time() * 1000)}))
+
+    def waits(self, kind: str) -> bool:
+        """Whether an event of that kind waits in the queue."""
+        return any(e.kind == kind for e in list(self._queue._queue))
+
     def holds(self, channel_id: str) -> bool | None:
         """Whether events of this channel wait in the queue; None while the
         socket is not connected, so nothing is known about what arrived.
@@ -456,7 +467,7 @@ class WebSocketInbox:
         # Mentions and DMs first: a backlog of channel posts must never push the
         # one message that wants an answer past max_events. Gated posts, data
         # only, come last (RT-6.16).
-        queued.sort(key=lambda e: (bool(e.gated), e.kind not in ("mention", "dm", "reaction")))
+        queued.sort(key=lambda e: (bool(e.gated), e.kind not in ("mention", "dm", "reaction", "stall")))
         events, rest = queued[:max(1, max_events)], queued[max(1, max_events):]
         for e in rest:
             self._queue.put_nowait(e)

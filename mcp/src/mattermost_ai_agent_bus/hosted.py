@@ -437,16 +437,17 @@ def write_ready(path: Path, pid: int, port: int, hook: str) -> None:
 @asynccontextmanager
 async def services(key: str, client: Any) -> AsyncIterator[str]:
     """Hook API (same key, own port) and lease heartbeat for the whole session
-    (RT-6.17, RT-6.6): the hooks call before any relay connects and after one
-    closed. Yields the hook API's endpoint."""
-    from . import hookapi, lease
+    (RT-6.17, RT-6.6), with the ask reminders and the stall check (RT-6.19):
+    the hooks call before any relay connects and after one closed. Yields the
+    hook API's endpoint."""
+    from . import hookapi, lease, stall
 
     async def get_client() -> Any:
         return client
 
     api = hookapi.HookAPI(get_client, key=key)
     await api.start(write_file=False)  # the sandbox has it in its environment
-    task = asyncio.create_task(lease.heartbeat(get_client))
+    task = asyncio.create_task(lease.heartbeat(get_client, stall.watch))
     try:
         yield api.endpoint
     finally:

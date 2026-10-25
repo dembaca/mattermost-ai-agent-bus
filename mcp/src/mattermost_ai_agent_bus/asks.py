@@ -110,6 +110,20 @@ def open_asks(uid: str) -> list[str]:
     return list(_read(uid)[0])
 
 
+def waiting(uid: str) -> list[tuple[str, float, str, str]]:
+    """Asks to a human no trusted human has answered yet (RT-6.19): post id,
+    when, the human, the thread root ('' for a top-level ask). A permission
+    prompt names no human here and is left out."""
+    asks, _, whom = _read_all(uid)
+    done = _read_answered(uid)
+    out = []
+    for pid, at in asks.items():
+        human, _, root = whom.get(pid, "").partition(" ")
+        if human and human != "-" and pid not in done:
+            out.append((pid, at, human, root))
+    return out
+
+
 def is_open(uid: str, post_id: str) -> bool:
     return post_id in _read(uid)[0]
 

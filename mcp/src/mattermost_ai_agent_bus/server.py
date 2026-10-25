@@ -20,7 +20,8 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from . import (
-    a2a, asks, channel, gate, hookapi, lease, overhead, ownpost, permission, session_file, slim, stats, tasks,
+    a2a, asks, channel, gate, hookapi, lease, overhead, ownpost, permission, session_file, slim, stall, stats,
+    tasks,
 )
 from .client import InvalidId, MattermostClient, attachment_props, mm_id
 from .websocket_inbox import WebSocketInbox
@@ -97,8 +98,9 @@ async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
         # not per relay connection (RT-6.18, hosted.py).
         yield {}
         return
-    # The session's heartbeat: renews its status lease and the crown (RT-6.6).
-    task = asyncio.create_task(lease.heartbeat(_bus_client))
+    # The session's heartbeat: renews its status lease and the crown (RT-6.6),
+    # reminds of open asks and, with the crown, looks for a stall (RT-6.19).
+    task = asyncio.create_task(lease.heartbeat(_bus_client, stall.watch))
     api = await _start_hook_api()
     try:
         yield {}
@@ -258,6 +260,23 @@ def _get_inbox() -> WebSocketInbox:
     if _inbox is None or _inbox.client is not client:
         _inbox = WebSocketInbox(client=client, typing_sec=_typing_sec(), in_my_thread=_in_my_thread)
     return _inbox
+
+
+def _stall_event(text: str) -> bool:
+    """Queue the stall event for this agent (RT-6.19); False without a bus."""
+    try:
+        inbox = _get_inbox()
+    except RuntimeError:
+        return False
+    inbox.notify(stall.KIND, text)
+    return True
+
+
+def _stall_waits() -> bool:
+    return _inbox is not None and _inbox.waits(stall.KIND)
+
+
+stall.sink, stall.waiting = _stall_event, _stall_waits
 
 
 async def _my_id(client: MattermostClient) -> str:
@@ -863,8 +882,9 @@ async def ask_human(
     The answer comes through wait_for_events: a reply, or {kind: reaction,
     emoji, answer: yes|no|null, ask} — 👍/✅ from a trusted human is a yes to
     exactly this ask, within 24 h of it: a later answer comes with
-    expired: true and approves nothing; resolve_ask it and ask again. When it
-    is settled, call resolve_ask. Mention humans nowhere else; elsewhere write
+    expired: true and approves nothing; resolve_ask it and ask again. Until
+    then the server reminds the human in its thread (RT-6.19). When it is
+    settled, call resolve_ask. Mention humans nowhere else; elsewhere write
     their name without @.
     """
     _done_typing()
@@ -961,8 +981,13 @@ async def coordinator(action: str = "who") -> str:
         client = _get_client()
         posts, names = await _work_posts(client)
         if action == "tasks":
+            try:
+                trusted = await client.trusted_humans()
+            except Exception as exc:  # noqa: BLE001
+                log.info("asks without the trusted humans: %s", exc)
+                trusted = {}
             return _out("coordinator", {"tasks": await _tasks(client, posts, names),
-                                        "asks": tasks.open_asks(posts, names)})
+                                        "asks": tasks.open_asks(posts, names, trusted)})
         return _out("coordinator", {"roster": tasks.roster(await lease.roster(client), posts, names)})
     if action not in ("who", "take", "release"):
         return _refused("coordinator", 'action must be "who", "take", "release", "tasks" or "roster"')
@@ -1024,7 +1049,9 @@ async def wait_for_events(
     max_events were waiting, a last item {kind: more_pending, count} says so —
     call again to collect them. A delivered mention or DM
     shows you as typing in its thread until you post, wait again, or
-    MM_TYPING_SEC (default 60) runs out. Keep timeout_sec below the
+    MM_TYPING_SEC (default 60) runs out. Holding the crown you may get
+    {kind: stall}: the bus is stuck, its text lists what is open (RT-6.19,
+    coordinator.md). Keep timeout_sec below the
     runtime's background limit (Claude Code: ~120 s) and call it in the
     foreground; a newer call supersedes one still pending, which returns [].
     """
@@ -1048,14 +1075,15 @@ async def wait_for_events(
 
 async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, Any]]:
     client = _get_client()
-    trusted = await client.trusted_humans() if events else {}
+    posts = [e.post for e in events if e.kind != stall.KIND]
+    trusted = await client.trusted_humans() if posts else {}
     agents: set[str] = set()
     try:
-        if events:
-            agents = await client.agents({e.post.get("user_id", "") for e in events} - {""})
+        if posts:
+            agents = await client.agents({p.get("user_id", "") for p in posts} - {""})
     except Exception as exc:  # noqa: BLE001 — unknown: nobody counts as an agent
         log.info("could not tell agents from others: %s", exc)
-    lean = [] if raw or not events else await slim.posts(client, [e.post for e in events])
+    lean = iter([] if raw or not posts else await slim.posts(client, posts))
     uid = ""
     if any(e.post.get("root_id") for e in events):
         try:
@@ -1063,7 +1091,12 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         except Exception as exc:  # noqa: BLE001 — unknown: no answer marked expired
             log.info("could not read the bot's id: %s", exc)
     payload = []
-    for i, e in enumerate(events):
+    for e in events:
+        if e.kind == stall.KIND:
+            # The server's own event (RT-6.19): no author, the digest as text.
+            payload.append({"kind": e.kind, "from_trusted_human": False, "from_agent": False,
+                            "post": {"message": e.post.get("message", "")}})
+            continue
         author = e.post.get("user_id", "")
         # Server-verified (RT-6.8, RT-6.16): Mattermost authenticates the author,
         # so this, not anything a message says about itself, names a trusted
@@ -1103,7 +1136,7 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         if raw:
             item |= {"post": e.post, "channel": e.channel}
         else:
-            item["post"] = lean[i]
+            item["post"] = next(lean)
         payload.append(item)
     return payload
 

@@ -51,8 +51,11 @@ attention and tokens.
   if it cannot, naming the agent that carries it out.
 - **Short and precise.** Point out prose, recaps and repeated questions in
   one line (*Short messages* in the skill).
-- **Spot stalled tasks.** An agent with no `PROGRESS` for long, or `IDLE` with
-  a task still `active`: ask in its thread, and reassign if it stays silent.
+- **A stall wakes you** (`kind: stall`, RT-6.19): work is open, the bus
+  quiet. Per item nudge exactly one addressee in its thread: an agent by
+  @-mention there (reassign if it stays silent); a human's ask reminds them by
+  itself, so only an expired one needs a new ask, from its agent. No
+  broadcast; if the wait is fine, do nothing.
 - **Keep disputes short.** After two rounds without agreement, ask the human
   for a decision with `ask_human`.
 - **Stay lean yourself.** Take only small tasks; hand the crown over or

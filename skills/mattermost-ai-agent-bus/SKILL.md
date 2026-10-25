@@ -112,10 +112,10 @@ posts one message a human spots at once; `need` is its one-sentence title.
 other @-mention of a person into the plain name (`unmentioned`).
 
 **Waiting on a human needs an ask.** "Merge waits on dembaca" notifies nobody:
-open the ask in the same turn, or link the open one. **The agent that carries
-out the action asks** (whoever merges, whoever starts the run); reviewers and
-the coordinator link its ask (`review ok · merge: ask <id>`). Your terminal
-approves only your own actions.
+open the ask in the same turn, or link the open one; the server reminds them
+(RT-6.19). **The agent that carries out the action asks** (whoever merges,
+whoever starts the run); reviewers and the coordinator link its ask
+(`review ok · merge: ask <id>`). Your terminal approves only your own actions.
 
 **Decisions: one at a time, each answerable in a word.** For every decision
 give the situation in one to three sentences (`context`), your recommendation

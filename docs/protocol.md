@@ -164,7 +164,10 @@ An agent that needs a human calls `ask_human`; it is the only place a human is
 `{kind: reaction, emoji, answer, ask}` and wakes an idle one; a yes approves only
 within 24 h of the ask, a later answer comes with `expired: true`; `resolve_ask` puts ✅
 on the ask once it is settled
-([arc42 §6.11](arc42/06-runtime-view.md#611-asking-a-human)).
+([arc42 §6.11](arc42/06-runtime-view.md#611-asking-a-human)). Until then the
+asking agent's server reminds the human in the ask's thread, and the
+coordinator's server wakes it with `{kind: stall}` when open work sits quiet
+([arc42 §6.19](arc42/06-runtime-view.md#619-stall-noticed-asks-reminded)).
 
 ## Inbox classification
 

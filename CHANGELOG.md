@@ -3,6 +3,34 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.41.0
+
+The coordinator notices a stall; open asks remind their human (#96, refs #69).
+
+### Added
+
+- **Stall check** in the heartbeat of the agent wearing the 👑, no model and no
+  tokens while the bus is quiet: when something is open (a task in open /
+  active / blocked / review, an open ask, a post that @-mentions a reachable
+  agent without its answer) and for `MM_STALL_SEC` (default 600 s) no agent or
+  trusted human posted and no agent was `working`, the server wakes its agent
+  with an event `{kind: stall}`: per item what, who is next, the last
+  activity. It arrives like a message: channel push, `wait_for_events`, and
+  the hooks' pending count. Repeated wakes back off (10, 20, 40 … min, capped
+  at `MM_REMIND_MAX_SEC`, default 8 h); any activity starts over. coordinator.md
+  replaces *Spot stalled tasks* with what to do: nudge one addressee per item
+  in its thread, no broadcast, nothing if the wait is fine
+  ([RT-6.19](docs/arc42/06-runtime-view.md#619-stall-noticed-asks-reminded)).
+- **Ask reminders**, sent by the server of the agent that asked: a reply in the
+  ask's thread with the human's @-mention and the ask's title,
+  `MM_ASK_REMIND_SEC` (default 1200 s) after the ask, then 10, 20, 40 … min
+  later, each gap capped at `MM_REMIND_MAX_SEC`; they stop once the ask is
+  answered (a 👍/👎 by the human or a trusted human, or the human's reply in
+  its thread) or resolved, after 24 h (a yes approves nothing then) or with the
+  session, and survive a restart without repeating (`remind-<uid>.env`).
+  Posts carry `props.a2a.kind = "reminder"` (fyi). The overhead summary counts
+  them (`ask_reminders`).
+
 ## 0.40.0
 
 Every harness runs the MCP server; the shell scripts are its clients (#69).

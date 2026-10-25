@@ -6,7 +6,7 @@ The hooks (hooks/*.sh) and the scripts an agent runs (bin/mm-agent-listen.sh,
 instead, served next to the WebSocket inbox in the server's event loop:
 
     GET  /v1/me             {user_id, username, project, crown_until, channel}
-    GET  /v1/pending        {count[, channels: [{id, type, pending, fyi}]]}
+    GET  /v1/pending        {count[, stall: 1][, channels: [{id, type, pending, fyi}]]}
                             (?detail=1: up to 5 channels, with fyi counts)
     GET  /v1/last-post      {at, message}: the own latest post in the work channel
     GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
@@ -63,7 +63,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import a2a, asks, channel, gate, lease, ownpost, session_file, stats, unread
+from . import a2a, asks, channel, gate, lease, ownpost, session_file, stall, stats, unread
 from .client import InvalidId, _pid_alive, mm_name
 
 if TYPE_CHECKING:
@@ -397,10 +397,15 @@ async def me(client: MattermostClient, query: Mapping[str, str], body: Mapping[s
 
 
 async def pending(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
-    """Unread mentions, DMs and posts for all agents (RT-6.2 step 1, unread.py);
-    with detail=1 per channel, with its fyi posts (RT-6.14)."""
+    """Unread mentions, DMs and posts for all agents (RT-6.2 step 1, unread.py),
+    plus a stall event still to collect (RT-6.19); with detail=1 per channel,
+    with its fyi posts (RT-6.14)."""
     rows = await unread.channels(client)
-    result: dict[str, Any] = {"count": sum(n for _, n in rows)}
+    # A stall the server noticed waits in the inbox like a message (RT-6.19).
+    waits = 1 if stall.waiting() else 0
+    result: dict[str, Any] = {"count": sum(n for _, n in rows) + waits}
+    if waits:
+        result["stall"] = waits
     if rows and query.get("detail") == "1":
         result["channels"] = await unread.detail(client, rows)
     return 200, result
