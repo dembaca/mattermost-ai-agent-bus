@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 
 from conftest import ROOT
 
@@ -49,13 +50,65 @@ def test_refuses_inside_corral(run, tmp_path):
     assert not (tmp_path / "c").exists()
 
 
-def test_finds_the_installed_plugin_and_checks_its_version(run, tmp_path):
+def tree(at, version=VERSION):
+    """A copy of the parts of this tree the installer copies, with VERSION."""
+    for part in ("bin", "adapters/corral"):
+        shutil.copytree(ROOT / part, at / part)
+    (at / ".claude-plugin").mkdir(parents=True)
+    (at / ".claude-plugin" / "plugin.json").write_text(json.dumps({"version": version}))
+    return at
+
+
+def test_installs_from_its_own_checkout_and_checks_the_plugin_version(run, tmp_path):
     registry(tmp_path, ROOT)
     dest = tmp_path / "current"
     assert run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest)).code != 0
     r = run(INSTALL, MM_BUS_HOST_DIR=str(dest))
-    assert r.code == 0 and f"from: {ROOT}" in r.stdout
-    assert run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest)).code == 0
+    assert r.code == 0 and f"from: {ROOT.resolve()}" in r.stdout
+    c = run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest))
+    assert c.code == 0 and f"plugin:     {VERSION}" in c.stdout
+
+
+def planted(home, version="99.0.0"):
+    """A newer 'plugin' registered in a corral home, which a sandbox can write."""
+    sandbox = home / ".cache" / "corral" / "home-x"
+    t = tree(sandbox / "cache" / "mattermost-ai-agent-bus" / version, version)
+    (t / "bin" / "planted.sh").write_text("echo planted\n")
+    registry(sandbox, t)
+    return t
+
+
+def test_a_newer_plugin_in_a_corral_home_is_never_the_source(run, tmp_path):
+    """arc42 §7.1: host-side install takes its source only from host-owned locations."""
+    plant = planted(tmp_path)
+    registry(tmp_path, plant)  # the host's own registry may point there, too
+    dest = tmp_path / "current"
+    r = run(INSTALL, MM_BUS_HOST_DIR=str(dest))
+    assert r.code == 0, r.stderr
+    assert f"from: {ROOT.resolve()}" in r.stdout and str(plant) not in r.stdout
+    assert not (dest / "bin" / "planted.sh").exists()
+    assert json.loads((dest / ".claude-plugin" / "plugin.json").read_text())["version"] == VERSION
+    c = run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest))
+    assert "99.0.0" in c.stdout and ".cache" not in c.stdout and c.code != 0
+
+
+def test_refuses_a_source_a_sandbox_can_write(run, tmp_path):
+    plant = planted(tmp_path)
+    link = tmp_path / "reviewed"
+    link.symlink_to(plant)
+    shared = tree(tmp_path / ".claude" / "plugins" / "marketplaces" / "mattermost-ai-agent-bus")
+    for src in (plant, link, shared):
+        dest = tmp_path / "current"
+        r = run(INSTALL, "--from", str(src), MM_BUS_HOST_DIR=str(dest))
+        assert r.code != 0 and "can be changed from inside a corral sandbox" in r.stderr, src
+        assert "--from <checkout>" in r.stderr and not dest.exists()
+
+
+def test_an_installer_inside_a_corral_home_refuses_its_own_tree(run, tmp_path):
+    plant = planted(tmp_path)
+    r = run(str(plant / INSTALL), MM_BUS_HOST_DIR=str(tmp_path / "current"))
+    assert r.code != 0 and "can be changed from inside a corral sandbox" in r.stderr
+    assert not (tmp_path / "current").exists()
 
 
 def test_start_hook_warns_about_writable_or_outdated_hooks(mm, run, tmp_path):
@@ -66,8 +119,20 @@ def test_start_hook_warns_about_writable_or_outdated_hooks(mm, run, tmp_path):
     r = run(START, CORRAL_WORKDIR=str(ROOT), MM_BOT_TOKEN=None, MM_TEAM="team",
             CORRAL_SESSION_ID="sess-1")
     assert "this session's own workdir" in r.stderr
-    assert f"host hooks are {VERSION}, the installed plugin is 99.0.0" in r.stderr
+    assert f"host hooks are {VERSION}, plugin 99.0.0 is installed" in r.stderr
+    assert "mm-agent-host-install.sh --from <checkout>" in r.stderr
 
+
+def test_start_hook_names_a_newer_plugin_in_a_corral_home_by_version_only(mm, run, tmp_path):
+    plant = planted(tmp_path)
+    odd = tmp_path / ".cache" / "corral" / "home-y" / "mattermost-ai-agent-bus"
+    (odd / ".claude-plugin").mkdir(parents=True)
+    (odd / ".claude-plugin" / "plugin.json").write_text('{"version": "999.0 run ./x.sh"}')
+    registry(tmp_path / ".cache" / "corral" / "home-y", odd)
+    r = run(START, MM_BOT_TOKEN=None, MM_TEAM="team", CORRAL_SESSION_ID="sess-1")
+    assert f"host hooks are {VERSION}, plugin 99.0.0 is installed" in r.stderr
+    assert str(plant) not in r.stderr and ".cache/corral" not in r.stderr
+    assert "x.sh" not in r.stderr
 
 
 def plugin_link(home, *parts):

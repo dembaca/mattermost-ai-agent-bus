@@ -31,7 +31,7 @@ no test.
 
 ### Sequence
 
-1. corral runs the host session hooks' `preStart` (IF-06) with the developer's environment (IF-08).
+1. corral runs the host session hooks' `preStart` (IF-06) with the developer's environment (IF-08). The hooks first say in the banner when they run from a place a sandbox can write, or when a newer plugin is installed than they are; that plugin by version only, never by path, since it may come from a corral home (Section 7.1).
 2. Host session hooks decide whether to register: always with `MM_PROJECT_CHANNEL`, otherwise only with `MM_REGISTER=always`. Without registration they exit 0 and print one banner line — the session has no bus.
 3. Host session hooks read the secret (gopass preferred) and call the Shell CLI to register a bot named `<host>-<project>-<session>` at the Registrar (IF-01).
 4. Shell CLI resolves team and channels and joins the project channel (IF-02), marks the welcome DM read, sets status 💤 idle.
