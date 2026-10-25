@@ -316,10 +316,9 @@ mm_load_session_file() {
 #      workspace, or a worktree under a checkout, is its own workspace.
 # A workspace named by a variable is taken exactly. The walk can still reach an
 # outer workspace's server from a directory that is in no repository of its
-# own below it (RT-6.17 step 2). The prefix names
-# the file: endpoint (the hook API's, default) or mcp (the session file).
+# own below it (RT-6.17 step 2). The file is the hook API's endpoint file.
 mm_bus_file() {
-  local prefix="${1:-endpoint}" dir state key f sid v
+  local prefix=endpoint dir state key f sid v
   state="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
   sid="${CLAUDE_CODE_SESSION_ID:-}"
   sid="${sid//[[:space:]]/}"
