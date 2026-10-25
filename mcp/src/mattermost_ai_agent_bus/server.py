@@ -982,9 +982,8 @@ async def coordinator(action: str = "who") -> str:
     waits until the holder releases or its lease runs out), "release" (right
     after the agent you handed over to ACKed), "tasks" (open tasks and asks)
     or "roster" (reachable agents), one row each (RT-6.14). Without a crown
-    anywhere, the oldest reachable agent takes it on its own; an idle
-    coordinator loses it when its lease runs out, unless its session was
-    started as a channel (RT-6.6). Holding it, read
+    anywhere, the oldest reachable agent takes it on its own; a 💤
+    coordinator loses it when its lease runs out. Holding it, read
     coordinator.md next to the skill.
     """
     if action in ("tasks", "roster"):
