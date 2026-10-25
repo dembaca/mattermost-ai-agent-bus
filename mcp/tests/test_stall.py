@@ -2,12 +2,14 @@
 stall and wakes it; open asks remind their human. Fake clocks throughout."""
 
 import asyncio
+import fcntl
 import json
+import os
 import time
 
 import pytest
 
-from mattermost_ai_agent_bus import a2a, asks, channel, hookapi, lease, remind, server, stall, stats
+from mattermost_ai_agent_bus import a2a, asks, channel, hookapi, lease, remind, server, stall, stats, tasks
 from mattermost_ai_agent_bus.model import RosterEntry
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
@@ -15,7 +17,8 @@ ME = "c" * 26          # the coordinator
 BOB = "b" * 26         # an agent
 EVE = "e" * 26         # another agent
 HUMAN = "h" * 26       # a trusted human
-NOW = float(int(time.time()))
+NOW = int(time.time()) + 0.437   # not round: Mattermost times are ms, clocks are not whole seconds
+UNTRUSTED = "u" * 26   # a human, not trusted
 
 
 def pid(n: int) -> str:
@@ -24,7 +27,7 @@ def pid(n: int) -> str:
 
 def post(n: int, user: str, message: str, ago_min: float, root: int = 0, kind: str = "") -> dict:
     p = {"id": pid(n), "user_id": user, "message": message,
-         "create_at": int((NOW - ago_min * 60) * 1000), "root_id": pid(root) if root else ""}
+         "create_at": int((NOW - ago_min * 60) * 1000) - 123, "root_id": pid(root) if root else ""}
     props = a2a.props(message, kind=kind)
     if props:
         p["props"] = props
@@ -37,7 +40,8 @@ class Client:
 
     def __init__(self):
         self.posts: list[dict] = []
-        self.names = {ME: "agent-coord", BOB: "agent-bob", EVE: "agent-eve", HUMAN: "dembaca"}
+        self.names = {ME: "agent-coord", BOB: "agent-bob", EVE: "agent-eve", HUMAN: "dembaca",
+                      UNTRUSTED: "visitor"}
         self.trusted = {HUMAN: "dembaca"}
         self.reacts: dict[str, list[dict]] = {}
         self.sent: list[dict] = []
@@ -85,6 +89,7 @@ def bus(monkeypatch):
 
     monkeypatch.setattr(stall, "sink", sink)
     monkeypatch.setattr(stall, "waiting", lambda: False)
+    monkeypatch.setattr(stall, "_held", False)
     client.roster, client.woken = roster, woken
     return client
 
@@ -418,3 +423,123 @@ def test_the_reminder_kind_is_fyi_and_kept_in_props():
     assert note == {"v": 1, "kind": "reminder", "intent": "fyi"}
     assert a2a.kind_of({"props": {"a2a": note}}) == a2a.REMINDER
     assert json.dumps(note)
+
+
+# --- review of #97 --------------------------------------------------------------------------
+
+async def _wakes(bus, minutes) -> list[int]:
+    at = []
+    for minute in minutes:
+        before = len(bus.woken)
+        await look(bus, minute)
+        if len(bus.woken) > before:
+            at.append(minute)
+    return at
+
+
+async def test_the_backoff_holds_with_millisecond_times(bus):
+    """RT-6.19 regression: QUIET is kept in whole ms, so a quiet period with
+    ms in its start is the same period at the next look (no wake each tick)."""
+    _open(bus, "task")
+    assert bus.posts[-1]["create_at"] % 1000                    # not a round second
+    assert await _wakes(bus, range(0, 25)) == [0, 20]
+    st = stall._read(ME)
+    assert st["QUIET"] == bus.posts[-1]["create_at"] and st["WAKES"] == 2
+
+
+async def test_own_nudges_and_own_working_keep_the_backoff(bus):
+    """RT-6.19: the crown holder's nudge and its working wake turn are no
+    activity: the next wake comes after the backoff, not 10 min later."""
+    _open(bus, "task")
+    assert await _wakes(bus, [0]) == [0]
+    bus.posts.append(post(7, ME, "@agent-bob still on the parser?", -1, root=1))
+    bus.roster["agent-coord"] = "working"
+    assert await _wakes(bus, range(1, 25)) == [20]
+    assert stall._read(ME)["WAKES"] == 2
+
+
+async def test_an_own_post_pushes_the_first_wake_out(bus):
+    """RT-6.19: a task the coordinator just posted is not stalled at once;
+    without other activity the quiet period starts with the oldest open item."""
+    bus.posts.append(post(1, ME, "TASK · Fix the parser · @agent-bob", 3))
+    assert await _wakes(bus, range(0, 9)) == [7]
+    assert "Stall: no post by an agent or trusted human for 10 min" in bus.woken[0]
+
+
+async def test_without_activity_the_oldest_item_starts_the_quiet(bus, monkeypatch):
+    """RT-6.19: no qualifying post in the window is no quiet since 1970: the
+    oldest open item starts it."""
+    bus.posts += [post(1, UNTRUSTED, "hello", 60), post(2, ME, "TASK · Fix the parser · @agent-bob", 3)]
+    assert stall.quiet_since(bus.posts, ["other", "agent"], ME) == (0, bus.posts[1]["create_at"])
+    monkeypatch.setattr(stall, "quiet_since", lambda posts, classes, uid: (0, 0))
+    assert await _wakes(bus, range(0, 9)) == [7]
+    assert stall._read(ME)["QUIET"] == bus.posts[1]["create_at"]
+
+
+async def test_a_new_crown_holder_does_not_wake_at_once(bus, monkeypatch):
+    """RT-6.19: the previous holder's backoff is not on the bus: taking the
+    crown allows the first wake only MM_STALL_SEC later."""
+    _open(bus, "task")
+    monkeypatch.setattr(lease, "crown_held", lambda uid: True)
+    assert await stall.watch(bus) == pytest.approx(600, abs=60)
+    assert bus.woken == []
+    assert await _wakes(bus, [5, 11]) == [11]
+
+
+def test_a_reply_in_the_task_thread_answers_the_ask():
+    """RT-6.19: an ask inside a task thread is answered by the human's later
+    reply anywhere in that thread (the ask's root), as the reminders see it."""
+    names = {BOB: "agent-bob", HUMAN: "dembaca"}
+    posts = [post(1, BOB, "TASK · Deploy", 60),
+             post(2, BOB, "🙋 @dembaca — **Go?**", 30, root=1, kind=a2a.ASK)]
+    assert [a["ask"] for a in tasks.open_asks(posts, names)] == [pid(2)]
+    posts.append(post(3, HUMAN, "go", 40, root=1))                   # before the ask
+    assert [a["ask"] for a in tasks.open_asks(posts, names)] == [pid(2)]
+    posts.append(post(4, HUMAN, "go", 10, root=1))
+    assert tasks.open_asks(posts, names) == []
+
+
+@pytest.mark.parametrize("by,answers", [(EVE, False), (UNTRUSTED, False), (HUMAN, True)])
+def test_only_the_humans_reaction_answers_the_ask_in_the_task_list(by, answers):
+    """RT-6.19: a 👍 by another agent or a human not trusted leaves the ask open."""
+    names = {BOB: "agent-bob", HUMAN: "dembaca", EVE: "agent-eve", UNTRUSTED: "visitor"}
+    ask = post(1, BOB, "🙋 @someone — **Go?**", 30, kind=a2a.ASK)
+    ask["metadata"] = {"reactions": [{"user_id": by, "emoji_name": "+1"}]}
+    assert (tasks.open_asks([ask], names, {HUMAN}) == []) == answers
+
+
+@pytest.mark.parametrize("by,stops", [(EVE, False), (UNTRUSTED, False), (HUMAN, True)])
+async def test_only_the_human_or_a_trusted_reaction_stops_reminders(bus, by, stops):
+    """RT-6.19: a 👍 by another agent or an untrusted human is no answer."""
+    ask_id = _ask(25)
+    bus.posts.append(post(1, ME, "🙋 @dembaca — **Merge?**", 25, kind=a2a.ASK))
+    bus.reacts[ask_id] = [{"user_id": by, "emoji_name": "+1"}]
+    await remind.tick(bus, ME, NOW)
+    assert (bus.sent == []) == stops
+
+
+async def test_a_reply_in_the_task_thread_stops_reminders(bus):
+    """RT-6.19: the ask's thread is the task's thread; the human's reply there counts."""
+    _ask(25, root=7)
+    bus.posts += [post(7, BOB, "TASK · Deploy", 60),
+                  post(1, ME, "🙋 @dembaca — **Go?**", 25, root=7, kind=a2a.ASK),
+                  post(2, HUMAN, "yes go", 5, root=7)]
+    await remind.tick(bus, ME, NOW)
+    assert bus.sent == []
+
+
+async def test_two_servers_of_one_bot_send_one_reminder(bus):
+    """RT-6.19: remind-<uid>.lock: while one server sends, the other sends nothing."""
+    _ask(25)
+    bus.posts.append(post(1, ME, "🙋 @dembaca — **Merge?**", 25, kind=a2a.ASK))
+    path = remind.session_file.state_dir() / f"remind-{ME}.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert await remind.tick(bus, ME, NOW) is None
+        assert bus.sent == []
+    finally:
+        os.close(fd)
+    await remind.tick(bus, ME, NOW)
+    assert len(bus.sent) == 1

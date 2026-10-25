@@ -981,8 +981,13 @@ async def coordinator(action: str = "who") -> str:
         client = _get_client()
         posts, names = await _work_posts(client)
         if action == "tasks":
+            try:
+                trusted = await client.trusted_humans()
+            except Exception as exc:  # noqa: BLE001
+                log.info("asks without the trusted humans: %s", exc)
+                trusted = {}
             return _out("coordinator", {"tasks": await _tasks(client, posts, names),
-                                        "asks": tasks.open_asks(posts, names)})
+                                        "asks": tasks.open_asks(posts, names, trusted)})
         return _out("coordinator", {"roster": tasks.roster(await lease.roster(client), posts, names)})
     if action not in ("who", "take", "release"):
         return _refused("coordinator", 'action must be "who", "take", "release", "tasks" or "roster"')

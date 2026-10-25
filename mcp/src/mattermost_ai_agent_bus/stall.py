@@ -11,7 +11,10 @@ post in the work channel that @-mentions a reachable agent and has no reply
 by that agent in its thread after it (not an agent's fyi post, not older than
 a day) — and for MM_STALL_SEC (default 600 s) no post there by an agent or a
 trusted human (the ask reminders of remind.py are none) and no agent with the
-status `working`. Then the server wakes its agent with an event
+status `working`; the crown holder's own posts and status are none either (its
+nudges would start a new quiet period), they only push the next wake to
+MM_STALL_SEC after them. Without any activity in the window the quiet period
+starts with the oldest open item. Then the server wakes its agent with an event
 `{kind: "stall"}` whose text lists the items: what, who is next, the last
 activity. The event goes into the inbox queue, so it reaches the agent like
 any event: pushed as a channel tag (RT-6.12), from wait_for_events, and the
@@ -23,8 +26,10 @@ then twice that after the wake, doubling, each gap capped at
 MM_REMIND_MAX_SEC (8 h); any activity starts over. The server looks at every
 heartbeat while it holds the crown (one read of the work channel, as
 coordinator("tasks") makes), sooner when a wake is due. stall-<uid>.env in
-the state dir keeps QUIET (the activity it counts from), WAKES and NEXT
-(epoch of the next possible wake), so a restart does not wake early. DMs
+the state dir keeps QUIET (epoch ms of the activity it counts from), WAKES,
+NEXT (epoch of the next possible wake) and FROM (taking the crown, or a
+restart with it, allows no wake for MM_STALL_SEC: the previous holder's
+backoff is not on the bus), so a restart does not wake early. DMs
 between other agents are theirs: the coordinator sees the work channel only.
 """
 
@@ -32,7 +37,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -59,6 +64,7 @@ def _none_waits() -> bool:
 
 sink: Callable[[str], bool] | None = None
 waiting: Callable[[], bool] = _none_waits
+_held = False  # whether this server held the crown at its last watch
 
 
 def stall_sec() -> int:
@@ -81,12 +87,15 @@ def _hhmm(ms: int) -> str:
     return time.strftime("%H:%M", time.localtime(ms / 1000)) if ms else "–"
 
 
-def quiet_since(posts: list[Mapping[str, Any]], classes: list[str]) -> int:
-    """Epoch ms of the newest post by an agent or trusted human; reminders
-    and system posts do not count. 0 without one."""
-    return max((_at(p) for p, c in zip(posts, classes, strict=True)
-                if c != gate.OTHER and not p.get("type") and not p.get("delete_at")
-                and a2a.kind_of(p) != a2a.REMINDER), default=0)
+def quiet_since(posts: list[Mapping[str, Any]], classes: list[str], uid: str = "") -> tuple[int, int]:
+    """Epoch ms of the newest post by an agent or trusted human other than
+    `uid` (the crown holder), and of the newest post by `uid`; reminders and
+    system posts do not count. 0 without one."""
+    counted = [p for p, c in zip(posts, classes, strict=True)
+               if c != gate.OTHER and not p.get("type") and not p.get("delete_at")
+               and a2a.kind_of(p) != a2a.REMINDER]
+    return (max((_at(p) for p in counted if p.get("user_id") != uid), default=0),
+            max((_at(p) for p in counted if uid and p.get("user_id") == uid), default=0))
 
 
 def _last(thread: list[Mapping[str, Any]], names: Mapping[str, str]) -> tuple[int, str]:
@@ -98,7 +107,8 @@ def _last(thread: list[Mapping[str, Any]], names: Mapping[str, str]) -> tuple[in
 
 
 def items(posts: list[Mapping[str, Any]], names: Mapping[str, str], classes: list[str],
-          rows: list[Mapping[str, Any]], reachable: set[str], now_ms: int) -> list[dict[str, Any]]:
+          rows: list[Mapping[str, Any]], reachable: set[str], now_ms: int,
+          trusted: Collection[str] = ()) -> list[dict[str, Any]]:
     """The open items, longest quiet first: {what, id, title, next, last, at}."""
     live = [p for p in posts if not p.get("type") and not p.get("delete_at")]
     by_thread: dict[str, list[Mapping[str, Any]]] = {}
@@ -126,7 +136,7 @@ def items(posts: list[Mapping[str, Any]], names: Mapping[str, str], classes: lis
                     "next": nxt, "last": last, "at": at})
 
     by_id = {str(p.get("id")): p for p in live}
-    for a in tasks.open_asks(live, names):
+    for a in tasks.open_asks(live, names, trusted):
         post = by_id.get(a["ask"], {})
         asked = _at(post)
         at, last = _last(by_thread.get(str(post.get("root_id") or a["ask"]), []), names)
@@ -184,7 +194,7 @@ def _path(uid: str) -> Path:
 
 
 def _read(uid: str) -> dict[str, float]:
-    out = {"QUIET": 0.0, "WAKES": 0.0, "NEXT": 0.0}
+    out = {"QUIET": 0.0, "WAKES": 0.0, "NEXT": 0.0, "FROM": 0.0}
     try:
         for line in _path(uid).read_text().splitlines():
             k, _, v = line.partition("=")
@@ -195,48 +205,68 @@ def _read(uid: str) -> dict[str, float]:
     return out
 
 
-def _save(uid: str, quiet: float, wakes: int, nxt: float) -> None:
+def _save(uid: str, quiet_ms: int, wakes: int, nxt: float, frm: float) -> None:
     try:
-        session_file.write_private(_path(uid), f"QUIET={int(quiet)}\nWAKES={wakes}\nNEXT={int(nxt)}\n")
+        session_file.write_private(
+            _path(uid), f"QUIET={quiet_ms}\nWAKES={wakes}\nNEXT={nxt:.3f}\nFROM={frm:.3f}\n")
     except OSError as exc:
         log.debug("stall state not saved: %s", exc)
+
+
+def crowned(uid: str, now: float | None = None) -> None:
+    """The server just took the crown (or restarted with it): the previous
+    holder's backoff is not on the bus, so the first wake comes not before
+    MM_STALL_SEC from now (FROM)."""
+    st = _read(uid)
+    _save(uid, int(st["QUIET"]), int(st["WAKES"]), st["NEXT"], (now or time.time()) + stall_sec())
 
 
 # --- the check -----------------------------------------------------------------------
 
 async def check(client: MattermostClient, uid: str, now: float | None = None) -> float | None:
     """One look while holding the crown: wake the agent when the bus stalls.
-    Seconds until the next wake could be due; None to look at the next tick."""
+    Seconds until the next wake could be due; None to look at the next tick.
+    Times in the state are whole: QUIET in ms as Mattermost gives them."""
     now = now or time.time()
+    now_ms = int(now * 1000)
     st = _read(uid)
     posts = await client.list_recent(per_page=200, since_ms=tasks.since_ms(now))
-    names = await client.usernames({str(p.get("user_id") or "") for p in posts} - {""})
+    reactors = {str(r.get("user_id") or "") for p in posts
+                for r in (p.get("metadata") or {}).get("reactions") or []}
+    names = await client.usernames(({str(p.get("user_id") or "") for p in posts} | reactors | {uid}) - {""})
     classes = await gate.author_classes(client, posts)
     roster = await lease.roster(client)
-    quiet = quiet_since(posts, classes) / 1000
-    if any(r.status == "working" for r in roster):
-        quiet = now
-    wakes, nxt = int(st["WAKES"]), st["NEXT"]
-    if quiet > st["QUIET"]:
-        wakes, nxt = 0, quiet + stall_sec()  # activity: a new quiet period
-    else:
-        quiet = st["QUIET"]
-    if nxt > now:
-        _save(uid, quiet, wakes, nxt)
-        return nxt - now
+    # The crown holder's own posts (its nudges) and own `working` (its wake
+    # turn) start no quiet period: only someone else's activity does.
+    quiet, own = quiet_since(posts, classes, uid)
+    if any(r.status == "working" and r.username != names.get(uid) for r in roster):
+        quiet = now_ms
+    trusted = await client.trusted_humans()
     untrusted: set[str] = set()
-    if await client.trusted_humans():
+    if trusted:
         untrusted = {str(p["id"]) for p, c in zip(posts, classes, strict=True)
                      if c == gate.OTHER and not p.get("root_id")}
-    rows = tasks.build(posts, names, now_ms=int(now * 1000), untrusted=untrusted)
-    found = items(posts, names, classes, rows, {r.username for r in roster}, int(now * 1000))
+    rows = tasks.build(posts, names, now_ms=now_ms, untrusted=untrusted)
+    found = items(posts, names, classes, rows, {r.username for r in roster}, now_ms, trusted)
+    if not quiet:  # nothing that counts in the window: the saved start, else the oldest open item
+        quiet = int(st["QUIET"]) or min((i["at"] for i in found if i["at"]), default=now_ms)
+    wakes, nxt = int(st["WAKES"]), st["NEXT"]
+    if quiet > st["QUIET"]:
+        wakes, nxt = 0, quiet / 1000 + stall_sec()  # activity: a new quiet period
+    else:
+        quiet = int(st["QUIET"])
+    # Own posts and a fresh crown only push the next wake out; the backoff goes on.
+    nxt = max(nxt, own / 1000 + stall_sec() if own else 0.0, st["FROM"])
     if not found:
-        _save(uid, quiet, wakes, nxt)
+        _save(uid, quiet, wakes, nxt, st["FROM"])
         return None
-    if not waiting() and (sink is None or not sink(digest(found, int(quiet * 1000), now))):
+    if nxt > now:
+        _save(uid, quiet, wakes, nxt, st["FROM"])
+        return nxt - now
+    if not waiting() and (sink is None or not sink(digest(found, quiet, now))):
         return None  # nobody to wake yet: look again at the next tick
     wakes += 1
-    _save(uid, quiet, wakes, now + backoff(wakes))
+    _save(uid, quiet, wakes, now + backoff(wakes), st["FROM"])
     return backoff(wakes)
 
 
@@ -249,9 +279,14 @@ async def watch(client: MattermostClient) -> float | None:
     except Exception as exc:  # noqa: BLE001
         log.debug("watch: %s", exc)
         return None
+    global _held
+    held = lease.crown_held(uid)
+    if held and not _held:
+        crowned(uid)
+    _held = held
     waits: list[float] = []
     for name, step in (("reminders", remind.tick), ("stall", check)):
-        if step is check and not lease.crown_held(uid):
+        if step is check and not held:
             continue
         try:
             got = await step(client, uid)

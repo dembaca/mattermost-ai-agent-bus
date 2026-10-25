@@ -7,13 +7,15 @@ after half that, doubling (10, 20, 40 … min), each gap capped at
 MM_REMIND_MAX_SEC (default 8 h). A reminder is a short reply in the ask's
 thread with the human's @-mention and the ask's title: part of the ask, the
 one place a human is mentioned (RT-6.11). It stops once the ask is answered
-(a yes/no reaction by someone else, a reply by the human, a trusted human's
-answer the agent collected) or resolved, at 24 h (asks.APPROVAL_SEC: a yes
+(a yes/no reaction by the human or a trusted human, a reply by the human in
+the ask's thread, a trusted human's answer the agent collected) or resolved,
+at 24 h (asks.APPROVAL_SEC: a yes
 approves nothing then, the coordinator's stall digest says to ask again) and
 with the session, whose heartbeat it runs in.
 
 remind-<uid>.env in the state dir keeps what was sent, so a restarted server
-(`claude --continue`) sends nothing early:
+(`claude --continue`) sends nothing early; remind-<uid>.lock (flock) keeps two
+servers of one bot from both sending:
 
     R=<ask post id> <reminders sent> <epoch of the last one>
     STOP=<ask post id>                 answered on Mattermost: no more
@@ -21,6 +23,7 @@ remind-<uid>.env in the state dir keeps what was sent, so a restarted server
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import re
@@ -28,7 +31,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import a2a, asks, lease, session_file, stats
+from . import a2a, asks, lease, session_file, stats, tasks
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -77,7 +80,7 @@ def _read(uid: str) -> tuple[dict[str, tuple[int, float]], set[str]]:
     for line in lines:
         key, _, val = line.partition("=")
         parts = val.split()
-        if key == "R" and len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
+        if key == "R" and len(parts) == 3 and parts[1].isdigit() and parts[2].replace(".", "", 1).isdigit():
             sent[parts[0]] = (int(parts[1]), float(parts[2]))
         elif key == "STOP" and val:
             stop.add(val)
@@ -85,7 +88,7 @@ def _read(uid: str) -> tuple[dict[str, tuple[int, float]], set[str]]:
 
 
 def _write(uid: str, sent: dict[str, tuple[int, float]], stop: set[str]) -> None:
-    lines = [f"R={pid} {n} {int(at)}" for pid, (n, at) in sent.items()]
+    lines = [f"R={pid} {n} {at:.3f}" for pid, (n, at) in sent.items()]
     lines += [f"STOP={pid}" for pid in sorted(stop)]
     path = _path(uid)
     try:
@@ -111,18 +114,17 @@ def text(human: str, title: str, waited: float) -> str:
 
 async def _answered(client: MattermostClient, uid: str, pid: str, root: str,
                     human: str) -> tuple[bool, str]:
-    """Whether the ask is answered on Mattermost (a yes/no reaction by someone
-    else, a reply by the human after it, or the ask gone), and its title."""
-    for r in await client.reactions(pid):
-        if r.get("user_id") != uid and asks.answer_of(str(r.get("emoji_name") or "")):
-            return True, ""
+    """Whether the ask is answered on Mattermost (tasks.ask_answered: a yes/no
+    reaction by the human or a trusted human, a reply by the human in its
+    thread after it; or the ask gone), and its title."""
+    reactions = await client.reactions(pid)
     posts = (await client.thread(root or pid))["posts"]
     ask = next((p for p in posts if p.get("id") == pid), None)
     if ask is None or ask.get("delete_at"):
         return True, ""
-    later = [p for p in posts if int(p.get("create_at") or 0) > int(ask.get("create_at") or 0)]
-    names = await client.usernames({str(p.get("user_id") or "") for p in later} - {"", uid})
-    if any(names.get(str(p.get("user_id") or ""), "").lower() == human for p in later):
+    ids = {str(p.get("user_id") or "") for p in posts} | {str(r.get("user_id") or "") for r in reactions}
+    names = await client.usernames(ids - {"", uid})
+    if tasks.ask_answered(ask, posts, reactions, names, human, await client.trusted_humans()):
         return True, ""
     title = _TITLE.search(str(ask.get("message") or ""))
     return False, " ".join(title[1].split())[:TITLE] if title else ""
@@ -133,6 +135,35 @@ async def tick(client: MattermostClient, uid: str, now: float | None = None) -> 
     None without one to come. Called by the heartbeat; raises on a bus error,
     which the heartbeat swallows (the reminder is sent at the next tick)."""
     now = now or time.time()
+    lock = _lock(uid)
+    if lock is None:
+        return None  # another server of this bot is sending: look at the next tick
+    try:
+        return await _tick(client, uid, now)
+    finally:
+        os.close(lock)
+
+
+def _lock(uid: str) -> int | None:
+    """An exclusive advisory lock on remind-<uid>.lock around read, decide,
+    post and write, so two servers of one bot send no reminder twice. None
+    while another holds it; a state dir that cannot be written locks nothing."""
+    path = session_file.state_dir() / f"remind-{uid}.lock"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    except OSError as exc:
+        log.debug("reminder lock not taken: %s", exc)
+        return os.open(os.devnull, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+async def _tick(client: MattermostClient, uid: str, now: float) -> float | None:
     open_asks = asks.waiting(uid)
     sent, stop = _read(uid)
     ids = {pid for pid, *_ in open_asks}

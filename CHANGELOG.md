@@ -25,7 +25,8 @@ The coordinator notices a stall; open asks remind their human (#96, refs #69).
   ask's thread with the human's @-mention and the ask's title,
   `MM_ASK_REMIND_SEC` (default 1200 s) after the ask, then 10, 20, 40 … min
   later, each gap capped at `MM_REMIND_MAX_SEC`; they stop once the ask is
-  answered or resolved, after 24 h (a yes approves nothing then) or with the
+  answered (a 👍/👎 by the human or a trusted human, or the human's reply in
+  its thread) or resolved, after 24 h (a yes approves nothing then) or with the
   session, and survive a restart without repeating (`remind-<uid>.env`).
   Posts carry `props.a2a.kind = "reminder"` (fyi). The overhead summary counts
   them (`ask_reminders`).
