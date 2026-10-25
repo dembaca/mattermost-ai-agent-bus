@@ -24,6 +24,7 @@ class FakeClient:
     def __init__(self, posts=(), reactions=None, agents=(), token="t", fail=False):
         self.token = token
         self.project_channel_name = ""
+        self.work_channel_name = "agents"
         self.posts = list(posts)
         self._reactions = reactions or {}
         self._agents = set(agents)
@@ -184,7 +185,9 @@ async def test_posts_say_what_the_listener_needs(api):
     d.mkdir(parents=True, exist_ok=True)
     (d / f"gate-{UID}.env").write_text(f"GATED=p3 {int(time.time())}\n")
     _, h = await api(client)
-    got = (await h.get("/v1/posts?limit=500")).json()["posts"]
+    body = (await h.get("/v1/posts?limit=500")).json()
+    assert body["channel"] == "agents"  # the work channel's name, for mm-agent-poll.sh
+    got = body["posts"]
     assert client.calls == [("posts", 200, None)]
     assert [p["id"] for p in got] == ["p1", "p2", "p3", "p4"]
     assert [p["fyi"] for p in got] == [True, False, False, False]
@@ -249,7 +252,10 @@ async def test_the_file_names_endpoint_and_key_and_goes_at_exit(api, monkeypatch
     await a.close()
     assert not f.exists()
     b, _ = await api(FakeClient(), write_file=True)
+    b._server.close()  # `claude --continue`: the old server is gone, its file not yet
+    await b._server.wait_closed()
     c, _ = await api(FakeClient(), write_file=True)
+    assert not c.conflict
     await b.close()
     assert session_file.parse(f)["MM_BUS_KEY"] == c.key
     await c.close()
@@ -304,6 +310,8 @@ async def test_the_file_learns_the_bot_id(api, monkeypatch):
     assert session_file.parse(f)["MM_BUS_KEY"] == a.key
     assert stat.S_IMODE(os.stat(f).st_mode) == 0o600
     monkeypatch.setenv("MM_BOT_USER_ID", OTHER)
+    # a looks gone to b (`claude --continue`), so b takes the session's file over.
+    monkeypatch.setattr(hookapi, "_answers", lambda endpoint, key: False)
     b, _ = await api(FakeClient(), write_file=True)
     assert session_file.parse(f)["MM_BOT_USER_ID"] == OTHER
     await h.get("/v1/me")   # a's file is b's now: a leaves it alone
@@ -422,3 +430,134 @@ async def test_me_says_whether_the_channel_is_confirmed(api):
     assert (await h.get("/v1/me")).json()["channel"] is False
     session_file.write_private(channel.confirmed_file(UID), "CONFIRMED=1\n")
     assert (await h.get("/v1/me")).json()["channel"] is True
+
+
+async def test_post_and_reply_run_the_tools_code(api, monkeypatch):
+    """RT-6.17 step 3: POST /v1/post and /v1/reply hand the fields to the
+    server's post_as_bot / reply_as_bot (the tools' code) and answer what they
+    return, a refusal included; anything but the post fields as strings is a 400."""
+    calls = []
+
+    async def post_as_bot(client, **kw):
+        calls.append(("post", kw))
+        return {"posted": False, "refused": "kind must be one of …"} if kw["kind"] else {"id": "n"}
+
+    async def reply_as_bot(client, **kw):
+        calls.append(("reply", kw))
+        return {"id": "r"}
+
+    monkeypatch.setattr(hookapi, "_tools", lambda: type("M", (), {
+        "post_as_bot": staticmethod(post_as_bot), "reply_as_bot": staticmethod(reply_as_bot)}))
+    _, h = await api(FakeClient())
+    r = await h.post("/v1/post", json={"message": "hi", "to": "all"})
+    assert r.status_code == 200 and r.json() == {"id": "n"}
+    assert calls[-1] == ("post", {"message": "hi", "channel_id": "", "root_id": "",
+                                  "to": "all", "kind": ""})
+    assert (await h.post("/v1/post", json={"message": "x", "kind": "SHOUT"})).json()["posted"] is False
+    assert (await h.post("/v1/reply", json={"root_id": ASK, "message": "ok"})).json() == {"id": "r"}
+    for bad in ({"message": "x", "token": "t"}, {"message": 1}, {"message": ""}):
+        assert (await h.post("/v1/post", json=bad)).status_code == 400
+    assert (await h.post("/v1/reply", json={"message": "x"})).status_code == 400
+    monkeypatch.setattr(hookapi, "_tools", lambda: None)  # a host process before its first relay
+    assert (await h.post("/v1/post", json={"message": "x"})).status_code == 503
+
+
+async def test_posts_only_of_the_channels_the_bus_watches(api, monkeypatch):
+    """RT-6.17, arc42 §7.3: mm-agent-poll.sh --channel reads the work, the
+    project or the default channel, by id or name; a DM, a group channel or
+    another channel the bot is in is a 403, read from nowhere."""
+    proj, default = "p" * 26, "d" * 26
+    monkeypatch.setenv("MM_CHANNEL_ID", default)
+    monkeypatch.delenv("MM_PROJECT_CHANNEL_ID", raising=False)
+    c = FakeClient(posts=[post("p1", "hi")])
+    c.project_channel_name, c.channel_name = "proj-x", "agents"
+    names = {"proj-x": proj, "agents": default, "elsewhere": "e" * 26}
+    seen = []
+
+    async def get_channel_id(name=None):
+        return names[name]
+
+    async def channel_posts(cid, *, per_page=None, since_ms=None):
+        seen.append(cid)
+        return list(c.posts)
+
+    c.get_channel_id, c.channel_posts = get_channel_id, channel_posts
+    _, h = await api(c)
+    for chan in (proj, default, "proj-x", "c" * 26):
+        assert (await h.get(f"/v1/posts?channel={chan}&since=1")).status_code == 200
+    assert seen == [proj, default, proj, "c" * 26]
+    dm, group = "x" * 26, "g" * 26
+    for chan in (dm, group, "elsewhere"):
+        r = await h.get(f"/v1/posts?channel={chan}&since=1")
+        assert r.status_code == 403 and "work, project and default" in r.json()["error"]
+    assert (await h.get("/v1/posts?channel=../x")).status_code == 400
+    assert len(seen) == 4
+
+
+async def test_a_harness_with_an_inherited_session_id_leaves_the_file(api, monkeypatch):
+    """RT-6.17 error handling: a harness started from a Claude Code shell
+    (codex exec, opencode) inherits CLAUDE_CODE_SESSION_ID. Its server leaves
+    the live server's file alone and names both clients in its warning."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
+    a, _ = await api(FakeClient(), write_file=True)
+    a.note_client("claude-code")
+    f = hookapi.file_path()
+    assert session_file.parse(f)["MM_BUS_CLIENT"] == "claude-code"
+    # Both serve on this test's one loop: b's probe of a (GET /v1/me within
+    # 1 s) cannot be answered here, so it is taken as answered.
+    monkeypatch.setattr(hookapi, "_answers", lambda endpoint, key: key == a.key)
+    b, _ = await api(FakeClient(), write_file=True)
+    b.note_client("codex-mcp-client")
+    assert session_file.parse(f)["MM_BUS_KEY"] == a.key
+    w = b.warning()
+    assert "client claude-code" in w and "codex-mcp-client" in w
+    assert "env -u CLAUDE_CODE_SESSION_ID" in w and not a.warning()
+
+
+async def test_rekey_writes_the_new_file_before_the_old_one_goes(api, monkeypatch, tmp_path):
+    """RT-6.17 step 2: when the roots name the workspace, the file moves; a
+    shell looking meanwhile finds the old file or the new one, never neither."""
+    for var in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PROJECT_DIR", "MM_WORKSPACE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(session_file, "_roots_dir", None)
+    one, two = tmp_path / "one", tmp_path / "two"
+    one.mkdir(), two.mkdir()
+    monkeypatch.chdir(one)
+    a, _ = await api(FakeClient(), write_file=True)
+    old = hookapi.file_path()
+    assert old.exists()
+    order, real = [], os.replace
+
+    def replace(src, dst):
+        real(src, dst)
+        order.append(("new written, old still there", old.exists()))
+
+    monkeypatch.setattr(os, "replace", replace)
+    assert session_file.set_roots_dir(str(two.resolve()))
+    a.rekey()
+    assert order == [("new written, old still there", True)]
+    assert not old.exists() and session_file.parse(hookapi.file_path())["MM_BUS_KEY"] == a.key
+
+
+async def test_no_file_keyed_on_home_or_above(api, monkeypatch, tmp_path):
+    """RT-6.17 step 2: a server started in the home directory (or /) keys no
+    endpoint file there, where a shell anywhere below would find it; it waits
+    for the client's roots and says so (bus_info's warning)."""
+    for var in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PROJECT_DIR", "MM_WORKSPACE"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(session_file, "_roots_dir", None)
+    home, proj = tmp_path / "home", tmp_path / "home" / "proj"
+    proj.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(home)
+    a, _ = await api(FakeClient(), write_file=True)
+    assert not hookapi.file_path().exists() and not list(session_file.state_dir().glob("endpoint-*"))
+    assert "MM_WORKSPACE" in a.warning() and str(home.resolve()) in a.warning()
+    monkeypatch.chdir("/")
+    assert session_file.unkeyed() == "/"
+    monkeypatch.chdir(home)
+    assert session_file.set_roots_dir(str(proj.resolve()))
+    a.rekey()
+    assert hookapi.file_path().exists() and not a.warning()
+    monkeypatch.setenv("MM_WORKSPACE", str(home))
+    assert session_file.unkeyed() == ""  # a variable that names it is taken

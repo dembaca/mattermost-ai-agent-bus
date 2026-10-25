@@ -3,6 +3,152 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.40.0
+
+Every harness runs the MCP server; the shell scripts are its clients (#69).
+
+### Breaking
+
+- **Shell-only agent sessions are gone.** An agent's shell holds no bot token
+  and no registration secret in any runtime: it reaches the bus only through
+  its session's MCP server
+  ([RT-6.17](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
+  Removed: `bin/mm-agent-session.sh` (`start` / `stop`; agents register with
+  the MCP tool `session_start` and end with `session_end`), the Cursor example
+  hooks `adapters/cursor/hooks.json.example`, `mm-session-start.sh.example`
+  and `mm-session-end.sh.example` (they registered through the shell and wrote
+  the token into Cursor's env file), the `mm_load_hook_session` helper, and the
+  docs that told agents to export `MM_REG_SECRET` into their shell.
+- **Removed in 0.38.0, listed here for the migration** — the scripts and their
+  MCP replacements: `mm-agent-lease.sh` (`tick` / `take` / `release` / `who`) →
+  the server's heartbeat and `coordinator("take" | "release" | "who")`;
+  `mm-agent-roster.sh` → `coordinator("roster")`; `mm-agent-unread.sh count` /
+  `detail` → `wait_for_events(timeout_sec=1)` (the hooks: `GET /v1/pending`).
+  `mm-agent-unread.sh baseline` stays for the host session hooks.
+- **`mm-agent-post.sh`, `mm-agent-poll.sh`, `mm-agent-status.sh` need the
+  session's MCP server.** Without one they exit 3 and say what to start; no
+  token fallback. `mm-agent-poll.sh --team` is gone (the bot's team);
+  `mm-agent-status.sh offline` by hand is gone (the server sets it at the end).
+- **`mm-agent-post.sh` prints the server's slim post**, not Mattermost's:
+  `id`, `root_id` (a reply), `channel` (the name, not `channel_id`), `author`,
+  `at` (readable, not `create_at` in ms), `message`, and hints such as
+  `unmentioned`. Read `id` and `message` as before; take `channel`/`at`
+  instead of `channel_id`/`create_at`.
+- **`mm-agent-poll.sh` prints slim posts:** `id`, `user_id`, `root_id`,
+  `create_at`, `type`, `message`, `to`, `intent`, `fyi`, `gated` — no
+  `props`, `metadata` or `update_at`; a2a props come as `to` / `intent`.
+  `--channel` reads only the work, project and default channel (403 otherwise).
+- **`mm-agent-post.sh` posts with `post_message`'s rules:** a human's
+  @-mention becomes the plain name and `@channel`/`@here`/`@all` plain words.
+  To reach a human use the MCP tool `ask_human`; to wake every agent `--to all`.
+- **A message `-` reads stdin** in the new form (`mm-agent-post.sh -`); in the
+  0.36 form `CHANNEL_ID - [ROOT_ID]` it is still the text `-`.
+- **Exit codes:** 1 a refused post or a 400, 2 usage, 3 no reachable server of
+  this session — no longer curl's codes. Scripts that tested curl's codes test these.
+
+### Changed
+
+- **Thin clients:** `mm-agent-post.sh [--channel ID] [--root ID] [--to AGENT|all]
+  [--kind WORD] MESSAGE|-` (the 0.36 form `CHANNEL MESSAGE [ROOT]` still works)
+  posts through the new `POST /v1/post` and `POST /v1/reply`, which run the code
+  of `post_message` / `reply_in_thread` (mention rewriting, a2a props, kind and
+  its refusal, 👑) and answer what they return; a refusal goes to stderr, exit 1.
+  `mm-agent-poll.sh` reads `GET /v1/posts` (new `?channel=`) and prints its
+  JSON lines oldest first.
+- **Finding the server per harness:** outside Claude Code the server keys its
+  endpoint and session file on the workspace: `CLAUDE_PROJECT_DIR`,
+  `MM_WORKSPACE` (Cursor: `${workspaceFolder}`), the client's first MCP root,
+  else its working directory. The shell takes `MM_BUS_ENDPOINT`/`MM_BUS_KEY`,
+  else the session id, else `CLAUDE_PROJECT_DIR` / `CURSOR_PROJECT_DIR` /
+  `MM_WORKSPACE` exactly, else the closest file walking up from `$PWD`. A
+  second server in the same workspace does not overwrite a live first one's
+  file and warns in `session_start` / `bus_info`. The walk from `$PWD` stops
+  at the nearest git top (a nested repository or a worktree under a checkout
+  never reaches the outer workspace's server), and no endpoint file is keyed
+  on `/`, the home directory or above it: such a server waits for the client's
+  roots and says so in `bus_info`. A live server's file is not overwritten for
+  a session id either: a harness started from a Claude Code shell
+  (`codex exec`, `opencode`) inherits `CLAUDE_CODE_SESSION_ID`; its warning
+  names both MCP clients (the endpoint file now carries `MM_BUS_CLIENT`) and
+  says to start it with `env -u CLAUDE_CODE_SESSION_ID`. When the roots move
+  the file, the new one is written before the old one goes.
+- **`mm-agent-post.sh` options:** only `--channel`, `--root`, `--to`, `--kind`,
+  `-h`/`--help` and `--` are options, so messages such as `- done`, `-1 left`
+  or `---` are posted (0.40.0 drafts refused them); in the 0.36 form nothing
+  after the channel id is an option.
+- **`GET /v1/posts?channel=`** reads only the channels the bus watches (work,
+  project, default), never a DM or group channel: `403`. §7.3 names what a
+  holder of a session's `MM_BUS_KEY` can do.
+- **`mm-agent-status.sh` never hands over to another bot's server:** with
+  `MM_BOT_USER_ID` set the server must name that bot (since 0.38 a server found
+  by directory was asked whatever bot it served).
+- **A symlinked state directory** is allowed again outside the corral host
+  process (0.39.0 refused it everywhere).
+- **The server remembers the agent's last post** by the work channel's id
+  (`MM_PROJECT_CHANNEL_ID` included), as the shell did.
+- Docs: adapters for Cursor, OpenCode and (new, untested) Codex with complete
+  MCP configs; README, `docs/protocol.md`, the smoke test, SKILL.md, the MCP
+  instructions and arc42 §5, RT-6.6, RT-6.10, RT-6.11, RT-6.17, §7.2, §7.3.
+
+### Fixed (live tests with Codex, OpenCode and Cursor)
+
+- **The MCP server ends with its client.** A server whose client went without
+  closing its stdin (Codex killed the `uv` that started it) or that got SIGTERM
+  lived on: the SDK reads stdin in an AnyIO worker thread that is no daemon and
+  cannot be cancelled, so the interpreter waited for it forever. The orphan kept
+  its endpoint file, and the next server's shell clients exited 3. Now the exit
+  work (BYE, stats, offline, unregister, endpoint file) runs explicitly when
+  stdin ends, on SIGTERM/SIGHUP, or when a watchdog sees the server's parent
+  gone, and the process leaves with `os._exit` (within 2.5 s after a signal)
+  ([RT-6.10](docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
+- **A stuck owner no longer blocks the endpoint file.** Another server counts
+  as live only when its pid runs and it answers an authenticated `GET /v1/me`
+  within 1 s; listening is not enough
+  ([RT-6.17](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
+- **Channel push is Claude Code's alone.** An `MM_CHANNEL_PUSH=1` from the
+  user's shell put Codex, OpenCode and Cursor servers into channel mode; now a
+  client that does not name itself `claude-code` gets the plain server
+  ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)).
+- **Inherited Claude Code session variables are ignored** by a server whose
+  client is not Claude Code: it keys its files on the workspace and takes over
+  no bot of that Claude session. Start other harnesses from a clean shell all
+  the same ([§7.2](docs/arc42/07-deployment-view.md#72-environment-differences)).
+- `session_end` answers with the registered bot's name (`ended` was empty).
+- `mm-agent-poll.sh` names the channel it reads (`polling channel=<name>`), not
+  `work`; `GET /v1/posts` carries `channel`.
+- Docs: a complete, tested Codex configuration (all `MM_*` variables, since
+  Codex passes no other environment to MCP servers;
+  `default_tools_approval_mode = "approve"` for `codex exec`); Cursor: remove
+  the old global `sessionStart`/`sessionEnd` hooks and `mattermost` MCP entry.
+
+### Migration
+
+- **Claude Code without corral:** nothing to change for the plugin's server;
+  drop `mm-agent-session.sh` from scripts and `trap`s, let the agent call
+  `session_start`. To keep `MM_REG_SECRET` out of the agent's shell, add the
+  server with a command that reads it itself ([adapters/claude.md](adapters/claude.md)).
+- **Cursor:** remove the `sessionStart` / `sessionEnd` hooks of the examples;
+  configure the MCP server as in [adapters/cursor.md](adapters/cursor.md):
+  `uv run --project …/mcp`, `env.MM_WORKSPACE = "${workspaceFolder}"`, and a
+  server command that fetches `MM_REG_SECRET` itself (`sh -c
+  'MM_REG_SECRET="$(gopass show -o …)" exec uv run …'`). `${env:MM_REG_SECRET}`
+  works too but needs the secret in Cursor's environment, so the agent's shell
+  has it.
+- **OpenCode:** configure the MCP server as in
+  [adapters/opencode.md](adapters/opencode.md): `uv run --project …/mcp` (not
+  `cd …/mcp`) in a command that fetches `MM_REG_SECRET` itself, then remove it
+  from the environment you start OpenCode with. `{env:MM_REG_SECRET}` reads it
+  from that environment, which the agent's shell inherits.
+- **Scripts that call `mm-agent-post.sh` / `mm-agent-poll.sh`:** see Breaking
+  for the output keys and exit codes.
+- **Codex:** [adapters/codex.md](adapters/codex.md): list every `MM_*`
+  variable in the server's `env` and set `default_tools_approval_mode =
+  "approve"` for `codex exec`.
+- **Cursor, before 0.40.0 set up with session hooks:** remove the
+  `sessionStart`/`sessionEnd` entries from `~/.cursor/hooks.json` and an older
+  global `mattermost` MCP entry, or the session runs two bots.
+- **corral:** nothing; rerun `bin/mm-agent-host-install.sh` as for any update.
+
 ## 0.39.0
 
 Keyless corral session: the bot token stays on the host (#81, #69).

@@ -804,7 +804,7 @@ class MattermostClient:
         """Keep the bot's latest post in the work channel for the Stop hook and
         the exit handler (ownpost.py). Bookkeeping: never fails the post."""
         try:
-            if self.bot_id and channel_id == await self.get_channel_id():
+            if self.bot_id and channel_id == await self.work_channel_id():
                 ownpost.record(self.bot_id, channel_id, post)
         except Exception as exc:  # noqa: BLE001
             log.info("own post not remembered: %s", exc)

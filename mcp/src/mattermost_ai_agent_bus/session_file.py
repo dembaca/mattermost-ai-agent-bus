@@ -1,23 +1,21 @@
-"""Session file: hands the bot token from the MCP server to the hooks.
+"""Session file: the bot a session registered itself, for `claude --continue`.
 
-Under Claude Code the MCP server and the hooks are sibling processes. A token
-that session_start puts into the server's own ``os.environ`` never reaches the
-hooks, so they stayed inert and a Stop hook could not tell anyone was waiting.
-The session file is the hand-over: written by session_start, read by the hooks
-(``mm_load_hook_session`` in bin/mm-agent-lib.sh), removed by session_end.
+session_start writes it (0600), session_end removes it; the server's exit
+touches it, and the next server of the same Claude Code session takes the bot
+over from it (RT-6.10). It lives next to the corral session files, so
+``mm-agent-sweep.sh`` sees it too: it records MM_SESSION_PID, which the sweep
+uses to tell a live session from an abandoned one. No shell reads its token:
+hooks and scripts ask the server's hook API (RT-6.17), whose endpoint file is
+keyed the same way (keyed_path).
 
-It lives next to the corral session files, so ``mm-agent-sweep.sh`` sees it too:
-it records MM_SESSION_PID, which the sweep uses to tell a live session from an
-abandoned one.
-
-Server and hooks have to derive the same file name, and two sessions must never
-share one. Both key it on the Claude Code session (CLAUDE_CODE_SESSION_ID), which
-Claude Code puts into the environment of the MCP server, the hooks and every
-command the agent starts. Only without it do they fall back to the project
-directory (CLAUDE_PROJECT_DIR, else the working directory). Keyed on the project
-alone, a second session in the same checkout overwrote the first one's file:
-the first agent's hooks and listener then ran as the second bot and never saw
-the messages for its own (RT-6.10).
+Two sessions must never share a key. Under Claude Code it is the session
+(CLAUDE_CODE_SESSION_ID), which Claude Code puts into the environment of the
+MCP server, the hooks and every command the agent starts. Elsewhere (Cursor,
+OpenCode, Codex) nothing names a session, so it is the workspace (workspace()):
+one MCP server per workspace, one bot per workspace. Keyed on the project
+alone, a second Claude Code session in the same checkout overwrote the first
+one's file: the first agent's hooks and listener then ran as the second bot
+and never saw the messages for its own (RT-6.10).
 """
 
 from __future__ import annotations
@@ -32,6 +30,7 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlsplit
 
 if TYPE_CHECKING:
     from .client import SessionInfo
@@ -153,12 +152,74 @@ def state_dir() -> Path:
     return Path(base) / "mm-agent-bus"
 
 
-def project_dir() -> str:
+# The workspace the client named in roots/list, when the environment names none.
+_roots_dir: str | None = None
+# Where the workspace may come from, before roots and cwd (RT-6.17 step 2).
+WORKSPACE_VARS = ("CLAUDE_PROJECT_DIR", "MM_WORKSPACE")
+
+
+def workspace() -> tuple[str, str]:
+    """The directory a session without a session id is keyed on, and its source:
+    CLAUDE_PROJECT_DIR, MM_WORKSPACE (Cursor: ``${workspaceFolder}``), the
+    first file:// root the client named (roots), else the server's working
+    directory (cwd; OpenCode starts its servers there). Resolved, so a shell
+    that walks up from its real directory meets the same name. Must match
+    mm_bus_file in bin/mm-agent-lib.sh (RT-6.17 step 2)."""
     if _hosted_dir is not None:
         # The sandbox's directory, from the relay's handshake: a name only,
         # never resolved, opened or entered on the host (RT-6.18).
-        return os.path.normpath(os.environ.get("CLAUDE_PROJECT_DIR") or "/")
-    return os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+        return os.path.normpath(os.environ.get("CLAUDE_PROJECT_DIR") or "/"), "hosted"
+    for var in WORKSPACE_VARS:
+        value = os.environ.get(var, "").strip()
+        if value:
+            return os.path.realpath(value), var
+    if _roots_dir:
+        return _roots_dir, "roots"
+    return os.path.realpath(os.getcwd()), "cwd"
+
+
+def too_broad(path: str) -> bool:
+    """/, the home directory or a directory above it: no workspace to key an
+    endpoint file on (RT-6.17 step 2), a shell anywhere below would find it."""
+    home = os.path.realpath(str(Path.home()))
+    path = os.path.realpath(path)
+    return path == home or home.startswith(path.rstrip("/") + "/")
+
+
+def unkeyed() -> str:
+    """The directory the endpoint file is not keyed on, or '': without a
+    session id the working directory or the client's root, when it is / or
+    the home directory (or above it). A variable that names it is taken."""
+    if session_id() or _hosted_dir is not None:
+        return ""
+    path, source = workspace()
+    return path if source in ("cwd", "roots") and too_broad(path) else ""
+
+
+def project_dir() -> str:
+    return workspace()[0]
+
+
+def root_path(uri: str) -> str | None:
+    """A client's file:// root as the real path of a directory, else None."""
+    parts = urlsplit(uri)
+    if parts.scheme != "file" or parts.netloc not in ("", "localhost"):
+        return None
+    path = unquote(parts.path)
+    if not os.path.isabs(path) or not os.path.isdir(path):
+        return None
+    return os.path.realpath(path)
+
+
+def set_roots_dir(path: str) -> bool:
+    """Key on the client's first root from now on, where neither a session id
+    nor the environment names the workspace. True when the key changed."""
+    global _roots_dir
+    if session_id() or workspace()[1] not in ("cwd", "roots"):
+        return False
+    before = keyed_path("mcp")
+    _roots_dir = path
+    return keyed_path("mcp") != before
 
 
 # --- writing state files --------------------------------------------------------
@@ -177,7 +238,10 @@ def ensure_private_dir(path: Path) -> None:
 def _state_parent(path: Path) -> Path:
     d = path.parent
     d.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if os.path.islink(d):
+    # The host process keeps its files where the host hook chose: nothing from
+    # a sandbox may redirect them (RT-6.18). Elsewhere the state dir is the
+    # user's own and may be a symlink (a dotfiles setup).
+    if hosted() and os.path.islink(d):
         raise OSError(errno.ELOOP, "state directory is a symlink", str(d))
     if os.path.islink(path):
         raise OSError(errno.ELOOP, "state file is a symlink", str(path))
@@ -216,8 +280,8 @@ def session_id() -> str:
 
 def keyed_path(prefix: str) -> Path:
     """A file of this session in the state dir: <prefix>-sid-<key>.env keyed on
-    the session id, else <prefix>-<key>.env keyed on the project directory.
-    Must match mm_hook_session_file in bin/mm-agent-lib.sh."""
+    the session id, else <prefix>-<key>.env keyed on the workspace.
+    Must match mm_bus_file in bin/mm-agent-lib.sh."""
     sid = session_id()
     if sid:
         return state_dir() / f"{prefix}-sid-{hashlib.sha1(sid.encode()).hexdigest()[:16]}.env"

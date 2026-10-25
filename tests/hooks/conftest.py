@@ -1,10 +1,11 @@
 """Run the shell hooks against an in-process fake Mattermost + registrar.
 
 Each test gets a fresh server (random port), a private XDG state dir and a
-minimal environment, so nothing from the developer's machine leaks in. The
-turn hooks and the listener hold no token: they ask the MCP server's hook API
-(RT-6.17), which runs here for each of their runs, in-process, with the run's
-environment and a real client against the fake.
+minimal environment, so nothing from the developer's machine leaks in. The turn hooks and the scripts an agent runs (listen, post, poll, status) hold
+no token: they ask the MCP server's hook API (RT-6.17), which runs here for each
+of their runs, in-process, with the run's environment and a real client against
+the fake. The server's module is loaded, as in the real process: its tools'
+code answers POST /v1/post and /v1/reply.
 """
 
 from __future__ import annotations
@@ -36,11 +37,12 @@ if os.path.realpath(tempfile.gettempdir()).lower().startswith("/private/tmp/corr
     (ROOT / ".pytest-tmp").mkdir(exist_ok=True)
 sys.path.insert(0, str(ROOT / "mcp" / "src"))
 
-from mattermost_ai_agent_bus import hookapi  # noqa: E402
+from mattermost_ai_agent_bus import hookapi, server  # noqa: E402,F401
 from mattermost_ai_agent_bus.client import MattermostClient  # noqa: E402
 
-# Scripts that ask the hook API instead of Mattermost.
-API_USERS = ("hooks/", "bin/mm-agent-listen.sh")
+# Scripts that ask the hook API instead of Mattermost: no token in their environment.
+API_USERS = ("hooks/", "bin/mm-agent-listen.sh", "bin/mm-agent-post.sh", "bin/mm-agent-poll.sh",
+             "bin/mm-agent-status.sh")
 ME = "a" * 26
 TEAM = "t" * 26
 CHANNEL = "c" * 26
@@ -129,6 +131,8 @@ def _handler(fake: FakeMattermost):
                 return self._send({"id": PROJECT if name.startswith("proj") else CHANNEL})
             if p.startswith("/api/v4/posts/") and p.endswith("/reactions"):
                 return self._send(fake.reactions.get(p.split("/")[4], []))
+            if re.fullmatch(r"/api/v4/posts/[a-z0-9]{26}", p):  # a reply's root
+                return self._send({"id": p.rsplit("/", 1)[1], "channel_id": CHANNEL})
             if p.endswith("/posts"):
                 return self._send({"order": [x["id"] for x in fake.posts],
                                    "posts": {x["id"]: x for x in fake.posts}})
@@ -156,6 +160,9 @@ def _handler(fake: FakeMattermost):
             fake.writes.append((self.command, p, body))
             if p in fake.deny:
                 return self._send({"message": "no permission"}, 403)
+            if p == "/api/v4/users/usernames":  # people, for the mention check (RT-6.11)
+                return self._send([{"username": n, "is_bot": False} for n in body
+                                   if n in ("dembaca", "kollegin")])
             if p == "/api/v4/users/ids":
                 return self._send([u for u in fake.users if u["id"] in body])
             if p == "/api/v4/users/status/ids":
@@ -258,12 +265,14 @@ class Result:
 @pytest.fixture
 def run(mm, tmp_path):
     """run(script, *args, stdin=..., **env) → Result. Bot session env is set by default;
-    pass key=None to drop a variable. Hooks and the listener get the hook API
-    (RT-6.17) by env (bus="env"), by its file (bus="file") or none (bus=None)."""
+    pass key=None to drop a variable. Hooks and the agent's scripts get the hook
+    API (RT-6.17) by env (bus="env"), by its file (bus="file") or none (bus=None).
+    fd_token=True: the token on fd 3 instead (MM_BOT_TOKEN_FD), as the corral
+    host hooks hand it to mm-agent-status.sh."""
     state = tmp_path / "state"
 
     def _run(script: str, *args: str, stdin: str = "{}", bus: str | None = "env",
-             cwd: str | None = None, **env) -> Result:
+             cwd: str | None = None, fd_token: bool = False, **env) -> Result:
         base = {
             "PATH": os.environ["PATH"],
             "HOME": str(tmp_path),
@@ -278,15 +287,20 @@ def run(mm, tmp_path):
         for k, v in env.items():
             if v is None:
                 base.pop(k, None)
+        argv = ["bash", str(ROOT / script), *args]
+        if fd_token:
+            base["MM_TEST_FD_TOKEN"] = base.pop("MM_BOT_TOKEN", "")
+            argv = ["bash", "-c", 'exec 3<<<"$MM_TEST_FD_TOKEN"; unset MM_TEST_FD_TOKEN; '
+                    'MM_BOT_TOKEN_FD=3 exec bash "$@"', "_", *argv[1:]]
         with contextlib.ExitStack() as stack:
-            if script.startswith(API_USERS):
+            if script.startswith(API_USERS) and not fd_token:
                 if bus:
                     found = stack.enter_context(hook_api(base, write_file=bus == "file"))
                     if bus == "env":
                         base |= found
                 # The token is the MCP server's alone: hooks and listener never see it.
                 base = {k: v for k, v in base.items() if k not in ("MM_BOT_TOKEN", "MATTERMOST_TOKEN")}
-            p = subprocess.run(["bash", str(ROOT / script), *args], input=stdin, env=base,
+            p = subprocess.run(argv, input=stdin, env=base,
                                capture_output=True, text=True, timeout=60, cwd=cwd)
         return Result(p.returncode, p.stdout, p.stderr)
 

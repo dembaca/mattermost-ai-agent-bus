@@ -354,6 +354,7 @@ async def serve_handshake_only(
     pusher: Pusher,
     on_connected: Callable[[], Awaitable[None]],
     on_permission: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    on_initialize: Callable[[Any], Any] | None = None,
 ) -> None:
     """The SDK's handshake-era loop, keeping the connection for the pusher.
 
@@ -376,6 +377,12 @@ async def serve_handshake_only(
                 code=INVALID_REQUEST,
                 message="channel server: handshake protocol era only",
             )
+        if method == "initialize" and on_initialize is not None:
+            # The client names itself: other options for one that is no
+            # Claude Code (RT-6.12).
+            opts = on_initialize(params)
+            if opts is not None:
+                runner.init_options = opts
         return await runner.on_request(dctx, method, params)
 
     try:

@@ -371,7 +371,7 @@ def test_keyless_hooks_reach_the_host_process(mm, run, tmp_path):
             MM_LISTEN_POLL_SEC="1", **env)
     assert "1 unread mention(s) or DM(s)" in r.stdout
 
-    assert run("bin/mm-agent-status.sh", "bus", "tool", **env).code == 0
+    assert run("bin/mm-agent-status.sh", "bus", "tool", bus=None, **env).code == 0
     assert mm.custom_status()["text"] == "on the bus · tool"
 
     hosted = run.state_dir / "hosted" / "sess-hooks"

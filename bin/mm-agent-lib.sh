@@ -33,8 +33,9 @@ mm_bot_token() {
 # environment (KERN_PROCARGS2). They start a helper with MM_BOT_TOKEN_FD=3 or
 # MM_REG_SECRET_FD=3 and the value on that fd (mm_with_token, mm_with_secret);
 # sourcing this file reads it into a shell variable that is not exported, so
-# nothing this script starts sees it. Without the *_FD variables (the shell CLI)
-# the environment is used as before.
+# nothing this script starts sees it. Without the *_FD variables (an operator's
+# shell: sweep, stats) the environment is used as before. An agent's shell has
+# neither: its scripts ask the session's MCP server (mm_bus, RT-6.17).
 mm_creds_from_fds() {
   local v fdv fd from_fd=0
   for v in MM_BOT_TOKEN MM_REG_SECRET; do
@@ -154,8 +155,8 @@ mm_channel() {
 # takes part in the coordination, so registering is not optional there.
 # Without one only when MM_REGISTER=always — a quick question to the agent would
 # otherwise just add a bot, a HELLO and a sign-off to the default channel.
-# Prints the reason when it says no. Explicit registration (session_start,
-# mm-agent-session.sh start) is not affected.
+# Prints the reason when it says no. Explicit registration (the MCP server's
+# session_start) is not affected.
 mm_registration_wanted() {
   [[ -n "${MM_PROJECT_CHANNEL:-}" ]] && return 0
   [[ "${MM_REGISTER:-}" == "always" ]] && return 0
@@ -300,18 +301,25 @@ mm_load_session_file() {
   mm_load_env_file "$f"
 }
 
-# Session file written by the MCP server's session_start (see
-# mcp/.../session_file.py). Keyed on the Claude Code session
-# (CLAUDE_CODE_SESSION_ID), so two sessions in one checkout never share a file
-# (RT-6.10); with a session id there is no fallback, since a project-keyed file
-# may belong to another session. Without one it is keyed on the directory the
-# server runs in, the project directory Claude Code was started in. A hook may
-# run deeper (the agent cd'ed into a subdirectory), so that lookup walks up from
-# CLAUDE_PROJECT_DIR / $PWD to the root and takes the nearest session file. The
-# keys must match keyed_path() there. The prefix names the file: mcp (the
-# session file, default) or endpoint (the hook API's, mm_bus).
-mm_hook_session_file() {
-  local prefix="${1:-mcp}" dir state key f sid
+# The endpoint file of this session's MCP server (RT-6.17 step 2,
+# mcp/.../session_file.py keyed_path and workspace(); the keys must match):
+#   1. CLAUDE_CODE_SESSION_ID set (Claude Code: server, hooks and every command
+#      the agent starts have it): endpoint-sid-<sha1(id)>.env, no fallback — a
+#      workspace-keyed file may belong to another session (RT-6.10).
+#   2. Else the workspace from CLAUDE_PROJECT_DIR, CURSOR_PROJECT_DIR or
+#      MM_WORKSPACE, the first one set, resolved: endpoint-<sha1(dir)>.env of
+#      exactly that directory, no walk.
+#   3. Else walk up from the real path of $PWD (OpenCode's and Cursor's shells
+#      start in the workspace, the agent may cd deeper) and take the closest,
+#      but never above the nearest git top (a directory with a .git directory
+#      or file: a checkout or worktree): a repository nested in another
+#      workspace, or a worktree under a checkout, is its own workspace.
+# A workspace named by a variable is taken exactly. The walk can still reach an
+# outer workspace's server from a directory that is in no repository of its
+# own below it (RT-6.17 step 2). The prefix names
+# the file: endpoint (the hook API's, default) or mcp (the session file).
+mm_bus_file() {
+  local prefix="${1:-endpoint}" dir state key f sid v
   state="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
   sid="${CLAUDE_CODE_SESSION_ID:-}"
   sid="${sid//[[:space:]]/}"
@@ -322,7 +330,16 @@ mm_hook_session_file() {
     printf '%s' "$f"
     return 0
   fi
-  dir="$(cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null && pwd -P)" || return 1
+  for v in CLAUDE_PROJECT_DIR CURSOR_PROJECT_DIR MM_WORKSPACE; do
+    [[ -n "${!v:-}" ]] || continue
+    dir="$(cd "${!v}" 2>/dev/null && pwd -P)" || return 1
+    key="$(printf '%s' "$dir" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16)"
+    f="${state}/${prefix}-${key}.env"
+    [[ -n "$key" && -f "$f" ]] || return 1
+    printf '%s' "$f"
+    return 0
+  done
+  dir="$(pwd -P 2>/dev/null)" || return 1
   while :; do
     key="$(printf '%s' "$dir" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16)"
     f="${state}/${prefix}-${key}.env"
@@ -330,14 +347,14 @@ mm_hook_session_file() {
       printf '%s' "$f"
       return 0
     fi
-    [[ "$dir" == "/" ]] && return 1
+    [[ "$dir" == "/" || -e "$dir/.git" ]] && return 1
     dir="$(dirname "$dir")"
   done
 }
 
 # For hooks: read the hook's JSON input once into MM_HOOK_INPUT and take the
-# session id from it when the environment has none, so the session file lookup
-# (mm_hook_session_file) keys on this session even then.
+# session id from it when the environment has none, so the endpoint lookup
+# (mm_bus_file) keys on this session even then.
 mm_read_hook_input() {
   MM_HOOK_INPUT="$(cat 2>/dev/null || true)"
   if [[ -z "${CLAUDE_CODE_SESSION_ID:-}" ]] && command -v jq >/dev/null 2>&1; then
@@ -348,33 +365,26 @@ mm_read_hook_input() {
   return 0
 }
 
-# For the shell CLI in an agent's session: pick up the bot token of an
-# MCP-managed session. A no-op when the environment already carries a token
-# (host-managed session). The turn hooks and the listener do not: they ask the
-# MCP server (mm_bus, RT-6.17).
-mm_load_hook_session() {
-  [[ -z "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]] || return 0
-  local f
-  f="$(mm_hook_session_file)" || return 1
-  mm_load_env_file "$f"
-}
-
 # The MCP server's hook API (RT-6.17, mcp/.../hookapi.py): the turn hooks and
-# the listener ask it instead of Mattermost and hold no token.
+# the scripts an agent runs (listen, post, poll, status) ask it instead of
+# Mattermost and hold no token.
 #   mm_bus GET /v1/me                       → MM_BUS_STATUS, MM_BUS_BODY
 #   mm_bus POST /v1/presence '{"state":"idle"}'
-# Endpoint and key come from MM_BUS_ENDPOINT / MM_BUS_KEY, else from the file
-# the server writes (endpoint-sid-<key>.env, mm_hook_session_file endpoint),
-# read on every call: a restarted server has a new port and key. The key goes
-# to curl on stdin, never in its argv. Succeeds only on HTTP 200; no endpoint,
-# no server or a timeout fail, and the caller fails open. Each call takes at
-# most MM_BUS_MAX_TIME (whole seconds, default 3), and none runs past
-# MM_BUS_DEADLINE (epoch seconds) when a hook set one for its whole run.
+# Endpoint and key come from MM_BUS_ENDPOINT / MM_BUS_KEY (a corral session),
+# else from the file the server writes (mm_bus_file), read on every call: a
+# restarted server has a new port and key. MM_BUS_FROM says which (env, the
+# file, or empty: none found). The key goes to curl on stdin, never in its
+# argv. Succeeds only on HTTP 200; no endpoint, no server or a timeout fail,
+# and a hook fails open. Each call takes at most MM_BUS_MAX_TIME (whole
+# seconds, default 3), and none runs past MM_BUS_DEADLINE (epoch seconds)
+# when a hook set one for its whole run.
 mm_bus() {
   local method="$1" path="$2" payload="${3:-}" ep="${MM_BUS_ENDPOINT:-}" key="${MM_BUS_KEY:-}" f k v resp
-  MM_BUS_STATUS="" MM_BUS_BODY=""
+  MM_BUS_STATUS="" MM_BUS_BODY="" MM_BUS_FROM=env
   if [[ -z "$ep" || -z "$key" ]]; then
-    f="$(mm_hook_session_file endpoint)" || return 1
+    MM_BUS_FROM=""
+    f="$(mm_bus_file)" || return 1
+    MM_BUS_FROM="$f"
     while IFS='=' read -r k v; do
       case "$k" in MM_BUS_ENDPOINT) ep="$v" ;; MM_BUS_KEY) key="$v" ;; esac
     done <"$f"
@@ -397,6 +407,23 @@ mm_bus() {
   [[ "$MM_BUS_STATUS" == 200 ]]
 }
 
+# Why the last mm_bus call failed, for a person or agent reading stderr. The
+# scripts an agent runs by hand have no other way onto the bus: no token.
+mm_bus_explain() {
+  local how="start the MCP server of this session: Claude Code, Cursor and OpenCode start it from their MCP config (adapters/, arc42 §7.2); the shell finds it by the session id, CLAUDE_PROJECT_DIR / CURSOR_PROJECT_DIR / MM_WORKSPACE, else from the workspace directory (RT-6.17)"
+  if [[ -z "${MM_BUS_FROM:-}" ]]; then
+    echo "mm-bus: no MCP server of this session found — ${how}" >&2
+  elif [[ -z "${MM_BUS_STATUS:-}" || "${MM_BUS_STATUS}" == 000 ]]; then
+    echo "mm-bus: the MCP server of this session does not answer (${MM_BUS_FROM}) — ${how}" >&2
+  elif [[ "$MM_BUS_STATUS" == 401 ]]; then
+    echo "mm-bus: the MCP server refused the key (${MM_BUS_FROM}): a stale file or another server — restart the MCP server of this session" >&2
+  elif [[ "$MM_BUS_STATUS" == 503 ]]; then
+    echo "mm-bus: no bot yet: register with the MCP tool session_start first" >&2
+  else
+    echo "mm-bus: the MCP server answered HTTP ${MM_BUS_STATUS}: $(jq -r '.error // empty' <<<"${MM_BUS_BODY:-}" 2>/dev/null)" >&2
+  fi
+}
+
 # A keyless corral session (RT-6.18): the MCP server runs on the host, the
 # sandbox has its endpoints and no token. The server's state files are not
 # here; what the hooks need of them comes through the hook API.
@@ -411,7 +438,7 @@ mm_bus_keyless() {
 mm_bus_uid() {
   local uid="${MM_BOT_USER_ID:-}" f
   if ! [[ "$uid" =~ ^[a-z0-9]{26}$ ]]; then
-    f="$(mm_hook_session_file endpoint)" || return 1
+    f="$(mm_bus_file)" || return 1
     uid="$(sed -n 's/^MM_BOT_USER_ID=//p' "$f" 2>/dev/null | head -1)"
     [[ "$uid" =~ ^[a-z0-9]{26}$ ]] || return 1
   fi

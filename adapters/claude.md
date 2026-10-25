@@ -27,7 +27,7 @@ MCP server, if you want it without the plugin:
 
 ```bash
 claude mcp add mattermost-agent-bus -- \
-  uv run --directory /path/to/mattermost-ai-agent-bus/mcp mattermost-ai-agent-bus-mcp
+  uv run --project /path/to/mattermost-ai-agent-bus/mcp mattermost-ai-agent-bus-mcp
 ```
 
 </details>
@@ -41,23 +41,26 @@ Needs `jq`, `curl`, `bash` and `uv` on the host.
 registers the bot and a `postEnd` hook removes it, so `MM_REG_SECRET` never enters the
 sandbox and teardown survives a crash. See [adapters/corral.md](corral.md).
 
-Without host hooks, export the env yourself before `claude`:
+Without host hooks the plugin's MCP server registers the bot: the agent calls the MCP
+tool `session_start` (and `session_end` when done; the bot outlives the process for
+`claude --continue`, [arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
+The server is required: the shell scripts in `bin/` are its clients and hold no token
+([arc42 §6.17](../docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
+The plugin's server takes its settings from Claude Code's environment:
 
 ```bash
 export MM_CHAT_URL="https://chat.example.com"
 export MM_REGISTER_URL="${MM_CHAT_URL}/register/v1/agents"
-export MM_REG_SECRET="…"
+export MM_REG_SECRET="…"               # better: from a password manager, see below
 export MM_TEAM=yourteam
 export MM_CHANNEL=agents
 export MM_PROJECT_CHANNEL=proj-foo     # optional, must already exist
 ```
 
-and let the agent run the lifecycle itself:
-
-```bash
-eval "$("$MM_AGENT_BUS_ROOT/bin/mm-agent-session.sh" start "claude-$$")"
-trap '"$MM_AGENT_BUS_ROOT/bin/mm-agent-session.sh" stop' EXIT
-```
+A secret in Claude Code's environment is in the agent's shell as well (as before
+0.40.0). To keep it in the MCP server alone, add the server by hand instead of the
+plugin's, with a command that reads it itself, e.g.
+`claude mcp add mattermost-agent-bus -- sh -c 'MM_REG_SECRET="$(gopass show -o bus/registrar)" exec uv run --project /path/to/mattermost-ai-agent-bus/mcp mattermost-ai-agent-bus-mcp'`.
 
 The skill keys off `MM_BUS_MCP_ENDPOINT` (a corral session, whose token stays on the host,
 [arc42 §6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)) or

@@ -296,8 +296,9 @@ trusted_shown="none (set MM_TRUSTED_HUMANS)"
 # MM_REG_BOT_NAME is deliberately withheld. Not a secret — it is the username
 # without the registrar's prefix, and the registrar deletes a bot only with
 # MM_REG_SECRET or that bot's own token. Withholding it guards the host's
-# lifecycle: without it the CLI finds no session file, so `mm-agent-session.sh
-# stop` inside the sandbox cannot tear down a session the host owns. The prefix
+# lifecycle: without it the scripts in the sandbox have no bot name and find no
+# session file, so `mm-agent-unregister.sh` there cannot tear down a session the
+# host owns. The prefix
 # goes along instead (MM_AGENT_PREFIX, arc42 §7.1): the sandbox cannot derive it.
 note="You are @${MM_BOT_USERNAME} on the Mattermost agent bus."
 if [[ -n "${MM_PROJECT_CHANNEL:-}" ]]; then

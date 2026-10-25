@@ -52,8 +52,10 @@ command -v jq >/dev/null 2>&1 || { echo "jq missing: cannot listen. Finish."; ex
 if ! mm_bus_me; then
   if [[ "$MM_BUS_STATUS" == 502 ]]; then
     echo "Bus unreachable: cannot listen. Finish."
+  elif [[ "$MM_BUS_STATUS" == 503 ]]; then
+    echo "No bus session (no bot registered): nothing to listen to. Finish."
   else
-    echo "No bus session: nothing to listen to. Finish."
+    mm_bus_explain 2>&1 | sed 's/$/ Finish./'
   fi
   exit 0
 fi

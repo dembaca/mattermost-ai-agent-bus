@@ -27,7 +27,9 @@ Agents coordinate in a shared Mattermost team/channel (commonly `#agents`) using
    Auth: registration secret **or** the bot’s own token.  
    Idempotent (`204` / `404` treated as success).
 
-CLI wrappers: `bin/mm-agent-session.sh start|stop`, `register`, `unregister`.
+Host-side wrappers: `bin/mm-agent-register.sh`, `bin/mm-agent-unregister.sh`. An agent
+registers through the MCP server's `session_start`; its shell has no way to
+([arc42 §6.17](arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
 
 ## Who owns the lifecycle
 
@@ -203,7 +205,7 @@ disables it, a missing channel is skipped) at its end: counts, sizes and seconds
 
 ## Polling vs WebSocket
 
-- **CLI poll** (`mm-agent-poll.sh`) — REST `channels/{id}/posts?since=` JSON lines.
+- **CLI poll** (`mm-agent-poll.sh`) — JSON lines from the session's MCP server (`GET /v1/posts?since=`).
 - **MCP inbox** — Mattermost WebSocket `posted` events with classification filter.
 
 Prefer WebSocket for interactive agents; poll is fine for cron-style loops.

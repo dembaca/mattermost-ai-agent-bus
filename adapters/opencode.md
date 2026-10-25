@@ -1,54 +1,80 @@
 # OpenCode adapter
 
+The MCP server is required: it holds the bot, and the shell scripts in `bin/` are its
+clients ([arc42 §6.17](../docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
+There is no shell-only mode any more (0.40.0).
+
 ## Skill / instructions
 
 Point OpenCode at [`SKILL.md`](../skills/mattermost-ai-agent-bus/SKILL.md) or paste
-the contract into the agent system prompt: register with `MM_REG_SECRET` only → work
-in `MM_TEAM`/`MM_CHANNEL` threads → always unregister.
-
-## Env
-
-```bash
-export MM_CHAT_URL="https://chat.example.com"
-export MM_REGISTER_URL="${MM_CHAT_URL}/register/v1/agents"
-export MM_REG_SECRET="…"
-export MM_TEAM=yourteam
-export MM_CHANNEL=agents
-export MM_PROJECT_CHANNEL=proj-foo     # optional, must already exist
-export MM_AGENT_BUS_ROOT="/path/to/mattermost-ai-agent-bus"
-```
-
-## CLI session (shell tools)
-
-```bash
-eval "$("$MM_AGENT_BUS_ROOT/bin/mm-agent-session.sh" start "opencode-$$")"
-"$MM_AGENT_BUS_ROOT/bin/mm-agent-poll.sh" --once
-"$MM_AGENT_BUS_ROOT/bin/mm-agent-post.sh" "$CHANNEL_ID" "ack" "$ROOT_ID"
-"$MM_AGENT_BUS_ROOT/bin/mm-agent-session.sh" stop
-```
-
-Each session gets its own session file
-(`~/.local/state/mm-agent-bus/session-<bot-name>.env`), and `stop` only acts on the
-one named in its environment. When every shell command starts fresh, as in agent
-tool calls, carry the name over: `MM_REG_BOT_NAME=<name> …/mm-agent-session.sh stop`
-(`start` prints the exact line). There is no shared host-wide file any more, so
-concurrent sessions cannot overwrite or tear down each other.
-
-## Reachability
-
-There are no turn hooks here: no `Stop` check, no listen window. The agent hears
-the bus only when it looks, so the skill asks it to check before each new
-activity, not only at the end
-([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable);
-differences: [arc42 §7.2](../docs/arc42/07-deployment-view.md#72-environment-differences)).
+the contract into the agent system prompt: register with `session_start` → work in
+`MM_TEAM`/`MM_CHANNEL` threads → `session_end`.
 
 ## MCP
 
-If OpenCode supports MCP stdio servers, run:
+One server per OpenCode instance, shared by its sessions, so one bot per workspace.
+`opencode.json` in the project (or the global config):
 
-```bash
-cd "$MM_AGENT_BUS_ROOT/mcp" && uv run mattermost-ai-agent-bus-mcp
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "mattermost-agent-bus": {
+      "type": "local",
+      "command": [
+        "uv", "run", "--locked",
+        "--project", "/ABS/PATH/mattermost-ai-agent-bus/mcp",
+        "mattermost-ai-agent-bus-mcp"
+      ],
+      "environment": {
+        "MM_CHAT_URL": "https://chat.example.com",
+        "MM_REGISTER_URL": "https://chat.example.com/register/v1/agents",
+        "MM_REG_SECRET": "{env:MM_REG_SECRET}",
+        "MM_TEAM": "yourteam",
+        "MM_CHANNEL": "agents",
+        "MM_PROJECT_CHANNEL": "proj-foo",
+        "MM_TRUSTED_HUMANS": "you"
+      }
+    }
+  }
+}
 ```
 
-with the env above. Prefer MCP `session_start` / `wait_for_events` /
-`reply_in_thread` / `session_end`.
+- `--project`, not `--directory` (nor `cd …/mcp`): OpenCode starts the server in the
+  workspace, and `uv run --project` keeps that working directory. The endpoint file the
+  shell scripts look for is keyed on it (or on the root OpenCode names in `roots/list`).
+- The registration secret: never a literal in a committed file. **Recommended:** the
+  server command fetches it itself, so it is only in the MCP server's environment
+  (any secret store; `gopass` here), and the `MM_REG_SECRET` line goes:
+
+  ```json
+  "command": [
+    "sh", "-c",
+    "MM_REG_SECRET=\"$(gopass show -o bus/registrar)\" exec uv run --locked --project /ABS/PATH/mattermost-ai-agent-bus/mcp mattermost-ai-agent-bus-mcp"
+  ],
+  ```
+
+  The reference in the example (`{env:MM_REG_SECRET}`) works too, but it reads the secret from
+  OpenCode's own environment, which the agent's shell inherits: there the agent can
+  read it. The bot token never enters the shell either way: the agent registers
+  with the MCP tool `session_start` and ends with `session_end` (the server's exit
+  unregisters too), and the token stays in the server and its 0600 session file.
+
+## Shell scripts
+
+OpenCode's shell starts in the project directory. `"$MM_AGENT_BUS_ROOT/bin/mm-agent-post.sh"`,
+`-poll.sh` and `-status.sh` walk up from the shell's directory to the closest
+endpoint file, which is the workspace's server, but not above the nearest git top
+(a nested repository or a worktree is its own workspace). OpenCode started from a
+Claude Code shell inherits `CLAUDE_CODE_SESSION_ID`: start it with
+`env -u CLAUDE_CODE_SESSION_ID opencode`, or its server warns that the Claude Code
+session's file is taken. Without a reachable server they exit 3
+and say what to start.
+
+## Reachability
+
+There are no turn hooks here: no `Stop` check, no listen window, and no channel
+push (Claude Code only). The agent hears the bus only when it looks, with
+`wait_for_events`, so the skill asks it to check before each new activity, not only
+at the end ([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable);
+differences: [arc42 §7.2](../docs/arc42/07-deployment-view.md#72-environment-differences)).

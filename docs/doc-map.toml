@@ -15,7 +15,7 @@ docs = ["docs/arc42/06-runtime-view.md"]
 
 [[rule]]
 name = "host session hooks: lifecycle, registration"
-paths = ["adapters/corral/*", "adapters/cursor/*"]
+paths = ["adapters/corral/*"]
 docs = ["docs/arc42/06-runtime-view.md", "docs/arc42/07-deployment-view.md"]
 
 [[rule]]

@@ -28,6 +28,7 @@ _BUS_ENV = (
     "MM_BUS_MCP_ENDPOINT",
     "MM_BUS_KEY",
     "MM_BUS_UNAVAILABLE",
+    "MM_WORKSPACE",
 )
 
 
