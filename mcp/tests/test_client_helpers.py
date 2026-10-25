@@ -3,6 +3,7 @@
 import pytest
 
 from mattermost_ai_agent_bus.client import MattermostClient, ws_url_from_http
+from mattermost_ai_agent_bus.model import UnreadChannel
 
 
 @pytest.mark.parametrize(
@@ -135,3 +136,28 @@ async def test_session_start_name_validation():
     )
     with pytest.raises(ValueError):
         await c.session_start("X")
+
+
+@pytest.mark.asyncio
+async def test_unread_channels_never_read_before_the_bot_existed(monkeypatch):
+    """RT-6.2: a fresh bot's channel reports never viewed (0); backfill reads
+    from the bot's creation, not the channel's history. A DM counts every
+    unread message, a channel only mentions."""
+    c = MattermostClient(base_url="https://mm.example", token="tok")
+
+    async def fake_api(method, path, **kwargs):
+        if path == "/api/v4/users/me":
+            return {"id": "bot1", "create_at": 5000}
+        if path.startswith("/api/v4/teams/name/"):
+            return {"id": "team1"}
+        if path.endswith("/channels/members"):
+            return [{"channel_id": "proj", "mention_count": 1, "last_viewed_at": 0},
+                    {"channel_id": "dm1", "msg_count": 2, "last_viewed_at": 9000},
+                    {"channel_id": "quiet", "msg_count": 4, "mention_count": 0}]
+        assert path == "/api/v4/users/me/channels"
+        return [{"id": "proj", "type": "O"}, {"id": "dm1", "type": "D", "total_msg_count": 3},
+                {"id": "quiet", "type": "O", "total_msg_count": 9}]
+
+    monkeypatch.setattr(c, "_api", fake_api)
+    assert await c.unread_channels() == [UnreadChannel("proj", since=5000),
+                                         UnreadChannel("dm1", "D", since=9000)]

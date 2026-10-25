@@ -86,6 +86,27 @@ async def test_no_project_channel_no_join():
     assert ("POST", "/api/v4/channels/cid/members") not in calls
 
 
+async def test_welcome_dm_is_marked_read():
+    plain, calls = _handler(201)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        p = req.url.path
+        if p.startswith("/api/v4/users/me/teams/"):
+            return httpx.Response(200, json=[{"channel_id": "dm1", "msg_count": 0,
+                                              "mention_count": 0, "last_viewed_at": 0}])
+        if p == "/api/v4/users/me/channels":
+            return httpx.Response(200, json=[{"id": "dm1", "type": "D", "total_msg_count": 1}])
+        if p == "/api/v4/users/me":
+            return httpx.Response(200, json={"id": "uid1", "create_at": 0})
+        if p == "/api/v4/channels/members/me/view":
+            calls.append(("view", json.loads(req.content)["channel_id"]))
+            return httpx.Response(200, json={})
+        return plain(req)
+
+    await _client(handler).finish_session_setup()
+    assert ("view", "dm1") in calls
+
+
 def test_unique_name_suffix_and_length():
     n = unique_name("vtpm-hogan")
     assert n.startswith("vtpm-hogan-") and len(n) == len("vtpm-hogan-") + 4

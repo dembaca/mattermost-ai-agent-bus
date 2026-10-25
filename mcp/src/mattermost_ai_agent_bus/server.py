@@ -19,7 +19,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from . import a2a, asks, channel, gate, lease, overhead, ownpost, permission, session_file, slim, stats, tasks
-from .client import MattermostClient
+from .client import MattermostClient, attachment_props
 from .websocket_inbox import WebSocketInbox
 
 log = logging.getLogger(__name__)
@@ -200,12 +200,6 @@ async def _posted(client: MattermostClient, post: dict[str, Any]) -> None:
             log.info("could not mark %s read: %s", cid, exc)
 
 
-def _a2a_props(message: str, to: str = "") -> dict[str, Any] | None:
-    """props.a2a for a post whose first word is a bus convention (RT-6.14), or
-    that is for every agent (RT-6.11)."""
-    note = a2a.annotate(message, to)
-    return {"a2a": note} if note else None
-
 
 async def _work_posts(client: MattermostClient) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """The work channel's posts of the task window, and their authors' names."""
@@ -353,7 +347,7 @@ async def bus_info() -> str:
     for uid, name in trusted.items():
         if not name:
             try:
-                name = (await client._api("GET", f"/api/v4/users/{uid}"))["username"]
+                name = await client.username(uid)
             except Exception:  # noqa: BLE001 — diagnostic only
                 name = None
         humans.append({"id": uid, "username": name})
@@ -529,7 +523,7 @@ async def announce(
     stats.set_user(me.get("id", ""))
     stats.record("post", chars=sum(len(x) + 1 for x in lines))
     post = await client.post(lease.with_crown(_unbroadcast("\n".join(lines))[0], me.get("id", "")),
-                             props={"agent_card": card, "a2a": a2a.annotate("HELLO")})
+                             props=a2a.props("HELLO", card=card))
     return _out("announce", await slim.post(client, post))
 
 
@@ -576,7 +570,7 @@ async def post_message(
         lease.with_crown(message, uid),
         channel_id=channel_id or None,
         root_id=root_id or None,
-        props=_a2a_props(message, a2a.ALL if everyone else ""),
+        props=a2a.props(message, a2a.ALL if everyone else ""),
     )
     await _posted(client, post)
     return _out("post_message", await _claimed(client, root_id, message, uid, _with_unmentioned(
@@ -606,7 +600,7 @@ async def reply_in_thread(
         lease.with_crown(message, uid),
         channel_id=channel_id or None,
         root_id=root_id,
-        props=_a2a_props(message, a2a.ALL if everyone else ""),
+        props=a2a.props(message, a2a.ALL if everyone else ""),
     )
     await _posted(client, post)
     return _out("reply_in_thread", await _claimed(client, root_id, message, uid, _with_unmentioned(
@@ -711,23 +705,19 @@ async def ask_human(
         context = f"{rest} {context}"
     text = lease.with_crown(f"🙋 @{who} — **{head}**", me.get("id", ""))
     fields = [
-        {"title": "from", "value": f"@{me.get('username')}", "short": True},
-        {"title": "blocking", "value": "yes" if blocking else "no", "short": True},
-        {"title": "where", "value": _one_line(where) or "–", "short": False},
+        ("from", f"@{me.get('username')}", True),
+        ("blocking", "yes" if blocking else "no", True),
+        ("where", _one_line(where) or "–", False),
     ]
     for title, value in (("context", context), ("recommendation", recommendation),
                          ("decision", decision)):
         if value.strip():
-            fields.append({"title": title, "value": " ".join(value.split()), "short": False})
+            fields.append((title, " ".join(value.split()), False))
     yes = "👍 = yes to the decision" if decision.strip() else "👍 = yes"
-    fields.append({"title": "answer", "short": False,
-                   "value": (f"{_one_line(answers)} — " if answers else "")
-                   + f"{yes} · 👎 = no · or reply in this thread"})
-    props = {"attachments": [{
-        "color": "#d24b4e" if blocking else "#e8a317",
-        "fallback": f"{who}: {_one_line(need)}",
-        "fields": fields,
-    }], "a2a": a2a.annotate(kind=a2a.ASK)}
+    fields.append(("answer", (f"{_one_line(answers)} — " if answers else "")
+                   + f"{yes} · 👎 = no · or reply in this thread", False))
+    props = (attachment_props(fields, fallback=f"{who}: {_one_line(need)}", urgent=blocking)
+             | (a2a.props(kind=a2a.ASK) or {}))
     stats.record("post", chars=len(text))
     post = await client.post(text, root_id=root_id or None, props=props)
     # With its thread: a reply there may answer it, too late after 24 h (RT-6.11).
@@ -754,7 +744,7 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
         note, _ = await _unmention(client, note)
         stats.record("post", chars=len(note))
         await client.post(lease.with_crown(note, me.get("id", "")), root_id=post_id,
-                          props=_a2a_props(note))
+                          props=a2a.props(note))
     return _out("resolve_ask", {"ask": post_id, "was_open": was_open})
 
 
@@ -1027,7 +1017,7 @@ async def _permission_request(params: dict[str, Any]) -> None:
         text = permission.prompt(params)
         stats.record("post", chars=len(text))
         post = await client.post(text, channel_id=await client.direct_channel_with(to),
-                                 props={"a2a": a2a.annotate(kind=a2a.PERMISSION)})
+                                 props=a2a.props(kind=a2a.PERMISSION))
         # An open ask, so a 👍/👎 on it reaches the inbox (RT-6.11); without a
         # human, so it does not hold up the agent's own asks to them.
         asks.add((await client.get_me()).get("id", ""), post["id"])

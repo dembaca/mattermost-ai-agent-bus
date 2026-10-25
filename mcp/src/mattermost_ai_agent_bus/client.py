@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse, urlunparse
@@ -14,8 +15,25 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from . import links, ownpost, profile, session_file
+from .model import UnreadChannel
 
 log = logging.getLogger(__name__)
+
+
+def from_webhook(post: Mapping[str, Any]) -> bool:
+    """Anyone with a hook's URL posts as the account that made the hook."""
+    return str((post.get("props") or {}).get("from_webhook", "")) == "true"
+
+
+def attachment_props(fields: list[tuple[str, str, bool]], *, fallback: str,
+                     urgent: bool) -> dict[str, Any]:
+    """Props for a message attachment: a card of (title, value, short) fields,
+    red when urgent, else amber."""
+    return {"attachments": [{
+        "color": "#d24b4e" if urgent else "#e8a317",
+        "fallback": fallback,
+        "fields": [{"title": t, "value": v, "short": s} for t, v, s in fields],
+    }]}
 
 
 def _pid_alive(pid: str) -> bool:
@@ -419,7 +437,7 @@ class MattermostClient:
         # drain; mark everything read so the Stop hook starts from empty.
         try:
             for ch in await self.unread_channels():
-                await self.view_channel(ch["channel_id"])
+                await self.view_channel(ch.channel_id)
         except (httpx.HTTPError, KeyError):
             pass
         return result
@@ -619,6 +637,10 @@ class MattermostClient:
                     self._bots.add(u["id"])
         return {i: self._usernames[i] for i in user_ids if i in self._usernames}
 
+    async def username(self, user_id: str) -> str:
+        """One account's username, uncached; raises when it cannot be read."""
+        return (await self._api("GET", f"/api/v4/users/{user_id}"))["username"]
+
     async def agents(self, user_ids: set[str]) -> set[str]:
         """The ids among ``user_ids`` of bus agents: bot accounts with the
         registrar's prefix, agent-* by default (RT-6.16, arc42 §7.1). A person
@@ -656,12 +678,13 @@ class MattermostClient:
                 self._is_human[(u.get("username") or "").lower()] = not u.get("is_bot", False)
         return {n for n in names if self._is_human.get(n.lower())}
 
-    async def unread_channels(self) -> list[dict[str, Any]]:
-        """Channels with something pending, each with the watermark to read from.
+    async def unread_channels(self) -> list[UnreadChannel]:
+        """Channels with something pending, each with the time to read from.
 
-        Returns [{channel_id, type, last_viewed_at, pending}]. A DM counts
-        unread messages (total minus the watermark); elsewhere only an explicit
-        mention means someone wants this agent.
+        A DM counts unread messages (total minus the watermark); elsewhere only
+        an explicit mention means someone wants this agent. Read from the last
+        view, never before the bot was created: nothing older can be for this
+        session, and a fresh bot's channels can report never viewed (0).
 
         Note `member.msg_count` is the watermark, not a pending count — unread
         is channel.total_msg_count - member.msg_count.
@@ -672,7 +695,8 @@ class MattermostClient:
         )
         channels = await self._api("GET", "/api/v4/users/me/channels")
         by_id = {c["id"]: c for c in (channels or [])}
-        out: list[dict[str, Any]] = []
+        floor = int((await self.get_me()).get("create_at") or 0)
+        out: list[UnreadChannel] = []
         for member in members or []:
             cid = member.get("channel_id")
             channel = by_id.get(cid) or {}
@@ -684,14 +708,9 @@ class MattermostClient:
             else:
                 pending = member.get("mention_count") or 0
             if pending > 0:
-                out.append(
-                    {
-                        "channel_id": cid,
-                        "type": ctype,
-                        "last_viewed_at": member.get("last_viewed_at") or 0,
-                        "pending": pending,
-                    }
-                )
+                out.append(UnreadChannel(
+                    channel_id=cid, channel_type=ctype,
+                    since=max(member.get("last_viewed_at") or 0, floor)))
         return out
 
     async def view_channel(self, channel_id: str) -> None:
@@ -740,6 +759,44 @@ class MattermostClient:
                 ownpost.record(self.bot_id, channel_id, post)
         except Exception as exc:  # noqa: BLE001
             log.info("own post not remembered: %s", exc)
+
+    def post_sync(self, message: str, *, channel_id: str, root_id: str = "",
+                  props: dict[str, Any] | None = None, timeout: float = 5.0) -> dict[str, Any]:
+        """Post without an event loop, for the exit handler: one bounded request,
+        raises when it fails. The raw post: no permalinks, not remembered."""
+        body: dict[str, Any] = {"channel_id": channel_id, "message": message}
+        if root_id:
+            body["root_id"] = root_id
+        if props:
+            body["props"] = props
+        with httpx.Client(timeout=timeout) as http:
+            resp = http.post(f"{self.base_url}/api/v4/posts", json=body,
+                             headers=self._auth_headers())
+            resp.raise_for_status()
+            return resp.json()
+
+    def post_by_name_sync(self, channel_name: str, message: str, *, join: str = "") -> bool:
+        """Post to the team's channel `channel_name` without an event loop, for
+        the exit handler, joining it as user `join` first: joining twice is
+        harmless, a non-member cannot post. False when there is no such
+        channel; raises when a request fails."""
+        headers = self._auth_headers()
+        api = f"{self.base_url}/api/v4"
+        with httpx.Client(timeout=5.0) as http:
+            team = http.get(f"{api}/teams/name/{self.team_name}", headers=headers)
+            team.raise_for_status()
+            ch = http.get(f"{api}/teams/{team.json()['id']}/channels/name/{channel_name}",
+                          headers=headers)
+            if ch.status_code == 404:
+                return False
+            ch.raise_for_status()
+            cid = ch.json()["id"]
+            if join:
+                http.post(f"{api}/channels/{cid}/members", headers=headers, json={"user_id": join})
+            resp = http.post(f"{api}/posts", headers=headers,
+                             json={"channel_id": cid, "message": message})
+            resp.raise_for_status()
+        return True
 
     async def add_reaction(self, post_id: str, emoji: str) -> None:
         me = await self.get_me()

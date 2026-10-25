@@ -24,8 +24,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
 from . import a2a, session_file
 
 if TYPE_CHECKING:
@@ -82,14 +80,10 @@ def bye_sync(client: MattermostClient, uid: str) -> str:
         return "no announcement"  # never part of the coordination: nothing to end
     if a2a.word(last.get("MSG", "")) in SIGN_OFFS:
         return "signed off"
-    body = {"channel_id": last["CHANNEL"], "root_id": last["HELLO"], "message": BYE,
-            "props": {"a2a": a2a.annotate(BYE)}}
     try:
-        with httpx.Client(timeout=BYE_TIMEOUT_SEC) as http:
-            resp = http.post(f"{client.base_url}/api/v4/posts", json=body,
-                             headers={"Authorization": f"Bearer {client.token}"})
-            resp.raise_for_status()
-            record(uid, last["CHANNEL"], resp.json())
-    except (httpx.HTTPError, ValueError) as exc:
+        post = client.post_sync(BYE, channel_id=last["CHANNEL"], root_id=last["HELLO"],
+                                props=a2a.props(BYE), timeout=BYE_TIMEOUT_SEC)
+        record(uid, last["CHANNEL"], post)
+    except Exception as exc:  # noqa: BLE001 — exit handler: fail open
         return f"BYE not posted: {type(exc).__name__}"
     return "BYE posted"

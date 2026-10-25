@@ -2,6 +2,7 @@
 
 import pytest
 
+from mattermost_ai_agent_bus.model import UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
 
@@ -111,7 +112,7 @@ class _BackfillClient(_FakeClient):
         self.viewed: list[str] = []
 
     async def unread_channels(self):
-        return [{"channel_id": "dm1", "type": "D", "last_viewed_at": 100, "pending": 1}]
+        return [UnreadChannel("dm1", "D", since=100)]
 
     async def list_recent(self, channel_id=None, per_page=20, since_ms=None):
         return [p for p in self.posts if p["channel_id"] == channel_id]
@@ -191,14 +192,14 @@ async def test_wait_times_out_empty():
 
 
 class _FreshBotClient(_BackfillClient):
-    """A bot that just joined: Mattermost reports the channel as never viewed."""
+    """A bot that just joined: read from its creation (client.unread_channels)."""
 
     def __init__(self, posts, **kw):
         super().__init__(posts, **kw)
         self.since: list = []
 
     async def unread_channels(self):
-        return [{"channel_id": "proj", "type": "O", "last_viewed_at": 0, "pending": 1}]
+        return [UnreadChannel("proj", since=5000)]  # the bot's create_at
 
     async def list_recent(self, channel_id=None, per_page=20, since_ms=None):
         self.since.append(since_ms)
@@ -215,7 +216,6 @@ async def test_backfill_never_reads_before_the_bot_existed():
     client = _FreshBotClient(old + [new])
     inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"})
     inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
-    inbox._since_floor = 5000  # the bot's create_at
     inbox._ws = _DeadSocket()
     await inbox._backfill()
     assert client.since == [5000]
