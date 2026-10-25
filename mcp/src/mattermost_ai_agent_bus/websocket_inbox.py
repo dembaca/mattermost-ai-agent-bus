@@ -378,13 +378,18 @@ class WebSocketInbox:
             who = await gate.author_name(self.client, post)
             gate.mark_gated(me, post.get("id", ""))
             # One @channel would get an answer from every worker: none for that.
-            answer = why != "broadcast" and gate.first_reply(me, root)
+            # Nor for a post that already names the coordinator (not in a DM,
+            # which it cannot see): it was told.
+            dm = (channel_type or "").upper() in ("D", "G")
+            answer = why != "broadcast" and not (
+                not dm and await gate.names_coordinator(self.client, post)
+            ) and gate.first_reply(me, root)
         except Exception as exc:  # noqa: BLE001 — fail open
             log.info("wake gate open for post %s: %s", post.get("id"), exc)
             return
         event.gated = f"from {who}, not trusted by me: the coordinator answers"
         task = asyncio.create_task(self._after_gate(
-            event, who, root if answer else "", dm=(channel_type or "").upper() in ("D", "G")))
+            event, who, root if answer else "", dm=dm))
         self._gate_tasks.add(task)
         task.add_done_callback(self._gate_tasks.discard)
 

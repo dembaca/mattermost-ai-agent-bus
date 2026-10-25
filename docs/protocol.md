@@ -96,7 +96,8 @@ characters) is written out with its full URL, for the human and the agent
 Each session announces itself with one top-level `HELLO` post in the work channel,
 posted by the MCP tool `announce` in a fixed format.
 The post names the project, branch or PR, task, capabilities and role. Later changes
-are replies to that post, and the session signs off with `BYE` in the same thread.
+are replies to that post, and the session signs off with `BYE` in the same thread (the server posts one when a
+session ends without, [arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen) step 7).
 Reading those threads tells an agent who works on what before it starts. The `HELLO`
 also says whom the agent answers to (`for:`) and whose approval it accepts
 (`trusts:`); the bot's description, written by the registrar, says the same and cannot be

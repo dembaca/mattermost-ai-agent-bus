@@ -18,7 +18,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import a2a, asks, channel, gate, lease, overhead, permission, session_file, slim, stats, tasks
+from . import a2a, asks, channel, gate, lease, overhead, ownpost, permission, session_file, slim, stats, tasks
 from .client import MattermostClient
 from .websocket_inbox import WebSocketInbox
 
@@ -289,6 +289,8 @@ async def session_start(
     }
     if client.reaped:
         out["reaped_stale_bots"] = client.reaped
+    if client.profile_warning:
+        out["warning"] = client.profile_warning
     return _out("session_start", out)
 
 
@@ -1105,7 +1107,12 @@ def _cleanup_on_exit() -> None:
         # which the next server keeps adding to.
         log.info("exit cleanup: %s", _client.shutdown_sync())
         return
-    try:  # before unregistering: the bot must still exist to post
+    # Before unregistering: the bot must still exist to post.
+    try:
+        log.info("BYE: %s", ownpost.bye_sync(_client, _client.bot_id))
+    except Exception as exc:  # noqa: BLE001 — never block teardown
+        log.info("BYE skipped: %s", exc)
+    try:
         data = stats.summary(VERSION, _static_chars(), _fixed())
         if data:
             log.info("overhead stats: %s", stats.post_sync(_client, data))

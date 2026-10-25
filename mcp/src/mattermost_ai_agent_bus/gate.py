@@ -19,6 +19,7 @@ Entries older than MAX_AGE_SEC are dropped.
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -89,6 +90,14 @@ async def coordinator_name(client: MattermostClient) -> str:
             return ""
         _coord = (now, next((str(r.get("username", "")) for r in rows if r.get("crown")), ""))
     return _coord[1]
+
+
+async def names_coordinator(client: MattermostClient, post: Mapping[str, Any]) -> bool:
+    """RT-6.16 step 3: the post already @-mentions the agent wearing the 👑: it was told, an
+    answer saying that it will look would only repeat it."""
+    name = await coordinator_name(client)
+    return bool(name) and re.search(
+        rf"(?<![\w.-])@{re.escape(name)}(?![\w-]|\.\w)", str(post.get("message", "")), re.I) is not None
 
 
 async def reply_text(client: MattermostClient, author: str, *, dm: bool) -> str:
