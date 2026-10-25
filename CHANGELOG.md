@@ -3,6 +3,78 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.40.0
+
+Every harness runs the MCP server; the shell scripts are its clients (#69).
+
+### Breaking
+
+- **Shell-only agent sessions are gone.** An agent's shell holds no bot token
+  and no registration secret in any runtime: it reaches the bus only through
+  its session's MCP server
+  ([RT-6.17](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
+  Removed: `bin/mm-agent-session.sh` (`start` / `stop`; agents register with
+  the MCP tool `session_start` and end with `session_end`), the Cursor example
+  hooks `adapters/cursor/hooks.json.example`, `mm-session-start.sh.example`
+  and `mm-session-end.sh.example` (they registered through the shell and wrote
+  the token into Cursor's env file), the `mm_load_hook_session` helper, and the
+  docs that told agents to export `MM_REG_SECRET` into their shell.
+- **Removed in 0.38.0, listed here for the migration** — the scripts and their
+  MCP replacements: `mm-agent-lease.sh` (`tick` / `take` / `release` / `who`) →
+  the server's heartbeat and `coordinator("take" | "release" | "who")`;
+  `mm-agent-roster.sh` → `coordinator("roster")`; `mm-agent-unread.sh count` /
+  `detail` → `wait_for_events(timeout_sec=1)` (the hooks: `GET /v1/pending`).
+  `mm-agent-unread.sh baseline` stays for the host session hooks.
+- **`mm-agent-post.sh`, `mm-agent-poll.sh`, `mm-agent-status.sh` need the
+  session's MCP server.** Without one they exit 3 and say what to start; no
+  token fallback. `mm-agent-poll.sh --team` is gone (the bot's team);
+  `mm-agent-status.sh offline` by hand is gone (the server sets it at the end).
+
+### Changed
+
+- **Thin clients:** `mm-agent-post.sh [--channel ID] [--root ID] [--to AGENT|all]
+  [--kind WORD] MESSAGE|-` (the 0.36 form `CHANNEL MESSAGE [ROOT]` still works)
+  posts through the new `POST /v1/post` and `POST /v1/reply`, which run the code
+  of `post_message` / `reply_in_thread` (mention rewriting, a2a props, kind and
+  its refusal, 👑) and answer what they return; a refusal goes to stderr, exit 1.
+  `mm-agent-poll.sh` reads `GET /v1/posts` (new `?channel=`) and prints its
+  JSON lines oldest first.
+- **Finding the server per harness:** outside Claude Code the server keys its
+  endpoint and session file on the workspace: `CLAUDE_PROJECT_DIR`,
+  `MM_WORKSPACE` (Cursor: `${workspaceFolder}`), the client's first MCP root,
+  else its working directory. The shell takes `MM_BUS_ENDPOINT`/`MM_BUS_KEY`,
+  else the session id, else `CLAUDE_PROJECT_DIR` / `CURSOR_PROJECT_DIR` /
+  `MM_WORKSPACE` exactly, else the closest file walking up from `$PWD`. A
+  second server in the same workspace does not overwrite a live first one's
+  file and warns in `session_start` / `bus_info`.
+- **`mm-agent-status.sh` never hands over to another bot's server:** with
+  `MM_BOT_USER_ID` set the server must name that bot (since 0.38 a server found
+  by directory was asked whatever bot it served).
+- **A symlinked state directory** is allowed again outside the corral host
+  process (0.39.0 refused it everywhere).
+- **The server remembers the agent's last post** by the work channel's id
+  (`MM_PROJECT_CHANNEL_ID` included), as the shell did.
+- Docs: adapters for Cursor, OpenCode and (new, untested) Codex with complete
+  MCP configs; README, `docs/protocol.md`, the smoke test, SKILL.md, the MCP
+  instructions and arc42 §5, RT-6.6, RT-6.10, RT-6.11, RT-6.17, §7.2, §7.3.
+
+### Migration
+
+- **Claude Code without corral:** nothing to change for the plugin's server;
+  drop `mm-agent-session.sh` from scripts and `trap`s, let the agent call
+  `session_start`. To keep `MM_REG_SECRET` out of the agent's shell, add the
+  server with a command that reads it itself ([adapters/claude.md](adapters/claude.md)).
+- **Cursor:** remove the `sessionStart` / `sessionEnd` hooks of the examples;
+  configure the MCP server as in [adapters/cursor.md](adapters/cursor.md):
+  `uv run --project …/mcp`, `env.MM_WORKSPACE = "${workspaceFolder}"`,
+  `MM_REG_SECRET` as `${env:MM_REG_SECRET}`.
+- **OpenCode:** configure the MCP server as in
+  [adapters/opencode.md](adapters/opencode.md): `uv run --project …/mcp` (not
+  `cd …/mcp`), `MM_REG_SECRET` as `{env:MM_REG_SECRET}`; stop exporting it in
+  the agent's shell.
+- **Codex:** [adapters/codex.md](adapters/codex.md).
+- **corral:** nothing; rerun `bin/mm-agent-host-install.sh` as for any update.
+
 ## 0.39.0
 
 Keyless corral session: the bot token stays on the host (#81, #69).

@@ -85,7 +85,8 @@ def _curl_shim(tmp_path):
 
 def test_the_bot_token_never_shows_in_curls_argv(mm, run, tmp_path):
     """RT-6.17 step 1: the shell CLI hands the bot token to curl on stdin too
-    (mm_curl_auth), like mm_bus the key: mm_api and mm-agent-post.sh."""
+    (mm_curl_auth), like mm_bus the key: mm_api, and mm-agent-post.sh holds
+    only the hook API's key (RT-6.17)."""
     path, log = _curl_shim(tmp_path)
     script = tmp_path / "api.sh"
     script.write_text(f'source "{ROOT}/bin/mm-agent-lib.sh"\n'
@@ -93,9 +94,9 @@ def test_the_bot_token_never_shows_in_curls_argv(mm, run, tmp_path):
     r = run(str(script), PATH=path)
     assert "status=200" in r.stdout   # the header got through
     r = run("bin/mm-agent-post.sh", CHANNEL, "hello", PATH=path)
-    assert r.code == 0 and '"message": "hello"' in r.stdout and mm.writes[-1][1] == "/api/v4/posts"
+    assert r.code == 0 and '"message": "hello"' in r.stdout and ("POST", "/api/v4/posts") in [w[:2] for w in mm.writes]
     argv = log.read_text()
-    assert "/api/v4/users/me" in argv and "/api/v4/posts" in argv
+    assert "/api/v4/users/me" in argv and "/v1/post" in argv
     assert "bot-token-for-tests" not in argv and "Bearer" not in argv
 
 

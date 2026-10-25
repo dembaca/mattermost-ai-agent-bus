@@ -137,23 +137,17 @@ def _bash(script, **env):
     )
 
 
-def test_hook_loads_token_written_by_server():
-    """Python and bash must derive the same file name — otherwise hooks stay inert."""
-    session_file.write(INFO, "agents", "agents")
-    r = _bash(
-        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "$MM_BOT_TOKEN"',
-        MM_BOT_TOKEN="", MATTERMOST_TOKEN="",
-    )
-    assert r.stdout.strip() == "tok-secret", r.stderr
+FIND = f'source "{REPO}/bin/mm-agent-lib.sh"; mm_bus_file mcp; echo "[$MM_BOT_TOKEN]"'
 
 
-def test_hook_loader_does_not_override_existing_token():
-    session_file.write(INFO, "agents", "agents")
-    r = _bash(
-        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "$MM_BOT_TOKEN"',
-        MM_BOT_TOKEN="host-token",
-    )
-    assert r.stdout.strip() == "host-token"
+def test_hooks_find_the_file_the_server_names():
+    """RT-6.10, RT-6.17 step 2: Python and bash derive the same file name —
+    otherwise hooks stay inert. The shell finds the file; it never loads the
+    token from it (no token in an agent's shell)."""
+    path = session_file.write(INFO, "agents", "agents")
+    r = _bash(FIND, MM_BOT_TOKEN="", MATTERMOST_TOKEN="")
+    assert r.stdout.strip() == f"{path}[]", r.stderr
+    assert "mm_load_hook_session" not in (REPO / "bin" / "mm-agent-lib.sh").read_text()
 
 
 def test_hooks_launch_under_bash():
@@ -205,25 +199,23 @@ async def test_session_file_success_is_reported():
     assert Path(c.session_file_status["path"]).exists()
 
 
-def test_hook_in_subdirectory_finds_session_of_project_root(tmp_path, monkeypatch):
-    """The agent cd'ed into a subdirectory: the hook walks up to the server's dir."""
-    session_file.write(INFO, "agents", "agents")  # keyed on CLAUDE_PROJECT_DIR=tmp_path
+def test_a_shell_in_a_subdirectory_walks_up_to_the_workspace(tmp_path):
+    """RT-6.17 step 2: no variable names the workspace (OpenCode's shell): the
+    shell walks up from its real directory to the server's file. A named
+    workspace is taken as it is, with no walk."""
+    path = session_file.write(INFO, "agents", "agents")  # keyed on CLAUDE_PROJECT_DIR=tmp_path
     sub = tmp_path / "src" / "deep"
     sub.mkdir(parents=True)
-    r = _bash(
-        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "$MM_BOT_TOKEN"',
-        MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_PROJECT_DIR=str(sub),
-    )
-    assert r.stdout.strip() == "tok-secret", r.stderr
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    r = subprocess.run(["bash", "-c", FIND], capture_output=True, text=True, env=env, cwd=sub)
+    assert r.stdout.strip() == f"{path}[]", r.stderr
+    assert _bash(FIND, CLAUDE_PROJECT_DIR=str(sub)).stdout.strip() == "[]"
 
 
 def test_hook_outside_project_finds_nothing(tmp_path):
     other = tmp_path.parent / "elsewhere"
     other.mkdir(exist_ok=True)
-    r = _bash(
-        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "[$MM_BOT_TOKEN]"',
-        MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_PROJECT_DIR=str(other),
-    )
+    r = _bash(FIND, MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_PROJECT_DIR=str(other))
     assert r.stdout.strip() == "[]"
 
 
@@ -310,10 +302,9 @@ def test_two_sessions_in_one_checkout_keep_their_own_bot(monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-two")
     second = session_file.write(other, "agents", "agents")
     assert first != second and first.exists() and second.exists()
-    load = f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "$MM_BOT_TOKEN"'
-    for sid, tok in (("sess-one", "tok-secret"), ("sess-two", "tok-other")):
-        r = _bash(load, MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_CODE_SESSION_ID=sid)
-        assert r.stdout.strip() == tok, r.stderr
+    for sid, path in (("sess-one", first), ("sess-two", second)):
+        r = _bash(FIND, MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_CODE_SESSION_ID=sid)
+        assert r.stdout.strip() == f"{path}[]", r.stderr
     session_file.remove()  # sess-two ends; sess-one keeps its file
     assert first.exists() and not second.exists()
 
@@ -321,10 +312,7 @@ def test_two_sessions_in_one_checkout_keep_their_own_bot(monkeypatch):
 def test_hook_with_session_id_ignores_a_project_keyed_file():
     """RT-6.10: a project-keyed file may belong to another session."""
     session_file.write(INFO, "agents", "agents")  # no session id: project key
-    r = _bash(
-        f'source "{REPO}/bin/mm-agent-lib.sh"; mm_load_hook_session; echo "[$MM_BOT_TOKEN]"',
-        MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_CODE_SESSION_ID="sess-new",
-    )
+    r = _bash(FIND, MM_BOT_TOKEN="", MATTERMOST_TOKEN="", CLAUDE_CODE_SESSION_ID="sess-new")
     assert r.stdout.strip() == "[]"
 
 
@@ -332,15 +320,14 @@ def test_hook_takes_the_session_id_from_its_input(monkeypatch):
     """RT-6.10: without CLAUDE_CODE_SESSION_ID in the environment the hook payload's
     session_id keys the lookup."""
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-one")
-    session_file.write(INFO, "agents", "agents")
+    path = session_file.write(INFO, "agents", "agents")
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
     r = subprocess.run(
-        ["bash", "-c", f'source "{REPO}/bin/mm-agent-lib.sh"; mm_read_hook_input; '
-                       'mm_load_hook_session; echo "$MM_BOT_TOKEN"'],
+        ["bash", "-c", f'source "{REPO}/bin/mm-agent-lib.sh"; mm_read_hook_input; mm_bus_file mcp'],
         input='{"session_id": "sess-one"}', capture_output=True, text=True,
         env={**os.environ, "MM_BOT_TOKEN": "", "MATTERMOST_TOKEN": ""}, cwd=REPO,
     )
-    assert r.stdout.strip() == "tok-secret", r.stderr
+    assert r.stdout.strip() == str(path), r.stderr
 
 
 def test_exit_keeps_the_bot_for_claude_continue(monkeypatch):

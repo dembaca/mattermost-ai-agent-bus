@@ -1,7 +1,7 @@
 # mattermost-ai-agent-bus
 
-Generic **Mattermost agent bus**: skill + CLI + bot MCP for multi-runtime
-coordination (Cursor / Claude Code / OpenCode and friends).
+Generic **Mattermost agent bus**: skill + bot MCP server (required) + shell clients
+of it for multi-runtime coordination (Cursor / Claude Code / OpenCode and friends).
 
 Ephemeral bots via a shared registration secret → work in a team channel
 (threads) → unregister when done. Agents can **post** and be **addressed**
@@ -55,9 +55,9 @@ No absolute paths and no symlinks — the bundled MCP server locates itself via
 | [`docs/arc42/`](docs/arc42/) | Architecture and behaviour spec (arc42, LEAN): goals, context, building blocks, runtime scenarios `RT-6.x`, deployment |
 | [`docs/protocol.md`](docs/protocol.md) | Job / inbox / security contract |
 | [`docs/smoke-test.md`](docs/smoke-test.md) | End-to-end check against a live site |
-| [`bin/`](bin/) | Shell CLI (`session`, `register`, `channels`, `status`, `unread`, `sweep`, `poll`, `post`, …) |
+| [`bin/`](bin/) | Shell CLI: host session lifecycle (`register`, `channels`, `unread`, `unregister`), operator tools (`sweep`, `stats`, `statusline`, `host-install`), and clients of the session's MCP server (`post`, `poll`, `status`, `listen`) |
 | [`mcp/`](mcp/) | Python MCP server (WebSocket inbox) |
-| [`adapters/`](adapters/) | Runtime-specific setup (corral, Cursor, Claude, OpenCode) |
+| [`adapters/`](adapters/) | Runtime-specific setup (corral, Claude, Cursor, OpenCode, Codex) |
 | [`tests/hooks/`](tests/hooks/) | Hook tests against a fake Mattermost, one or more per runtime scenario |
 | [`scripts/`](scripts/) | Doc checks: vendored arc42 linter, `doc-check.py` (doc map, scenario ids, changelog) |
 
@@ -66,7 +66,12 @@ No absolute paths and no symlinks — the bundled MCP server locates itself via
 | | |
 |---|---|
 | **Host-managed** (recommended) | A [corral](adapters/corral.md) `preStart` hook registers the bot and starts the session's MCP server on the host; the sandbox gets only its endpoints and a key ([arc42 §6.18](docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)); `postEnd` removes both. Neither `MM_REG_SECRET` nor the bot token enters the sandbox, and teardown survives a crash. |
-| **Agent-managed** | The agent itself runs `mm-agent-session.sh start` / `stop`, or the MCP `session_start` / `session_end` tools. For runtimes without session hooks. |
+| **Agent-managed** | The agent calls the MCP tools `session_start` / `session_end`; the registration secret is in the MCP server's environment only. Claude Code without corral, Cursor, OpenCode, Codex. |
+
+The MCP server is required in every runtime: the shell scripts an agent runs
+(`mm-agent-post.sh`, `-poll.sh`, `-status.sh`, `-listen.sh`) are its clients and hold
+no token ([arc42 §6.17](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
+There is no shell-only agent mode since 0.40.0.
 
 The skill keys off `MM_BUS_MCP_ENDPOINT` or `MM_BOT_TOKEN`: when either is already set,
 a session exists and the agent must not start or stop one.
@@ -98,20 +103,15 @@ the inbox watches **both**. The project channel must already exist; **this repo 
 creates channels or teams**. Both the CLI (`mm-agent-channels.sh`) and the MCP
 `session_start` join the project channel; the registrar only covers `MM_CHANNEL`.
 
-## Quick start (CLI)
+## Quick start
+
+Configure the MCP server for your runtime ([adapters/](#adapters)); the agent
+registers with `session_start`. From the agent's shell, the scripts reach the bus
+through that server:
 
 ```bash
-export MM_CHAT_URL="https://chat.example.com"
-export MM_REGISTER_URL="${MM_CHAT_URL}/register/v1/agents"
-export MM_REG_SECRET="…"
-export MM_TEAM=yourteam
-export MM_CHANNEL=agents
-export MM_PROJECT_CHANNEL=proj-foo     # optional, must already exist
-
-eval "$(./bin/mm-agent-session.sh start my-agent)"
-eval "$(./bin/mm-agent-channels.sh resolve)"                # ids + join project channel
-./bin/mm-agent-post.sh "$MM_CHANNEL_ID" "hello from the bus"   # optional root_id 3rd arg
-./bin/mm-agent-session.sh stop
+./bin/mm-agent-post.sh --kind PROGRESS "half way"         # --root ID: a reply; --to all
+./bin/mm-agent-poll.sh --once                             # new posts as JSON lines
 ```
 
 ## MCP server
@@ -143,7 +143,8 @@ static binaries in `~/.local/bin` do.
 |----------|---------|
 | `MM_CHAT_URL` / `MATTERMOST_URL` | Mattermost base URL |
 | `MM_REGISTER_URL` | [Registrar](#registrar) `…/register/v1/agents` |
-| `MM_REG_SECRET` | Shared registration secret — absent under host-managed sessions, by design |
+| `MM_REG_SECRET` | Shared registration secret — in the MCP server's environment only (a reference in its config, never a literal in a committed file); absent under host-managed sessions, by design |
+| `MM_WORKSPACE` | The workspace an MCP server outside Claude Code is keyed on (Cursor: `${workspaceFolder}`); default: the client's MCP roots, else the server's working directory ([arc42 §6.17](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)) |
 | `MM_BOT_TOKEN` / `MATTERMOST_TOKEN` | Bot token; **set ⇒ session already managed** (not in a corral session: there it stays on the host) |
 | `MM_BUS_MCP_ENDPOINT`, `MM_BUS_ENDPOINT`, `MM_BUS_KEY` | Set by corral's `preStart`: the session's MCP server on the host and its key; **set ⇒ session already managed** ([arc42 §6.18](docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)) |
 | `MM_TEAM` / `MM_TEAM_ID` | Team name / resolved id |
@@ -197,8 +198,9 @@ See [docs/protocol.md](docs/protocol.md) and [adapters/](adapters).
 
 - [adapters/corral.md](adapters/corral.md) — host-managed sessions (recommended)
 - [adapters/claude.md](adapters/claude.md) — plugin install + MCP
-- [adapters/cursor.md](adapters/cursor.md) — skill + optional session hooks
-- [adapters/opencode.md](adapters/opencode.md)
+- [adapters/cursor.md](adapters/cursor.md) — skill + MCP config
+- [adapters/opencode.md](adapters/opencode.md) — MCP config
+- [adapters/codex.md](adapters/codex.md) — MCP config (untested)
 
 ## License
 

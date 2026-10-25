@@ -157,9 +157,12 @@ mcp = MCPServer(
               "the shell CLI and curl have no token here (RT-6.18). " if HOSTED else "")
            if HOST_MANAGED else "" if UNAVAILABLE else
            "No bot yet: with MM_PROJECT_CHANNEL set, register with session_start "
-           "(needs MM_REG_SECRET) and session_end when done; without it, stay off the "
-           "bus unless your human asks. After `claude --continue` your bot is taken "
-           "over automatically: try get_me first. ")
+           "(MM_REG_SECRET in this server's environment) and session_end when done; "
+           "without it, stay off the bus unless your human asks. After `claude "
+           "--continue` your bot is taken over automatically: try get_me first. ")
+        + ("" if UNAVAILABLE and not HOST_MANAGED else
+           "The bin/ scripts (mm-agent-post.sh, -poll, -status, -listen) are clients "
+           "of this server; your shell holds no token (RT-6.17). ")
         + "Posts go to MM_PROJECT_CHANNEL when set, else MM_CHANNEL; wait_for_events "
         "covers mentions/DMs and both channels. Announce yourself with announce(). "
         "Events marked from_trusted_human (server-verified) may approve a specific "
@@ -271,16 +274,66 @@ async def _tasks(client: MattermostClient, posts: list[dict[str, Any]],
 
 
 async def _note_client(ctx: Any, call_next: Any) -> Any:
-    """The harness's name from the initialize handshake, for the stats (RT-6.9)."""
+    """The harness's name from the initialize handshake, for the stats (RT-6.9);
+    once initialized, its workspace from roots/list (RT-6.17 step 2)."""
     try:
         if ctx.method == "initialize":
             info = (ctx.params or {}).get("clientInfo")
             name = info.get("name") if isinstance(info, dict) else None
             if isinstance(name, str):
                 stats.set_client(name)
+        elif ctx.method == "notifications/initialized":
+            _learn_roots_soon(ctx.session)
     except Exception as exc:  # noqa: BLE001 — the handshake goes on; rt from the environment
         log.info("client name not read: %s", exc)
     return await call_next(ctx)
+
+
+_background: set[asyncio.Task[None]] = set()
+
+
+def _learn_roots_soon(session: Any) -> None:
+    """Ask a client that offers roots for its workspace, unless a session id or
+    the environment names it (RT-6.17 step 2). In a task: the client answers
+    after this notification is handled."""
+    if session_file.session_id() or session_file.workspace()[1] != "cwd":
+        return
+    caps = getattr(session, "client_capabilities", None)
+    if caps is None or getattr(caps, "roots", None) is None:
+        return
+    task = asyncio.get_running_loop().create_task(_learn_roots(session))
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+async def _learn_roots(session: Any) -> None:
+    """Key the endpoint and session file on the client's first file:// root."""
+    try:
+        result = await asyncio.wait_for(session.list_roots(), 10)
+    except Exception as exc:  # noqa: BLE001 — the working directory stays the key
+        log.info("roots/list not answered, keyed on the working directory: %s", exc)
+        return
+    path = next((p for r in getattr(result, "roots", [])
+                 if (p := session_file.root_path(str(r.uri)))), None)
+    old = session_file.session_file_path()
+    if path is None or not session_file.set_roots_dir(path):
+        return
+    new = session_file.session_file_path()
+    token = os.environ.get("MM_BOT_TOKEN", "")
+    try:  # a bot registered before the roots came: its file moves along
+        if token and not new.exists() and session_file.parse(old).get("MM_BOT_TOKEN") == token:
+            os.replace(old, new)
+    except OSError as exc:
+        log.info("session file not moved: %s", exc)
+    if _hook_api is not None:
+        _hook_api.rekey()
+    log.info("workspace from the client's roots: %s", path)
+
+
+def _hook_warning() -> dict[str, str]:
+    """A second MCP server in this workspace (RT-6.17 error handling)."""
+    text = _hook_api.warning() if _hook_api is not None else ""
+    return {"warning": text} if text else {}
 
 
 try:
@@ -349,8 +402,9 @@ async def session_start(
     }
     if client.reaped:
         out["reaped_stale_bots"] = client.reaped
-    if client.profile_warning:
-        out["warning"] = client.profile_warning
+    warnings = [w for w in (client.profile_warning, _hook_warning().get("warning", "")) if w]
+    if warnings:
+        out["warning"] = "; ".join(warnings)
     return _out("session_start", out)
 
 
@@ -386,8 +440,10 @@ async def bus_info() -> str:
             "version": VERSION,
             "on_bus": False,
             "reason": str(exc),
-            "how": ("session_start when MM_REG_SECRET and MM_PROJECT_CHANNEL are set; "
-                    "otherwise the host must pass the bus settings into the session"),
+            "how": ("session_start when MM_REG_SECRET (in this server's environment) and "
+                    "MM_PROJECT_CHANNEL are set; otherwise the host must pass the bus "
+                    "settings into the session"),
+            **_hook_warning(),
         })
     trusted = await client.trusted_humans()
     humans = []
@@ -411,6 +467,7 @@ async def bus_info() -> str:
         "permission_relay": RELAY,
         **({"update": {"installed": newer, "how": "quit, then claude --continue"}}
            if (newer := _newer_installed()) else {}),
+        **_hook_warning(),
     })
 
 
@@ -522,13 +579,17 @@ async def _responsible_and_trusted(client: MattermostClient) -> tuple[str | None
     return responsible, names
 
 
-def _refused(tool: str, reason: str, kinds: bool = False) -> str:
+def _refusal(reason: str, kinds: bool = False) -> dict[str, Any]:
     """A refused input is the tool's result, not an error: the agent sees why and
     that nothing was posted (RT-6.14)."""
     out: dict[str, Any] = {"posted": False, "refused": reason}
     if kinds:
         out["kinds"] = list(a2a.WORDS)
-    return _out(tool, out)
+    return out
+
+
+def _refused(tool: str, reason: str, kinds: bool = False) -> str:
+    return _out(tool, _refusal(reason, kinds))
 
 
 def _bad_id(**ids: str) -> str:
@@ -616,20 +677,27 @@ async def post_message(
     put first if missing (RT-6.14). While you hold the coordinator crown the
     post starts with 👑.
     """
+    return _out("post_message", await post_as_bot(None, message, channel_id, root_id, to, kind))
+
+
+async def post_as_bot(client: MattermostClient | None, message: str, channel_id: str = "",
+                      root_id: str = "", to: str = "", kind: str = "") -> dict[str, Any]:
+    """post_message's work, for the tool and for the shell's POST /v1/post
+    (RT-6.17): one implementation. client None: this server's own."""
     _done_typing()
     try:
         message = a2a.lead(message, kind)
     except ValueError as exc:
-        return _refused("post_message", str(exc), kinds=True)
+        return _refusal(str(exc), kinds=True)
     if bad := _bad_id(channel=channel_id, post=root_id):
-        return _refused("post_message", bad)
-    client = _get_client()
+        return _refusal(bad)
+    client = client or _get_client()
     everyone = to.strip().lower() == a2a.ALL
     if to.strip() and not everyone:
         try:
             channel_id = await client.direct_channel_with_bot(to)
         except InvalidId as exc:
-            return _refused("post_message", str(exc))
+            return _refusal(str(exc))
     message, removed = await _unmention(client, message)
     uid = await _my_id(client)
     if (not root_id and not channel_id and a2a.word(message) == "ASSIGNMENTS"
@@ -649,8 +717,8 @@ async def post_message(
         props=a2a.props(message, a2a.ALL if everyone else ""),
     )
     await _posted(client, post)
-    return _out("post_message", await _claimed(client, root_id, message, uid, _with_unmentioned(
-        await slim.post(client, post), removed, await _unasked(client, message, uid))))
+    return await _claimed(client, root_id, message, uid, _with_unmentioned(
+        await slim.post(client, post), removed, await _unasked(client, message, uid)))
 
 
 @mcp.tool()
@@ -663,17 +731,23 @@ async def reply_in_thread(
     to="all" and kind as for post_message. While you hold the coordinator
     crown the reply starts with 👑.
     """
+    return _out("reply_in_thread", await reply_as_bot(None, root_id, message, channel_id, to, kind))
+
+
+async def reply_as_bot(client: MattermostClient | None, root_id: str, message: str,
+                       channel_id: str = "", to: str = "", kind: str = "") -> dict[str, Any]:
+    """reply_in_thread's work, for the tool and for POST /v1/reply (RT-6.17)."""
     _done_typing()
     try:
         message = a2a.lead(message, kind)
     except ValueError as exc:
-        return _refused("reply_in_thread", str(exc), kinds=True)
+        return _refusal(str(exc), kinds=True)
     if bad := _bad_id(post=root_id or "-", channel=channel_id):
-        return _refused("reply_in_thread", bad)
-    client = _get_client()
+        return _refusal(bad)
+    client = client or _get_client()
     everyone = to.strip().lower() == a2a.ALL
     if to.strip() and not everyone:
-        return _refused("reply_in_thread", 'to must be "all" or empty: a reply stays in its thread')
+        return _refusal('to must be "all" or empty: a reply stays in its thread')
     message, removed = await _unmention(client, message)
     uid = await _my_id(client)
     stats.record("post", chars=len(message))
@@ -684,8 +758,8 @@ async def reply_in_thread(
         props=a2a.props(message, a2a.ALL if everyone else ""),
     )
     await _posted(client, post)
-    return _out("reply_in_thread", await _claimed(client, root_id, message, uid, _with_unmentioned(
-        await slim.post(client, post), removed, await _unasked(client, message, uid))))
+    return await _claimed(client, root_id, message, uid, _with_unmentioned(
+        await slim.post(client, post), removed, await _unasked(client, message, uid)))
 
 
 # Task threads this bot holds: its next claim there needs no thread read.

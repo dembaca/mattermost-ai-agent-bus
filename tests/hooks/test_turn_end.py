@@ -125,8 +125,9 @@ def test_listen_window_follows_the_files_post_time(mm, run):
 
 
 def test_the_cli_post_keeps_the_file(mm, run):
-    """RT-6.2: bin/mm-agent-post.sh keeps the same file for the work channel,
-    with the HELLO thread; a post in another channel leaves it alone."""
+    """RT-6.2, RT-6.17: a post through bin/mm-agent-post.sh (the server's
+    POST /v1/post) keeps the same file for the work channel, with the HELLO
+    thread; a post in another channel leaves it alone."""
     post = "bin/mm-agent-post.sh"
     assert run(post, PROJECT, "HELLO @agent-test\nproject: x", **IN_PROJECT).code == 0
     f = run.state_dir / f"last-{ME}.env"
@@ -282,7 +283,8 @@ def test_without_the_mcp_server_the_hooks_stay_quiet(mm, run):
     assert r.passed and r.stdout == ""
     assert run(PROMPT, bus=None).code == 0 and mm.writes == []
     r = run(LISTEN, "--until", str(int(time.time()) + 30), bus=None)
-    assert r.code == 0 and "No bus session" in r.stdout
+    assert r.code == 0 and "no MCP server of this session found" in r.stdout
+    assert r.stdout.rstrip().endswith("Finish.")
 
 
 def test_listener_wakes_on_a_dm(mm, run):

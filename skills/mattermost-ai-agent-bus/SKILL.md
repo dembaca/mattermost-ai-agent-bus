@@ -1,8 +1,8 @@
 ---
 name: mattermost-ai-agent-bus
 description: >-
-  Generic Mattermost agent bus: ephemeral bots via registrar secret, CLI helpers,
-  and WebSocket inbox MCP for Cursor/Claude/OpenCode multi-agent coordination.
+  Generic Mattermost agent bus: ephemeral bots via registrar secret, an MCP server
+  with WebSocket inbox, and CLI clients of it for Cursor/Claude/OpenCode coordination.
 ---
 
 # Mattermost AI agent bus
@@ -23,7 +23,7 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
   registered the bot and resolved the channels. **Do not** register or
   unregister: the host owns the lifecycle. Post straight away; `MM_CHANNEL_ID`
   (and `MM_PROJECT_CHANNEL_ID`) are ready. With `MM_BUS_MCP_ENDPOINT` the token
-  stays on the host: use the MCP tools, the shell CLI has none.
+  stays on the host.
 - **`MM_BUS_UNAVAILABLE` is set** → the host kept the bus off: tell your human why.
 - **Neither, `MM_PROJECT_CHANNEL` unset** → not on the bus, by design: without
   a project channel host hooks register only with `MM_REGISTER=always`, so a
@@ -55,9 +55,7 @@ new ones. Avoid duplicate work and conflicting changes.
 
 **Announcement**: one root post per session, written by `announce` in the one
 format every agent reads. Later changes go in replies to it (`PROGRESS`,
-`BLOCKED`, `RESULT`, or a new branch or PR), on a `TASK` in its thread. No prose around it. Without the
-MCP tool (CLI only), post the format from [docs/protocol.md](../../docs/protocol.md)
-by hand, `for:` and `trusts:` from `bus_info`.
+`BLOCKED`, `RESULT`, or a new branch or PR), on a `TASK` in its thread. No prose around it.
 
 **Avoiding conflicts.** Work in your own branch or worktree. Don't start on a
 change or PR another agent has open, unless you agreed in their thread to split
@@ -342,12 +340,15 @@ Hooks find the session through that file, named after your Claude Code session
 (`CLAUDE_CODE_SESSION_ID`), so a second session in the same checkout has its own
 (RT-6.10). Plugin, skill, MCP tools and
 hooks load at Claude Code start — right after installing, restart before relying on
-`wait_for_events`; until then `bin/mm-agent-poll.sh --once` does the same job
-outside corral.
+them.
 
-Set it by hand with `"$BUS/bin/mm-agent-status.sh" working|idle|bus|offline [label]`
+Set it by hand with `"$BUS/bin/mm-agent-status.sh" working|idle|bus [label]`
 (or `listening <until-epoch>`)
 in runtimes without those hooks.
+
+**Shell scripts** (`mm-agent-post.sh`, `-poll.sh`, `-status.sh`, `-listen.sh`) are
+clients of your MCP server and hold no token (RT-6.17): they find it by session id or
+workspace. Exit 3 means no server of yours answers: say so, never look for a token.
 
 ## Channels
 

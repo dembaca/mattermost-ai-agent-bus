@@ -1,22 +1,28 @@
-"""Hook API: the turn hooks and the listener ask the MCP server, not Mattermost
-(RT-6.17 in docs/arc42/06-runtime-view.md).
+"""Hook API: the turn hooks and the shell scripts ask the MCP server, not
+Mattermost (RT-6.17 in docs/arc42/06-runtime-view.md).
 
-The hooks (hooks/*.sh) and the background listener (bin/mm-agent-listen.sh) hold
-no bot token. They call this small HTTP API instead, served next to the
-WebSocket inbox in the server's event loop:
+The hooks (hooks/*.sh) and the scripts an agent runs (bin/mm-agent-listen.sh,
+-post, -poll, -status) hold no bot token. They call this small HTTP API
+instead, served next to the WebSocket inbox in the server's event loop:
 
     GET  /v1/me             {user_id, username, project, crown_until, channel}
     GET  /v1/pending        {count[, channels: [{id, type, pending, fyi}]]}
                             (?detail=1: up to 5 channels, with fyi counts)
     GET  /v1/last-post      {at, message}: the own latest post in the work channel
     GET  /v1/posts          {posts: [{id, user_id, root_id, create_at, type,
-                            message, to, intent, fyi, gated}]}, work channel,
-                            newest first (?limit=N, at most 200, or ?since=MS)
+                            message, to, intent, fyi, gated}]}, work channel
+                            (or ?channel=ID|NAME), newest first (?limit=N, at
+                            most 200, or ?since=MS)
     GET  /v1/ask-reactions  {fresh}: reactions to open asks not handed over yet
     POST /v1/presence       {state: working|idle|listening|bus, label?, until?} → {ok}
     POST /v1/stat           {k: turn|turn_end|block|compact|wake|transcript, …} → {ok}
                             (one overhead counter, RT-6.9: the hooks of a keyless
                             session cannot reach the server's state dir, RT-6.18)
+    POST /v1/post           {message, channel_id?, root_id?, to?, kind?} → what
+                            post_message returns, a refusal included
+    POST /v1/reply          {root_id, message, channel_id?, to?, kind?} → what
+                            reply_in_thread returns (mm-agent-post.sh): the tools'
+                            own code (server.py), not a second implementation
 
 HTTP/1.1 on 127.0.0.1 only, an ephemeral port, one random key per server: every
 request carries ``Authorization: Bearer <key>``, compared in constant time, or
@@ -25,8 +31,10 @@ no bus session (no token yet), 502 that Mattermost failed. At most
 MAX_CONNECTIONS connections at once and MAX_HEAVY_RUNS Mattermost-heavy requests.
 The hooks find endpoint and key in MM_BUS_ENDPOINT / MM_BUS_KEY, else in the
 discovery file ``endpoint-sid-<key>.env`` (0600) in the state dir, keyed like the
-session file (session_file.keyed_path), with the bot's id once known; it is
-removed when the server ends. The host process of a keyless corral session
+session file (session_file.keyed_path: the Claude Code session, else the
+workspace), with the bot's id once known; it is removed when the server ends.
+A workspace-keyed file of another server that still runs is not overwritten:
+one MCP server per workspace (warning()). The host process of a keyless corral session
 (RT-6.18, hosted.py) serves it with the session's key from preStart and writes
 no file: the sandbox has both in its environment.
 
@@ -43,6 +51,8 @@ import logging
 import os
 import re
 import secrets
+import socket
+import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
@@ -50,7 +60,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import a2a, asks, channel, gate, lease, ownpost, session_file, stats, unread
-from .client import InvalidId
+from .client import InvalidId, _pid_alive, mm_name
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -86,6 +96,18 @@ class BadRequest(ValueError):
     pass
 
 
+def _answers(endpoint: str) -> bool:
+    """Something listens at this loopback endpoint (http://127.0.0.1:<port>)."""
+    host, _, port = urlsplit(endpoint).netloc.rpartition(":")
+    if host != "127.0.0.1" or not port.isdigit():
+        return False
+    try:
+        with socket.create_connection((host, int(port)), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def file_path() -> Path:
     """Where the hooks find endpoint and key (mm_bus in bin/mm-agent-lib.sh)."""
     return session_file.keyed_path(FILE_PREFIX)
@@ -104,15 +126,54 @@ class HookAPI:
         self._uid = ""
         self._open = 0
         self._heavy = asyncio.Semaphore(MAX_HEAVY_RUNS)
+        self._writes = False
+        # Another live server owns this workspace's file (RT-6.17 error handling).
+        self.conflict: dict[str, Any] | None = None
 
     async def start(self, *, write_file: bool = True) -> str:
         """Listen on 127.0.0.1 and (by default) write the discovery file."""
         self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
         port = self._server.sockets[0].getsockname()[1]
         self.endpoint = f"http://127.0.0.1:{port}"
+        self._writes = write_file
         if write_file:
             self._write_file()
         return self.endpoint
+
+    def rekey(self) -> None:
+        """The workspace is known now (the client's roots arrived): the file
+        moves to its name, if another live server does not own that one."""
+        if not self._writes or self._server is None or self._file == file_path():
+            return
+        self.remove_file()
+        try:
+            self._write_file(self._uid or None)
+        except OSError as exc:
+            log.warning("hook API: endpoint file not written: %s", exc)
+
+    def warning(self) -> str:
+        """Why the hooks and shell scripts here do not reach this server, or ''."""
+        if not self.conflict:
+            return ""
+        return (f"another MCP server (pid {self.conflict['pid']}) of this workspace owns "
+                f"{self.conflict['file']}: the hooks and shell scripts here reach that one, "
+                "not this one. Run one MCP server per workspace: close the other window or "
+                "instance, then restart this one (RT-6.17)")
+
+    def _foreign(self, path: Path) -> dict[str, Any] | None:
+        """The file of another server that still runs, in a workspace-keyed
+        place: a second server in the same workspace must not take the first
+        one's hooks and scripts. A session-id file is the same Claude Code
+        session's, whose newer server takes over (`claude --continue`)."""
+        if path.name.startswith(f"{FILE_PREFIX}-sid-"):
+            return None
+        data = session_file.parse(path)
+        pid = data.get("MM_BUS_PID", "")
+        if not data or data.get("MM_BUS_KEY") == self.key or not _pid_alive(pid):
+            return None
+        if not _answers(data.get("MM_BUS_ENDPOINT", "")):
+            return None  # a crash left it behind; its pid may be reused
+        return {"file": str(path), "pid": int(pid)}
 
     def _write_file(self, uid: str | None = None) -> None:
         # The bot's id too (not secret): the prompt hook stops the listener and
@@ -120,6 +181,10 @@ class HookAPI:
         uid = os.environ.get("MM_BOT_USER_ID", "") if uid is None else uid
         self._uid = uid if _UID.fullmatch(uid) else ""
         path = file_path()
+        self.conflict = self._foreign(path)
+        if self.conflict:
+            log.warning("hook API: %s", self.warning())
+            return
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         tmp = path.with_name(path.name + ".tmp")
         tmp.unlink(missing_ok=True)
@@ -316,15 +381,31 @@ def _slim(post: Mapping[str, Any], agents: set[str], gated: set[str]) -> dict[st
     }
 
 
+async def _channel(client: MattermostClient, chan: str) -> str:
+    """The work channel, or the one named (an id, or a name in the bot's team)."""
+    if not chan:
+        return await client.work_channel_id()
+    if _UID.fullmatch(chan):
+        return chan
+    name = mm_name(chan, "channel")  # InvalidId: a 400, before any request
+    try:
+        return await client.get_channel_id(name)
+    except Exception as exc:
+        if getattr(getattr(exc, "response", None), "status_code", None) == 404:
+            raise BadRequest(f"no channel {chan} in the team") from exc
+        raise
+
+
 async def posts(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
-    """The work channel's posts, newest first: the last ?limit=N, or those since
-    ?since=MS (created or edited). Each says whether it is for all agents, an
-    agent's fyi post (RT-6.14) and gated by the server (RT-6.16)."""
+    """The work channel's posts (or ?channel=), newest first: the last
+    ?limit=N, or those since ?since=MS (created or edited). Each says whether
+    it is for all agents, an agent's fyi post (RT-6.14) and gated by the
+    server (RT-6.16). mm-agent-poll.sh reads them too."""
     since, limit = query.get("since", ""), query.get("limit", "60")
     if not (since or limit).isdigit():
         raise BadRequest("since: epoch ms, limit: a count")
     uid = await _uid(client)
-    cid = await client.work_channel_id()
+    cid = await _channel(client, query.get("channel", ""))
     if since:
         raw = await client.channel_posts(cid, since_ms=int(since))
     else:
@@ -407,6 +488,53 @@ async def stat(client: MattermostClient, query: Mapping[str, str], body: Mapping
     return 200, {"ok": True}
 
 
+POST_FIELDS = ("message", "channel_id", "root_id", "to", "kind")
+
+
+def _fields(body: Mapping[str, Any], required: str) -> dict[str, str]:
+    """The post fields as strings: an unknown field or another type is a 400."""
+    unknown = sorted(set(body) - set(POST_FIELDS))
+    if unknown:
+        raise BadRequest(f"unknown field {unknown[0]}: {', '.join(POST_FIELDS)}")
+    out: dict[str, str] = {}
+    for name in POST_FIELDS:
+        value = body.get(name, "")
+        if not isinstance(value, str):
+            raise BadRequest(f"{name}: a string")
+        out[name] = value
+    if not out[required].strip():
+        raise BadRequest(f"{required}: required")
+    if not (out["message"].strip() or out["kind"].strip()):
+        raise BadRequest("message: required (or a kind alone, e.g. IDLE)")
+    return out
+
+
+def _tools() -> Any:
+    """The MCP server's module, whose tools post: loaded by the stdio server,
+    and by the host process of a keyless session at the first relay
+    handshake (RT-6.18), never imported from here."""
+    return sys.modules.get(f"{__package__}.server")
+
+
+async def post_route(client: MattermostClient, query: Mapping[str, str],
+                     body: Mapping[str, Any]) -> Reply:
+    """post_message for the shell (mm-agent-post.sh): the tool's own code,
+    its result, refusals included (RT-6.17)."""
+    tools = _tools()
+    if tools is None:
+        return 503, {"error": "the MCP server is not loaded yet"}
+    return 200, await tools.post_as_bot(client, **_fields(body, "message"))
+
+
+async def reply_route(client: MattermostClient, query: Mapping[str, str],
+                      body: Mapping[str, Any]) -> Reply:
+    """reply_in_thread for the shell (mm-agent-post.sh --root)."""
+    tools = _tools()
+    if tools is None:
+        return 503, {"error": "the MCP server is not loaded yet"}
+    return 200, await tools.reply_as_bot(client, **_fields(body, "root_id"))
+
+
 _ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/me"): me,
     ("GET", "/v1/pending"): pending,
@@ -415,6 +543,8 @@ _ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/ask-reactions"): ask_reactions,
     ("POST", "/v1/presence"): presence,
     ("POST", "/v1/stat"): stat,
+    ("POST", "/v1/post"): post_route,
+    ("POST", "/v1/reply"): reply_route,
 }
 # Routes that make several Mattermost calls: at most MAX_HEAVY_RUNS at once.
-_HEAVY_ROUTES = frozenset({pending, presence})
+_HEAVY_ROUTES = frozenset({pending, presence, post_route, reply_route})

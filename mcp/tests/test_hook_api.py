@@ -422,3 +422,49 @@ async def test_me_says_whether_the_channel_is_confirmed(api):
     assert (await h.get("/v1/me")).json()["channel"] is False
     session_file.write_private(channel.confirmed_file(UID), "CONFIRMED=1\n")
     assert (await h.get("/v1/me")).json()["channel"] is True
+
+
+async def test_post_and_reply_run_the_tools_code(api, monkeypatch):
+    """RT-6.17 step 3: POST /v1/post and /v1/reply hand the fields to the
+    server's post_as_bot / reply_as_bot (the tools' code) and answer what they
+    return, a refusal included; anything but the post fields as strings is a 400."""
+    calls = []
+
+    async def post_as_bot(client, **kw):
+        calls.append(("post", kw))
+        return {"posted": False, "refused": "kind must be one of …"} if kw["kind"] else {"id": "n"}
+
+    async def reply_as_bot(client, **kw):
+        calls.append(("reply", kw))
+        return {"id": "r"}
+
+    monkeypatch.setattr(hookapi, "_tools", lambda: type("M", (), {
+        "post_as_bot": staticmethod(post_as_bot), "reply_as_bot": staticmethod(reply_as_bot)}))
+    _, h = await api(FakeClient())
+    r = await h.post("/v1/post", json={"message": "hi", "to": "all"})
+    assert r.status_code == 200 and r.json() == {"id": "n"}
+    assert calls[-1] == ("post", {"message": "hi", "channel_id": "", "root_id": "",
+                                  "to": "all", "kind": ""})
+    assert (await h.post("/v1/post", json={"message": "x", "kind": "SHOUT"})).json()["posted"] is False
+    assert (await h.post("/v1/reply", json={"root_id": ASK, "message": "ok"})).json() == {"id": "r"}
+    for bad in ({"message": "x", "token": "t"}, {"message": 1}, {"message": ""}):
+        assert (await h.post("/v1/post", json=bad)).status_code == 400
+    assert (await h.post("/v1/reply", json={"message": "x"})).status_code == 400
+    monkeypatch.setattr(hookapi, "_tools", lambda: None)  # a host process before its first relay
+    assert (await h.post("/v1/post", json={"message": "x"})).status_code == 503
+
+
+async def test_posts_of_another_channel(api):
+    """RT-6.17: mm-agent-poll.sh --channel reads another channel by id."""
+    c = FakeClient(posts=[post("p1", "hi")])
+    seen = []
+
+    async def channel_posts(cid, *, per_page=None, since_ms=None):
+        seen.append(cid)
+        return list(c.posts)
+
+    c.channel_posts = channel_posts
+    _, h = await api(c)
+    assert (await h.get(f"/v1/posts?channel={OTHER}&since=1")).status_code == 200
+    assert seen == [OTHER]
+    assert (await h.get("/v1/posts?channel=../x")).status_code == 400

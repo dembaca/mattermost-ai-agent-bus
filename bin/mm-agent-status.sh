@@ -11,18 +11,21 @@
 # Deliberately carries no content — a label names the project (default: the
 # directory), never the task, so following along costs nobody any privacy.
 #
-# The status lease and the coordinator crown are the MCP server's (lease.py):
-# while this session's server answers (its hook API, RT-6.17), this script
-# hands the state to it, which keeps the crown and renews the lease; when that
-# hand-over fails, it leaves the status alone. Only without such a server — the
-# host session hooks before the session starts, a runtime without the MCP
-# server — it writes the status itself, with an expiry of MM_LEASE_SEC
-# (default 900 s) that nobody renews; a crown whose lease in coord-<uid>.env
-# still runs keeps its text until then, never longer. offline is always
-# written here: the session is over, and its lease files go.
+# The status lease and the coordinator crown are the MCP server's (lease.py).
+# By hand, in an agent's shell, this script is a client of the session's own
+# server (its hook API, RT-6.17): it hands the state over, and the server keeps
+# the crown and renews the lease. There is no token in an agent's shell, so
+# without a reachable server of this session it changes nothing and says what
+# to do (exit 3); a server that serves another bot than MM_BOT_USER_ID names is
+# never asked (exit 1). offline is the server's to set when the session ends.
 #
-# Fails open and silent: no bus, no token, an API hiccup — exit 0. A status
-# indicator must never be able to disturb a coding session.
+# The host session hooks (corral, the token on fd 3: MM_BOT_TOKEN_FD) call it
+# before the server runs and after it ended: they hand over to the server when
+# it serves their bot, else write the status themselves with an expiry of
+# MM_LEASE_SEC (default 900 s) that nobody renews; a crown whose lease in
+# coord-<uid>.env still runs keeps its text until then, never longer. offline
+# is always written there: the session is over, and its lease files go. That
+# path fails open and silent: a status must never disturb a session.
 set -uo pipefail
 
 LIB="$(cd "$(dirname "$0")" && pwd)/mm-agent-lib.sh"
@@ -45,15 +48,33 @@ if [[ -z "$LABEL" && "$STATE" != listening ]]; then
   LABEL="$(basename "${CORRAL_WORKDIR:-$PWD}")"
 fi
 
-# This session's MCP server, if it runs: only its own bot, never another
-# session's server found by directory.
+if [[ "$STATE" == listening ]]; then
+  body="$(jq -nc --argjson u "$LABEL" '{state: "listening", until: $u}')"
+else
+  body="$(jq -nc --arg s "$STATE" --arg l "$LABEL" '{state: $s, label: $l}')"
+fi
+
+# This session's MCP server (mm_bus_file): only when it serves the bot
+# MM_BOT_USER_ID names, if one is named.
 OWN="${MM_BOT_USER_ID:-}"
-if [[ "$STATE" != offline ]] && mm_bus_me && [[ -z "$OWN" || "$OWN" == "$MM_BOT_USER_ID" ]]; then
-  if [[ "$STATE" == listening ]]; then
-    body="$(jq -nc --argjson u "$LABEL" '{state: "listening", until: $u}')"
-  else
-    body="$(jq -nc --arg s "$STATE" --arg l "$LABEL" '{state: $s, label: $l}')"
+if [[ "${MM_CREDS_FROM_FD:-0}" != 1 ]]; then
+  if [[ "$STATE" == offline ]]; then
+    echo "mm-agent-status.sh: offline is set by the MCP server when the session ends (session_end)" >&2
+    exit 2
   fi
+  if ! mm_bus_me; then
+    mm_bus_explain
+    exit 3
+  fi
+  if [[ -n "$OWN" && "$OWN" != "$MM_BOT_USER_ID" ]]; then
+    echo "mm-agent-status.sh: the MCP server found (${MM_BUS_FROM}) serves another bot than MM_BOT_USER_ID: not asked" >&2
+    exit 1
+  fi
+  mm_bus POST /v1/presence "$body" || { mm_bus_explain; exit 1; }
+  exit 0
+fi
+
+if [[ "$STATE" != offline ]] && mm_bus_me && [[ -n "$OWN" && "$OWN" == "$MM_BOT_USER_ID" ]]; then
   # The server holds status and crown: a failed hand-over leaves both alone.
   mm_bus POST /v1/presence "$body" || true
   exit 0

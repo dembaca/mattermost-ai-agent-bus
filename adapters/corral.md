@@ -162,8 +162,8 @@ Deliberately **not** contributed:
 - `MM_REG_BOT_NAME` — the registrar's short name for the bot (the username without
   its prefix). Not a secret: the registrar deletes a bot only with `MM_REG_SECRET` or that
   bot's own token, so from inside the sandbox an agent can remove at most its own bot.
-  Withholding the name guards the host's lifecycle: without it the CLI finds no session
-  file, so `mm-agent-session.sh stop` cannot tear down a session the host owns.
+  Withholding the name guards the host's lifecycle: without it nothing in the sandbox
+  names the host's session file.
 
 ## Presence
 
