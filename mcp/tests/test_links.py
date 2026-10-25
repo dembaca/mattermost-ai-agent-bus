@@ -79,3 +79,19 @@ def test_task_rows_read_linked_prs():
     """RT-6.15 + RT-6.14: a PR the agent links is still the task's PR."""
     assert set(tasks._PR.findall("RESULT [MR !12](https://gl.example/g/r/-/merge_requests/12)")) \
         == {"12"}
+
+
+TABLE = "| a | b |\n|---|---|\n| 1 | 2 |"
+
+
+@pytest.mark.parametrize("text,want", [
+    (f"Stand:\n{TABLE}", f"Stand:\n\n{TABLE}"),
+    (f"Stand:\n\n{TABLE}", f"Stand:\n\n{TABLE}"),
+    (TABLE, TABLE),
+    (f"```\nx\n{TABLE}\n```", f"```\nx\n{TABLE}\n```"),
+    ("a | b\nno table | here", "a | b\nno table | here"),
+    (f"one:\n{TABLE}\ntwo:\n{TABLE}", f"one:\n\n{TABLE}\ntwo:\n\n{TABLE}"),
+])
+def test_a_table_after_text_gets_a_blank_line(text, want):
+    # RT-6.15: Mattermost renders a table only after a blank line.
+    assert send(text) == want
