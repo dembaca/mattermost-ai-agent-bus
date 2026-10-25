@@ -437,7 +437,7 @@ class MattermostClient:
         # drain; mark everything read so the Stop hook starts from empty.
         try:
             for ch in await self.unread_channels():
-                await self.view_channel(ch["channel_id"])
+                await self.view_channel(ch.channel_id)
         except (httpx.HTTPError, KeyError):
             pass
         return result
