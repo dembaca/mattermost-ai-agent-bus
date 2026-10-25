@@ -84,15 +84,19 @@ mm_require_reg_secret() {
   fi
 }
 
-mm_auth_header() {
+# curl with "Authorization: Bearer <token>" read from stdin (-H @-), never in
+# its argv, where `ps` shows it to every user of the machine. The other
+# arguments are curl's; a body goes in them (-d), stdin is the header's.
+#   mm_curl_auth "$tok" -fsS "$url"
+mm_curl_auth() {
   local tok="$1"
-  printf 'Authorization: Bearer %s' "$tok"
+  shift
+  printf 'Authorization: Bearer %s\n' "$tok" | curl -H @- "$@"
 }
 
 mm_json_post() {
   local url="$1" tok="$2" body="$3"
-  curl -fsS -X POST "$url" \
-    -H "$(mm_auth_header "$tok")" \
+  mm_curl_auth "$tok" -fsS -X POST "$url" \
     -H "Content-Type: application/json" \
     -d "$body"
 }
@@ -110,12 +114,11 @@ mm_api() {
   tok="$(mm_bot_token)" || return $?
   # Status is appended on its own line rather than written to a temp file:
   # no writable TMPDIR is needed, which matters inside a sandbox.
-  local args=(-sS -w $'\n%{http_code}' -X "$method"
-    -H "$(mm_auth_header "$tok")")
+  local args=(-sS -w $'\n%{http_code}' -X "$method")
   if [[ -n "$payload" ]]; then
     args+=(-H "Content-Type: application/json" -d "$payload")
   fi
-  resp="$(curl "${args[@]}" "${chat}${path}" || true)"
+  resp="$(mm_curl_auth "$tok" "${args[@]}" "${chat}${path}" || true)"
   MM_API_STATUS="${resp##*$'\n'}"
   MM_API_BODY="${resp%$'\n'*}"
   [[ "$MM_API_STATUS" =~ ^[0-9]{3}$ ]] || return 1
@@ -278,8 +281,9 @@ mm_load_hook_session() {
 # the server writes (endpoint-sid-<key>.env, mm_hook_session_file endpoint),
 # read on every call: a restarted server has a new port and key. The key goes
 # to curl on stdin, never in its argv. Succeeds only on HTTP 200; no endpoint,
-# no server or a timeout (MM_BUS_MAX_TIME, default 5 s) fail, and the caller
-# fails open.
+# no server or a timeout fail, and the caller fails open. Each call takes at
+# most MM_BUS_MAX_TIME (whole seconds, default 3), and none runs past
+# MM_BUS_DEADLINE (epoch seconds) when a hook set one for its whole run.
 mm_bus() {
   local method="$1" path="$2" payload="${3:-}" ep="${MM_BUS_ENDPOINT:-}" key="${MM_BUS_KEY:-}" f k v resp
   MM_BUS_STATUS="" MM_BUS_BODY=""
@@ -290,14 +294,35 @@ mm_bus() {
     done <"$f"
     [[ -n "$ep" && -n "$key" ]] || return 1
   fi
-  local args=(-sS --max-time "${MM_BUS_MAX_TIME:-5}" -w $'\n%{http_code}' -X "$method" -H @-)
+  local max="${MM_BUS_MAX_TIME:-3}" left
+  [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=3
+  if [[ "${MM_BUS_DEADLINE:-}" =~ ^[0-9]+$ ]]; then
+    left=$((MM_BUS_DEADLINE - $(date +%s)))
+    (( left > 0 )) || return 1
+    (( left < max )) && max="$left"
+  fi
+  local args=(-sS --max-time "$max" -w $'\n%{http_code}' -X "$method")
   if [[ -n "$payload" ]]; then
     args+=(-H "Content-Type: application/json" --data-raw "$payload")
   fi
-  resp="$(printf 'Authorization: Bearer %s\n' "$key" | curl "${args[@]}" "${ep%/}${path}" 2>/dev/null)" || return 1
+  resp="$(mm_curl_auth "$key" "${args[@]}" "${ep%/}${path}" 2>/dev/null)" || return 1
   MM_BUS_STATUS="${resp##*$'\n'}"
   MM_BUS_BODY="${resp%$'\n'*}"
   [[ "$MM_BUS_STATUS" == 200 ]]
+}
+
+# This session's bot id without asking anyone: MM_BOT_USER_ID from the
+# environment, else the one the MCP server put into its endpoint file. For the
+# local steps that must not wait on the server (the prompt hook stopping the
+# listener and clearing the turn state, RT-6.17 error handling). Exports it.
+mm_bus_uid() {
+  local uid="${MM_BOT_USER_ID:-}" f
+  if ! [[ "$uid" =~ ^[a-z0-9]{26}$ ]]; then
+    f="$(mm_hook_session_file endpoint)" || return 1
+    uid="$(sed -n 's/^MM_BOT_USER_ID=//p' "$f" 2>/dev/null | head -1)"
+    [[ "$uid" =~ ^[a-z0-9]{26}$ ]] || return 1
+  fi
+  export MM_BOT_USER_ID="$uid"
 }
 
 # Who this session's bot is, from the hook API: exports MM_BOT_USER_ID and

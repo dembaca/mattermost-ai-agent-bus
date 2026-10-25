@@ -16,6 +16,9 @@ set -uo pipefail
 source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
 mm_read_hook_input            # drains the payload; only its session id is used
 
+# The hook has 10 s (hooks.json); its two calls to the server share 8.
+MM_BUS_DEADLINE=$(( $(date +%s) + 8 ))
+export MM_BUS_DEADLINE
 mm_bus_me || exit 0
 mm_bus GET '/v1/posts?limit=200' || exit 0
 

@@ -1,6 +1,7 @@
 """RT-6.17 the hook API: turn hooks and listener ask the MCP server
 (docs/arc42/06-runtime-view.md)."""
 
+import asyncio
 import json
 import os
 import stat
@@ -226,9 +227,10 @@ async def test_presence_runs_the_status_script(api, monkeypatch):
     _, h = await api(FakeClient())
     assert (await h.post("/v1/presence", json={"state": "working", "label": "proj"})).json() == {"ok": True}
     await h.post("/v1/presence", json={"state": "idle"})
-    await h.post("/v1/presence", json={"state": "listening", "until": 1900000000})
+    until = int(time.time()) + 600
+    await h.post("/v1/presence", json={"state": "listening", "until": until})
     assert runs == [("mm-agent-status.sh", "working", "proj"), ("mm-agent-status.sh", "idle", ""),
-                    ("mm-agent-status.sh", "listening", "1900000000")]
+                    ("mm-agent-status.sh", "listening", str(until))]
     for body in ({"state": "offline"}, {"state": "listening"}, {"state": "listening", "until": "x"}):
         assert (await h.post("/v1/presence", json=body)).status_code == 400
     assert (await h.post("/v1/presence", content=b"[1]")).status_code == 400
@@ -260,11 +262,136 @@ async def test_the_file_names_endpoint_and_key_and_goes_at_exit(api, monkeypatch
 async def test_a_malformed_request_is_refused(api):
     a, _ = await api(FakeClient())
     host, port = a.endpoint.removeprefix("http://").split(":")
-    import asyncio
-
     reader, writer = await asyncio.open_connection(host, int(port))
     writer.write(b"nonsense\r\n\r\n")
     await writer.drain()
     head = (await reader.read()).decode()
     writer.close()
     assert head.startswith("HTTP/1.1 400") and json.loads(head.split("\r\n\r\n", 1)[1])
+
+
+async def test_presence_takes_a_short_label_and_a_near_until(api, monkeypatch):
+    """RT-6.17 step 3: the label is one line of at most 64 characters (stripped),
+    `until` an epoch within a day, `state` one of three; anything else is 400
+    and runs nothing."""
+    runs = []
+
+    async def script(client, name, *args):
+        runs.append(args)
+        return ""
+
+    monkeypatch.setattr(lease, "script", script)
+    _, h = await api(FakeClient())
+    assert (await h.post("/v1/presence", json={"state": "idle", "label": "  " + "x" * 64 + " "})).status_code == 200
+    assert runs == [("idle", "x" * 64)]
+    now = int(time.time())
+    for body in ({"state": "working", "label": "x" * 65}, {"state": "working", "label": "a\nb"},
+                 {"state": "working", "label": "a\rb"}, {"state": "working", "label": "a\tb"},
+                 {"state": "working", "label": 7}, {"state": "working", "label": ["x"]},
+                 {"state": "listening", "until": now + 2 * 86400}, {"state": "listening", "until": -5},
+                 {"state": "listening", "until": True}, {"state": "listening", "until": 1.5e9},
+                 {"state": "Working"}, {"state": None}):
+        assert (await h.post("/v1/presence", json=body)).status_code == 400, body
+    assert len(runs) == 1
+
+
+async def test_the_file_learns_the_bot_id(api, monkeypatch):
+    """RT-6.17 step 2, error handling: the endpoint file names the bot's id
+    (not secret) once the server knows it, so the prompt hook can clear the
+    turn state and stop the listener without the server."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-uid")
+    a, h = await api(FakeClient(), write_file=True)
+    f = hookapi.file_path()
+    assert "MM_BOT_USER_ID" not in session_file.parse(f)
+    assert (await h.get("/v1/me")).status_code == 200
+    assert session_file.parse(f)["MM_BOT_USER_ID"] == UID
+    assert session_file.parse(f)["MM_BUS_KEY"] == a.key
+    assert stat.S_IMODE(os.stat(f).st_mode) == 0o600
+    monkeypatch.setenv("MM_BOT_USER_ID", OTHER)
+    b, _ = await api(FakeClient(), write_file=True)
+    assert session_file.parse(f)["MM_BOT_USER_ID"] == OTHER
+    await h.get("/v1/me")   # a's file is b's now: a leaves it alone
+    assert session_file.parse(f) == {"MM_BUS_ENDPOINT": b.endpoint, "MM_BUS_KEY": b.key,
+                                     "MM_BUS_PID": str(os.getpid()), "MM_BOT_USER_ID": OTHER}
+
+
+async def _raw(endpoint):
+    host, port = endpoint.removeprefix("http://").split(":")
+    return await asyncio.open_connection(host, int(port))
+
+
+async def test_connections_beyond_the_cap_are_closed(api, monkeypatch):
+    """RT-6.17 step 1: at most MAX_CONNECTIONS at once; one more is closed
+    without an answer and without work."""
+    monkeypatch.setattr(hookapi, "MAX_CONNECTIONS", 2)
+    a, h = await api(FakeClient())
+    held = [await _raw(a.endpoint) for _ in range(2)]   # say nothing: held open
+    await asyncio.sleep(0.1)
+    reader, writer = await _raw(a.endpoint)
+    writer.write(f"GET /v1/me HTTP/1.1\r\nAuthorization: Bearer {a.key}\r\n\r\n".encode())
+    try:
+        answer = await asyncio.wait_for(reader.read(), 2)
+    except ConnectionResetError:   # closed with the request unread
+        answer = b""
+    assert answer == b""
+    writer.close()
+    for _, w in held:
+        w.close()
+    await asyncio.sleep(0.1)
+    assert (await h.get("/v1/me")).status_code == 200
+
+
+async def test_a_client_that_does_not_read_is_dropped(api, monkeypatch):
+    """RT-6.17 step 1: writing the answer gives up after WRITE_TIMEOUT_SEC."""
+    monkeypatch.setattr(hookapi, "WRITE_TIMEOUT_SEC", 0.1)
+    a, _ = await api(FakeClient())
+
+    class Stuck:
+        closed = aborted = False
+
+        def __init__(self):
+            self.transport = self
+
+        def write(self, data):
+            pass
+
+        async def drain(self):
+            await asyncio.sleep(3600)
+
+        def abort(self):
+            self.aborted = True
+
+        def close(self):
+            self.closed = True
+
+    reader = asyncio.StreamReader()
+    reader.feed_data(f"GET /v1/me HTTP/1.1\r\nAuthorization: Bearer {a.key}\r\n\r\n".encode())
+    reader.feed_eof()
+    w = Stuck()
+    await asyncio.wait_for(a._handle(reader, w), 2)
+    assert w.aborted and w.closed
+
+
+async def test_script_runs_are_limited(api, monkeypatch):
+    """RT-6.17 step 4: requests that run a shell CLI script (pending,
+    presence) run MAX_SCRIPT_RUNS at a time; the others are not held up."""
+    running, peak, gate_ = 0, 0, asyncio.Event()
+
+    async def script(client, name, *args):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await gate_.wait()
+        running -= 1
+        return "0"
+
+    monkeypatch.setattr(lease, "script", script)
+    _, h = await api(FakeClient())
+    calls = [asyncio.create_task(h.get("/v1/pending")) for _ in range(3)]
+    calls.append(asyncio.create_task(h.post("/v1/presence", json={"state": "idle"})))
+    await asyncio.sleep(0.3)
+    assert running == hookapi.MAX_SCRIPT_RUNS == 2
+    assert (await h.get("/v1/me")).status_code == 200
+    gate_.set()
+    assert [r.status_code for r in await asyncio.gather(*calls)] == [200] * 4
+    assert peak == 2

@@ -6,15 +6,21 @@
 # a blocked stop means we are still busy.
 #
 # Carries no content: presence and a project label, never the prompt.
-# Asks the MCP server (RT-6.17), never Mattermost: no server, no bus session —
-# exit 0 without a word.
+# Asks the MCP server (RT-6.17), never Mattermost. The local steps come first
+# and need no server: with the bot's id from the environment or the server's
+# endpoint file, a new turn always clears the last turn's state and stops a
+# running listener. Only the status waits on the server; without one, or
+# without a bus session, nothing more happens, and nothing is printed.
 # Spec: RT-6.2 (step 6), RT-6.3 in docs/arc42/06-runtime-view.md.
 set -uo pipefail
 
 # shellcheck source=../bin/mm-agent-lib.sh
 source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
 mm_read_hook_input            # drains the payload: its session id, and whether the bus woke the turn
-mm_bus_me || exit 0           # the bot's id keys the turn and listen state
+# The hook has 5 s (hooks.json); every call to the server fits in 4.
+MM_BUS_DEADLINE=$(( $(date +%s) + 4 ))
+export MM_BUS_DEADLINE
+mm_bus_uid || mm_bus_me || exit 0   # the bot's id keys the turn and listen state
 
 # Who started this turn: the bus (a channel push, or the listener that ended on
 # a message) or the human. The Stop hook that ends the turn notes the end, so

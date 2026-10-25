@@ -31,9 +31,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-auth=(-H "$(mm_auth_header "$TOKEN")")
-TEAM_ID="$(curl -fsS "${auth[@]}" "${CHAT_URL}/api/v4/teams/name/${TEAM_NAME}" | jq -r .id)"
-CHANNEL_ID="$(curl -fsS "${auth[@]}" \
+TEAM_ID="$(mm_curl_auth "$TOKEN" -fsS "${CHAT_URL}/api/v4/teams/name/${TEAM_NAME}" | jq -r .id)"
+CHANNEL_ID="$(mm_curl_auth "$TOKEN" -fsS \
   "${CHAT_URL}/api/v4/teams/${TEAM_ID}/channels/name/${CHANNEL_NAME}" | jq -r .id)"
 
 if [[ -z "$SINCE_MS" ]]; then
@@ -45,7 +44,7 @@ echo "polling team=${TEAM_NAME} channel=${CHANNEL_NAME} id=${CHANNEL_ID} since_m
 declare -A SEEN=()
 
 while true; do
-  POSTS="$(curl -fsS "${auth[@]}" \
+  POSTS="$(mm_curl_auth "$TOKEN" -fsS \
     "${CHAT_URL}/api/v4/channels/${CHANNEL_ID}/posts?since=${SINCE_MS}&per_page=50")"
 
   while IFS= read -r line; do

@@ -560,8 +560,8 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. At start, with a bus configured, the MCP server serves HTTP/1.1 on `127.0.0.1` only, on an ephemeral port, in its own event loop next to the WebSocket inbox. It draws a random key per start (32 bytes, URL-safe). Every request carries `Authorization: Bearer <key>`, compared in constant time; any other gets `401`, for unknown routes too. The hooks hand the key to `curl` on stdin, never in its argv, and never log it.
-2. The hooks take endpoint and key from `MM_BUS_ENDPOINT` / `MM_BUS_KEY` when set, else from the file the server writes in the state directory, 0600, keyed like the session file (RT-6.10): `endpoint-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`, without a session id `endpoint-<sha1(dir)>.env`. They read it on every call. The server removes it when it ends, unless a newer server of the same session wrote its own. The transport is the same in every mode, host-managed and self-registered.
+1. At start, with a bus configured, the MCP server serves HTTP/1.1 on `127.0.0.1` only, on an ephemeral port, in its own event loop next to the WebSocket inbox. It draws a random key per start (32 bytes, URL-safe). A malformed request (request line, headers, `Content-Length`) gets `400` before the key is looked at, with no work done and nothing echoed. Every other request carries `Authorization: Bearer <key>`, compared in constant time, or gets `401`, for unknown routes too. The hooks hand the key to `curl` on stdin, never in its argv, and never log it; the Shell CLI does the same with the bot token (`mm_curl_auth`). The server serves at most 32 connections at once (one more is closed without an answer), gives up writing an answer to a client that does not read it after 5 s, and runs at most 2 requests that start a Shell CLI script (`/v1/pending`, `/v1/presence`) at a time.
+2. The hooks take endpoint and key from `MM_BUS_ENDPOINT` / `MM_BUS_KEY` when set, else from the file the server writes in the state directory, 0600, keyed like the session file (RT-6.10): `endpoint-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`, without a session id `endpoint-<sha1(dir)>.env`. Besides endpoint, key and `MM_BUS_PID` it names the bot's `MM_BOT_USER_ID` once the server knows it (not secret). They read it on every call. The server removes it when it ends, unless a newer server of the same session wrote its own. The transport is the same in every mode, host-managed and self-registered.
 3. The API answers JSON under `/v1`:
 
    | Route | Answer | Asked by |
@@ -571,10 +571,11 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
    | `GET /v1/last-post` | `at` (ms), `message`: the own latest post in the work channel, `at` 0 when there is none | Stop hook (sign-off and window, RT-6.2 steps 2–3) |
    | `GET /v1/posts` | `posts`, newest first, of the work channel (`?limit=N`, at most 200, or `?since=MS`): `id`, `user_id`, `root_id`, `create_at`, `type`, `message`, `to` (`all` for all agents), `intent`, `fyi` (an agent's fyi post, RT-6.14), `gated` (RT-6.16) | compaction hook (RT-6.7), listener |
    | `GET /v1/ask-reactions` | `fresh`: reactions on open asks not yet handed to the agent (RT-6.11) | listener |
-   | `POST /v1/presence` | `{state: working \| idle \| listening, label?, until?}` → `ok` | prompt and Stop hooks (RT-6.2, RT-6.3) |
+   | `POST /v1/presence` | `{state: working \| idle \| listening, label?, until?}` → `ok`; `label` one line of at most 64 characters (stripped), `until` an epoch within a day, else `400` | prompt and Stop hooks (RT-6.2, RT-6.3) |
 
 4. The server answers with its own client and token. Where the logic lives in the Shell CLI, it runs the CLI with that token, as for the lease (RT-6.6): `mm-agent-unread.sh` for the counters, `mm-agent-status.sh` for the status. What the hooks decide from the answers is unchanged (RT-6.2 to RT-6.7).
-5. The hooks keep their per-bot files in the state directory (turn state, listen window, overhead counters), keyed on the `user_id` from `/v1/me`.
+5. The hooks keep their per-bot files in the state directory (turn state, listen window, overhead counters), keyed on the `user_id` from `/v1/me`. The prompt hook takes it from `MM_BOT_USER_ID` or the endpoint file instead, so its local steps (clear the turn state, stop the listener, RT-6.3 step 1) run before it asks the server for anything.
+6. Each call to the server ends after `MM_BUS_MAX_TIME` (whole seconds, default 3). All calls of one hook share a deadline inside the runtime's hook timeout: 4 s of 5 for the prompt hook, 8 s of 10 for the Stop hook (me, pending, last post, presence) and the compaction hook. A call past it is not made.
 
 ### Error Handling
 
@@ -582,6 +583,9 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 |------|---------|----------------|
 | 1–2 | No MCP server (not started, crashed, a runtime without it), no endpoint file, a wrong key | The hook exits 0 without output, like a hook without a bus session (RT-6.4); the listener says there is no bus session and ends. Accepted: a host-managed session's hooks used to work without the server |
 | 3 | No bus session yet (`503`: a self-registering session before `session_start`) | As without a server |
-| 3 | Mattermost fails (`502`), or the hook's request times out (`MM_BUS_MAX_TIME`, default 5 s) | The check counts as nothing to do (RT-6.4); the listener asks again next round |
+| 3 | Mattermost fails (`502`), the answer is no JSON, or the hook's request times out (`MM_BUS_MAX_TIME`, default 3 s) or runs into the hook's deadline (step 6) | The check counts as nothing to do (RT-6.4), the hook exits 0 and prints nothing; the listener asks again next round |
+| 1 | More than 32 connections, more than 2 script-running requests, a client that does not read its answer | The extra connection is closed unanswered; script runs wait for a free slot within the route's timeout; the answer is dropped after 5 s |
+| 3 | `/v1/presence` with a label longer than 64 characters or over several lines, an `until` not within a day, an unknown state | `400`, nothing runs |
+| 5 | No server, or none with a bus session, when a new prompt arrives | The prompt hook still removes the turn state and stops a running listener, by the bot id from `MM_BOT_USER_ID` or the endpoint file, so the next Stop hook drains and asks for the sign-off as usual; only the 🛠 status is not set. Without either id it does nothing |
 | 2 | The server restarts during a listen window (`claude --continue`, a reconnect) with a new port and key | Without the variables the listener reads the file on every call and reaches the new server on its next round |
-| 2 | A crash leaves the file behind | It names a port nobody listens on, so the hooks stay quiet; the sweep leaves it alone, the session's next server overwrites it |
+| 2 | A crash leaves the file behind | It names a port nobody listens on, so the hooks stay quiet; the session's next server overwrites it. `mm-agent-sweep.sh --apply` removes it once its `MM_BUS_PID` is no longer alive and the file is an hour old |

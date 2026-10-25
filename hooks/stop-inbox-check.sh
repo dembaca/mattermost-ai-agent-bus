@@ -48,6 +48,13 @@ LISTEN_COORD_SEC="${MM_LISTEN_COORD_SEC:-7200}"
 (( LISTEN_SEC > MAX_BG_SEC )) && LISTEN_SEC=$MAX_BG_SEC
 (( LISTEN_COORD_SEC > MAX_BG_SEC )) && LISTEN_COORD_SEC=$MAX_BG_SEC
 
+# The hook has 10 s (hooks.json): all its calls to the server (me, pending,
+# last post, presence) share 8 of them, each at most MM_BUS_MAX_TIME. A call
+# past the deadline fails like an unreachable server: the check counts as
+# nothing to do (RT-6.17).
+MM_BUS_DEADLINE=$(( $(date +%s) + 8 ))
+export MM_BUS_DEADLINE
+
 # Who the bot is, its project channel and crown: from the MCP server. Without
 # it there is no bus session to answer for.
 mm_bus_me || exit 0

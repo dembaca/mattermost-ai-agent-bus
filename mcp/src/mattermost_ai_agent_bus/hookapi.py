@@ -17,10 +17,13 @@ WebSocket inbox in the server's event loop:
 
 HTTP/1.1 on 127.0.0.1 only, an ephemeral port, one random key per server: every
 request carries ``Authorization: Bearer <key>``, compared in constant time, or
-gets 401. 503 means no bus session (no token yet), 502 that Mattermost failed.
+gets 401 (a malformed request: 400, before the key is looked at). 503 means
+no bus session (no token yet), 502 that Mattermost failed. At most
+MAX_CONNECTIONS connections at once and MAX_SCRIPT_RUNS script-running requests.
 The hooks find endpoint and key in MM_BUS_ENDPOINT / MM_BUS_KEY, else in the
 discovery file ``endpoint-sid-<key>.env`` (0600) in the state dir, keyed like the
-session file (session_file.keyed_path); it is removed when the server ends.
+session file (session_file.keyed_path), with the bot's id once known; it is
+removed when the server ends.
 
 What the shell CLI already does with the token stays there, run by the server:
 the status (mm-agent-status.sh) and the unread counters (mm-agent-unread.sh).
@@ -33,7 +36,9 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,15 +55,26 @@ FILE_PREFIX = "endpoint"
 MAX_BODY = 64 * 1024
 MAX_HEADERS = 64
 READ_TIMEOUT_SEC = 5.0
+# Writing the answer to a client that does not read it gives up after this.
+WRITE_TIMEOUT_SEC = 5.0
+# Connections served at once; one more is closed without an answer.
+MAX_CONNECTIONS = 32
+# Requests that run a shell CLI script (a process with the token) at once.
+MAX_SCRIPT_RUNS = 2
 # A route may run a shell CLI script, which lease.py gives 60 s.
 ROUTE_TIMEOUT_SEC = 90.0
 PRESENCE = ("working", "idle", "listening")
+MAX_LABEL = 64
+# A listen window ends within Claude Code's 2 h limit; a day is ample.
+MAX_UNTIL_AHEAD_SEC = 86400
 DETAIL_CHANNELS = 5
 MAX_POSTS = 200
 _REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found",
             413: "Payload Too Large", 502: "Bad Gateway", 503: "Service Unavailable"}
 
 Reply = tuple[int, dict[str, Any]]
+Route = Callable[[Any, Mapping[str, str], Mapping[str, Any]], Awaitable[Reply]]
+_UID = re.compile(r"[a-z0-9]{26}")
 
 
 class BadRequest(ValueError):
@@ -79,6 +95,9 @@ class HookAPI:
         self.endpoint = ""
         self._server: asyncio.Server | None = None
         self._file: Path | None = None
+        self._uid = ""
+        self._open = 0
+        self._scripts = asyncio.Semaphore(MAX_SCRIPT_RUNS)
 
     async def start(self, *, write_file: bool = True) -> str:
         """Listen on 127.0.0.1 and (by default) write the discovery file."""
@@ -89,7 +108,11 @@ class HookAPI:
             self._write_file()
         return self.endpoint
 
-    def _write_file(self) -> None:
+    def _write_file(self, uid: str | None = None) -> None:
+        # The bot's id too (not secret): the prompt hook stops the listener and
+        # clears the turn state by it, server or not (RT-6.17 error handling).
+        uid = os.environ.get("MM_BOT_USER_ID", "") if uid is None else uid
+        self._uid = uid if _UID.fullmatch(uid) else ""
         path = file_path()
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         tmp = path.with_name(path.name + ".tmp")
@@ -97,9 +120,22 @@ class HookAPI:
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as fh:
             fh.write(f"MM_BUS_ENDPOINT={self.endpoint}\nMM_BUS_KEY={self.key}\n"
-                     f"MM_BUS_PID={os.getpid()}\n")
+                     f"MM_BUS_PID={os.getpid()}\n"
+                     + (f"MM_BOT_USER_ID={self._uid}\n" if self._uid else ""))
         os.replace(tmp, path)
         self._file = path
+
+    def _note_uid(self, uid: str) -> None:
+        """Keep the file's bot id current (a bot registered or taken over after
+        start), while the file is still this server's."""
+        if self._file is None or uid == self._uid or not _UID.fullmatch(uid):
+            return
+        try:
+            if session_file.parse(self._file).get("MM_BUS_KEY") != self.key:
+                return
+            self._write_file(uid)
+        except OSError as exc:
+            log.info("hook API: endpoint file not updated: %s", exc)
 
     def remove_file(self) -> None:
         """Remove the discovery file while it is still this server's: one that
@@ -129,6 +165,16 @@ class HookAPI:
         return hmac.compare_digest(header.encode(), f"Bearer {self.key}".encode())
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self._open >= MAX_CONNECTIONS:
+            writer.close()  # too many at once: no answer, no work
+            return
+        self._open += 1
+        try:
+            await self._serve(reader, writer)
+        finally:
+            self._open -= 1
+
+    async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             status, body = await self._respond(reader)
         except Exception as exc:  # noqa: BLE001 — a malformed request, never the key
@@ -140,7 +186,9 @@ class HookAPI:
                 f"Content-Length: {len(data)}\r\nConnection: close\r\n\r\n")
         try:
             writer.write(head.encode() + data)
-            await writer.drain()
+            await asyncio.wait_for(writer.drain(), WRITE_TIMEOUT_SEC)
+        except asyncio.TimeoutError:
+            writer.transport.abort()  # a client that does not read holds nothing
         except (ConnectionError, OSError):
             pass
         finally:
@@ -169,12 +217,22 @@ class HookAPI:
         if client is None or not client.token:
             return 503, {"error": "no bus session"}
         try:
-            return await asyncio.wait_for(route(client, query, payload), ROUTE_TIMEOUT_SEC)
+            reply = await asyncio.wait_for(self._run(route, client, query, payload), ROUTE_TIMEOUT_SEC)
         except BadRequest as exc:
             return 400, {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 — Mattermost failed: the hook fails open
             log.info("hook API %s %s: %s", method, url.path, type(exc).__name__)
             return 502, {"error": "bus unreachable"}
+        if route is me and reply[0] == 200:
+            self._note_uid(str(reply[1].get("user_id") or ""))
+        return reply
+
+    async def _run(self, route: Route, client: MattermostClient,
+                   query: Mapping[str, str], payload: Mapping[str, Any]) -> Reply:
+        if route not in _SCRIPT_ROUTES:
+            return await route(client, query, payload)
+        async with self._scripts:  # each runs a shell CLI process: a few at a time
+            return await route(client, query, payload)
 
 
 async def _read_head(reader: asyncio.StreamReader) -> tuple[str, str, dict[str, str]]:
@@ -313,16 +371,21 @@ async def presence(client: MattermostClient, query: Mapping[str, str],
         raise BadRequest("state: working, idle or listening")
     if state == "listening":
         until = body.get("until")
-        if type(until) is not int or until <= 0:
-            raise BadRequest("until: epoch seconds")
+        if type(until) is not int or not 0 < until <= time.time() + MAX_UNTIL_AHEAD_SEC:
+            raise BadRequest("until: epoch seconds, within a day")
         arg = str(until)
     else:
-        arg = str(body.get("label") or "")
+        label = body.get("label") or ""
+        if not isinstance(label, str):
+            raise BadRequest("label: a string")
+        arg = label.strip()
+        if len(arg) > MAX_LABEL or any(c < " " or c == "\x7f" for c in arg):
+            raise BadRequest(f"label: one line, at most {MAX_LABEL} characters")
     await lease.script(client, "mm-agent-status.sh", state, arg)
     return 200, {"ok": True}
 
 
-_ROUTES: dict[tuple[str, str], Callable[[Any, Mapping[str, str], Mapping[str, Any]], Awaitable[Reply]]] = {
+_ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/me"): me,
     ("GET", "/v1/pending"): pending,
     ("GET", "/v1/last-post"): last_post,
@@ -330,3 +393,5 @@ _ROUTES: dict[tuple[str, str], Callable[[Any, Mapping[str, str], Mapping[str, An
     ("GET", "/v1/ask-reactions"): ask_reactions,
     ("POST", "/v1/presence"): presence,
 }
+# Routes that run a shell CLI script: at most MAX_SCRIPT_RUNS at once.
+_SCRIPT_ROUTES = frozenset({pending, presence})

@@ -161,3 +161,32 @@ async def test_unread_channels_never_read_before_the_bot_existed(monkeypatch):
     monkeypatch.setattr(c, "_api", fake_api)
     assert await c.unread_channels() == [UnreadChannel("proj", since=5000),
                                          UnreadChannel("dm1", "D", since=9000)]
+
+
+@pytest.mark.asyncio
+async def test_get_me_started_before_a_takeover_keeps_no_old_identity(monkeypatch):
+    """RT-6.17: the hook API names the bot from get_me; a /users/me that was
+    under way when the session took another bot over (_take) must not cache
+    the old bot, it asks again as the new one."""
+    import asyncio
+
+    from mattermost_ai_agent_bus.client import SessionInfo
+
+    c = MattermostClient(base_url="https://mm.example", token="old", channel_name="agents")
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def fake_api(method, path, **kwargs):
+        token = c.token
+        if token == "old":
+            started.set()
+            await release.wait()
+        return {"id": token}
+
+    monkeypatch.setattr(c, "_api", fake_api)
+    pending = asyncio.create_task(c.get_me())
+    await started.wait()
+    c._take(SessionInfo(url="https://mm.example", name="n", username="agent-n",
+                        user_id="u" * 26, bot_token="new"))
+    release.set()
+    assert (await pending)["id"] == "new"
+    assert (await c.get_me())["id"] == "new"

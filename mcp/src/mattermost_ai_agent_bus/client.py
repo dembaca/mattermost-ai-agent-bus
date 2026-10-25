@@ -137,6 +137,9 @@ class MattermostClient:
     project_channel_name: str = ""
     _client: httpx.AsyncClient | None = field(default=None, repr=False, init=False)
     _me: dict[str, Any] | None = field(default=None, repr=False, init=False)
+    # Bumped whenever the identity changes (_take, session_end): a get_me that
+    # started before must not cache the old bot's answer.
+    _me_gen: int = field(default=0, repr=False, init=False)
     _team_id: str | None = field(default=None, repr=False, init=False)
     _channel_ids: dict[str, str] = field(
         default_factory=dict, repr=False, init=False
@@ -314,6 +317,7 @@ class MattermostClient:
         self.token = info.bot_token
         self.session = info
         self._me = None
+        self._me_gen += 1
         self._team_id = None
         self._channel_ids.clear()
         os.environ["MM_CHAT_URL"] = info.url
@@ -463,6 +467,7 @@ class MattermostClient:
         self.session = None
         self.token = None
         self._me = None
+        self._me_gen += 1
         session_file.remove()
         ownpost.remove(uid)
         for key in (
@@ -587,8 +592,12 @@ class MattermostClient:
         return f"{self.base_url}/{self.team_name}/pl/"
 
     async def get_me(self) -> dict[str, Any]:
-        if self._me is None:
-            self._me = await self._api("GET", "/api/v4/users/me")
+        while self._me is None:
+            gen = self._me_gen
+            me = await self._api("GET", "/api/v4/users/me")
+            if gen == self._me_gen:  # else the bot changed meanwhile: ask again as the new one
+                self._me = me
+                return me
         return self._me
 
     async def get_team_id(self, team_name: str | None = None) -> str:

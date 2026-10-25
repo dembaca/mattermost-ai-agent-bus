@@ -25,14 +25,26 @@ MCP server (#80, #69). The step before keeping the token out of the sandbox.
   `endpoint-sid-<sha1(session id)>.env` in the state directory (0600, keyed
   like the session file), which the server removes when it ends. The key
   goes to `curl` on stdin, never in its argv; each request is bounded by
-  `MM_BUS_MAX_TIME` (default 5 s). Same transport in every mode.
+  `MM_BUS_MAX_TIME` (default 3 s), and all of one hook's requests by a
+  deadline inside its timeout (Stop hook 8 s of 10, prompt hook 4 s of 5).
+  Same transport in every mode. The file also names the bot's id: without
+  a server the prompt hook still clears the turn state and stops the
+  listener.
+- **Limits:** at most 32 connections, 2 script-running requests at once, 5 s
+  to write an answer; `/v1/presence` takes a one-line label of at most 64
+  characters and an `until` within a day.
+- **Bot token off argv:** the Shell CLI (`mm_api`, `mm-agent-post.sh`,
+  `mm-agent-poll.sh`, `mm-agent-unregister.sh`, registration) hands
+  `Authorization` to `curl` on stdin (`mm_curl_auth`), so `ps` never shows
+  the token.
 - **Trade-off:** without a running MCP server (or before a self-registering
   session has its bot) the hooks do nothing and the listener ends at once,
   as without a bus session. A host-managed session's hooks used to work on
   the token alone. The Stop hook's fallback for an unknown bot id
   (`stop_hook_active`) is gone: the server always names the bot.
 - **Sweep:** `mm-agent-sweep.sh` takes the endpoint files for neither
-  sessions nor per-bot state.
+  sessions nor per-bot state; it removes those of servers that are gone
+  (`MM_BUS_PID` dead, file an hour old).
 
 ### Checked
 

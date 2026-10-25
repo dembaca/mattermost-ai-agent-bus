@@ -22,8 +22,7 @@ BODY="$(jq -nc --arg c "$CHANNEL_ID" --arg m "$MESSAGE" --arg r "$ROOT_ID" '
   {channel_id:$c, message:$m} + (if $r == "" then {} else {root_id:$r} end)
 ')"
 
-RESP="$(curl -fsS -X POST "${CHAT_URL}/api/v4/posts" \
-  -H "$(mm_auth_header "$TOKEN")" \
+RESP="$(mm_curl_auth "$TOKEN" -fsS -X POST "${CHAT_URL}/api/v4/posts" \
   -H "Content-Type: application/json" \
   -d "$BODY")"
 # The Stop hook finds the agent's latest post in the file (RT-6.2).
