@@ -3,6 +3,15 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.36.3
+
+### Fixed
+
+- **A name in a URL path asks nobody (#84):** the `unasked` hint no longer
+  fires on a trusted human's name inside a URL path, a repo slug
+  (`name/repo#12`) or a branch (`name/feature`); `/` now borders the name like
+  `.`, `@` and `-` do ([arc42 RT-6.11](docs/arc42/06-runtime-view.md)).
+
 ## 0.36.2
 
 The MCP server's first step towards its own types (#69, #79). No behaviour
