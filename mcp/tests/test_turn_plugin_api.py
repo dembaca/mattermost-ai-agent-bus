@@ -22,6 +22,7 @@ class FakeClient:
     def __init__(self, posts=(), agents=(), reactions=None):
         self.token = "t"
         self.project_channel_name = ""
+        self.work_channel_name = "agents"
         self.channel_name = ""
         self.posts = list(posts)
         self._agents = set(agents)
