@@ -441,7 +441,7 @@ async def _unasked(client: MattermostClient, text: str, uid: str) -> list[str]:
         log.info("ask check skipped: %s", exc)
         return []
     named = [n for n in trusted
-             if re.search(rf"(?<![\w.@-]){re.escape(n)}(?![\w@-]|\.\w)", text, re.I)]
+             if re.search(rf"(?<![\w.@/-]){re.escape(n)}(?![\w@/-]|\.\w)", text, re.I)]
     return sorted(n for n in named if not (uid and asks.open_to(uid, n)))
 
 

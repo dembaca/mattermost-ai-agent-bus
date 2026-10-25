@@ -253,10 +253,25 @@ async def test_naming_a_human_without_an_ask_gets_a_hint(monkeypatch):
 async def test_no_hint_with_an_open_ask_or_without_the_name(monkeypatch):
     c = _NamingClient()
     monkeypatch.setattr(server, "_get_client", lambda: c)
-    for text in ("merged #190", "branch dembaca-x, file a.dembaca, mail dembaca@x.de"):
+    for text in (
+        "merged #190",
+        "branch dembaca-x, file a.dembaca, mail dembaca@x.de",
+        "see https://github.com/dembaca/x/issues/69",
+        "[#69](https://github.com/dembaca/x/issues/69)",
+        "fixed dembaca/x#12",
+        "branch dembaca/feature",
+    ):
         assert "unasked" not in json.loads(await server.post_message(text))
     asks.add(BOT, ASK, "dembaca")
     assert "unasked" not in json.loads(await server.post_message("merge waits on dembaca, ask " + ASK))
+
+
+@pytest.mark.asyncio
+async def test_hint_when_the_name_stands_next_to_a_link(monkeypatch):
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    res = json.loads(await server.post_message("waits on dembaca: https://github.com/dembaca/x/pull/1"))
+    assert "unasked" in res
 
 
 @pytest.mark.asyncio
