@@ -60,8 +60,7 @@ def record(uid: str, channel_id: str, post: Mapping[str, Any]) -> None:
              f"MSG={' '.join(message.split())[:_MSG_CHARS]}", f"HELLO={hello}"]
     p = path(uid)
     try:
-        p.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        p.write_text("\n".join(lines) + "\n")
+        session_file.write_private(p, "\n".join(lines) + "\n")
     except OSError as exc:
         log.info("own post not remembered: %s", exc)
 

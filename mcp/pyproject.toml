@@ -1,6 +1,6 @@
 [project]
 name = "mattermost-ai-agent-bus"
-version = "0.38.0"
+version = "0.39.0"
 description = "Mattermost AI agent bus MCP server (session + WebSocket inbox)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-mattermost-ai-agent-bus-mcp = "mattermost_ai_agent_bus.server:main"
+mattermost-ai-agent-bus-mcp = "mattermost_ai_agent_bus.hosted:main"
 
 [build-system]
 requires = ["hatchling"]

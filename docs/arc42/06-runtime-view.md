@@ -2,14 +2,14 @@
 
 ## Overview
 
-Seventeen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Eighteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 4), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, and how the turn hooks reach the bus through the MCP server without the token. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, how the turn hooks reach the bus through the MCP server without the token, and how a corral session keeps the bot token on the host altogether, with its MCP server there. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -21,7 +21,7 @@ no test.
 
 ## 6.1 Host-managed session lifecycle
 
-**Purpose:** Shows how the registration secret stays on the host while the agent gets a working identity.
+**Purpose:** Shows how the registration secret stays on the host while the agent gets a working identity. Since 0.39.0 the bot token stays there as well (RT-6.18).
 
 **Trigger:** `corral run` starts an agent session; the session ends.
 
@@ -31,19 +31,20 @@ no test.
 
 ### Sequence
 
-1. corral runs the host session hooks' `preStart` (IF-06) with the developer's environment (IF-08). The hooks first say in the banner when they run from a place a sandbox can write, or when a newer plugin is installed than they are; that plugin by version only, never by path, since it may come from a corral home (Section 7.1).
+1. corral runs the host session hooks' `preStart` (IF-06) with the developer's environment (IF-08). The hooks first check, before they source anything, that they run from the installed host copy and not from a place a sandbox can write; from such a place `preStart` contributes only `MM_BUS_UNAVAILABLE` and `postEnd` runs nothing (Section 7.1). They say in the banner when a newer plugin is installed than they are; that plugin by version only, never by path, since it may come from a corral home (Section 7.1).
 2. Host session hooks decide whether to register: always with `MM_PROJECT_CHANNEL`, otherwise only with `MM_REGISTER=always`. Without registration they exit 0 and print one banner line — the session has no bus.
 3. Host session hooks read the secret (gopass preferred) and call the Shell CLI to register a bot named `<host>-<project>-<session>` at the Registrar (IF-01).
 4. Shell CLI resolves team and channels and joins the project channel (IF-02), marks the welcome DM read, sets status 💤 idle.
-5. Host session hooks return the contribution (IF-06): bot token, ids, channel names — never `MM_REG_SECRET`, nor `MM_REG_BOT_NAME` (so the CLI inside cannot stop the host's session).
-6. Inside the sandbox, the MCP server uses the bot token; the Turn hooks and the listener hold none and ask the server (RT-6.17); the agent follows the Agent skill (`HELLO`, work, sign-off). With a token at startup the MCP server offers no `session_start`/`session_end` and leaves the self-registration text out of its instructions: the agent must not register, and every turn would carry that text.
-7. At the end, the MCP server unregisters its bot on exit (own token, `agent-*` only); `postEnd` sets offline and unregisters again as a safety net — a 404 counts as done.
+5. Host session hooks start the session's MCP server on the host and return the contribution (IF-06): ids, channel names, the server's two endpoints and its per-session key (RT-6.18) — never the bot token, nor `MM_REG_SECRET`, nor `MM_REG_BOT_NAME` (so the CLI inside cannot stop the host's session).
+6. Inside the sandbox, the plugin's MCP entry point relays to that server, which holds the bot token; the Turn hooks and the listener hold none and ask it (RT-6.17); the agent follows the Agent skill (`HELLO`, work, sign-off). Host-managed — on the host, or with a token at startup from an older host install — the MCP server offers no `session_start`/`session_end` and leaves the self-registration text out of its instructions: the agent must not register, and every turn would carry that text.
+7. At the end, `postEnd` stops the MCP server on the host, which unregisters its bot (own token, `agent-*` only, RT-6.18 step 7); `postEnd` then sets offline and unregisters again as a safety net — a 404 counts as done.
 
 ### Error Handling
 
 | Step | Failure | System Response |
 |------|---------|----------------|
 | 3 | Registrar unreachable or rejects | Banner warning, session continues without a bot (hook is `optional: true`) |
+| 5 | The MCP server cannot start on the host | No token reaches the sandbox: the bot is unregistered again and the session runs without the bus, the banner and the agent's note saying why (RT-6.18) |
 | 3 | No bus settings reached the session (no hook, no env) | `bus_info` answers `on_bus: false` with the reason instead of failing; the other bus tools fail |
 | 4 | Channel missing or not joinable | Bot is unregistered again, session file removed; channels are never created |
 | 7 | Unregister fails | Status already offline; session file kept so `mm-agent-sweep.sh` can remove the bot with its own token |
@@ -306,7 +307,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Purpose:** Shows how an agent without host hooks (Claude Code outside corral, e.g. on a lab host) gets its bot to its own hooks and listener, and why two such sessions in one checkout never swap identities.
 
-**Trigger:** The agent calls `session_start` (no `MM_BOT_TOKEN` in its environment); the session ends, or is resumed with `claude --continue`.
+**Trigger:** The agent calls `session_start` (no host-managed session: neither `MM_BUS_MCP_ENDPOINT` nor `MM_BOT_TOKEN` in its environment); the session ends, or is resumed with `claude --continue`.
 
 **Participants:** MCP server, Turn hooks, Shell CLI; Agent runtime, Registrar, Mattermost REST API
 
@@ -315,8 +316,8 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 ### Sequence
 
 1. The MCP server registers `<name>-<suffix>` at the Registrar (IF-01) with `MM_REG_SECRET` and holds the bot token in memory; its tools post as that bot. Before registering it unregisters the bots of other MCP-registered sessions whose Claude process is gone and whose file was untouched for `MM_SESSION_KEEP_SEC` (default 24 h), each with its own token (`reaped_stale_bots`).
-2. It writes the token to a 0600 session file in the state directory, named after the Claude Code session: `mcp-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`. Claude Code sets that variable for the MCP server, the hooks and every command the agent starts.
-3. The status line helper (`mm-agent-statusline.sh`, which shows the bot's name and 👑 in Claude Code's status line and in a host-managed session reads `MM_BOT_USERNAME` instead) finds the file under the same name and reads only name and id from it. The Turn hooks and the background listener (`mm-agent-listen.sh`) find the server's hook API file under the same key (`endpoint-sid-…`, RT-6.17) and ask the server, which counts unread messages, sets presence and reads the channel as that bot; a hook whose environment lacks the variable takes `session_id` from its JSON input.
+2. It writes the token to a 0600 session file in the state directory, which the agent can read too: without a host and a sandbox there is no boundary to keep it behind (Section 7.2). The file is named after the Claude Code session: `mcp-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`. Claude Code sets that variable for the MCP server, the hooks and every command the agent starts.
+3. The status line helper (`mm-agent-statusline.sh`, which shows the bot's name and 👑 in Claude Code's status line and in a host-managed session reads `MM_BOT_USERNAME` instead, in a keyless one asking the server for the 👑, RT-6.18) finds the file under the same name and reads only name and id from it. The Turn hooks and the background listener (`mm-agent-listen.sh`) find the server's hook API file under the same key (`endpoint-sid-…`, RT-6.17) and ask the server, which counts unread messages, sets presence and reads the channel as that bot; a hook whose environment lacks the variable takes `session_id` from its JSON input.
 4. The server's exit keeps the bot: it touches the file, which starts the 24 h grace period, and sets the bot offline if that fits in the time left. Claude Code kills an MCP server about 0.5 s after asking it to stop, so only the local part is certain.
 5. `claude --continue` resumes under the same session id. The new server finds the file at start and takes the bot over while its token is accepted: same name, same threads and DMs, crown included. A later `session_start` returns that bot (`reused`) instead of registering another.
 6. `session_end` unregisters the bot and removes the file at once.
@@ -378,7 +379,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Purpose:** A message for the agent reaches its session the moment it is posted, without a background listener, listen windows or turns spent waiting.
 
-**Trigger:** The developer starts Claude Code with the MCP server as a channel (research preview): `claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus` once the plugin is on the organisation's `allowedChannelPlugins`, otherwise `--dangerously-load-development-channels` with the same entry. The MCP server finds the nearest ancestor process named `claude` and reads its command line for one of the two flags naming this plugin. `MM_CHANNEL_PUSH` overrides that (`1` on, `0` off); under corral the host session hook passes it into the sandbox with the bot's other variables.
+**Trigger:** The developer starts Claude Code with the MCP server as a channel (research preview): `claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus` once the plugin is on the organisation's `allowedChannelPlugins`, otherwise `--dangerously-load-development-channels` with the same entry. The MCP server finds the nearest ancestor process named `claude` and reads its command line for one of the two flags naming this plugin. `MM_CHANNEL_PUSH` overrides that (`1` on, `0` off); under corral the host session hook passes it into the sandbox with the bot's other variables, and the relay in the sandbox, which has Claude Code among its ancestors, tells the MCP server on the host (RT-6.18).
 
 **Participants:** MCP server, Turn hooks; Agent runtime, Mattermost WebSocket, Developer / operator
 
@@ -563,20 +564,21 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 ### Sequence
 
 1. At start, with a bus configured, the MCP server serves HTTP/1.1 on `127.0.0.1` only, on an ephemeral port, in its own event loop next to the WebSocket inbox. It draws a random key per start (32 bytes, URL-safe). A malformed request (request line, headers, `Content-Length`) gets `400` before the key is looked at, with no work done and nothing echoed. Every other request carries `Authorization: Bearer <key>`, compared in constant time, or gets `401`, for unknown routes too. The hooks hand the key to `curl` on stdin, never in its argv, and never log it; the Shell CLI does the same with the bot token (`mm_curl_auth`). The server serves at most 32 connections at once (one more is closed without an answer), gives up writing an answer to a client that does not read it after 5 s, and runs at most 2 requests that start a Shell CLI script (`/v1/pending`, `/v1/presence`) at a time.
-2. The hooks take endpoint and key from `MM_BUS_ENDPOINT` / `MM_BUS_KEY` when set, else from the file the server writes in the state directory, 0600, keyed like the session file (RT-6.10): `endpoint-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`, without a session id `endpoint-<sha1(dir)>.env`. Besides endpoint, key and `MM_BUS_PID` it names the bot's `MM_BOT_USER_ID` once the server knows it (not secret). They read it on every call. The server removes it when it ends, unless a newer server of the same session wrote its own. The transport is the same in every mode, host-managed and self-registered.
+2. The hooks take endpoint and key from `MM_BUS_ENDPOINT` / `MM_BUS_KEY` when set, else from the file the server writes in the state directory, 0600, keyed like the session file (RT-6.10): `endpoint-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`, without a session id `endpoint-<sha1(dir)>.env`. Besides endpoint, key and `MM_BUS_PID` it names the bot's `MM_BOT_USER_ID` once the server knows it (not secret). They read it on every call. The server removes it when it ends, unless a newer server of the same session wrote its own. The transport is the same in every mode, host-managed and self-registered. In a corral session the MCP server on the host serves it (RT-6.18) with the key preStart drew, writes no file, and the sandbox has both variables.
 3. The API answers JSON under `/v1`:
 
    | Route | Answer | Asked by |
    |-------|--------|----------|
-   | `GET /v1/me` | `user_id`, `username`, `project` (a project channel is set), `crown_until` (epoch, 0 without the 👑) | every hook, the listener |
+   | `GET /v1/me` | `user_id`, `username`, `project` (a project channel is set), `crown_until` (epoch, 0 without the 👑), `channel` (the agent confirmed the channel check, RT-6.12) | every hook, the listener, the status line in a keyless session (RT-6.18) |
    | `GET /v1/pending` | `count`: unread mentions, DMs and posts for all agents; with `?detail=1` up to 5 `channels` (`id`, `type`, `pending`, `fyi`) | Stop hook (drain, RT-6.2 step 1), listener |
    | `GET /v1/last-post` | `at` (ms), `message`: the own latest post in the work channel, `at` 0 when there is none | Stop hook (sign-off and window, RT-6.2 steps 2–3) |
    | `GET /v1/posts` | `posts`, newest first, of the work channel (`?limit=N`, at most 200, or `?since=MS`): `id`, `user_id`, `root_id`, `create_at`, `type`, `message`, `to` (`all` for all agents), `intent`, `fyi` (an agent's fyi post, RT-6.14), `gated` (RT-6.16) | compaction hook (RT-6.7), listener |
    | `GET /v1/ask-reactions` | `fresh`: reactions on open asks not yet handed to the agent (RT-6.11) | listener |
    | `POST /v1/presence` | `{state: working \| idle \| listening \| bus, label?, until?}` → `ok`; `label` one line of at most 64 characters (stripped), `until` an epoch within a day, else `400` | prompt and Stop hooks (RT-6.2, RT-6.3), `mm-agent-status.sh` by hand (RT-6.6) |
+   | `POST /v1/stat` | `{k: turn \| turn_end \| block \| compact \| wake \| transcript, …}` → `ok`: one overhead counter (RT-6.9) into the server's own file, at most 4 fields with short lowercase names, numbers or strings up to 4096 characters, else `400` | every hook and the listener in a keyless session (RT-6.18), whose files the server cannot share |
 
 4. The server answers with its own client and token, from its own modules: the counters from `unread.py` (the rules of RT-6.2 step 1), status and crown from `lease.py` (RT-6.6). No script runs behind the API. What the hooks decide from the answers is unchanged (RT-6.2 to RT-6.7).
-5. The hooks keep their per-bot files in the state directory (turn state, listen window, overhead counters), keyed on the `user_id` from `/v1/me`. The prompt hook takes it from `MM_BOT_USER_ID` or the endpoint file instead, so its local steps (clear the turn state, stop the listener, RT-6.3 step 1) run before it asks the server for anything.
+5. The hooks keep their per-bot files in the state directory (turn state, listen window, overhead counters; in a keyless session the counters go to `/v1/stat`), keyed on the `user_id` from `/v1/me`. The prompt hook takes it from `MM_BOT_USER_ID` or the endpoint file instead, so its local steps (clear the turn state, stop the listener, RT-6.3 step 1) run before it asks the server for anything.
 6. Each call to the server ends after `MM_BUS_MAX_TIME` (whole seconds, default 3). All calls of one hook share a deadline inside the runtime's hook timeout: 4 s of 5 for the prompt hook, 8 s of 10 for the Stop hook (me, pending, last post, presence) and the compaction hook. A call past it is not made.
 
 ### Error Handling
@@ -591,3 +593,45 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 5 | No server, or none with a bus session, when a new prompt arrives | The prompt hook still removes the turn state and stops a running listener, by the bot id from `MM_BOT_USER_ID` or the endpoint file, so the next Stop hook drains and asks for the sign-off as usual; only the 🛠 status is not set. Without either id it does nothing |
 | 2 | The server restarts during a listen window (`claude --continue`, a reconnect) with a new port and key | Without the variables the listener reads the file on every call and reaches the new server on its next round |
 | 2 | A crash leaves the file behind | It names a port nobody listens on, so the hooks stay quiet; the session's next server overwrites it. `mm-agent-sweep.sh --apply` removes it once its `MM_BUS_PID` is no longer alive and the file is an hour old |
+
+---
+
+## 6.18 Keyless host-managed session
+
+**Purpose:** In a corral session the bot token stays on the host, like the registration secret: the session's MCP server runs there as one process per session and holds it. The sandbox gets the server's two endpoints and a per-session key, so the agent reaches the bus through the MCP tools and the Turn hooks through the hook API (RT-6.17), never through the REST API.
+
+**Trigger:** `corral run` starts a session that registers a bot (RT-6.1 step 2); the session ends.
+
+**Participants:** Host session hooks, MCP server, Turn hooks, Shell CLI, Agent skill; corral, Agent runtime, Registrar, Mattermost REST API
+
+**Quality goal illustrated:** `#secure` Secret confinement — no bot token in the sandbox; `#reliable` — a host process that does not come up costs the session its bus, never a token in the sandbox
+
+### Sequence
+
+1. After registration (RT-6.1 steps 1–4) the host session hooks stop host processes of ended sessions (error handling), draw a random key (32 bytes, hex) and start the MCP server from the host copy's environment (`<host copy>/mcp/.venv`, prepared by the installer, Section 7.1): `cd` into the host copy, `env -i` with only `HOME`, a fixed `PATH`, `USER`, `LOGNAME`, `LANG`/`LC_*`, `TMPDIR`, then `python -I -m mattermost_ai_agent_bus --host` — isolated, so neither the working directory (the agent's workdir) nor `PYTHON*` variables reach its import path. Key, bot token and the bus settings (`MM_*`, the corral names, proxy and certificate settings; never `MM_REG_SECRET`) go as one JSON line on its stdin: nothing secret in an argv or in its initial environment. The hooks keep the token and the registration secret in shell variables they never export: the helper scripts get them on fd 3 (`MM_BOT_TOKEN_FD`, `MM_REG_SECRET_FD`), curl on stdin, jq reads token and key from pipes fed by the shell's builtin `printf` — no process the hooks start has a credential in its environment or argv (Section 7.3). Its argv names only a readiness file and a log in the host state directory, its own state directory `hosted/<CORRAL_SESSION_ID>/` there (created 0700, a real directory of this user, never a symlink), and corral's pid to watch (the hook's parent). It takes the token into its client, detaches into its own session (stdin `/dev/null`, stdout and stderr to the log, since corral waits until the hook's own streams close), changes to `/`, listens on `127.0.0.1` on two ephemeral ports — the MCP relay and the hook API (RT-6.17) with the same key — and writes `{pid, port, hook}` to the readiness file. The hook waits for it (20 s at most) and records `MM_BUS_HOST_PID` and the process's start time in the session file.
+2. The contribution (IF-06) carries `MM_BUS_MCP_ENDPOINT` (`tcp://127.0.0.1:<port>`), `MM_BUS_ENDPOINT` (`http://127.0.0.1:<port>`, the hook API) and `MM_BUS_KEY` besides ids, names, trusted and responsible humans; no `MM_BOT_TOKEN`. The banner says `token stays on the host`. From the first turn the Turn hooks, the listener and `mm-agent-status.sh` reach the hook API with these variables, before and after any relay connection; the lease heartbeat runs in the host process for the whole session (RT-6.6). What the hooks read from the server's state files elsewhere comes through the API here: the 👑 deadline and the channel confirmation from `/v1/me` (the status line asks it too, with 1 s at most, and shows no 👑 without an answer), the overhead counters go to `/v1/stat` (RT-6.9).
+3. Inside the sandbox Claude Code starts the plugin's MCP entry point as before. With `MM_BUS_MCP_ENDPOINT` set it starts no server: it connects to the endpoint (`127.0.0.1` only), sends one line `{"key", "session"}` and then copies stdin and stdout both ways unchanged, channel notifications and the permission relay (RT-6.13) included. `session` holds names only: `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PROJECT_DIR`, the working directory, `CLAUDECODE`, and whether Claude Code was started with the server as a channel (RT-6.12), which only the sandbox side can tell.
+4. The host process compares the key in constant time and refuses anything else. It checks the session values — strings on one line, at most 256 characters for the session id and 4096 for a directory, directories absolute, the channel flag `0` or `1` — and drops every other key (`HOME`, `XDG_STATE_HOME`, `PYTHONPATH`, …). The values only name things: the session id and directory key the server's file names, the flag decides whether it serves as a channel; nothing is opened, resolved or entered with them, and the server's state directory stays the one the hook chose. On the first handshake it loads the server, which counts as host-managed (no `session_start`/`session_end`) and tells the agent in its instructions that the token stays on the host and the shell CLI has none.
+5. It answers `{"ok": true}` and serves MCP over the connection, newline-delimited JSON-RPC as on stdio.
+6. One relay connection at a time; a second one is refused while the first is open, as is a ninth connection still in its handshake. A closed connection (an MCP reconnect, `/mcp`) is not the end of the session: the next relay with the key is served by the same server, bot and state, with the first relay's names.
+7. At the end `postEnd` sends the process SIGTERM, waits up to 10 s, then SIGKILL, and removes the readiness file and the state directory. On SIGTERM the server does the exit work of RT-6.1 step 7 on the host — `BYE`, overhead stats (RT-6.9), offline, unregister with the bot's own token — also when no relay ever connected, and removes its state directory. `postEnd` then unregisters as before; a 404 counts as done.
+8. If corral itself is killed, `postEnd` never runs. The host process checks corral's pid every 5 s, and its start time against pid reuse (`/proc` or `sysctl`, no subprocess); once it is gone, it does the same exit work and ends.
+
+Everything the server writes in its state directory goes through one helper: a new file (`mkstemp`, exclusive, 0600) renamed over the old one, or an append with `O_NOFOLLOW`; a symlink in a state file's place is refused. The server runs no subprocess. The transcript path of RT-6.9 comes from the agent's side, so the host process reads a transcript only when its real path lies under the host's `~/.claude/projects/`, opened read-only and non-blocking without following a symlink at its end, a regular file of at most 64 MiB, its real path checked once more from the open descriptor; otherwise the summary carries no `tok`. An id the agent passes (post, root, channel) must be a Mattermost id (26 lowercase letters and digits), a team, channel or user name one without a path character: anything else is refused before a request goes out (the tools' `refused` result, `400` from the hook API). It tells of no newer installed plugin (RT-6.2): the plugin list it could read is the host's, which a sandbox may change; the Stop hook in the sandbox still does.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | The hooks run from a tree a sandbox can change — the marketplace clone or plugin cache under `~/.claude`, a corral home, the session's workdir, corral's temporary directories, also through a symlink, a `..` or another case — or the Python they would start lies there | Fail closed before anything of the tree is sourced or run: `preStart` contributes only `MM_BUS_UNAVAILABLE` naming the installer and the host copy's path for corral's `exec`, no bot is registered; `postEnd` notes it on stderr and runs nothing (Section 7.1) |
+| 1 | `PATH` has `.`, empty or relative entries, or ones in the workdir; a FIFO sits where the version notice reads a plugin's files | The hooks drop those entries and work from `/`: no command of the workdir runs. Each file read gives up after a second, all of them after a few: the start goes on (Section 7.1) |
+| 1 | No Python environment in the host copy (installer not rerun, no `uv`) | Fail closed: no bot is registered, the contribution holds only `MM_BUS_UNAVAILABLE` with the reason and what to do, the banner and the agent's note say it. The current plugin's MCP server tells the agent the bus is off in this session and offers no `session_start` |
+| 1 | The host process is not ready within 20 s, or ends | Fail closed: it is stopped, the bot is unregistered again (its session file stays for `postEnd` and the sweep if that fails), and the sandbox gets only `MM_BUS_UNAVAILABLE` naming the host log. Never the token |
+| 1 | A session whose corral is gone left its host process (SIGKILL, watchdog failed) | Stopped with SIGTERM by the next `preStart` when its pid has the recorded start time, so its exit work unregisters the bot; readiness files of gone sessions are removed, their logs after a day, their state directories after an hour. `mm-agent-sweep.sh` leaves a session alone while its host process runs and removes the same files |
+| 3 | Host process unreachable, key or session values refused, or no answer | The relay writes the reason to stderr and exits 1: no server starts in the sandbox, and Claude Code shows the bus server as failed. Never a server without a token that only looks like the bus |
+| 3 | The plugin in the sandbox is older than 0.39.0 | It does not know the relay: its MCP server finds no token and offers self-registration, which fails without a secret, so the session has no MCP bus until the plugin is updated (`/plugin update`, then restart); its hooks (0.37.0 on) still reach the hook API |
+| 2 | The agent calls the hook API or the relay itself, with the key from its environment | It gets what the hooks and the MCP tools get (the routes of RT-6.17, the tools of this session), the relay only while Claude Code's is not connected; never the token (Section 7.3) |
+| 4 | A relay sends `HOME`, `XDG_STATE_HOME` or other variables | Dropped; the server's files stay in the directory the hook chose, so a symlink planted in the sandbox's state directory is never followed |
+| 7 | No start time recorded for the host process (`ps` could not read it) | `postEnd` does not signal a bare pid, which may name another process by now, and says so on stderr; the watchdog stops the process once corral is gone |
+| 7 | The exit work takes longer than 10 s | SIGKILL; `postEnd` still sets offline and unregisters |
+| 8 | corral is SIGKILLed and the host reboots, or the watchdog cannot run | The process (gone after a reboot) or the bot stays, holding the token, until the next `preStart`'s sweep or `mm-agent-sweep.sh` (RT-6.1 step 7) |

@@ -51,6 +51,31 @@ _NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$")
 _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 
 
+_ID = re.compile(r"[a-z0-9]{26}")
+_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+class InvalidId(ValueError):
+    """An id or name that must not go into a Mattermost API path (#81)."""
+
+
+def mm_id(value: object, what: str) -> str:
+    """`value` if it is a Mattermost id (26 lowercase letters and digits), else
+    InvalidId: nothing an agent or hook passes reaches an API path unchecked."""
+    if not isinstance(value, str) or not _ID.fullmatch(value):
+        raise InvalidId(f"invalid {what} id")
+    return value
+
+
+def mm_name(value: object, what: str) -> str:
+    """`value` if it is a safe team, channel, user or agent name for an API
+    path: letters, digits, '.', '_', '-', no '..', at most 64; else InvalidId.
+    A DM channel's name "<id>__<id>" passes."""
+    if not isinstance(value, str) or not _NAME.fullmatch(value) or ".." in value:
+        raise InvalidId(f"invalid {what} name")
+    return value
+
+
 def env(name: str, default: str = "") -> str:
     """Read an env var, treating an unexpanded ``${VAR}`` as unset.
 
@@ -294,6 +319,10 @@ class MattermostClient:
         if not sent:
             return ""
         description: str | None = None
+        try:
+            mm_id(info.user_id, "user")
+        except InvalidId:
+            return ""
         for path, key in ((f"/api/v4/users/{info.user_id}", "bot_description"),
                           (f"/api/v4/bots/{info.user_id}", "description")):
             try:
@@ -394,11 +423,12 @@ class MattermostClient:
             try:
                 if now - path.stat().st_mtime < keep:
                     continue
+                short = mm_name(name.removeprefix(session_file.agent_prefix(data)), "agent")
                 resp = await self._http().delete(
-                    f"{self.register_url}/{name.removeprefix(session_file.agent_prefix(data))}",
+                    f"{self.register_url}/{short}",
                     headers={"Authorization": f"Bearer {token}"},
                 )
-            except (OSError, httpx.HTTPError) as exc:
+            except (OSError, httpx.HTTPError, InvalidId) as exc:
                 log.info("stale session %s left: %s", name, exc)
                 continue
             # 401: the token is dead, so the bot is gone already.
@@ -424,10 +454,12 @@ class MattermostClient:
                 # list (403, not 404). Joining twice is harmless.
                 await self._api(
                     "POST",
-                    f"/api/v4/channels/{cid}/members",
+                    f"/api/v4/channels/{mm_id(cid, 'channel')}/members",
                     json={"user_id": self.session.user_id},
                 )
                 result["project_channel"] = {"name": name, "id": cid, "joined": True}
+            except InvalidId as exc:
+                result["project_channel"] = {"name": name, "joined": False, "error": str(exc)}
             except httpx.HTTPStatusError as exc:
                 code = exc.response.status_code
                 reason = {
@@ -442,7 +474,7 @@ class MattermostClient:
         try:
             for ch in await self.unread_channels():
                 await self.view_channel(ch.channel_id)
-        except (httpx.HTTPError, KeyError):
+        except (httpx.HTTPError, KeyError, InvalidId):
             pass
         return result
 
@@ -451,7 +483,7 @@ class MattermostClient:
         short = name or (self.session.name if self.session else os.environ.get("MM_REG_BOT_NAME"))
         if not short:
             raise RuntimeError("no agent name; pass name or call session_start first")
-        short = short.removeprefix(session_file.agent_prefix())
+        short = mm_name(short.removeprefix(session_file.agent_prefix()), "agent")
         uid = self.bot_id
         if not self.register_url:
             raise RuntimeError("MM_REGISTER_URL is required for session_end")
@@ -503,10 +535,10 @@ class MattermostClient:
             name = self.session.name
             try:
                 with httpx.Client(timeout=0.3) as http:
-                    http.put(f"{self.base_url}/api/v4/users/{self.session.user_id}/status",
+                    http.put(f"{self.base_url}/api/v4/users/{mm_id(self.session.user_id, 'user')}/status",
                              headers=headers,
                              json={"user_id": self.session.user_id, "status": "offline"})
-            except httpx.HTTPError:
+            except (httpx.HTTPError, InvalidId):
                 pass
             self.session = None
             self.token = None
@@ -527,12 +559,12 @@ class MattermostClient:
                     # Gone before unregistered, so a failed delete does not
                     # leave a bot that looks available.
                     http.put(
-                        f"{self.base_url}/api/v4/users/{user['id']}/status",
+                        f"{self.base_url}/api/v4/users/{mm_id(user['id'], 'user')}/status",
                         headers=headers,
                         json={"user_id": user["id"], "status": "offline"},
                     )
                 resp = http.delete(
-                    f"{self.register_url}/{short}",
+                    f"{self.register_url}/{mm_name(short, 'agent')}",
                     headers={"Authorization": f"Bearer {self.reg_secret or self.token}"},
                 )
                 ok = resp.status_code in (200, 204, 404)
@@ -573,8 +605,8 @@ class MattermostClient:
             elif wanted:
                 for n in wanted:
                     try:
-                        u = await self._api("GET", f"/api/v4/users/username/{n}")
-                    except httpx.HTTPError:
+                        u = await self._api("GET", f"/api/v4/users/username/{mm_name(n, 'user')}")
+                    except (httpx.HTTPError, InvalidId):
                         continue
                     if not u.get("is_bot"):
                         trusted[u["id"]] = n
@@ -604,7 +636,7 @@ class MattermostClient:
         name = team_name or self.team_name
         if self._team_id and name == self.team_name:
             return self._team_id
-        data = await self._api("GET", f"/api/v4/teams/name/{name}")
+        data = await self._api("GET", f"/api/v4/teams/name/{mm_name(name, 'team')}")
         tid = data["id"]
         if name == self.team_name:
             self._team_id = tid
@@ -618,14 +650,14 @@ class MattermostClient:
         Defaults to the work channel (project channel when set, else MM_CHANNEL).
         Never creates a channel: a missing one surfaces as the API's 404.
         """
-        cname = channel_name or self.work_channel_name
+        cname = mm_name(channel_name or self.work_channel_name, "channel")
         key = f"{team_name or self.team_name}/{cname}"
         cached = self._channel_ids.get(key)
         if cached:
             return cached
         tid = await self.get_team_id(team_name)
         data = await self._api(
-            "GET", f"/api/v4/teams/{tid}/channels/name/{cname}"
+            "GET", f"/api/v4/teams/{mm_id(tid, 'team')}/channels/name/{cname}"
         )
         cid = data["id"]
         self._channel_ids[key] = cid
@@ -633,12 +665,15 @@ class MattermostClient:
 
     async def get_channel(self, channel_id: str) -> dict[str, Any]:
         if channel_id not in self._channels:
-            self._channels[channel_id] = await self._api("GET", f"/api/v4/channels/{channel_id}")
+            self._channels[channel_id] = await self._api(
+                "GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}")
         return self._channels[channel_id]
 
     async def usernames(self, user_ids: set[str]) -> dict[str, str]:
         """{user_id: username}, cached; one request for all unknown ids."""
         missing = sorted(set(user_ids) - set(self._usernames))
+        for i in missing:
+            mm_id(i, "user")
         if missing:
             for u in await self._api("POST", "/api/v4/users/ids", json=missing):
                 self._usernames[u["id"]] = u.get("username", "")
@@ -648,7 +683,7 @@ class MattermostClient:
 
     async def username(self, user_id: str) -> str:
         """One account's username, uncached; raises when it cannot be read."""
-        return (await self._api("GET", f"/api/v4/users/{user_id}"))["username"]
+        return (await self._api("GET", f"/api/v4/users/{mm_id(user_id, 'user')}"))["username"]
 
     async def agents(self, user_ids: set[str]) -> set[str]:
         """The ids among ``user_ids`` of bus agents: bot accounts with the
@@ -661,7 +696,7 @@ class MattermostClient:
     async def direct_channel_with_bot(self, username: str) -> str:
         """The DM channel id between this bot and another bot. Refuses people
         (they are asked with ask_human) and unknown names."""
-        name = username.strip().lstrip("@").lower()
+        name = mm_name(username.strip().lstrip("@").lower(), "user")
         found = await self._api("POST", "/api/v4/users/usernames", json=[name]) or []
         if not found:
             raise ValueError(f"no user {name}")
@@ -672,7 +707,8 @@ class MattermostClient:
     async def direct_channel_with(self, user_id: str) -> str:
         """The DM channel id between this bot and a user id; no checks."""
         me = await self.get_me()
-        ch = await self._api("POST", "/api/v4/channels/direct", json=[me["id"], user_id])
+        ch = await self._api("POST", "/api/v4/channels/direct",
+                             json=[mm_id(me["id"], "user"), mm_id(user_id, "user")])
         return ch["id"]
 
     async def humans_among(self, names: set[str]) -> set[str]:
@@ -702,7 +738,7 @@ class MattermostClient:
         """
         tid = await self.get_team_id()
         members = await self._api(
-            "GET", f"/api/v4/users/me/teams/{tid}/channels/members"
+            "GET", f"/api/v4/users/me/teams/{mm_id(tid, 'team')}/channels/members"
         )
         channels = await self._api("GET", "/api/v4/users/me/channels")
         by_id = {c["id"]: c for c in (channels or [])}
@@ -734,7 +770,7 @@ class MattermostClient:
         await self._api(
             "POST",
             "/api/v4/channels/members/me/view",
-            json={"channel_id": channel_id},
+            json={"channel_id": mm_id(channel_id, "channel")},
         )
 
     async def post(
@@ -747,9 +783,11 @@ class MattermostClient:
     ) -> dict[str, Any]:
         if not channel_id and root_id:
             # A reply belongs where its root is: a DM, or another channel.
-            root = await self._api("GET", f"/api/v4/posts/{root_id}")
+            root = await self._api("GET", f"/api/v4/posts/{mm_id(root_id, 'post')}")
             channel_id = root.get("channel_id") or None
-        cid = channel_id or await self.get_channel_id()
+        cid = mm_id(channel_id or await self.get_channel_id(), "channel")
+        if root_id:
+            mm_id(root_id, "post")
         # RT-6.15: post ids as permalinks, odd links written out for the human.
         message = links.send(message, post_url=self.permalink_base)
         body: dict[str, Any] = {"channel_id": cid, "message": message}
@@ -794,16 +832,18 @@ class MattermostClient:
         headers = self._auth_headers()
         api = f"{self.base_url}/api/v4"
         with httpx.Client(timeout=5.0) as http:
-            team = http.get(f"{api}/teams/name/{self.team_name}", headers=headers)
+            team = http.get(f"{api}/teams/name/{mm_name(self.team_name, 'team')}", headers=headers)
             team.raise_for_status()
-            ch = http.get(f"{api}/teams/{team.json()['id']}/channels/name/{channel_name}",
+            tid = mm_id(team.json()["id"], "team")
+            ch = http.get(f"{api}/teams/{tid}/channels/name/{mm_name(channel_name, 'channel')}",
                           headers=headers)
             if ch.status_code == 404:
                 return False
             ch.raise_for_status()
-            cid = ch.json()["id"]
+            cid = mm_id(ch.json()["id"], "channel")
             if join:
-                http.post(f"{api}/channels/{cid}/members", headers=headers, json={"user_id": join})
+                http.post(f"{api}/channels/{cid}/members", headers=headers,
+                          json={"user_id": mm_id(join, "user")})
             resp = http.post(f"{api}/posts", headers=headers,
                              json={"channel_id": cid, "message": message})
             resp.raise_for_status()
@@ -814,16 +854,18 @@ class MattermostClient:
     async def channel_users(self, channel_id: str) -> list[dict[str, Any]]:
         """The accounts in a channel, at most 200, as Mattermost returns them."""
         return await self._api("GET", "/api/v4/users",
-                               params={"in_channel": channel_id, "per_page": 200}) or []
+                               params={"in_channel": mm_id(channel_id, "channel"),
+                                       "per_page": 200}) or []
 
     async def presences(self, user_ids: list[str]) -> dict[str, str]:
         """{user_id: online | away | dnd | offline}, in one request."""
-        rows = await self._api("POST", "/api/v4/users/status/ids", json=user_ids) or []
+        rows = await self._api("POST", "/api/v4/users/status/ids",
+                               json=[mm_id(i, "user") for i in user_ids]) or []
         return {str(r["user_id"]): str(r.get("status") or "") for r in rows
                 if isinstance(r, dict) and r.get("user_id")}
 
     async def set_presence(self, user_id: str, status: str) -> None:
-        await self._api("PUT", f"/api/v4/users/{user_id}/status",
+        await self._api("PUT", f"/api/v4/users/{mm_id(user_id, 'user')}/status",
                         json={"user_id": user_id, "status": status})
 
     async def set_custom_status(self, emoji: str, text: str, expires_at: str) -> None:
@@ -837,14 +879,14 @@ class MattermostClient:
     async def add_reaction(self, post_id: str, emoji: str) -> None:
         me = await self.get_me()
         await self._api("POST", "/api/v4/reactions", json={
-            "user_id": me["id"], "post_id": post_id, "emoji_name": emoji})
+            "user_id": me["id"], "post_id": mm_id(post_id, "post"), "emoji_name": emoji})
 
     async def reactions(self, post_id: str) -> list[dict[str, Any]]:
-        return await self._api("GET", f"/api/v4/posts/{post_id}/reactions") or []
+        return await self._api("GET", f"/api/v4/posts/{mm_id(post_id, 'post')}/reactions") or []
 
     async def thread(self, post_id: str) -> dict[str, Any]:
         """Return post + ordered replies for a thread root (or any post id)."""
-        data = await self._api("GET", f"/api/v4/posts/{post_id}/thread")
+        data = await self._api("GET", f"/api/v4/posts/{mm_id(post_id, 'post')}/thread")
         posts = data.get("posts") or {}
         order = data.get("order") or sorted(
             posts.keys(), key=lambda pid: posts[pid].get("create_at", 0)
@@ -874,7 +916,8 @@ class MattermostClient:
             params["per_page"] = per_page
         if since_ms is not None:
             params["since"] = since_ms
-        data = await self._api("GET", f"/api/v4/channels/{channel_id}/posts", params=params) or {}
+        data = await self._api("GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}/posts",
+                               params=params) or {}
         posts = data.get("posts") or {}
         order = [i for i in data.get("order") or [] if i in posts]
         listed = set(order)
@@ -894,7 +937,7 @@ class MattermostClient:
         if since_ms is not None:
             params["since"] = since_ms
         data = await self._api(
-            "GET", f"/api/v4/channels/{cid}/posts", params=params
+            "GET", f"/api/v4/channels/{mm_id(cid, 'channel')}/posts", params=params
         )
         posts = data.get("posts") or {}
         return sorted((links.read_post(p, self.permalink_base) for p in posts.values()),

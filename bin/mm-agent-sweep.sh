@@ -29,13 +29,29 @@
 # live session keeps writing them, and one whose token was exported by hand has
 # no session file but would lose its crown lease if they went sooner.
 #
+# A keyless corral session (RT-6.18) has its MCP server running on the host:
+# its session file records MM_BUS_HOST_PID, and the process keeps its files in
+# <sid>.host.json, <sid>.host.log and hosted/<sid>/. While that process runs,
+# its session is left alone (it ends with its watchdog and unregisters the bot
+# itself); the files go only once the session file is gone: the readiness
+# file at once, the log after a day, the state directory after an hour.
+#
 # Runs on the HOST: session files never enter a sandbox.
 set -uo pipefail
 
-LIB="$(cd "$(dirname "$0")" && pwd)/mm-agent-lib.sh"
-BIN="$(cd "$(dirname "$0")" && pwd)"
+here="${0%/*}"
+[[ "$here" != "$0" ]] || here=.
+BIN="$(cd -P "$here" && pwd -P)"
+LIB="$BIN/mm-agent-lib.sh"
 # shellcheck source=mm-agent-lib.sh
 source "$LIB"
+# Commands only from PATH entries no sandbox can write, and from / (arc42 §7.3).
+mm_safe_path
+cd /
+# No credential in any process environment (arc42 §7.3): the operator's token
+# and secret stay in this shell; helpers get them on fd 3 (mm_with_token,
+# mm_with_secret), curl on stdin.
+export -n MM_BOT_TOKEN MATTERMOST_TOKEN MM_REG_SECRET 2>/dev/null || true
 
 APPLY=0
 FORCE=0
@@ -43,7 +59,7 @@ for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
     --force) FORCE=1 ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -103,6 +119,13 @@ for f in "$STATE_DIR"/*.env; do
   [[ -n "$name" ]] || { note "skip $(basename "$f") (no bot name)"; continue; }
 
   pid="$(field "$f" MM_SESSION_PID)"
+  hpid="$(field "$f" MM_BUS_HOST_PID)"
+  if [[ "$FORCE" -eq 0 ]] && ! is_live "$pid" && is_live "$hpid"; then
+    note "HOSTED  ${name} (its MCP server on the host, pid ${hpid}, still runs and ends with its watchdog) — leaving it alone"
+    ACTIVE_NAMES+=("$name")
+    skipped=$((skipped + 1))
+    continue
+  fi
   if [[ "$FORCE" -eq 0 ]] && is_live "$pid"; then
     note "ACTIVE  ${name} (pid ${pid} alive) — leaving it alone"
     ACTIVE_NAMES+=("$name")
@@ -137,7 +160,8 @@ for f in "$STATE_DIR"/*.env; do
   if err="$( (
       export MM_AGENT_SESSION_FILE="$f"
       mm_load_session_file || exit 1
-      exec "$BIN/mm-agent-unregister.sh" "$name" 2>&1 >/dev/null
+      export -n MM_BOT_TOKEN MATTERMOST_TOKEN
+      mm_with_token "$BIN/mm-agent-unregister.sh" "$name" 2>&1 >/dev/null
      ) )"; then
     note "unregistered ${name}"
     rm -f "$f"
@@ -145,6 +169,7 @@ for f in "$STATE_DIR"/*.env; do
   elif [[ "$( (
       export MM_AGENT_SESSION_FILE="$f"
       mm_load_session_file >/dev/null 2>&1 || exit 0
+      export -n MM_BOT_TOKEN MATTERMOST_TOKEN
       mm_api GET "/api/v4/users/me" >/dev/null 2>&1 || exit 0
       printf '%s' "$MM_API_STATUS"
      ) )" == "401" ]]; then
@@ -186,7 +211,7 @@ if [[ -n "${MM_REG_SECRET:-}" && -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]];
         echo "would unregister ${uname}  (orphan, no session file)"
         continue
       fi
-      if MM_AGENT_PREFIX="$PREFIX" "$BIN/mm-agent-unregister.sh" "$short" >/dev/null 2>&1; then
+      if MM_AGENT_PREFIX="$PREFIX" mm_with_secret "$BIN/mm-agent-unregister.sh" "$short" >/dev/null 2>&1; then
         note "unregistered ${uname}"
         removed=$((removed + 1))
       else
@@ -242,6 +267,31 @@ if (( gone > 0 )); then
     note "removed ${gone} endpoint file(s) of MCP servers that are gone"
   else
     echo "would remove ${gone} endpoint file(s) of MCP servers that are gone"
+  fi
+fi
+
+# --- 5. the host process's files of ended sessions (RT-6.18) -------------------
+hostfiles=0
+shopt -s nullglob
+for f in "$STATE_DIR"/*.host.json "$STATE_DIR"/*.host.log; do
+  [[ -f "${f%.host.*}.env" ]] && continue
+  [[ "$f" == *.json || -n "$(find "$f" -mmin +1440 2>/dev/null)" ]] || continue
+  hostfiles=$((hostfiles + 1))
+  [[ "$APPLY" -eq 1 ]] && rm -f "$f"
+done
+for d in "$STATE_DIR"/hosted/*; do
+  [[ -d "$d" && ! -L "$d" ]] || continue
+  [[ -f "$STATE_DIR/$(basename "$d").env" ]] && continue
+  [[ -n "$(find "$d" -maxdepth 0 -mmin +60 2>/dev/null)" ]] || continue
+  hostfiles=$((hostfiles + 1))
+  [[ "$APPLY" -eq 1 ]] && rm -rf "$d"
+done
+shopt -u nullglob
+if (( hostfiles > 0 )); then
+  if [[ "$APPLY" -eq 1 ]]; then
+    note "removed ${hostfiles} file(s) of host processes whose session ended"
+  else
+    echo "would remove ${hostfiles} file(s) of host processes whose session ended"
   fi
 fi
 

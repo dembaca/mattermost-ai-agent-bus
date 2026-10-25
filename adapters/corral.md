@@ -3,59 +3,58 @@
 [corral](https://github.com/go-corral/corral) sandboxes Claude Code and can run host-side
 scripts around a session. That is the best place for the bus lifecycle:
 
-- `preStart` registers an ephemeral bot **on the host** and contributes only the minted
-  bot token into the sandbox — `MM_REG_SECRET` never crosses the boundary.
-- The bundled MCP server unregisters the bot itself when it exits (using the bot's own
-  token; `agent-*` only), so no `postEnd` is needed for a normal end.
-- `postEnd` stays worthwhile as a safety net: it runs on the host, survives a SIGKILL of
-  the sandbox or an aborted launch, and sets the status offline. It is idempotent next
-  to the MCP cleanup — a second unregister answers 404, which counts as done.
+- `preStart` registers an ephemeral bot **on the host**, starts the session's MCP server
+  there and contributes only its two local endpoints and a per-session key — neither
+  `MM_REG_SECRET` nor the bot token crosses the boundary ([arc42 §6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)).
+  If that server does not come up, the session gets no bus at all, never the token.
+- `postEnd` stops that server, whose exit work posts the `BYE`, the overhead stats and
+  unregisters the bot with its own token (`agent-*` only); then it sets the status
+  offline and unregisters again as a safety net — a 404 counts as done. If corral is
+  killed, the server notices within 5 s and does the same.
 
-The agent therefore starts with a working identity and resolved channel ids, and cannot
-register or delete agents itself.
+The agent therefore starts with a working identity and resolved channel ids, reaches the
+bus only through the MCP tools, and cannot register or delete agents itself.
 
 ## Config
 
 **First install the hooks on the host**, in a normal terminal outside corral, from a
-checkout you reviewed that no session works in:
+git clone no session works in, after reviewing it:
 
 ```bash
 git clone https://github.com/dembaca/mattermost-ai-agent-bus ~/src/mattermost-ai-agent-bus
-cd ~/src/mattermost-ai-agent-bus    # later: git pull; review what changed, then rerun
-bin/mm-agent-host-install.sh        # or: mm-agent-host-install.sh --from <checkout>
+cd ~/src/mattermost-ai-agent-bus    # later: git pull; review it (git log -p, git diff), then rerun
+bin/mm-agent-host-install.sh        # or: mm-agent-host-install.sh --from <clone>
 ```
 
-The installer copies from the checkout it runs from, or from `--from DIR`. It never
-takes its source from the installed plugin, and refuses one under `~/.cache/corral/`
-or `~/.claude/`: a sandbox can write those
+The installer copies from the clone it runs from, or from `--from DIR`, and only what
+is committed there (`git archive HEAD`): a clone with uncommitted changes or untracked
+files in the copied paths is refused, and so is a symlink among them. It never takes
+its source from the installed plugin, and refuses one under `~/.cache/corral/`,
+`~/.claude/`, corral's temporary directories or the session's workdir: a sandbox can
+write those. Use a clone that was never a session's workdir and is not a worktree of
+one: a sandbox can write a clone's git config, which can make git run commands. The
+installer reads none outside the clone and refuses a clone whose config could run
+anything; it prints the commit it installs — check the sha against the one you
+reviewed ([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
+The host copy is only as trustworthy as the clone you reviewed.
+
+It copies `adapters/corral/`, `bin/` and the MCP server (`mcp/`) to
+`~/.local/share/mm-agent-bus/current/`, where no sandbox can change them, prepares the
+server's Python environment there with `uv sync --locked` (needs `uv`; without it
+sessions get no bus), and prints the config below. The host process runs that code with
+the bot token. **Rerun it after every plugin update**, from the clone updated to that
+version; `mm-agent-host-install.sh --check` tells whether the host copy is current, and
+the start hook says so in the banner when it is not.
+
+**The installed copy is the only mode.** Pointing `exec` at the marketplace clone
+(`~/.claude/plugins/marketplaces/…`), another plugin directory or a checkout a session
+works in is not supported any more: the hooks run on the host with the registration
+secret and start the MCP server with the bot token, corral approves only the `exec`
+file by content, and all of those places are writable from inside a sandbox. Both
+hooks check where they run from before they source anything, symlinks included; from
+such a place the start hook refuses (the session gets no bus, and the banner says how
+to install) and the stop hook runs nothing
 ([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
-The host copy is only as trustworthy as the checkout you reviewed.
-
-It copies `adapters/corral/` and `bin/` to `~/.local/share/mm-agent-bus/current/`,
-where no sandbox can change them, and prints the config below. **Rerun it after every
-plugin update**, from the checkout updated to that version;
-`mm-agent-host-install.sh --check` tells whether the host copy is current, and the
-start hook says so in the banner when it is not.
-
-**Or follow `/plugin update` without installing:** point both `exec` entries at the
-host's marketplace clone instead:
-
-```yaml
-exec: ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus/adapters/corral/10-mm-session-start.sh
-exec: ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus/adapters/corral/90-mm-session-stop.sh
-```
-
-Nothing to rerun after an update. The cost: corral no longer asks before new hook
-code runs, and since the corral homes share `~/.claude`, a sandboxed agent can change
-that code. Choose it where that is acceptable — see
-[arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed).
-
-**Otherwise never point `exec` at a plugin directory or at a checkout a session
-works in.** The hooks run on the host with the registration secret, and corral approves only the
-`exec` file by content, not the scripts it sources and starts. Both locations are
-writable from inside a sandbox
-([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
-The start hook warns if it finds itself there.
 
 The bus is not repo-specific, so this belongs in the **global** config
 `~/.config/corral/config.yml`:
@@ -106,15 +105,24 @@ The registration secret, **gopass preferred**:
 
 ```bash
 export MM_REG_SECRET_GOPASS=path/to/mattermost/agent-registration-secret
-# or, if you have no gopass:
+# or, if you have no gopass (not recommended, see below):
 export MM_REG_SECRET="…"
 ```
+
+Keep the secret in gopass, not in the login environment: on macOS a corral sandbox can
+read the initial environment of every process of your user, and the hooks run with the
+environment corral starts them with. The hooks keep the secret and the bot token out of
+every process they start — helpers get them on a file descriptor
+([arc42 §7.3](../docs/arc42/07-deployment-view.md#73-trust-assumptions)) — but a value
+that arrives in their own environment is visible there; the start hook warns about it.
 
 With neither set the hook exits 0 silently — a machine without a bus is not an error.
 
 ## What the sandbox receives
 
-`MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_TOKEN`, `MM_BOT_USERNAME`, `MM_AGENT_PREFIX`
+`MM_BUS_MCP_ENDPOINT` and `MM_BUS_ENDPOINT` (the session's MCP server on the host, for
+the plugin's relay and the hooks), `MM_BUS_KEY` (their per-session key),
+`MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_USERNAME`, `MM_AGENT_PREFIX`
 (the registrar's username prefix,
 [arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)),
 `MM_BOT_USER_ID`, `MM_TEAM`, `MM_TEAM_ID`, `MM_CHANNEL`, `MM_CHANNEL_ID` and — when set —
@@ -141,9 +149,16 @@ and only the agent's `HELLO` says so. The start banner shows
 approval key for your sessions: protect them with 2FA. `MM_OWNER` (one name) is
 still read until 0.17.
 
+When the server cannot start on the host, the sandbox gets only `MM_BUS_UNAVAILABLE`
+(the reason and what to do), the bot is unregistered again, and the banner says why.
+
 Deliberately **not** contributed:
 
 - `MM_REG_SECRET` — the whole point; it stays on the host.
+- `MM_BOT_TOKEN` — it stays with the session's MCP server on the host. The shell CLI in
+  the sandbox therefore has no token; the agent uses the MCP tools. A plugin older than
+  0.39.0 in the sandbox does not know the relay: it gets no MCP bus until updated
+  (`/plugin update`, then restart the session) ([arc42 §6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)).
 - `MM_REG_BOT_NAME` — the registrar's short name for the bot (the username without
   its prefix). Not a secret: the registrar deletes a bot only with `MM_REG_SECRET` or that
   bot's own token, so from inside the sandbox an agent can remove at most its own bot.
@@ -191,6 +206,9 @@ other failure is printed with its HTTP status and the file kept. Per-bot state
 files (presence, listen window, turn, crown, stats) are no sessions; the sweep
 removes those of bots without a session file once they are a day old
 ([arc42 §6.1](../docs/arc42/06-runtime-view.md#61-host-managed-session-lifecycle)).
+While a session's MCP server still runs on the host, the sweep leaves that session
+alone (it ends with its watchdog); the files of host processes whose session ended
+(`<session>.host.json`, `.host.log`, `hosted/<session>/`) go with `--apply`.
 A bot an agent registered itself (`mcp-*.env`, outside corral) is kept for
 `claude --continue`; the sweep reports it as `KEPT` until its file is untouched for
 `MM_SESSION_KEEP_SEC` (24 h), and `--force` includes it sooner

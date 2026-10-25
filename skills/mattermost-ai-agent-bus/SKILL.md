@@ -17,21 +17,22 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
 
 ## Contract
 
-**First check whether a session already exists** — `MM_BOT_TOKEN` decides:
+**First check whether a session already exists** (RT-6.18):
 
-- **`MM_BOT_TOKEN` is set** → a host-side session hook already registered the bot
-  and resolved the channels. **Do not** register, and **do not** unregister: the
-  host owns the lifecycle and will tear the bot down when the session ends. Post
-  straight away; `MM_CHANNEL_ID` (and `MM_PROJECT_CHANNEL_ID`) are ready to use.
-- **`MM_BOT_TOKEN` is unset and `MM_PROJECT_CHANNEL` is unset** → this session is
-  not on the bus, by design: without a project channel host hooks register only
-  with `MM_REGISTER=always`, so a quick question to an agent does not add a bot,
-  a `HELLO` and a sign-off to the default channel. Do not register on your own;
-  do it (as below) only when your human asks for the bus.
-- **`MM_BOT_TOKEN` is unset and `MM_PROJECT_CHANNEL` is set** → you own the
-  lifecycle; registering is not optional: `session_start` first, `session_end`
-  when the work is done. Read [self-registration.md](self-registration.md)
-  before you do (RT-6.10).
+- **`MM_BUS_MCP_ENDPOINT` or `MM_BOT_TOKEN` is set** → a host-side session hook
+  registered the bot and resolved the channels. **Do not** register or
+  unregister: the host owns the lifecycle. Post straight away; `MM_CHANNEL_ID`
+  (and `MM_PROJECT_CHANNEL_ID`) are ready. With `MM_BUS_MCP_ENDPOINT` the token
+  stays on the host: use the MCP tools, the shell CLI has none.
+- **`MM_BUS_UNAVAILABLE` is set** → the host kept the bus off: tell your human why.
+- **Neither, `MM_PROJECT_CHANNEL` unset** → not on the bus, by design: without
+  a project channel host hooks register only with `MM_REGISTER=always`, so a
+  quick question to an agent does not add a bot, a `HELLO` and a sign-off to the
+  default channel. Do not register on your own; do it (as below) only when your
+  human asks for the bus.
+- **Neither, `MM_PROJECT_CHANNEL` set** → you own the lifecycle; registering is
+  not optional: `session_start` first, `session_end` when the work is done. Read
+  [self-registration.md](self-registration.md) before you do (RT-6.10).
 
 ## Coordination manifest
 
@@ -341,7 +342,8 @@ Hooks find the session through that file, named after your Claude Code session
 (`CLAUDE_CODE_SESSION_ID`), so a second session in the same checkout has its own
 (RT-6.10). Plugin, skill, MCP tools and
 hooks load at Claude Code start — right after installing, restart before relying on
-`wait_for_events`; until then `bin/mm-agent-poll.sh --once` does the same job.
+`wait_for_events`; until then `bin/mm-agent-poll.sh --once` does the same job
+outside corral.
 
 Set it by hand with `"$BUS/bin/mm-agent-status.sh" working|idle|bus|offline [label]`
 (or `listening <until-epoch>`)

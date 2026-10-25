@@ -27,6 +27,92 @@ mm_bot_token() {
   printf '%s' "$tok"
 }
 
+# Credentials on an inherited fd (arc42 §7.3). The corral host hooks never put
+# the bot token or the registration secret into any process environment or
+# argv: on macOS a sandbox can read every same-user process's initial
+# environment (KERN_PROCARGS2). They start a helper with MM_BOT_TOKEN_FD=3 or
+# MM_REG_SECRET_FD=3 and the value on that fd (mm_with_token, mm_with_secret);
+# sourcing this file reads it into a shell variable that is not exported, so
+# nothing this script starts sees it. Without the *_FD variables (the shell CLI)
+# the environment is used as before.
+mm_creds_from_fds() {
+  local v fdv fd from_fd=0
+  for v in MM_BOT_TOKEN MM_REG_SECRET; do
+    fdv="${v}_FD"
+    fd="${!fdv:-}"
+    [[ -n "$fd" ]] || continue
+    unset "$fdv"
+    from_fd=1
+    [[ "$fd" =~ ^[3-9]$ ]] || continue
+    IFS= read -r "${v?}" <&"$fd" || true
+    eval "exec ${fd}<&-"
+  done
+  if [[ "$from_fd" -eq 1 ]]; then
+    export -n MM_BOT_TOKEN MATTERMOST_TOKEN MM_REG_SECRET
+    MM_CREDS_FROM_FD=1
+  fi
+  return 0
+}
+mm_creds_from_fds
+
+# Run a command with the bot token / the registration secret on fd 3 only: the
+# value goes through a pipe from the shell's builtin printf, never through an
+# environment or an argv (arc42 §7.3). The caller must not export it.
+#   mm_with_token "$BIN/mm-agent-status.sh" offline
+mm_with_token() { MM_BOT_TOKEN_FD=3 "$@" 3< <(printf '%s\n' "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}"); }
+mm_with_secret() { MM_REG_SECRET_FD=3 "$@" 3< <(printf '%s\n' "${MM_REG_SECRET:-}"); }
+
+# What a corral sandbox can write (arc42 §7.1, §7.3): every corral home,
+# ~/.claude (the homes share it), the session's workdir and corral's temporary
+# directories. A path that is not absolute or has a . or .. component counts as
+# one, too: what it names depends on where one stands and on the symlinks on the
+# way. Compared without regard to case, as macOS volumes do. The corral hooks
+# carry the same check inline (they source nothing before it).
+mm_sandbox_can_write() {
+  local p="$1/" r real nc=0 rc=1
+  [[ "$1" == /* && "$p" != */../* && "$p" != */./* ]] || return 0
+  shopt -q nocasematch && nc=1
+  shopt -s nocasematch
+  case "$p" in /tmp/corral-* | /private/tmp/corral-*) rc=0 ;; esac
+  for r in "$HOME/.cache/corral" "$HOME/.claude" "${CORRAL_WORKDIR:-}" "${TMPDIR:-}"; do
+    [[ "$rc" -eq 1 && -n "$r" ]] || continue
+    [[ "$r" != "${TMPDIR:-}" || "$r" == *corral* ]] || continue
+    real="$(cd -P "$r" 2>/dev/null && pwd -P)" || real="$r"
+    if [[ "$p" == "${r%/}/"* || "$p" == "${real%/}/"* ]]; then rc=0; fi
+  done
+  [[ "$nc" -eq 1 ]] || shopt -u nocasematch
+  return "$rc"
+}
+
+# Host scripts (installer, sweep) look commands up only in absolute PATH
+# entries no sandbox can write, and work from /: started in a workdir, a `.` or
+# relative entry would find the sandbox's curl (arc42 §7.3).
+mm_safe_path() {
+  local rest="${PATH:-}:" e out=""
+  while [[ -n "$rest" ]]; do
+    e="${rest%%:*}" rest="${rest#*:}"
+    mm_sandbox_can_write "${e%/}" || out="${out:+$out:}$e"
+  done
+  PATH="${out:-/usr/bin:/bin:/usr/sbin:/sbin}"
+  export PATH
+}
+
+# Print a regular file, at most $2 bytes (default 64 KiB), giving up after one
+# second: for files a sandbox may have replaced with a FIFO or a device, which
+# would block a host hook (arc42 §7.1).
+mm_read_file() {
+  local f="$1" max="${2:-65536}" pid w rc
+  [[ -f "$f" ]] || return 1
+  head -c "$max" <"$f" 2>/dev/null &
+  pid=$!
+  { sleep 1; kill "$pid"; } >/dev/null 2>&1 &
+  w=$!
+  wait "$pid" 2>/dev/null
+  rc=$?
+  kill "$w" 2>/dev/null && wait "$w" 2>/dev/null
+  return "$rc"
+}
+
 mm_state_dir() {
   printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
 }
@@ -311,6 +397,13 @@ mm_bus() {
   [[ "$MM_BUS_STATUS" == 200 ]]
 }
 
+# A keyless corral session (RT-6.18): the MCP server runs on the host, the
+# sandbox has its endpoints and no token. The server's state files are not
+# here; what the hooks need of them comes through the hook API.
+mm_bus_keyless() {
+  [[ -n "${MM_BUS_MCP_ENDPOINT:-}" ]]
+}
+
 # This session's bot id without asking anyone: MM_BOT_USER_ID from the
 # environment, else the one the MCP server put into its endpoint file. For the
 # local steps that must not wait on the server (the prompt hook stopping the
@@ -327,19 +420,21 @@ mm_bus_uid() {
 
 # Who this session's bot is, from the hook API: exports MM_BOT_USER_ID and
 # MM_BOT_USERNAME (the per-bot state files key on them), sets MM_BUS_PROJECT
-# (1 in a project channel) and MM_CROWN_UNTIL (epoch, 0 without the 👑). Fails
+# (1 in a project channel), MM_CROWN_UNTIL (epoch, 0 without the 👑) and
+# MM_BUS_CHANNEL (1 once the agent confirmed the channel check, RT-6.12). Fails
 # without jq or a bus session: the hook then exits 0 and stays quiet (RT-6.4).
 # shellcheck disable=SC2034  # MM_BUS_PROJECT, MM_CROWN_UNTIL are read by the callers
 mm_bus_me() {
-  local uid name project crown
+  local uid name project crown channel
   command -v jq >/dev/null 2>&1 || return 1
   mm_bus GET /v1/me || return 1
-  { read -r uid; read -r name; read -r project; read -r crown; } < <(jq -r '
-    (.user_id // ""), (.username // ""), (if .project then 1 else 0 end), (.crown_until // 0)' \
-    <<<"$MM_BUS_BODY" 2>/dev/null)
+  { read -r uid; read -r name; read -r project; read -r crown; read -r channel; } < <(jq -r '
+    (.user_id // ""), (.username // ""), (if .project then 1 else 0 end), (.crown_until // 0),
+    (if .channel then 1 else 0 end)' <<<"$MM_BUS_BODY" 2>/dev/null)
   [[ "${uid:-}" =~ ^[a-z0-9]{26}$ ]] || return 1
   export MM_BOT_USER_ID="$uid" MM_BOT_USERNAME="${name:-}"
   MM_BUS_PROJECT="${project:-0}"
+  MM_BUS_CHANNEL="${channel:-0}"
   MM_CROWN_UNTIL="${crown:-0}"
   [[ "$MM_CROWN_UNTIL" =~ ^[0-9]+$ ]] || MM_CROWN_UNTIL=0
   return 0
@@ -401,6 +496,8 @@ mm_lease_sec() {
 #   mm_stat KIND [key=value …]     e.g. mm_stat wake reason=digest
 # Counted by hooks, listener and MCP server, posted once at session end to
 # MM_STATS_CHANNEL (default agents-stats); MM_STATS_CHANNEL=off counts nothing.
+# In a keyless corral session the server's state dir is on the host (RT-6.18):
+# the counter goes to its hook API instead (POST /v1/stat, at most 1 s).
 # Never fails, never prints: a counter must not disturb a session.
 mm_stats_off() { [[ "${MM_STATS_CHANNEL:-agents-stats}" =~ ^(off|none|0|false)$ ]]; }
 mm_stat() {
@@ -410,10 +507,14 @@ mm_stat() {
   [[ "${MM_BOT_USER_ID:-}" =~ ^[a-z0-9]{26}$ ]] || return 0
   f="$(mm_state_dir)/stats-${MM_BOT_USER_ID}.jsonl"
   command -v jq >/dev/null 2>&1 || return 0
-  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
   kv="$(printf '%s\n' "$@" | jq -cRn --arg k "$kind" --argjson t "$(date +%s)" '
     [inputs | select(contains("=")) | capture("^(?<k>[^=]+)=(?<v>.*)$")
      | {(.k): (.v | tonumber? // .)}] | add // {} | {k: $k, t: $t} + .' 2>/dev/null)" || return 0
+  if mm_bus_keyless; then
+    MM_BUS_MAX_TIME=1 mm_bus POST /v1/stat "$kv" >/dev/null 2>&1 || true
+    return 0
+  fi
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
   printf '%s\n' "$kv" >>"$f" 2>/dev/null || true
   return 0
 }
@@ -473,14 +574,18 @@ mm_responsible_name() {
 # and by default ~/.claude too, so nothing read here may decide which code runs
 # on the host. Hence a bare version (digits and dots, an optional suffix;
 # anything else is dropped), never an install path.
+# Every read is of a regular file, bounded in size and time (mm_read_file), and
+# all of them together stop after a few seconds: a FIFO or a long list there
+# must not stall a session's start.
 mm_newest_plugin_version() {
-  local f d v
+  local f d v deadline=$((SECONDS + 5))
   for f in "$HOME/.claude/plugins/installed_plugins.json" \
            "$HOME"/.cache/corral/home-*/.claude/plugins/installed_plugins.json; do
-    [[ -f "$f" ]] || continue
-    jq -r '.. | objects | select(has("installPath")) | .installPath
-           | select(test("mattermost-ai-agent-bus"))' "$f" 2>/dev/null || true
-  done | while read -r d; do
+    (( SECONDS < deadline )) || break
+    mm_read_file "$f" 1048576 | jq -r '.. | objects | select(has("installPath")) | .installPath
+           | select(type == "string" and test("mattermost-ai-agent-bus"))' 2>/dev/null || true
+  done | head -n 64 | while read -r d; do
+    (( SECONDS < deadline )) || break
     v="$(mm_tree_version "$d")"
     if [[ "$v" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]]; then printf '%s\n' "$v"; fi
   done | sort -V -r | sed -n 1p | grep .
@@ -505,7 +610,9 @@ mm_newer_plugin() {
 
 # Version of a mattermost-ai-agent-bus tree (checkout, plugin or host copy).
 mm_tree_version() {
-  jq -r '.version // "?"' "$1/.claude-plugin/plugin.json" 2>/dev/null || echo "?"
+  local v
+  v="$(mm_read_file "$1/.claude-plugin/plugin.json" | jq -r '.version // "?"' 2>/dev/null)" || v=""
+  printf '%s\n' "${v:-?}"
 }
 
 # Epoch seconds → RFC 3339 UTC / local HH:MM, on GNU and BSD date alike.
@@ -519,25 +626,36 @@ mm_epoch_hhmm() {
 # Claude Code was started with the MCP server as a channel (RT-6.12): the
 # server pushes bus messages into the session, so no listener is needed. The
 # server finds that out itself; it counts once the agent confirmed the server's
-# check (channel-<uid>.env). MM_CHANNEL_PUSH=0 turns it off.
+# check (channel-<uid>.env). MM_CHANNEL_PUSH=0 turns it off. In a keyless
+# session that file is on the host: /v1/me says (MM_BUS_CHANNEL, RT-6.18).
 mm_channel_push() {
   case "$(printf '%s' "${MM_CHANNEL_PUSH:-}" | tr '[:upper:]' '[:lower:]')" in
     0 | false | no | off) return 1 ;;
   esac
   local f
+  if mm_bus_keyless; then
+    [[ -n "${MM_BUS_CHANNEL:-}" ]] || mm_bus_me || return 1
+    [[ "${MM_BUS_CHANNEL:-0}" == 1 ]]
+    return
+  fi
   f="$(mm_bot_state_file channel "${1:-}")" && [[ -f "$f" ]]
 }
 
+# Lines for eval. With credentials from an fd (the corral host hooks) the token
+# lines are plain assignments: the caller keeps the token in a variable that
+# no process it starts inherits (arc42 §7.3). For the shell CLI they export.
 mm_emit_session_exports() {
+  local x=export
+  [[ "${MM_CREDS_FROM_FD:-0}" != 1 ]] || x=""
   cat <<EOF
 export MM_CHAT_URL=$(printf '%q' "${MM_CHAT_URL:-}")
 export MM_REG_BOT_NAME=$(printf '%q' "${MM_REG_BOT_NAME:-}")
 export MM_BOT_USERNAME=$(printf '%q' "${MM_BOT_USERNAME:-}")
 export MM_AGENT_PREFIX=$(printf '%q' "$(mm_agent_prefix)")
 export MM_BOT_USER_ID=$(printf '%q' "${MM_BOT_USER_ID:-}")
-export MM_BOT_TOKEN=$(printf '%q' "${MM_BOT_TOKEN:-}")
+${x:+$x }MM_BOT_TOKEN=$(printf '%q' "${MM_BOT_TOKEN:-}")
 export MATTERMOST_URL=$(printf '%q' "${MATTERMOST_URL:-${MM_CHAT_URL:-}}")
-export MATTERMOST_TOKEN=$(printf '%q' "${MATTERMOST_TOKEN:-${MM_BOT_TOKEN:-}}")
+${x:+$x }MATTERMOST_TOKEN=$(printf '%q' "${MATTERMOST_TOKEN:-${MM_BOT_TOKEN:-}}")
 export MM_AGENT_SESSION_FILE=$(printf '%q' "$(mm_session_file)")
 EOF
 }

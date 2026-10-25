@@ -40,11 +40,11 @@ def _client(handler):
 def _handler(user=None, bot=None):
     """The registrar, and a server whose user object / bots endpoint answer as given."""
     def handler(req: httpx.Request) -> httpx.Response:
-        if req.url.path == "/api/v4/users/uid9":
+        if req.url.path == "/api/v4/users/uid90000000000000000000000":
             return httpx.Response(200, json=user) if user is not None else httpx.Response(403)
-        if req.url.path == "/api/v4/bots/uid9":
+        if req.url.path == "/api/v4/bots/uid90000000000000000000000":
             return httpx.Response(200, json=bot) if bot is not None else httpx.Response(403)
-        return httpx.Response(200, json={"username": "agent-x", "user_id": "uid9", "bot_token": "t"})
+        return httpx.Response(200, json={"username": "agent-x", "user_id": "uid90000000000000000000000", "bot_token": "t"})
     return handler
 
 
@@ -65,7 +65,7 @@ async def test_session_start_warns_about_a_short_profile(monkeypatch):
 @pytest.mark.asyncio
 async def test_the_bots_endpoint_is_the_second_try(monkeypatch):
     monkeypatch.setenv("MM_TRUSTED_HUMANS", "user0,user1")
-    c = _client(_handler(user={"id": "uid9"}, bot={"description": _desc("user0")}))
+    c = _client(_handler(user={"id": "uid90000000000000000000000"}, bot={"description": _desc("user0")}))
     await c.session_start("proj")
     assert "lacks 1 of 2" in c.profile_warning and "user1" in c.profile_warning
 

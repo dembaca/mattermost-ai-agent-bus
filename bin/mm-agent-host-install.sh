@@ -5,25 +5,39 @@
 #   mm-agent-host-install.sh --from DIR      # from another checkout you reviewed
 #   mm-agent-host-install.sh --check         # compare host copy vs installed plugin
 #
-# Run it on the HOST, in a normal terminal — never inside corral — from a
-# checkout you reviewed that no session works in. corral's preStart/postEnd
+# Run it on the HOST, in a normal terminal — never inside corral — from a git
+# clone no session works in, after reviewing it (git log, git diff). corral's preStart/postEnd
 # hooks run on the host with the registration secret. corral approves the
 # `exec` file by its content, but not the scripts it sources and starts (bin/).
 # The installed plugin lives under the corral homes and ~/.claude, a checkout
 # may be a session's workdir; a sandbox can write all of them. So the source is
 # never looked up from what is installed: it is this script's own tree or
-# --from, and a source under ~/.cache/corral or ~/.claude is refused. This
+# --from, and a source under ~/.cache/corral, ~/.claude or $CORRAL_WORKDIR is
+# refused. Only what is committed is copied (git archive HEAD): a clone with
+# uncommitted changes or untracked files in the copied paths is refused, and
+# so is a symlink among them. git runs without system or global config, and a
+# clone whose own config or info/attributes could make it run a command
+# (filter, diff, merge drivers, includes) is refused; the installed commit is
+# printed to compare with the one you reviewed. This
 # copies adapters/corral/ and bin/ to MM_BUS_HOST_DIR (default
 # ~/.local/share/mm-agent-bus/current), which the sandbox neither sees nor
 # writes. Point corral's `exec` there once; rerun this after a plugin update.
 # corral then asks to approve the changed hook — that prompt is the point.
+# It also copies the MCP server (mcp/, without a checkout's .venv or caches)
+# and, with uv, prepares its Python environment there (uv sync --locked): the
+# start hook runs each session's MCP server on the host from this tree, so the
+# bot token never enters the sandbox (RT-6.18). Without it sessions get no bus.
 #
 # Spec: arc42 §7.1 (docs/arc42/07-deployment-view.md).
 set -euo pipefail
 
-SELF="$(cd -P "$(dirname "$0")/.." && pwd -P)"
+here="${0%/*}"
+[[ "$here" != "$0" ]] || here=.
+SELF="$(cd -P "$here/.." && pwd -P)"
 # shellcheck source=mm-agent-lib.sh
 source "$SELF/bin/mm-agent-lib.sh"
+# Commands only from PATH entries no sandbox can write (arc42 §7.3).
+mm_safe_path
 
 die() { echo "mm-agent-host-install: $*" >&2; exit 1; }
 
@@ -32,12 +46,16 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="${2:-}"; shift 2 ;;
     --check) CHECK=1; shift ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
 
 DEST="${MM_BUS_HOST_DIR:-$HOME/.local/share/mm-agent-bus/current}"
+# Relative paths are the operator's; then work from /, never from a checkout.
+[[ -z "$FROM" || "$FROM" == /* ]] || FROM="$PWD/$FROM"
+[[ "$DEST" == /* ]] || DEST="$PWD/$DEST"
+cd /
 
 version_of() { mm_tree_version "$1"; }
 
@@ -54,29 +72,71 @@ fi
 # Inside corral the target is not the host's and the source may be tampered with.
 [[ -z "${CORRAL_SANDBOX:-}" ]] || die "run this on the host, not inside a corral session"
 
-# Places a corral sandbox can write: every corral home, and ~/.claude, which the
-# homes share by default. $1 is a resolved path (pwd -P).
-sandbox_writable() {
-  local r real
-  for r in "$HOME/.cache/corral" "$HOME/.claude"; do
-    real="$(cd -P "$r" 2>/dev/null && pwd -P)" || real="$r"
-    [[ "$1/" == "$r/"* || "$1/" == "$real/"* ]] && return 0
-  done
-  return 1
-}
+# Places a corral sandbox can write (mm_sandbox_can_write): every corral home,
+# ~/.claude, which the homes share by default, corral's temporary directories;
+# without regard to case. $1 is a resolved path (pwd -P).
+sandbox_writable() { mm_sandbox_can_write "$1"; }
 
 [[ -n "$FROM" ]] || FROM="$SELF"
 src="$(cd -P "$FROM" 2>/dev/null && pwd -P)" || die "no such directory: $FROM"
 FROM="$src"
+if [[ -n "${CORRAL_WORKDIR:-}" ]]; then
+  wd="$(cd -P "$CORRAL_WORKDIR" 2>/dev/null && pwd -P)" || wd="$CORRAL_WORKDIR"
+  shopt -s nocasematch
+  [[ "$FROM/" != "$wd/"* && "$FROM/" != "${CORRAL_WORKDIR%/}/"* ]] ||
+    die "$FROM is a corral session's workdir, which its agent can change; run the installer from a checkout you reviewed (or pass --from <checkout>)"
+  shopt -u nocasematch
+fi
 if sandbox_writable "$FROM"; then
   die "$FROM can be changed from inside a corral sandbox; run the installer from a checkout you reviewed, outside corral and outside every session's workdir (or pass --from <checkout>)"
 fi
 for f in adapters/corral/10-mm-session-start.sh adapters/corral/90-mm-session-stop.sh \
-         bin/mm-agent-lib.sh .claude-plugin/plugin.json; do
+         bin/mm-agent-lib.sh .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock \
+         mcp/src/mattermost_ai_agent_bus/hosted.py; do
   [[ -f "$FROM/$f" ]] || die "$FROM is not a mattermost-ai-agent-bus tree (missing $f)"
 done
 [[ "$FROM" != "$(cd -P "$DEST" 2>/dev/null && pwd -P)" ]] ||
   die "source and target are the same directory; run it from a checkout, or pass --from <checkout>"
+
+# What is committed, nothing else: git archive of HEAD, so neither an untracked
+# file nor a change made after the review comes along. A clone whose copied
+# paths differ from HEAD is refused rather than silently installed without the
+# difference. A clone's config can make git run commands (filters on status
+# and archive, diff and merge drivers, fsmonitor, hooks) and a sandbox may have
+# written it, so git reads no system or global config, no attributes file of
+# the operator's, runs no fsmonitor and no hook, and a clone whose config or
+# info/attributes could make it run anything is refused (arc42 §7.1).
+unset "${!GIT_@}"
+git_() {
+  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    git --no-optional-locks -c core.attributesFile=/dev/null -c core.fsmonitor=false \
+    -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false -C "$FROM" "$@"
+}
+[[ "$(git_ rev-parse --show-toplevel 2>/dev/null)" == "$FROM" ]] ||
+  die "$FROM is not the top of a git clone; install from a clone you reviewed (git log, git diff)"
+repo_dirs=()
+while IFS= read -r d; do repo_dirs+=("$d"); done < <(
+  git_ rev-parse --path-format=absolute --git-dir --git-common-dir)
+[[ "${#repo_dirs[@]}" -eq 2 ]] || die "cannot find the repository of $FROM"
+for d in "${repo_dirs[@]}"; do
+  real="$(cd -P "$d" 2>/dev/null && pwd -P)" || die "cannot resolve the repository of $FROM"
+  ! sandbox_writable "$real" ||
+    die "$FROM keeps its repository in $real, which a corral sandbox can change; install from a clone that was never a session's workdir and is not a worktree of one"
+done
+risky="$(git_ config --get-regexp '^(filter|diff|merge|include|includeif|tar)\.' 2>/dev/null || true)"
+[[ -z "$risky" ]] ||
+  die "$FROM has git config that can run commands (filter, diff or merge drivers, includes); refused — install from a clone that was never a session's workdir:"$'\n'"$(cut -d' ' -f1 <<<"$risky" | tr -cd '[:alnum:]._:/\n-')"
+for a in "${repo_dirs[0]}/info/attributes" "${repo_dirs[1]}/info/attributes"; do
+  [[ ! -e "$a" ]] || die "$FROM has $a, which can make git run commands; refused — install from a clone that was never a session's workdir"
+done
+paths=(bin adapters/corral .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock mcp/src)
+for f in mcp/README.md skills/mattermost-ai-agent-bus; do
+  if git_ cat-file -e "HEAD:$f" 2>/dev/null; then paths+=("$f"); fi
+done
+dirty="$(git_ status --porcelain --untracked-files=all -- "${paths[@]}")" ||
+  die "git status failed in $FROM"
+[[ -z "$dirty" ]] ||
+  die "$FROM has uncommitted changes or untracked files in what would be installed — commit or remove them, review, then rerun:"$'\n'"$dirty"
 
 # Copy next to the target, then swap: a session starting meanwhile sees either
 # the old or the new tree, never half of one.
@@ -87,10 +147,14 @@ parent="$(cd -P "$parent" && pwd -P)"
 DEST="$parent/$(basename "$DEST")"
 new="$(mktemp -d "$parent/.install.XXXXXX")"
 trap 'rm -rf "$new"' EXIT
-mkdir -p "$new/adapters" "$new/.claude-plugin"
-cp -R "$FROM/bin" "$new/bin"
-cp -R "$FROM/adapters/corral" "$new/adapters/corral"
-cp "$FROM/.claude-plugin/plugin.json" "$new/.claude-plugin/plugin.json"
+# The MCP server, for the host process (RT-6.18); the skill, whose size its
+# overhead stats count (RT-6.9).
+head_sha="$(git_ rev-parse --verify 'HEAD^{commit}')" || die "$FROM has no commit to install"
+head_line="$(git_ log -1 --no-show-signature --format='%H %s' "$head_sha")"
+git_ archive --format=tar "$head_sha" -- "${paths[@]}" | tar -x -C "$new" ||
+  die "could not copy HEAD of $FROM"
+links="$(find "$new" -type l -print)"
+[[ -z "$links" ]] || die "$FROM has symlinks in what would be installed; refused:"$'\n'"${links//$new\//}"
 chmod -R go-w "$new"
 chmod +x "$new"/adapters/corral/*.sh "$new"/bin/*.sh
 
@@ -103,10 +167,22 @@ mv "$new" "$DEST"
 trap - EXIT
 [[ -n "$old" ]] && rm -rf "$old"
 
+# After the swap: a virtual environment does not survive a move. From the host
+# tree only (--directory), never from the source or the working directory.
+if command -v uv >/dev/null 2>&1 &&
+  (cd "$DEST/mcp" && uv sync --locked --no-dev --quiet --directory "$DEST/mcp") >&2; then
+  server="MCP server environment ready: the bot token stays on the host (RT-6.18)"
+else
+  server="WARNING: no Python environment for the MCP server (needs uv): corral sessions get no bus until this is rerun"
+fi
+
 cat <<EOF
 Installed mattermost-ai-agent-bus $(version_of "$DEST") host hooks
   from: $FROM
+  commit: $head_line
   to:   $DEST
+  Compare the commit with the one you reviewed.
+$server
 
 corral config (~/.config/corral/config.yml), set once:
 

@@ -18,7 +18,6 @@ Entries older than MAX_AGE_SEC are dropped.
 
 from __future__ import annotations
 
-import os
 import re
 import time
 from collections.abc import Mapping
@@ -33,7 +32,7 @@ if TYPE_CHECKING:
 
 TRUSTED, AGENT, OTHER = "trusted", "agent", "other"
 MAX_AGE_SEC = 7 * 86400
-# The coordinator's name is read with the roster, a subprocess: at most this often.
+# The coordinator's name is read with the roster, several requests: at most this often.
 COORD_TTL_SEC = 60.0
 
 _coord: tuple[float, str] | None = None
@@ -143,10 +142,7 @@ def _write(uid: str, state: dict[str, dict[str, float]]) -> None:
     if not lines:
         path.unlink(missing_ok=True)
         return
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text("\n".join(lines) + "\n")
-    os.replace(tmp, path)
+    session_file.write_private(path, "\n".join(lines) + "\n")
 
 
 def mark_gated(uid: str, post_id: str) -> None:

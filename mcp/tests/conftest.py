@@ -24,6 +24,10 @@ _BUS_ENV = (
     "MM_CHANNEL_ID",
     "MM_PROJECT_CHANNEL",
     "MM_PROJECT_CHANNEL_ID",
+    "MM_BUS_ENDPOINT",
+    "MM_BUS_MCP_ENDPOINT",
+    "MM_BUS_KEY",
+    "MM_BUS_UNAVAILABLE",
 )
 
 
@@ -33,6 +37,10 @@ def _isolate_bus_env(monkeypatch, tmp_path):
     for name in _BUS_ENV:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    # Only the host process of a keyless session sets it (RT-6.18).
+    from mattermost_ai_agent_bus import session_file
+
+    monkeypatch.setattr(session_file, "_hosted_dir", None)
     yield
     # monkeypatch restores the real environment itself; session_start also writes
     # into os.environ, so make sure nothing leaks into the next test.

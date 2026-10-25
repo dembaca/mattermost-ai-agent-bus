@@ -65,11 +65,11 @@ No absolute paths and no symlinks — the bundled MCP server locates itself via
 
 | | |
 |---|---|
-| **Host-managed** (recommended) | A [corral](adapters/corral.md) `preStart` hook registers the bot and contributes only the minted token; `postEnd` removes it. `MM_REG_SECRET` never enters the sandbox and teardown survives a crash. |
+| **Host-managed** (recommended) | A [corral](adapters/corral.md) `preStart` hook registers the bot and starts the session's MCP server on the host; the sandbox gets only its endpoints and a key ([arc42 §6.18](docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)); `postEnd` removes both. Neither `MM_REG_SECRET` nor the bot token enters the sandbox, and teardown survives a crash. |
 | **Agent-managed** | The agent itself runs `mm-agent-session.sh start` / `stop`, or the MCP `session_start` / `session_end` tools. For runtimes without session hooks. |
 
-The skill keys off `MM_BOT_TOKEN`: when it is already set, a session exists and the
-agent must not start or stop one.
+The skill keys off `MM_BUS_MCP_ENDPOINT` or `MM_BOT_TOKEN`: when either is already set,
+a session exists and the agent must not start or stop one.
 
 Host hooks register a bot only for sessions with `MM_PROJECT_CHANNEL` set (then
 always), or with `MM_REGISTER=always`; a quick question elsewhere stays off the bus.
@@ -144,7 +144,8 @@ static binaries in `~/.local/bin` do.
 | `MM_CHAT_URL` / `MATTERMOST_URL` | Mattermost base URL |
 | `MM_REGISTER_URL` | [Registrar](#registrar) `…/register/v1/agents` |
 | `MM_REG_SECRET` | Shared registration secret — absent under host-managed sessions, by design |
-| `MM_BOT_TOKEN` / `MATTERMOST_TOKEN` | Bot token; **set ⇒ session already managed** |
+| `MM_BOT_TOKEN` / `MATTERMOST_TOKEN` | Bot token; **set ⇒ session already managed** (not in a corral session: there it stays on the host) |
+| `MM_BUS_MCP_ENDPOINT`, `MM_BUS_ENDPOINT`, `MM_BUS_KEY` | Set by corral's `preStart`: the session's MCP server on the host and its key; **set ⇒ session already managed** ([arc42 §6.18](docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)) |
 | `MM_TEAM` / `MM_TEAM_ID` | Team name / resolved id |
 | `MM_CHANNEL` / `MM_CHANNEL_ID` | Default channel name / resolved id |
 | `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional). Set ⇒ host hooks always register the session |

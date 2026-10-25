@@ -59,8 +59,10 @@ eval "$("$MM_AGENT_BUS_ROOT/bin/mm-agent-session.sh" start "claude-$$")"
 trap '"$MM_AGENT_BUS_ROOT/bin/mm-agent-session.sh" stop' EXIT
 ```
 
-The skill keys off `MM_BOT_TOKEN`: set means a session already exists and must not be
-started or stopped by the agent.
+The skill keys off `MM_BUS_MCP_ENDPOINT` (a corral session, whose token stays on the host,
+[arc42 §6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)) or
+`MM_BOT_TOKEN`: either set means a session already exists and must not be started or
+stopped by the agent.
 
 **Long-running sessions.** Claude Code v2.1.290+ compacts a long conversation by itself
 while the terminal is idle. `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` makes it start at

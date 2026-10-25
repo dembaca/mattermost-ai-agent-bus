@@ -3,6 +3,112 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.39.0
+
+Keyless corral session: the bot token stays on the host (#81, #69).
+
+### Changed
+
+- **The MCP server runs on the host in a corral session
+  ([RT-6.18](docs/arc42/06-runtime-view.md)):** `preStart` starts it as one
+  host process per session (`python -I -m mattermost_ai_agent_bus --host` from
+  the host copy, a scrubbed environment, key and token on stdin) and
+  contributes only `MM_BUS_MCP_ENDPOINT`, `MM_BUS_ENDPOINT` and `MM_BUS_KEY`
+  besides the ids and names: no `MM_BOT_TOKEN` in the sandbox any more. The
+  plugin's MCP entry point relays stdio to it after a handshake with the key
+  and the session's names (session id, project directory, working directory,
+  channel flag, `CLAUDECODE`), checked and used only to name files. The host
+  process serves the hook API (RT-6.17) with the same key for the whole
+  session, keeps its files in its own state directory
+  (`~/.local/state/mm-agent-bus/hosted/<session>/`, 0700), and ends with
+  `postEnd` (SIGTERM: BYE, stats, offline, unregister) or when corral is gone
+  (watchdog every 5 s).
+- **Fail closed:** when that process cannot start, the bot is unregistered
+  again and the sandbox gets only `MM_BUS_UNAVAILABLE` with the reason — never
+  the token. The MCP server tells the agent so instead of offering
+  `session_start`.
+- **Hooks in a keyless session:** the overhead counters go to the new
+  `POST /v1/stat`, the channel confirmation comes from `/v1/me` (`channel`),
+  and `mm-agent-statusline.sh` asks `/v1/me` for the 👑 (1 s at most).
+  `HOST_MANAGED`, the skill and the docs key on `MM_BUS_MCP_ENDPOINT` as well
+  as `MM_BOT_TOKEN` (older host installs).
+- **State files** are written through one helper (mkstemp and rename, append
+  with `O_NOFOLLOW`) that refuses a symlink in their place; a transcript is
+  opened without following a symlink, and on the host only under
+  `~/.claude/projects/`.
+- **`mm-agent-host-install.sh`** copies the MCP server and the skill as well
+  and prepares the server's environment with `uv sync --locked` (needs `uv`).
+- **`mm-agent-sweep.sh`** leaves a session alone while its host process runs
+  and removes the files of host processes whose session ended.
+
+### Security (second review of #81)
+
+- **No credential in any process environment on the host
+  ([§7.3](docs/arc42/07-deployment-view.md#73-trust-assumptions)):** on macOS
+  a corral sandbox can read the initial environment of every process of the
+  same user (`KERN_PROCARGS2`). The host hooks no longer export the bot token
+  or the registration secret: helpers get them on fd 3 (`MM_BOT_TOKEN_FD`,
+  `MM_REG_SECRET_FD`, read by `mm-agent-lib.sh`), jq reads token and key from
+  pipes, curl from stdin. `mm-agent-register.sh` no longer exports the token.
+  A secret from the login environment is not passed on, and the start hook
+  warns: keep it in gopass. Residual: a session's `MM_BUS_KEY` is readable by
+  other sandboxes; the root fix belongs in corral's sandbox profile.
+- **Host hooks only from the installed copy
+  ([§7.1](docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)):**
+  both hooks check where they run from before sourcing anything (symlinks and
+  the Python included); under `~/.claude` (the marketplace clone), a corral
+  home or the session's workdir `preStart` contributes only
+  `MM_BUS_UNAVAILABLE` and `postEnd` runs nothing. The marketplace-clone
+  `exec` mode is gone.
+- **`mm-agent-host-install.sh`** copies only what is committed (`git archive
+  HEAD`) and refuses uncommitted changes, untracked files and symlinks in the
+  copied paths, and a source under `$CORRAL_WORKDIR`.
+- **Transcripts** are opened non-blocking, must be regular files of at most
+  64 MiB, and on the host their real path is checked again from the open
+  descriptor.
+- **Mattermost ids** in API paths must be 26 lowercase letters and digits,
+  names free of path characters; anything else is refused (tool result, `400`
+  from the hook API) before a request goes out.
+- `postEnd` no longer signals a host process without a recorded start time;
+  host files are named by the validated session key throughout.
+
+### Security (third review of #81)
+
+- **The installer runs nothing a clone's git config names
+  ([§7.1](docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)):**
+  git runs without system or global config, attributes file, fsmonitor or
+  hooks; a clone whose config has a filter, diff or merge driver or an
+  include, or that has `info/attributes`, is refused, and so is one whose
+  repository lies where a sandbox writes. It prints the commit it installs.
+  Use a clone that was never a session's workdir.
+- **No command from the workdir:** both corral hooks, the installer and
+  `mm-agent-sweep.sh` keep only absolute `PATH` entries outside the places a
+  sandbox writes and work from `/`.
+- **The location check** compares without regard to case, refuses a `..`
+  component and resolves every step's directory, and adds corral's temporary
+  directories.
+- **`mm-agent-sweep.sh`** exports no token or secret: helpers get them on
+  fd 3 ([§7.3](docs/arc42/07-deployment-view.md#73-trust-assumptions)).
+- **`mm-agent-register.sh`** passes the registrar's answer to jq through a
+  pipe, not a here-string (a temporary file on bash ≤ 5.0), and a failure
+  prints the registrar's `message`, never the answer.
+- **The version notice** reads the installed plugins' files only as regular
+  files, bounded in size and time: a FIFO no longer stalls `preStart`.
+
+### Upgrade
+
+- Rerun `bin/mm-agent-host-install.sh` on the host, from a clone you
+  reviewed: the host process runs that code with the bot token. Without its
+  Python environment corral sessions get no bus. If corral's `exec` points at
+  the marketplace clone, point it at
+  `~/.local/share/mm-agent-bus/current/adapters/corral/` instead: hooks from
+  the clone now refuse to run.
+- Move `MM_REG_SECRET` out of the login environment into gopass
+  (`MM_REG_SECRET_GOPASS`).
+- Update the plugin in the sandboxes (`/plugin update`, then restart): a
+  plugin older than 0.39.0 does not know the relay, so a keyless session gets
+  no MCP bus until it is updated.
+
 ## 0.38.0
 
 The MCP server runs no scripts any more: crown lease, roster, presence and

@@ -222,6 +222,9 @@ class _Client:
         return []
 
 
+T26 = "t" * 26  # a valid post id: the server refuses others (#81)
+
+
 @pytest.fixture
 def bus(monkeypatch):
     def make(posts, crown=False):
@@ -242,7 +245,7 @@ def bus(monkeypatch):
 async def test_posts_carry_their_kind(bus):
     """RT-6.14 step 2: the server writes props.a2a; a plain message gets none."""
     c = bus([])
-    await server.reply_in_thread(root_id="t", message="ACK – on it")
+    await server.reply_in_thread(root_id=T26, message="ACK – on it")
     await server.post_message(message="anyone seen #46?")
     assert c.posted[0]["props"] == {"a2a": {"v": 1, "kind": "ack", "state": "working",
                                             "intent": "fyi"}}
@@ -327,7 +330,7 @@ def test_static_budget():
     from pathlib import Path
 
     skill = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus"
-    assert len((skill / "SKILL.md").read_text()) <= 21_950  # + RT-6.15: link PRs/tickets
+    assert len((skill / "SKILL.md").read_text()) <= 22_010  # + RT-6.15: link PRs/tickets; + RT-6.18: keyless corral session
     assert len((skill / "coordinator.md").read_text()) <= 5_020  # + RT-6.16: posts not trusted
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
     assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90
@@ -376,11 +379,11 @@ async def test_kind_is_written_to_text_and_props(bus):
     """RT-6.14 step 2: post_message and reply_in_thread take kind; a refused
     kind posts nothing."""
     c = bus([])
-    await server.reply_in_thread(root_id="t", message="merged", kind="done")
+    await server.reply_in_thread(root_id=T26, message="merged", kind="done")
     await server.post_message(message="relay · @agent-a", kind="TASK")
     assert [p["message"] for p in c.posted] == ["DONE · merged", "TASK · relay · @agent-a"]
     assert [p["props"]["a2a"]["intent"] for p in c.posted] == ["fyi", "action"]
-    out = json.loads(await server.reply_in_thread(root_id="t", message="DONE", kind="ACK"))
+    out = json.loads(await server.reply_in_thread(root_id=T26, message="DONE", kind="ACK"))
     assert "kind is ACK" in out["refused"] and "ACK" in out["kinds"]
     assert len(c.posted) == 2
 
@@ -391,13 +394,13 @@ async def test_a_late_claim_learns_who_has_the_task(bus, monkeypatch):
     the task; a later one gets taken_by back. Once the bot holds a task, its
     next claims there read no thread."""
     monkeypatch.setattr(server, "_my_tasks", set())
-    root = P("t", LEIT, "TASK · relay", at=0)
-    c = bus([root, P("a1", A, "ACK", root="t", at=10), P("m1", ME, "ACK", root="t", at=20)])
-    out = json.loads(await server.reply_in_thread(root_id="t", message="on it", kind="ACK"))
+    root = P(T26, LEIT, "TASK · relay", at=0)
+    c = bus([root, P("a1", A, "ACK", root=T26, at=10), P("m1", ME, "ACK", root=T26, at=20)])
+    out = json.loads(await server.reply_in_thread(root_id=T26, message="on it", kind="ACK"))
     assert out["taken_by"] == "agent-a"
-    out = json.loads(await server.reply_in_thread(root_id="t", message="BLOCKED on #44"))
+    out = json.loads(await server.reply_in_thread(root_id=T26, message="BLOCKED on #44"))
     assert "taken_by" not in out  # no claim: no thread read
-    c = bus([root, P("m1", ME, "ACK", root="t", at=10), P("a1", A, "ACK", root="t", at=20)])
+    c = bus([root, P("m1", ME, "ACK", root=T26, at=10), P("a1", A, "ACK", root=T26, at=20)])
     reads = []
     orig = c.thread
 
@@ -406,9 +409,9 @@ async def test_a_late_claim_learns_who_has_the_task(bus, monkeypatch):
         return await orig(r)
     c.thread = thread
     for _ in range(2):
-        out = json.loads(await server.reply_in_thread(root_id="t", message="PROGRESS · half"))
+        out = json.loads(await server.reply_in_thread(root_id=T26, message="PROGRESS · half"))
         assert "taken_by" not in out
-    assert reads == ["t"]
+    assert reads == [T26]
 
 
 @pytest.mark.asyncio

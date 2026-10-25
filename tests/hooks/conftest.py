@@ -13,8 +13,11 @@ import asyncio
 import contextlib
 import json
 import os
+import re
+import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -24,6 +27,13 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# Inside a corral session the temporary directory is corral's own
+# (/private/tmp/corral-*), which the host scripts refuse as sandbox-writable
+# (arc42 §7.1): the tests' trees and PATH entries go next to this checkout.
+if os.path.realpath(tempfile.gettempdir()).lower().startswith("/private/tmp/corral-"):
+    os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", str(ROOT / ".pytest-tmp"))
+    (ROOT / ".pytest-tmp").mkdir(exist_ok=True)
 sys.path.insert(0, str(ROOT / "mcp" / "src"))
 
 from mattermost_ai_agent_bus import hookapi  # noqa: E402
@@ -51,6 +61,7 @@ class FakeMattermost:
     reactions: dict[str, list] = field(default_factory=dict)  # post id → reactions
     bot_description: str | None = None  # the bot's profile; None: not in its user object
     prefix: str = "agent-"  # the registrar's BOT_USERNAME_PREFIX (arc42 §7.1)
+    register_reply: dict | None = None  # the registrar's answer instead of a bot
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -153,6 +164,8 @@ def _handler(fake: FakeMattermost):
             if (p.startswith("/register/v1/agents/") and self.command == "DELETE"
                     and self.headers.get("Authorization") != "Bearer bot-token-for-tests"):
                 return self._send({"message": "unauthorized"}, 401)
+            if p == "/register/v1/agents" and self.command == "POST" and fake.register_reply:
+                return self._send(fake.register_reply)
             if p == "/register/v1/agents" and self.command == "POST":
                 return self._send({"username": f"{fake.prefix}{body['name']}",
                                    "bot_token": "bot-token-for-tests", "user_id": ME})
@@ -249,7 +262,8 @@ def run(mm, tmp_path):
     (RT-6.17) by env (bus="env"), by its file (bus="file") or none (bus=None)."""
     state = tmp_path / "state"
 
-    def _run(script: str, *args: str, stdin: str = "{}", bus: str | None = "env", **env) -> Result:
+    def _run(script: str, *args: str, stdin: str = "{}", bus: str | None = "env",
+             cwd: str | None = None, **env) -> Result:
         base = {
             "PATH": os.environ["PATH"],
             "HOME": str(tmp_path),
@@ -273,8 +287,30 @@ def run(mm, tmp_path):
                 # The token is the MCP server's alone: hooks and listener never see it.
                 base = {k: v for k, v in base.items() if k not in ("MM_BOT_TOKEN", "MATTERMOST_TOKEN")}
             p = subprocess.run(["bash", str(ROOT / script), *args], input=stdin, env=base,
-                               capture_output=True, text=True, timeout=30)
+                               capture_output=True, text=True, timeout=60, cwd=cwd)
         return Result(p.returncode, p.stdout, p.stderr)
 
     _run.state_dir = state / "mm-agent-bus"
-    return _run
+    yield _run
+    kill_host_processes(_run.state_dir)
+
+
+def kill_host_processes(state_dir: Path) -> None:
+    """The MCP servers corral's preStart started on the host (RT-6.18) end
+    with the test: their watchdog would wait for pytest to end."""
+    pids = set()
+    for f in [*state_dir.glob("*.env"), *state_dir.glob("*.host.json")]:
+        try:
+            text = f.read_text()
+        except OSError:
+            continue
+        pids |= {int(p) for p in re.findall(r"(?:MM_BUS_HOST_PID=|\"pid\": ?)(\d+)", text)}
+    for pid in pids - {0, 1, os.getpid()}:
+        try:
+            cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True,
+                                 text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):  # a sandbox may deny ps
+            cmd = "mattermost_ai_agent_bus --host"   # recorded by this test's own preStart
+        if "mattermost_ai_agent_bus --host" in cmd:
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)

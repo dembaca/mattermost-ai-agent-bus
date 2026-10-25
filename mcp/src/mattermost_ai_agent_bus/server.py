@@ -21,7 +21,7 @@ from mcp.server.mcpserver import MCPServer
 from . import (
     a2a, asks, channel, gate, hookapi, lease, overhead, ownpost, permission, session_file, slim, stats, tasks,
 )
-from .client import MattermostClient, attachment_props
+from .client import InvalidId, MattermostClient, attachment_props, mm_id
 from .websocket_inbox import WebSocketInbox
 
 log = logging.getLogger(__name__)
@@ -48,7 +48,11 @@ def _newer_installed() -> str | None:
 
     A running session keeps the plugin it started with; an update (also an
     automatic one) applies after a restart: quit, then `claude --continue`.
+    Not on the host side of a keyless session (RT-6.18): its plugin list is
+    the host's, which the sandbox may write; the Stop hook tells the sandbox's.
     """
+    if session_file.hosted():
+        return None
     reg = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
     try:
         data = json.loads(reg.read_text())
@@ -87,6 +91,11 @@ async def _bus_client() -> MattermostClient | None:
 
 @asynccontextmanager
 async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
+    if HOSTED:
+        # The host process runs heartbeat and hook API for the whole session,
+        # not per relay connection (RT-6.18, hosted.py).
+        yield {}
+        return
     # The session's heartbeat: renews its status lease and the crown (RT-6.6).
     task = asyncio.create_task(lease.heartbeat(_bus_client))
     api = await _start_hook_api()
@@ -117,9 +126,16 @@ async def _start_hook_api() -> hookapi.HookAPI | None:
     return api
 
 
-# A host hook registered the bot and passed its token in: the lifecycle tools
-# and their text would only cost context in every turn (RT-6.1).
-HOST_MANAGED = bool(os.environ.get("MM_BOT_TOKEN") or os.environ.get("MATTERMOST_TOKEN"))
+# This server runs on the host for the relay in a keyless corral session: the
+# bot token never enters the sandbox (RT-6.18, hosted.py).
+HOSTED = session_file.hosted()
+# A host hook registered the bot: the lifecycle tools and their text would only
+# cost context in every turn (RT-6.1). Either this server is the host side of a
+# keyless session, or an older host hook passed the token into the sandbox.
+HOST_MANAGED = HOSTED or bool(os.environ.get("MM_BOT_TOKEN") or os.environ.get("MATTERMOST_TOKEN"))
+# The corral host hooks could not bring the bus up for this session and kept
+# the token on the host (fail closed, RT-6.18): why, for the agent to pass on.
+UNAVAILABLE = " ".join(os.environ.get("MM_BUS_UNAVAILABLE", "").split())[:300]
 # The human started Claude Code with this server as a channel (RT-6.12): bus
 # events are pushed into the session instead of waited for.
 PUSH = channel.enabled()
@@ -131,8 +147,15 @@ mcp = MCPServer(
     "mattermost-ai-agent-bus",
     instructions=(
         f"Mattermost agent bus {VERSION}. "
+        + (f"The bus is off in this corral session: {UNAVAILABLE}. The bot token stays "
+           "on the host, so these tools cannot reach Mattermost here; do not register a "
+           "bot or look for a token. Tell your human, who can fix it and restart the "
+           "session (RT-6.18). " if UNAVAILABLE and not HOST_MANAGED else "")
         + ("A host-side session hook registered the bot and resolved the channels: "
-           "post and reply directly. " if HOST_MANAGED else
+           "post and reply directly. "
+           + ("Its token stays on the host: these tools are your only way onto the bus; "
+              "the shell CLI and curl have no token here (RT-6.18). " if HOSTED else "")
+           if HOST_MANAGED else "" if UNAVAILABLE else
            "No bot yet: with MM_PROJECT_CHANNEL set, register with session_start "
            "(needs MM_REG_SECRET) and session_end when done; without it, stay off the "
            "bus unless your human asks. After `claude --continue` your bot is taken "
@@ -508,6 +531,18 @@ def _refused(tool: str, reason: str, kinds: bool = False) -> str:
     return _out(tool, out)
 
 
+def _bad_id(**ids: str) -> str:
+    """Why the first of the given Mattermost ids (empty ones skipped) may not
+    go into an API path, else '' (#81): checked before anything is sent."""
+    for what, value in ids.items():
+        if value:
+            try:
+                mm_id(value, what)
+            except InvalidId as exc:
+                return str(exc)
+    return ""
+
+
 @mcp.tool()
 async def announce(
     project: str,
@@ -586,10 +621,15 @@ async def post_message(
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refused("post_message", str(exc), kinds=True)
+    if bad := _bad_id(channel=channel_id, post=root_id):
+        return _refused("post_message", bad)
     client = _get_client()
     everyone = to.strip().lower() == a2a.ALL
     if to.strip() and not everyone:
-        channel_id = await client.direct_channel_with_bot(to)
+        try:
+            channel_id = await client.direct_channel_with_bot(to)
+        except InvalidId as exc:
+            return _refused("post_message", str(exc))
     message, removed = await _unmention(client, message)
     uid = await _my_id(client)
     if (not root_id and not channel_id and a2a.word(message) == "ASSIGNMENTS"
@@ -628,6 +668,8 @@ async def reply_in_thread(
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refused("reply_in_thread", str(exc), kinds=True)
+    if bad := _bad_id(post=root_id or "-", channel=channel_id):
+        return _refused("reply_in_thread", bad)
     client = _get_client()
     everyone = to.strip().lower() == a2a.ALL
     if to.strip() and not everyone:
@@ -714,6 +756,8 @@ async def ask_human(
     their name without @.
     """
     _done_typing()
+    if bad := _bad_id(post=root_id):
+        return _refused("ask_human", bad)
     client = _get_client()
     me = await client.get_me()
     # Free text of the model: nothing but the ask itself may notify (RT-6.11).
@@ -775,6 +819,8 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
     for reactions to it, and with note replies in its thread.
     """
     _done_typing()
+    if bad := _bad_id(post=post_id or "-"):
+        return _refused("resolve_ask", bad)
     client = _get_client()
     me = await client.get_me()
     await client.add_reaction(post_id, "white_check_mark")
@@ -819,6 +865,8 @@ async def get_thread(post_id: str, raw: bool = False) -> str:
     Slim posts {id, root_id, channel, author, at, message}; raw=true for the
     full Mattermost JSON.
     """
+    if bad := _bad_id(post=post_id or "-"):
+        return _refused("get_thread", bad)
     client = _get_client()
     data = await client.thread(post_id)
     if raw:
@@ -835,6 +883,8 @@ async def list_recent(
     Slim posts {id, root_id, channel, author, at, message, replies}, system
     messages ("… added to the channel") left out; raw=true for everything.
     """
+    if bad := _bad_id(channel=channel_id):
+        return _refused("list_recent", bad)
     client = _get_client()
     posts = await client.list_recent(
         channel_id=channel_id or None,
@@ -970,8 +1020,7 @@ async def channel_ok(code: str) -> str:
     uid = await _my_id(_get_client())
     if uid:
         _confirmed = channel.confirmed_file(uid)
-        _confirmed.parent.mkdir(parents=True, exist_ok=True)
-        _confirmed.write_text(f"CONFIRMED={int(time.time())}\n")
+        session_file.write_private(_confirmed, f"CONFIRMED={int(time.time())}\n")
     return _out("channel_ok", {"ok": True})
 
 
@@ -1105,24 +1154,33 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
         return False
 
 
-async def _run_as_channel() -> None:
-    """stdio on the handshake era with the channel capability (RT-6.12)."""
-    from mcp.server.stdio import stdio_server
-
+async def serve(read_stream: Any, write_stream: Any) -> None:
+    """One MCP connection over these streams: stdio, or a relay's connection
+    on the host (RT-6.18); as a channel when started as one (RT-6.12)."""
     low = mcp._lowlevel_server
+    if not PUSH:
+        await low.run(read_stream, write_stream, low.create_initialization_options())
+        return
     caps: dict[str, dict[str, Any]] = {channel.CAPABILITY: {}}
     if RELAY:
         caps[permission.CAPABILITY] = {}  # RT-6.13
     opts = low.create_initialization_options(experimental_capabilities=caps)
+    async with low.lifespan(low) as state:
+        await channel.serve_handshake_only(
+            low, read_stream, write_stream, lifespan_state=state, init_options=opts,
+            pusher=_pusher, on_connected=lambda: _pusher.run(
+                _push_wait, prepare=_push_prepare, addressed=_push_addressed,
+                intercept=_push_intercept if RELAY else None),
+            on_permission=_permission_request if RELAY else None,
+        )
+
+
+async def _run_as_channel() -> None:
+    """stdio on the handshake era with the channel capability (RT-6.12)."""
+    from mcp.server.stdio import stdio_server
+
     async with stdio_server() as (read_stream, write_stream):
-        async with low.lifespan(low) as state:
-            await channel.serve_handshake_only(
-                low, read_stream, write_stream, lifespan_state=state, init_options=opts,
-                pusher=_pusher, on_connected=lambda: _pusher.run(
-                    _push_wait, prepare=_push_prepare, addressed=_push_addressed,
-                    intercept=_push_intercept if RELAY else None),
-                on_permission=_permission_request if RELAY else None,
-            )
+        await serve(read_stream, write_stream)
 
 
 _exit_handled = False
@@ -1133,7 +1191,7 @@ def _fixed() -> overhead.Fixed:
     skill = Path(__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
     tools = (bus_info, announce, get_me, post_message, reply_in_thread, ask_human,
              resolve_ask, coordinator, get_thread, list_recent, wait_for_events)
-    if not HOST_MANAGED:
+    if not (HOST_MANAGED or UNAVAILABLE):
         tools += (session_start, session_end)
     if PUSH:
         tools += (channel_ok,)
@@ -1195,8 +1253,9 @@ def _install_exit_handlers() -> None:
 
 def _hide_lifecycle_tools() -> None:
     """Host-managed: the agent must not register or unregister, so it is not
-    offered the tools to (RT-6.1)."""
-    if HOST_MANAGED:
+    offered the tools to (RT-6.1). Neither is an agent whose host kept the bus
+    off (RT-6.18): it has nothing to register with."""
+    if HOST_MANAGED or UNAVAILABLE:
         for name in ("session_start", "session_end"):
             mcp.remove_tool(name)
     if not PUSH:  # nothing to confirm without a channel (RT-6.12)

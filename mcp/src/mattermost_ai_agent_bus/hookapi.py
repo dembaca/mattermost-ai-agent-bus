@@ -5,7 +5,7 @@ The hooks (hooks/*.sh) and the background listener (bin/mm-agent-listen.sh) hold
 no bot token. They call this small HTTP API instead, served next to the
 WebSocket inbox in the server's event loop:
 
-    GET  /v1/me             {user_id, username, project, crown_until}
+    GET  /v1/me             {user_id, username, project, crown_until, channel}
     GET  /v1/pending        {count[, channels: [{id, type, pending, fyi}]]}
                             (?detail=1: up to 5 channels, with fyi counts)
     GET  /v1/last-post      {at, message}: the own latest post in the work channel
@@ -14,6 +14,9 @@ WebSocket inbox in the server's event loop:
                             newest first (?limit=N, at most 200, or ?since=MS)
     GET  /v1/ask-reactions  {fresh}: reactions to open asks not handed over yet
     POST /v1/presence       {state: working|idle|listening|bus, label?, until?} → {ok}
+    POST /v1/stat           {k: turn|turn_end|block|compact|wake|transcript, …} → {ok}
+                            (one overhead counter, RT-6.9: the hooks of a keyless
+                            session cannot reach the server's state dir, RT-6.18)
 
 HTTP/1.1 on 127.0.0.1 only, an ephemeral port, one random key per server: every
 request carries ``Authorization: Bearer <key>``, compared in constant time, or
@@ -23,7 +26,9 @@ MAX_CONNECTIONS connections at once and MAX_HEAVY_RUNS Mattermost-heavy requests
 The hooks find endpoint and key in MM_BUS_ENDPOINT / MM_BUS_KEY, else in the
 discovery file ``endpoint-sid-<key>.env`` (0600) in the state dir, keyed like the
 session file (session_file.keyed_path), with the bot's id once known; it is
-removed when the server ends.
+removed when the server ends. The host process of a keyless corral session
+(RT-6.18, hosted.py) serves it with the session's key from preStart and writes
+no file: the sandbox has both in its environment.
 
 The answers come from the server's own modules, no script runs behind them:
 the status from lease.py, the pending count from unread.py.
@@ -44,7 +49,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import a2a, asks, gate, lease, ownpost, session_file, unread
+from . import a2a, asks, channel, gate, lease, ownpost, session_file, stats, unread
+from .client import InvalidId
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -88,9 +94,10 @@ def file_path() -> Path:
 class HookAPI:
     """The server side of RT-6.17: one per MCP server."""
 
-    def __init__(self, get_client: Callable[[], Awaitable[MattermostClient | None]]) -> None:
+    def __init__(self, get_client: Callable[[], Awaitable[MattermostClient | None]],
+                 key: str | None = None) -> None:
         self._get_client = get_client
-        self.key = secrets.token_urlsafe(32)
+        self.key = key or secrets.token_urlsafe(32)
         self.endpoint = ""
         self._server: asyncio.Server | None = None
         self._file: Path | None = None
@@ -217,7 +224,7 @@ class HookAPI:
             return 503, {"error": "no bus session"}
         try:
             reply = await asyncio.wait_for(self._run(route, client, query, payload), ROUTE_TIMEOUT_SEC)
-        except BadRequest as exc:
+        except (BadRequest, InvalidId) as exc:  # InvalidId: refused before any request (#81)
             return 400, {"error": str(exc)}
         except Exception as exc:  # noqa: BLE001 — Mattermost failed: the hook fails open
             log.info("hook API %s %s: %s", method, url.path, type(exc).__name__)
@@ -260,8 +267,11 @@ async def me(client: MattermostClient, query: Mapping[str, str], body: Mapping[s
     who = await client.get_me()
     uid = str(who.get("id") or "")
     project = bool(os.environ.get("MM_PROJECT_CHANNEL_ID") or client.project_channel_name)
+    # channel: the agent confirmed the channel check (RT-6.12); the hooks of a
+    # keyless session cannot see the file that says so (RT-6.18).
     return 200, {"user_id": uid, "username": str(who.get("username") or ""),
-                 "project": project, "crown_until": lease.crown_until(uid)}
+                 "project": project, "crown_until": lease.crown_until(uid),
+                 "channel": bool(_UID.fullmatch(uid)) and channel.confirmed_file(uid).exists()}
 
 
 async def pending(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
@@ -370,6 +380,33 @@ async def presence(client: MattermostClient, query: Mapping[str, str],
     return 200, {"ok": True}
 
 
+# The counters the hooks and the listener note (bin/mm-agent-lib.sh mm_stat).
+STAT_KINDS = frozenset({"turn", "turn_end", "block", "compact", "wake", "transcript"})
+MAX_STAT_FIELDS = 4
+MAX_STAT_VALUE = 4096
+_FIELD = re.compile(r"[a-z][a-z_]{0,15}")
+
+
+async def stat(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
+    """One overhead counter for this session (RT-6.9) into the server's own
+    stats file. Names and values only, as mm_stat writes them; a transcript
+    path is read at session end only where stats.transcript allows."""
+    kind = body.get("k")
+    if kind not in STAT_KINDS:
+        raise BadRequest(f"k: one of {', '.join(sorted(STAT_KINDS))}")
+    values = {k: v for k, v in body.items() if k not in ("k", "t")}
+    if len(values) > MAX_STAT_FIELDS:
+        raise BadRequest(f"at most {MAX_STAT_FIELDS} fields")
+    for k, v in values.items():
+        if not _FIELD.fullmatch(k) or not (
+                (type(v) is int and abs(v) < 2**53)
+                or (isinstance(v, str) and len(v) <= MAX_STAT_VALUE and "\x00" not in v)):
+            raise BadRequest("fields: short lowercase names, numbers or strings")
+    stats.set_user(await _uid(client))
+    stats.record(kind, **values)
+    return 200, {"ok": True}
+
+
 _ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/me"): me,
     ("GET", "/v1/pending"): pending,
@@ -377,6 +414,7 @@ _ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/posts"): posts,
     ("GET", "/v1/ask-reactions"): ask_reactions,
     ("POST", "/v1/presence"): presence,
+    ("POST", "/v1/stat"): stat,
 }
 # Routes that make several Mattermost calls: at most MAX_HEAVY_RUNS at once.
 _HEAVY_ROUTES = frozenset({pending, presence})

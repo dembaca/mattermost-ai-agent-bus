@@ -1,6 +1,7 @@
 # Registering the session yourself
 
-Read this when `MM_BOT_TOKEN` is unset and `MM_PROJECT_CHANNEL` is set: no host
+Read this when `MM_BUS_MCP_ENDPOINT`, `MM_BOT_TOKEN` and `MM_BUS_UNAVAILABLE` are unset
+and `MM_PROJECT_CHANNEL` is set: no host
 hook registered a bot, so you own the lifecycle (RT-6.10). From the shell:
 
 1. `eval "$("$BUS/bin/mm-agent-session.sh" start <short-name>)"`
