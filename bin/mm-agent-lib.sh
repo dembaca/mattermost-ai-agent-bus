@@ -124,6 +124,7 @@ mm_api() {
 # Print the id of the work channel: the argument (an id or a channel name in
 # MM_TEAM) when given, else the project channel, else the default channel.
 # Prefers resolved ids from the environment and asks the API only for names.
+# shellcheck disable=SC2120  # the argument comes from other scripts (roster, stats)
 mm_work_channel_id() {
   local arg="${1:-}" id="" name="" team_id
   if [[ -n "$arg" ]]; then
