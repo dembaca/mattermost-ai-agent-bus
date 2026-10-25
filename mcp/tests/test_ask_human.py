@@ -421,3 +421,71 @@ async def test_agents_stay_mentioned_with_any_registrar_prefix(monkeypatch):
     out, humans = await server._unmention(c, "@bot-mac-1 please review, @dembaca FYI")
     assert out == "@bot-mac-1 please review, dembaca FYI" and humans == ["dembaca"]
     assert c.asked == {"dembaca"}
+
+
+def _answers():
+    """The `answer` events the stats hold (RT-6.9)."""
+    from mattermost_ai_agent_bus import stats
+    f = stats._path()
+    lines = f.read_text().splitlines() if f and f.exists() else []
+    return [json.loads(x) for x in lines if '"k": "answer"' in x]
+
+
+@pytest.fixture
+def stats_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("MM_BOT_USER_ID", BOT)
+    monkeypatch.delenv("MM_STATS_CHANNEL", raising=False)
+
+
+@pytest.mark.asyncio
+async def test_the_wait_for_an_ask_ends_at_the_first_trusted_answer(monkeypatch, stats_state):
+    """RT-6.9: the wait is the answer's server time minus the ask's; only the
+    first answer by a trusted human counts, whichever way it comes: a remark
+    emoji, an untrusted human, a second reaction, a reply, or a restarted server
+    changes nothing; an expired answer counts with its full wait."""
+    from mattermost_ai_agent_bus import stats
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    inbox = _inbox(c)
+    monkeypatch.setattr(server, "_get_inbox", lambda: inbox)
+    await server.ask_human(need="Merge #62 now?", context="CI is green.")
+    asked = asks._read(BOT)[0][ASK]
+    later = int((asked + 90) * 1000)
+    await inbox._on_reaction_event(_reaction_event("eyes", at=later))          # a remark
+    await inbox._on_reaction_event(_reaction_event("+1", user="o" * 26, at=later))  # not trusted
+    await inbox._on_reaction_event(_reaction_event("+1", at=later))
+    await inbox._on_reaction_event(_reaction_event("-1", at=later + 60_000))   # second answer
+    await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post={
+        "id": "r" * 26, "root_id": ASK, "user_id": HUMAN, "channel_id": "c1",
+        "create_at": later + 120_000, "message": "yes, as said"}))
+    assert len(json.loads(await server.wait_for_events(timeout_sec=1))) == 5
+    assert [(a["id"], a["wait"]) for a in _answers()] == [(ASK, 90)]
+    # The file remembers: a server that starts afresh counts the ask no more.
+    assert asks.answered(BOT, ASK, asked + 500) is None
+    s = stats.summary("0.36.0", 1)
+    assert (s["asks"], s["asks_answered"], s["ask_wait_sec"], s["asks_open"]) == (1, 1, 90, 0)
+
+
+def test_an_answer_in_the_thread_counts_for_an_ask_in_a_thread_and_a_late_one_too(stats_state):
+    """RT-6.9: the same matching as expired (RT-6.11); a permission prompt is no ask."""
+    task, prompt = "t" * 26, "p" * 26
+    asks.add(BOT, ASK, "dembaca", task)
+    asks.add(BOT, prompt)                               # a relayed permission prompt (RT-6.13)
+    day = asks.APPROVAL_SEC
+    assert asks.answered(BOT, prompt) is None
+    assert asks.answered(BOT, "z" * 26) is None
+    pid, wait = asks.answered(BOT, task, time.time() + day + 60, thread=True)
+    assert pid == ASK and day + 59 <= wait <= day + 61  # late: still an answer
+    assert asks.answered(BOT, task, time.time(), thread=True) is None
+    assert asks.is_open(BOT, ASK) and asks.open_to(BOT, "dembaca") == [ASK]
+
+
+def test_old_ask_lines_still_parse_and_the_marker_goes_with_the_ask(stats_state):
+    asks._path(BOT).parent.mkdir(parents=True, exist_ok=True)
+    asks._path(BOT).write_text(f"ASK={ASK} {int(time.time()) - 30}\nASK={'f' * 26} {int(time.time())} kollegin\n")
+    assert asks.answered(BOT, ASK) is None              # no human in the line: no ask_human ask
+    assert asks.answered(BOT, "f" * 26)[0] == "f" * 26
+    assert f"ANSWERED={'f' * 26}" in asks._path(BOT).read_text()
+    asks.resolve(BOT, "f" * 26)
+    assert "ANSWERED" not in asks._path(BOT).read_text()

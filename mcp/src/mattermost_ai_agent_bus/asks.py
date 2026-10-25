@@ -8,6 +8,8 @@ look at. It lives next to the other per-bot state, asks-<uid>.env:
     ASK=<post_id> <epoch> <human> <root_id>  an open ask, whom it asks (- for
                                              nobody), the thread it is in
     SEEN=<post_id>:<user_id>:<emoji>   a reaction already handed to the agent
+    ANSWERED=<post_id>                 a trusted human answered it (RT-6.9): the
+                                       wait is counted once, whatever comes next
 
 The background listener (bin/mm-agent-listen.sh) wakes the agent for any
 reaction on an open ask that is not SEEN. resolve() drops the ask and its SEEN
@@ -79,14 +81,25 @@ def _read_all(uid: str) -> tuple[dict[str, float], set[str], dict[str, str]]:
     return asks, seen, whom
 
 
+def _read_answered(uid: str) -> set[str]:
+    try:
+        lines = _path(uid).read_text().splitlines()
+    except OSError:
+        return set()
+    return {v for k, _, v in (line.partition("=") for line in lines) if k == "ANSWERED" and v}
+
+
 def _write(uid: str, asks: dict[str, float], seen: set[str],
-           whom: dict[str, str] | None = None) -> None:
+           whom: dict[str, str] | None = None, done: set[str] | None = None) -> None:
     if whom is None:
         whom = _read_all(uid)[2]
+    if done is None:
+        done = _read_answered(uid)
     seen = {s for s in seen if s.split(":", 1)[0] in asks}
     lines = [f"ASK={pid} {int(at)} {whom[pid]}".rstrip() if pid in whom
              else f"ASK={pid} {int(at)}" for pid, at in asks.items()]
     lines += [f"SEEN={s}" for s in sorted(seen)]
+    lines += [f"ANSWERED={p}" for p in sorted(done) if p in asks]
     path = _path(uid)
     if not lines:
         path.unlink(missing_ok=True)
@@ -127,6 +140,23 @@ def expired(uid: str, post_id: str, at: float = 0, *, thread: bool = False) -> b
     hits = [t for pid, t in asks.items()
             if pid == post_id or (thread and whom.get(pid, "").split(" ")[1:] == [post_id])]
     return bool(hits) and all(when - t >= APPROVAL_SEC for t in hits)
+
+
+def answered(uid: str, post_id: str, at: float = 0, *, thread: bool = False) -> tuple[str, int] | None:
+    """A trusted human's answer at `at` (default now) to an ask_human ask: with
+    thread, to the asks in the thread with that root. Returns the ask and how
+    many seconds it waited, once per ask (RT-6.9); None for a later answer, and
+    for a post that is no ask of an agent to a human (a permission prompt, RT-6.13)."""
+    asks, seen, whom = _read_all(uid)
+    done = _read_answered(uid)
+    hits = sorted((t, pid) for pid, t in asks.items()
+                  if pid in whom and pid not in done
+                  and (pid == post_id or (thread and whom[pid].split(" ")[1:] == [post_id])))
+    if not hits:
+        return None
+    t, pid = hits[0]
+    _write(uid, asks, seen, whom, done | {pid})
+    return pid, max(0, round((at or time.time()) - t))
 
 
 def seen_key(post_id: str, user_id: str, emoji: str) -> str:

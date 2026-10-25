@@ -194,9 +194,9 @@ compact JSON; `list_recent` leaves system messages out. `raw=true` returns
 Mattermost's full JSON.
 
 Every session posts one `STATS {…}` line to `agents-stats` (`MM_STATS_CHANNEL`; `off`
-disables it, a missing channel is skipped) at its end: counts and sizes of what the bus added to the session, never content
+disables it, a missing channel is skipped) at its end: counts, sizes and seconds of what the bus added to the session, never content
 ([arc42 §6.9](arc42/06-runtime-view.md#69-measuring-the-coordination-overhead)).
-`bin/mm-agent-stats.sh report` compares them by plugin version.
+`bin/mm-agent-stats.sh report` compares them by plugin version and coding harness.
 
 ## Polling vs WebSocket
 
