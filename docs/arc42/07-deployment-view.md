@@ -46,12 +46,17 @@ scripts it sources and starts. The plugin directory lives in the sandbox's priva
 home, and a checkout may be a session's workdir; both are writable from inside a
 sandbox. Host hooks that ran from there would run agent-changeable code on the host
 with the registration secret. `bin/mm-agent-host-install.sh`, run on the host,
-copies `adapters/corral/` and `bin/` from the installed plugin to
-`~/.local/share/mm-agent-bus/current/` (`MM_BUS_HOST_DIR`), which no sandbox sees.
-corral's `exec` points there once; after a plugin update the developer reruns the
-installer, and corral asks to approve the changed hook. The start hook warns when
-it runs from the plugin directory or the session's workdir, and when the host copy
-is older than the installed plugin.
+copies `adapters/corral/` and `bin/` from a checkout the developer reviewed (the one
+it runs from, or `--from`) to `~/.local/share/mm-agent-bus/current/`
+(`MM_BUS_HOST_DIR`), which no sandbox sees. Host-side code takes no input from the
+corral homes or the session's workdir that decides what runs on the host: the
+installer never looks its source up among the installed plugins, and refuses a
+source (symlinks resolved) under `~/.cache/corral/` or `~/.claude/`, which the homes
+share by default. corral's `exec` points there once; after a plugin update the
+developer updates the checkout and reruns the installer, and corral asks to approve
+the changed hook. The start hook warns when it runs from the plugin directory or the
+session's workdir, and when a newer plugin is installed than the host copy; it names
+that plugin by version only, with no path, as does `--check`.
 
 **From the marketplace clone, by choice.** corral's `exec` may point straight at
 the host's marketplace clone,

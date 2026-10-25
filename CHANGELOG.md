@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.36.1
+
+### Security
+
+- **The host install takes its source only from host-owned locations
+  (arc42 §7.1):** `bin/mm-agent-host-install.sh` now copies from the checkout
+  it runs from, or from `--from`, and no longer looks its source up among the
+  installed plugins. It refuses a source under `~/.cache/corral/` or
+  `~/.claude/` (symlinks resolved). Run it from a checkout you reviewed, outside
+  corral and outside every session's workdir
+  ([adapters/corral.md](adapters/corral.md)). The start hook and `--check` name
+  a newer installed plugin by version only.
+
 ## 0.36.0
 
 What waiting for humans costs, and which harness works longest alone: the

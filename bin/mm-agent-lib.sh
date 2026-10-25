@@ -436,32 +436,39 @@ mm_responsible_name() {
   printf '%s' "$r"
 }
 
-# Install paths of the mattermost-ai-agent-bus Claude Code plugin, newest
-# version first: the host's own Claude config and every corral private home.
-# Read-only; used to tell whether the host copy of the corral hooks is current.
-mm_installed_plugin_dirs() {
-  local f d
+# Newest version of the mattermost-ai-agent-bus Claude Code plugin installed on
+# this machine: the host's own Claude config and every corral private home.
+# For a version notice only (arc42 §7.1): a sandbox can write the corral homes,
+# and by default ~/.claude too, so nothing read here may decide which code runs
+# on the host. Hence a bare version (digits and dots, an optional suffix;
+# anything else is dropped), never an install path.
+mm_newest_plugin_version() {
+  local f d v
   for f in "$HOME/.claude/plugins/installed_plugins.json" \
            "$HOME"/.cache/corral/home-*/.claude/plugins/installed_plugins.json; do
     [[ -f "$f" ]] || continue
     jq -r '.. | objects | select(has("installPath")) | .installPath
            | select(test("mattermost-ai-agent-bus"))' "$f" 2>/dev/null || true
   done | while read -r d; do
-    [[ -f "$d/.claude-plugin/plugin.json" ]] && printf '%s\t%s\n' "$(mm_tree_version "$d")" "$d"
-  done | sort -t$'\t' -k1,1V -r | cut -f2
+    v="$(mm_tree_version "$d")"
+    if [[ "$v" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]]; then printf '%s\n' "$v"; fi
+  done | sort -V -r | sed -n 1p | grep .
+}
+
+# Is version $2 newer than version $1?
+mm_version_newer() {
+  [[ "$1" != "?" && "$2" != "?" && "$1" != "$2" ]] || return 1
+  [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" == "$2" ]]
 }
 
 # A newer installed plugin than the tree these scripts run from: prints its
 # version, else fails. A running session keeps the plugin it started with, so a
 # plugin update applies only after a restart (quit, then `claude --continue`).
 mm_newer_plugin() {
-  local have want newest
+  local have want
   have="$(mm_tree_version "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")"
-  newest="$(mm_installed_plugin_dirs | head -1)"
-  [[ -n "$newest" ]] || return 1
-  want="$(mm_tree_version "$newest")"
-  [[ "$have" != "?" && "$want" != "?" && "$have" != "$want" ]] || return 1
-  [[ "$(printf '%s\n%s\n' "$have" "$want" | sort -V | tail -1)" == "$want" ]] || return 1
+  want="$(mm_newest_plugin_version)" || return 1
+  mm_version_newer "$have" "$want" || return 1
   printf '%s' "$want"
 }
 

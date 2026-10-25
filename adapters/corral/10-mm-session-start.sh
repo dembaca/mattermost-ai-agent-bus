@@ -29,17 +29,20 @@ FROM_MARKETPLACE=0
 case "$ROOT" in
   "$HOME"/.claude/plugins/marketplaces/*) FROM_MARKETPLACE=1 ;;
   */.cache/corral/home-*|*/.claude/plugins/*)
-    log "WARNING: hooks run from the plugin directory ${ROOT}, which any sandbox can change — install them with bin/mm-agent-host-install.sh, or point exec at ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus to follow plugin updates by choice" ;;
+    log "WARNING: hooks run from the plugin directory ${ROOT}, which any sandbox can change — install them with bin/mm-agent-host-install.sh from a checkout you reviewed, or point exec at ~/.claude/plugins/marketplaces/mattermost-ai-agent-bus to follow plugin updates by choice" ;;
 esac
 if [[ -n "${CORRAL_WORKDIR:-}" && "$ROOT/" == "$(cd "$CORRAL_WORKDIR" 2>/dev/null && pwd)/"* ]]; then
-  log "WARNING: hooks run from this session's own workdir ${ROOT}, which the agent can change — install them with bin/mm-agent-host-install.sh"
+  log "WARNING: hooks run from this session's own workdir ${ROOT}, which the agent can change — install them with bin/mm-agent-host-install.sh from a checkout you reviewed"
 fi
-if command -v jq >/dev/null 2>&1 && newest="$(mm_installed_plugin_dirs | head -1)" && [[ -n "$newest" ]]; then
-  have="$(mm_tree_version "$ROOT")" want="$(mm_tree_version "$newest")"
-  if [[ "$have" != "$want" && "$FROM_MARKETPLACE" -eq 1 ]]; then
+# Version only: the installed plugins include the corral homes, which a sandbox
+# writes, so the notice names no path and does not tell where to install from.
+if command -v jq >/dev/null 2>&1 && want="$(mm_newest_plugin_version)" &&
+   mm_version_newer "$(mm_tree_version "$ROOT")" "$want"; then
+  have="$(mm_tree_version "$ROOT")"
+  if [[ "$FROM_MARKETPLACE" -eq 1 ]]; then
     log "host hooks (marketplace) are ${have}, the installed plugin is ${want} — run /plugin update"
-  elif [[ "$have" != "$want" ]]; then
-    log "host hooks are ${have}, the installed plugin is ${want} — rerun mm-agent-host-install.sh"
+  else
+    log "host hooks are ${have}, plugin ${want} is installed — reinstall them from a checkout you reviewed: mm-agent-host-install.sh --from <checkout>"
   fi
 fi
 

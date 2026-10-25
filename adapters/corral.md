@@ -16,23 +16,26 @@ register or delete agents itself.
 
 ## Config
 
-**First install the hooks on the host**, in a normal terminal outside corral, from the
-installed plugin:
+**First install the hooks on the host**, in a normal terminal outside corral, from a
+checkout you reviewed that no session works in:
 
 ```bash
-bash "$(ls -d ~/.cache/corral/home-*/.claude/plugins/cache/*/mattermost-ai-agent-bus/*/ \
-        | sort -V | tail -1)bin/mm-agent-host-install.sh"
-# or from a checkout you trust: bin/mm-agent-host-install.sh --from .
+git clone https://github.com/dembaca/mattermost-ai-agent-bus ~/src/mattermost-ai-agent-bus
+cd ~/src/mattermost-ai-agent-bus    # later: git pull; review what changed, then rerun
+bin/mm-agent-host-install.sh        # or: mm-agent-host-install.sh --from <checkout>
 ```
 
-The installer finds the newest installed plugin itself; `--from DIR` picks another
-source. The host copy is only as trustworthy as that source at install time, so run
-it right after updating the plugin, before working in a session.
+The installer copies from the checkout it runs from, or from `--from DIR`. It never
+takes its source from the installed plugin, and refuses one under `~/.cache/corral/`
+or `~/.claude/`: a sandbox can write those
+([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
+The host copy is only as trustworthy as the checkout you reviewed.
 
 It copies `adapters/corral/` and `bin/` to `~/.local/share/mm-agent-bus/current/`,
 where no sandbox can change them, and prints the config below. **Rerun it after every
-plugin update**; `mm-agent-host-install.sh --check` tells whether the host copy is
-current, and the start hook says so in the banner when it is not.
+plugin update**, from the checkout updated to that version;
+`mm-agent-host-install.sh --check` tells whether the host copy is current, and the
+start hook says so in the banner when it is not.
 
 **Or follow `/plugin update` without installing:** point both `exec` entries at the
 host's marketplace clone instead:
