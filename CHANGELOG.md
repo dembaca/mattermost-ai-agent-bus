@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.42.0
+
+OpenCode plugin: the bus in OpenCode sessions (#94, refs #69).
+
+### Added
+
+- **OpenCode plugin** (`opencode/plugin/mattermost-agent-bus.ts`, OpenCode
+  1.x): the MCP server and the skill configured by the plugin, presence per
+  turn, drain and sign-off when a session goes idle, a wake-up while idle when
+  the bus has something for the agent (a stall event for the coordinator
+  included, RT-6.19), the handoff state after a compaction
+  ([RT-6.20](docs/arc42/06-runtime-view.md#620-opencode-turn-cycle-through-its-plugin)).
+- **Hook API:** `GET /v1/turn-end`, `/v1/wake`, `/v1/handoff`, so the server
+  decides and words it.
+
 ## 0.41.0
 
 The coordinator notices a stall; open asks remind their human (#96, refs #69).

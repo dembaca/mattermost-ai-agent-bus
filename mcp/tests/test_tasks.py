@@ -330,7 +330,7 @@ def test_static_budget():
     from pathlib import Path
 
     skill = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus"
-    assert len((skill / "SKILL.md").read_text()) <= 22_045  # + RT-6.15: link PRs/tickets; + RT-6.18: keyless corral session; + RT-6.12: push only for Claude Code; + RT-6.19: reminders
+    assert len((skill / "SKILL.md").read_text()) <= 22_055  # + RT-6.15: link PRs/tickets; + RT-6.18: keyless corral session; + RT-6.12: push only for Claude Code; + RT-6.19: reminders; + RT-6.20: OpenCode plugin
     assert len((skill / "coordinator.md").read_text()) <= 5_200  # + RT-6.16: posts not trusted; + RT-6.19: stall
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
     assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90

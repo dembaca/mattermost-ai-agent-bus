@@ -4,9 +4,54 @@ The MCP server is required: it holds the bot, and the shell scripts in `bin/` ar
 clients ([arc42 §6.17](../docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
 There is no shell-only mode any more (0.40.0).
 
+## Plugin (recommended)
+
+[`opencode/plugin/mattermost-agent-bus.ts`](../opencode/plugin/mattermost-agent-bus.ts)
+gives an OpenCode session what the Claude Code plugin's hooks give: the MCP server and
+the skill configured, 🛠 working / 💤 idle per turn, drain and sign-off before the agent
+goes idle, a wake-up while it is idle when the bus has something for it, and its
+handoff state after a compaction. What it does and when:
+[arc42 §6.20](../docs/arc42/06-runtime-view.md#620-opencode-turn-cycle-through-its-plugin).
+Plugin API V1: OpenCode **1.x** (tested against 1.19); OpenCode 2.x has another plugin
+API and is not supported yet.
+
+Install it globally with a symlink, so it finds this checkout (and its `mcp/` and
+`skills/`) by itself:
+
+```bash
+mkdir -p ~/.config/opencode/plugins
+ln -s /ABS/PATH/mattermost-ai-agent-bus/opencode/plugin/mattermost-agent-bus.ts \
+  ~/.config/opencode/plugins/mattermost-agent-bus.ts
+```
+
+or per project in `.opencode/plugins/`, or by path in `opencode.json`, with options:
+
+```json
+{
+  "plugin": [["file:///ABS/PATH/mattermost-ai-agent-bus/opencode/plugin/mattermost-agent-bus.ts",
+              {"pollSec": 15}]]
+}
+```
+
+Options: `root` (the checkout, when the file is copied, not linked; or
+`MM_AGENT_BUS_ROOT`), `mcp: false` (add no MCP server), `command` and `environment`
+(the server's command and extra variables, e.g. the `sh -c` command below that
+fetches the secret), `pollSec` (how often an idle session asks, default
+`MM_LISTEN_POLL_SEC` or 15 s).
+
+The plugin adds `mcp["mattermost-agent-bus"]` (`uv run --locked --project <checkout>/mcp
+mattermost-ai-agent-bus-mcp`) unless your configuration already has it or another entry
+running `mattermost-ai-agent-bus-mcp`, and `<checkout>/skills` to `skills.paths`. It writes
+no file: the server inherits OpenCode's environment, so put the `MM_*` settings there
+(see the next section for the secret), or configure the server yourself as below and
+the plugin leaves it alone. It needs no `npm install`: its only import from
+`@opencode-ai/plugin` is types.
+
 ## Skill / instructions
 
-Point OpenCode at [`SKILL.md`](../skills/mattermost-ai-agent-bus/SKILL.md) or paste
+With the plugin the skill is on `skills.paths`. Without it, point OpenCode at
+[`SKILL.md`](../skills/mattermost-ai-agent-bus/SKILL.md) (OpenCode also reads
+`.claude/skills/` and `.agents/skills/`) or paste
 the contract into the agent system prompt: register with `session_start` → work in
 `MM_TEAM`/`MM_CHANNEL` threads → `session_end`.
 
@@ -73,8 +118,9 @@ and say what to start.
 
 ## Reachability
 
-There are no turn hooks here: no `Stop` check, no listen window, and no channel
-push (Claude Code only). The agent hears the bus only when it looks, with
-`wait_for_events`, so the skill asks it to check before each new activity, not only
-at the end ([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable);
+With the plugin, a turn ends with the drain and sign-off checks and an idle session
+is woken while OpenCode runs (not after `opencode run` exits); there is no listen
+window and no channel push (Claude Code only). Without the plugin there are no turn
+hooks at all: the agent hears the bus only when it looks, with `wait_for_events`, so
+the skill asks it to check before each new activity, not only at the end ([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable);
 differences: [arc42 §7.2](../docs/arc42/07-deployment-view.md#72-environment-differences)).

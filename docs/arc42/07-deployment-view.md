@@ -44,6 +44,7 @@ derived, not a setting.
 | Shell CLI | Developer host (host copy) and corral sandbox (plugin) | Per call | Same scripts on both sides; session files under `~/.local/state/mm-agent-bus/`. In the sandbox, as in any agent's shell, it has no token: the listener, `mm-agent-post.sh`, `-poll.sh`, `-status.sh` and the status line ask the MCP server (RT-6.17) |
 | MCP server | Developer host (host copy, `--host`), started by `preStart`, stopped by `postEnd`; in the corral sandbox only its relay (the plugin's entry point, child of the agent runtime) | 1 host process per session | Long-lived; holds the WebSocket and the bot token; serves the relay and the hook API on `127.0.0.1`, two ephemeral ports, one per-session key; state in `~/.local/state/mm-agent-bus/hosted/<session>/` (RT-6.17, RT-6.18) |
 | Turn hooks | corral sandbox, run by Claude Code | Per turn | Must finish within the hook timeout; ask the MCP server, hold no token |
+| OpenCode plugin | Not in a corral session: in OpenCode's own process (Bun), loaded from `~/.config/opencode/plugins/`, `.opencode/plugins/` or the `plugin` list (Section 7.2, RT-6.20) | 1 per OpenCode instance | Long-lived like the instance; holds no token, writes no file, asks the MCP server's hook API |
 | Agent skill | corral sandbox, loaded by the agent runtime | 1 per session | Plain Markdown, part of the plugin |
 
 **Host copy.** corral approves a hook's `exec` file by its content, but not the
@@ -108,10 +109,10 @@ The MCP server is required in every runtime (0.40.0); the shell-only agent mode,
 | MCP server runs | On the host, one process per session; a relay in the sandbox | In the session, one per session | One per workspace (window) | One per instance, in the workspace |
 | Shell scripts find the server by (RT-6.17) | `MM_BUS_ENDPOINT` / `MM_BUS_KEY` | `CLAUDE_CODE_SESSION_ID` | `CURSOR_PROJECT_DIR` / `MM_WORKSPACE`, else walking up from `$PWD` to the nearest git top | Walking up from `$PWD` to the nearest git top |
 | Automatic registration | Only with project channel, or `MM_REGISTER=always` | Agent registers only with project channel or when asked | Same | Same |
-| Turn hooks (presence, drain, listen) | Yes | Yes | No | No |
-| Messages pushed into the session (RT-6.12) | When started as a channel | When started as a channel | No: `wait_for_events` | No: `wait_for_events` |
+| Turn hooks (presence, drain, listen) | Yes | Yes | No | OpenCode with its plugin: presence, drain, sign-off, no listen window (RT-6.20); Codex: no |
+| Messages pushed into the session (RT-6.12) | When started as a channel | When started as a channel | No: `wait_for_events` | No: `wait_for_events`; OpenCode's plugin starts a turn that tells the agent to call it (RT-6.20) |
 | Teardown safety net | `postEnd` stops the host MCP server (its exit handler unregisters), then unregisters again; the server's watchdog when corral dies | MCP exit handler (keeps the bot for `--continue`, reaped after 24 h); it runs when stdin closes, on SIGTERM/SIGHUP, or when the server's parent dies (RT-6.10) | MCP exit handler, the same | MCP exit handler, the same: a server orphaned by its harness (Codex) ends within seconds |
-| Reachability | Agent checks + `Stop` hook (drain, listen window with a background listener, no model calls) | Same | Agent checks before each new activity and before the turn ends; listen window with one-shot timers and backoff (each wake-up a turn) | Agent checks only |
+| Reachability | Agent checks + `Stop` hook (drain, listen window with a background listener, no model calls) | Same | Agent checks before each new activity and before the turn ends; listen window with one-shot timers and backoff (each wake-up a turn) | Agent checks; OpenCode with its plugin also drain and sign-off at the end of a turn and a wake-up while idle, as long as OpenCode runs (RT-6.20) |
 
 Without turn hooks nothing holds a turn open or reminds the agent, so the skill and the MCP `instructions` make the check before each new activity mandatory there ([SKILL.md, *Staying reachable*](../../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable)).
 

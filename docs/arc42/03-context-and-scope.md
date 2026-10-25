@@ -20,3 +20,4 @@ delivers what others address to it.
 | IF-06 | corral (`preStart` / `postEnd`) | Host environment, `CORRAL_SESSION_ID` | Contribution JSON: env for the sandbox, agent note, banner status |
 | IF-07 | Agent runtime: skill loader | — | `SKILL.md`: rules the agent follows in every turn; `coordinator.md` and `self-registration.md` next to it, read only when the agent holds the crown or registers itself |
 | IF-08 | Developer / operator | `MM_*` environment, gopass path of the registration secret | Banner lines, sweep report |
+| IF-09 | Agent runtime: OpenCode plugin API (V1) | Its configuration (`config` hook), events (`chat.message`, `session.idle`, `session.compacted`, `session.error`, `session.created`) | MCP server and skill path in the configuration; prompts into a session (`session.promptAsync`, `noReply` for context); toasts (RT-6.20) |

@@ -42,6 +42,18 @@ jobs:
       - name: hooks against a fake Mattermost
         run: uv run --directory mcp pytest -q ../tests/hooks
 
+  opencode-plugin:
+    name: OpenCode plugin (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Type stripping runs the .ts as is; the plugin imports only node: modules.
+      - name: plugin glue against a fake hook API
+        run: node --test opencode/test/plugin.test.ts
+
   lint:
     runs-on: ubuntu-latest
     steps:
