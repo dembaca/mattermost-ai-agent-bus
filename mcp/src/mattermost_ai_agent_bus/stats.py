@@ -123,7 +123,8 @@ def _turns(events: list[dict[str, Any]]) -> list[tuple[bool, int]]:
 
 
 def _asks(events: list[dict[str, Any]], now: float) -> dict[str, int]:
-    """Asks posted, answered (waits) and still unanswered at session end (RT-6.9)."""
+    """Asks posted, answered (waits), still unanswered at session end (RT-6.9),
+    and the reminders sent (RT-6.19)."""
     posted = {e["id"]: int(e.get("t", 0)) for e in events if e.get("k") == "ask" and e.get("id")}
     waits: dict[str, int] = {}
     for e in events:
@@ -138,6 +139,8 @@ def _asks(events: list[dict[str, Any]], now: float) -> dict[str, int]:
         "asks_open": len(open_at),
         "ask_open_sec": sum(max(0, round(now - t)) for t in open_at),
         "ask_open_max_sec": max(0, round(now - min(open_at))) if open_at else 0,
+        # Reminders the server sent for them (RT-6.19).
+        "ask_reminders": sum(1 for e in events if e.get("k") == "remind"),
     }
 
 

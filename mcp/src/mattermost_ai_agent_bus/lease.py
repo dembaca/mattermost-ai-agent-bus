@@ -397,8 +397,12 @@ async def _command(client: MattermostClient, action: str) -> str:
     return ""
 
 
-async def heartbeat(get_client: Callable[[], Awaitable[MattermostClient | None]]) -> None:
-    """Renew the lease until cancelled. Never raises: presence is cosmetic."""
+async def heartbeat(get_client: Callable[[], Awaitable[MattermostClient | None]],
+                    watch: Callable[[MattermostClient], Awaitable[float | None]] | None = None) -> None:
+    """Renew the lease until cancelled. Never raises: presence is cosmetic.
+    `watch` runs after each tick (the stall check and the ask reminders,
+    RT-6.19, stall.watch) and may bring the next tick forward to when it is
+    due, PENDING_POLL_SEC apart at the least."""
     while True:
         delay = heartbeat_sec()
         try:
@@ -407,6 +411,10 @@ async def heartbeat(get_client: Callable[[], Awaitable[MattermostClient | None]]
                 await command(client, "tick")
                 if take_pending(await _user_id(client)):
                     delay = PENDING_POLL_SEC
+                if watch is not None:
+                    due = await watch(client)
+                    if due is not None:
+                        delay = min(delay, max(PENDING_POLL_SEC, due))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001

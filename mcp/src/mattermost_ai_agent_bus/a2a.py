@@ -49,6 +49,9 @@ _NONE = (None, None, None)
 # Kinds the server sets itself, not read from a word; both ask for an answer.
 ASK = "ask"
 PERMISSION = "permission"
+# The server's reminder of an open ask (RT-6.19): fyi for agents, no activity.
+REMINDER = "reminder"
+_OWN = (ASK, PERMISSION, REMINDER)
 # props.a2a.to: the post is for every agent in the channel (RT-6.11, RT-6.2).
 ALL = "all"
 
@@ -97,18 +100,20 @@ def state(kind: str | None) -> str | None:
 def intent(kind: str | None) -> str | None:
     if kind in (ASK, PERMISSION):
         return REPLY
+    if kind == REMINDER:
+        return FYI
     return WORDS.get((kind or "").upper(), _NONE)[2]
 
 
 def annotate(message: str = "", to: str = "", kind: str = "") -> dict[str, Any] | None:
     """props.a2a for a post the server writes, or None for a plain message.
-    kind: one the server sets itself (ask, permission); else the first word."""
+    kind: one the server sets itself (ask, permission, reminder); else the first word."""
     w = kind or word(message)
     if w is None and not to:
         return None
     out: dict[str, Any] = {"v": V}
     if w is not None:
-        out["kind"] = w if w in (ASK, PERMISSION) else w.lower()
+        out["kind"] = w if w in _OWN else w.lower()
         for key, value in (("state", state(w)), ("intent", intent(w))):
             if value:
                 out[key] = value
@@ -151,7 +156,7 @@ def kind_of(post: Mapping[str, Any]) -> str | None:
     a2a = (post.get("props") or {}).get("a2a")
     if isinstance(a2a, Mapping) and a2a.get("kind"):
         k = str(a2a["kind"])
-        return k if k in (ASK, PERMISSION) else k.upper()
+        return k if k in _OWN else k.upper()
     message = str(post.get("message", ""))
     if message.lstrip().removeprefix("👑").lstrip().startswith("🙋"):
         return ASK
