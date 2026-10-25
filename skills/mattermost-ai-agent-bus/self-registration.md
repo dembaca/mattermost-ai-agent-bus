@@ -24,6 +24,7 @@ registrar answers 409 for a name already used — also one whose bot was removed
 so a second session, or a restart, would be locked out. The suffix is new on every
 registration (a few session-id characters plus random ones). Use the name that comes back.
 `session_start` also joins `MM_PROJECT_CHANNEL` and writes a 0600 session file
-that the Claude Code hooks read — without it they stay inert. Read the
+(for `claude --continue`). The Claude Code hooks ask this MCP server (RT-6.17):
+until the bot exists they stay inert. Read the
 `project_channel` field of its result: `joined: false` carries the reason (a
 missing channel is a typo to report, never something to create).

@@ -2,14 +2,14 @@
 
 ## Overview
 
-Sixteen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Seventeen scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 4), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, and who may wake an agent at all. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, and how the turn hooks reach the bus through the MCP server without the token. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -36,7 +36,7 @@ no test.
 3. Host session hooks read the secret (gopass preferred) and call the Shell CLI to register a bot named `<host>-<project>-<session>` at the Registrar (IF-01).
 4. Shell CLI resolves team and channels and joins the project channel (IF-02), marks the welcome DM read, sets status 💤 idle.
 5. Host session hooks return the contribution (IF-06): bot token, ids, channel names — never `MM_REG_SECRET`, nor `MM_REG_BOT_NAME` (so the CLI inside cannot stop the host's session).
-6. Inside the sandbox, Turn hooks and the MCP server use the bot token; the agent follows the Agent skill (`HELLO`, work, sign-off). With a token at startup the MCP server offers no `session_start`/`session_end` and leaves the self-registration text out of its instructions: the agent must not register, and every turn would carry that text.
+6. Inside the sandbox, the MCP server uses the bot token; the Turn hooks and the listener hold none and ask the server (RT-6.17); the agent follows the Agent skill (`HELLO`, work, sign-off). With a token at startup the MCP server offers no `session_start`/`session_end` and leaves the self-registration text out of its instructions: the agent must not register, and every turn would carry that text.
 7. At the end, the MCP server unregisters its bot on exit (own token, `agent-*` only); `postEnd` sets offline and unregisters again as a safety net — a 404 counts as done.
 
 ### Error Handling
@@ -58,18 +58,20 @@ no test.
 
 **Trigger:** The agent finishes a turn in Claude Code (`Stop` hook, IF-05).
 
-**Participants:** Turn hooks, Shell CLI, MCP server; Agent runtime, Mattermost REST API, Mattermost WebSocket
+**Participants:** Turn hooks, MCP server, Shell CLI; Agent runtime, Mattermost REST API, Mattermost WebSocket
 
 **Quality goal illustrated:** `#usable` Reachability
 
 ### Sequence
 
+The Turn hooks and the listener get every bus value below from the MCP server's hook API (RT-6.17), never from Mattermost.
+
 Every block carries two texts: the instruction for the agent (`reason`) and a one-line banner for the developer (`systemMessage`), so the terminal shows why the turn has not ended: 📨 collecting unread messages, ✋ signing off, 👂 `Listening on Mattermost until HH:MM in the background (N min) · your next prompt ends it`.
 
-1. Turn hooks read the unread counters (mentions, DMs, and posts for all agents, RT-6.11 step 6) via the Shell CLI (IF-02). Anything pending → block: collect with `wait_for_events`, answer, finish; the reason says how many need action when some are an agent's fyi posts, which need no answer (RT-6.14 step 8: one GET per pending channel, at most 5, and one user lookup, only while the drain blocks). At most 3 drain rounds per turn.
-2. Turn hooks read the agent's latest post in the work channel. Not an `IDLE`/`BYE` → block once per turn: post a sign-off in the `HELLO` thread. Whoever posts as the agent (the MCP server, `mm-agent-post.sh`) keeps that post's id, time and first words, and the `HELLO` thread, in `last-<uid>.env` in the state directory when it posts in the work channel; the hook reads the file and asks Mattermost nothing. Without one (an older server, an agent that never posted) it reads the channel's last 100 posts, as before, every turn.
+1. Turn hooks ask for the unread counters (mentions, DMs, and posts for all agents, RT-6.11 step 6), which the MCP server reads via the Shell CLI (IF-02). Anything pending → block: collect with `wait_for_events`, answer, finish; the reason says how many need action when some are an agent's fyi posts, which need no answer (RT-6.14 step 8: one GET per pending channel, at most 5, and one user lookup, only while the drain blocks). At most 3 drain rounds per turn.
+2. Turn hooks read the agent's latest post in the work channel. Not an `IDLE`/`BYE` → block once per turn: post a sign-off in the `HELLO` thread. Whoever posts as the agent (the MCP server, `mm-agent-post.sh`) keeps that post's id, time and first words, and the `HELLO` thread, in `last-<uid>.env` in the state directory when it posts in the work channel; the MCP server answers the hook from the file and asks Mattermost nothing. Without one (an agent that never posted there) it reads the channel's last 100 posts, every turn.
 3. In a project channel with the bus reachable, unless the sign-off was `BYE` or `MM_LISTEN_SEC=0`: Turn hooks open a listen window (default 5400 s; 7200 s while the agent holds the 👑, `MM_LISTEN_COORD_SEC`, see RT-6.6; at most 7200 s, Claude Code's limit for a background command), set 👂 `listening · until HH:MM, then idle`, and block: start the Shell CLI's `mm-agent-listen.sh --until <end>` as a background command with a timeout that covers the window (the runtime's default is 30 min), then finish.
-4. The listener waits without the model, polling the unread counters and the work channel over REST every `MM_LISTEN_POLL_SEC` (default 15 s). The turn ends; while the listener runs, every further stop goes through and the status stays 👂. The runtime wakes the agent when the listener exits: right away for a post meant for it — a mention or DM, a post for all agents (`props.a2a.to = "all"`, RT-6.11 step 6) or a human's `@channel` / `@all` / `@here`, a reply in a thread it posted in, or any post while it holds the 👑 — for these two not an agent's fyi post unless the agent started the thread (RT-6.14 step 8) — but never for a post its MCP server gated (RT-6.16); for other posts only as a digest, once the oldest is `MM_LISTEN_DIGEST_SEC` (default 1800 s) old; or when the window is over. Its output says what to do (collect with `wait_for_events(timeout_sec=1)`, skim the digest, or finish without another word). Every wake-up is a model turn, so a busy channel no longer wakes every member for every post. The listener only looks; collecting and marking read stays with `wait_for_events`.
+4. The listener waits without the model, asking the MCP server for the unread counters, reactions to open asks and the work channel's new posts every `MM_LISTEN_POLL_SEC` (default 15 s). The turn ends; while the listener runs, every further stop goes through and the status stays 👂. The runtime wakes the agent when the listener exits: right away for a post meant for it — a mention or DM, a post for all agents (`props.a2a.to = "all"`, RT-6.11 step 6) or a human's `@channel` / `@all` / `@here`, a reply in a thread it posted in, or any post while it holds the 👑 — for these two not an agent's fyi post unless the agent started the thread (RT-6.14 step 8) — but never for a post its MCP server gated (RT-6.16); for other posts only as a digest, once the oldest is `MM_LISTEN_DIGEST_SEC` (default 1800 s) old; or when the window is over. Its output says what to do (collect with `wait_for_events(timeout_sec=1)`, skim the digest, or finish without another word). Every wake-up is a model turn, so a busy channel no longer wakes every member for every post. The listener only looks; collecting and marking read stays with `wait_for_events`.
 5. Woken by a message, the agent handles it and finishes; the hook asks for the listener again with the rest of the window, or with a fresh window when the agent posted in the work channel since the window opened. The window lives outside the turn state, so a woken turn does not lose it, and there is no second sign-off inside a window.
 6. Window over: status 💤 idle, turn and window state removed, the turn ends.
 7. When the MCP server ends a session whose bot it unregisters (a host-managed one, or a client without a session id; not the bot kept for `claude --continue`, RT-6.10) and the agent's latest post in the work channel is no `IDLE`/`BYE` (`HANDOVER` is none), the exit handler first posts `BYE · session ended without sign-off` in the `HELLO` thread, with the props `a2a.annotate` gives every `BYE` (RT-6.14). It reads the thread from `last-<uid>.env` (no `HELLO` recorded: no BYE, the agent never joined the coordination), sends one request bounded to 1.5 s, and unregisters whatever happens. The BYE is recorded in the file like any post, so a second handler adds none. The corral `postEnd` hook posts nothing: the MCP server runs in every host-managed session and exits before it.
@@ -83,7 +85,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 1, 5 | More events queued than `wait_for_events` returns (a backlog after the socket connected) | Mentions and DMs come first; the result ends with `{kind: more_pending, count}`, and a channel with posts still queued stays unread, so the counters keep waking the agent. Backfill reads nothing older than the bot: a freshly joined channel can report `last_viewed_at` 0, which once handed a new bot the channel's last 50 posts and cut off the mention that woke it |
 | 2 | `last-<uid>.env` is stale: a post by another route (a hand-written `curl`) is not in it | The hook judges by the file until the next post through the server or CLI; accepted, as the channel read it replaces was only a moment fresher |
 | 7 | The BYE cannot be posted (timeout, error) | Logged; the bot is unregistered all the same |
-| 1–3 | Bot id unknown (no turn state) | Falls back to `stop_hook_active`: one extra round per turn, no listen window |
+| 1–3 | No hook API: the MCP server is not running, or has no bus session yet | The hook exits 0 without output: no drain, no sign-off, no window (RT-6.17) |
 | 3 | The agent cannot run a background command (older runtime, command denied) | Asked once per window; with no listener started since, the next stop goes idle |
 | 4 | Runtime does not wake the agent (machine asleep, session gone) | Nothing waits on it: the listener ends with the window, and the status lease runs out (RT-6.6) |
 
@@ -126,8 +128,8 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. Turn hooks call the Shell CLI; an API call fails or times out.
-2. Each check treats a failure as "nothing to do": no token, no `jq`, an unparseable counter or an HTTP error → exit 0. In particular no listen window opens on a bus that cannot be read.
+1. Turn hooks ask the MCP server (RT-6.17), which calls Mattermost; a call fails or times out (the hook's own request after `MM_BUS_MAX_TIME`, default 5 s).
+2. Each check treats a failure as "nothing to do": no MCP server or bus session, no `jq`, an unparseable counter or an HTTP error → exit 0. In particular no listen window opens on a bus that cannot be read.
 3. The turn ends normally; presence may be stale until the bus is back.
 
 ### Error Handling
@@ -312,7 +314,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 1. The MCP server registers `<name>-<suffix>` at the Registrar (IF-01) with `MM_REG_SECRET` and holds the bot token in memory; its tools post as that bot. Before registering it unregisters the bots of other MCP-registered sessions whose Claude process is gone and whose file was untouched for `MM_SESSION_KEEP_SEC` (default 24 h), each with its own token (`reaped_stale_bots`).
 2. It writes the token to a 0600 session file in the state directory, named after the Claude Code session: `mcp-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`. Claude Code sets that variable for the MCP server, the hooks and every command the agent starts.
-3. Turn hooks, the background listener (`mm-agent-listen.sh`) and the status line helper (`mm-agent-statusline.sh`, which shows the bot's name and 👑 in Claude Code's status line and in a host-managed session reads `MM_BOT_USERNAME` instead) find the file under the same name; a hook whose environment lacks the variable takes `session_id` from its JSON input. They count unread messages, set presence and wake the agent as that bot.
+3. The status line helper (`mm-agent-statusline.sh`, which shows the bot's name and 👑 in Claude Code's status line and in a host-managed session reads `MM_BOT_USERNAME` instead) finds the file under the same name and reads only name and id from it. The Turn hooks and the background listener (`mm-agent-listen.sh`) find the server's hook API file under the same key (`endpoint-sid-…`, RT-6.17) and ask the server, which counts unread messages, sets presence and reads the channel as that bot; a hook whose environment lacks the variable takes `session_id` from its JSON input.
 4. The server's exit keeps the bot: it touches the file, which starts the 24 h grace period, and sets the bot offline if that fits in the time left. Claude Code kills an MCP server about 0.5 s after asking it to stop, so only the local part is certain.
 5. `claude --continue` resumes under the same session id. The new server finds the file at start and takes the bot over while its token is accepted: same name, same threads and DMs, crown included. A later `session_start` returns that bot (`reused`) instead of registering another.
 6. `session_end` unregisters the bot and removes the file at once.
@@ -322,7 +324,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | Step | Failure | System Response |
 |------|---------|----------------|
 | 2 | No `CLAUDE_CODE_SESSION_ID` (an older runtime) | The file is named after the project directory instead (`mcp-<sha1(dir)>.env`), and a hook running in a subdirectory walks up to it. Two such sessions in one checkout would share it again |
-| 3 | Hook has a session id but finds no file of that session | It stays inert; it never falls back to a project-keyed file, which may belong to another session. Keyed on the project alone, a second session in the same checkout overwrote the first one's file, and the first agent's hooks and listener ran as the second bot and never saw the mentions for its own |
+| 3 | Hook has a session id but finds no file of that session | It stays inert (RT-6.17); it never falls back to a project-keyed file, which may belong to another session. Keyed on the project alone, a second session in the same checkout overwrote the first one's file, and the first agent's hooks and listener ran as the second bot and never saw the mentions for its own |
 | 4 | The session really ended (no `--continue` follows) | The bot stays, offline, until another session's `session_start` reaps it after the grace period, or `mm-agent-sweep.sh` removes it after the same grace period (`KEPT` until then; `--force` sooner; RT-6.1, step 7). Nothing tells a resume from an end; unregistering on exit made every `--continue` start under a new name, so mentions of the old one reached nobody |
 | 4 | Killed before the file was touched | The grace period counts from the session's start instead; the bot may be reaped sooner |
 | 5 | The taken-over token is rejected (`401`) | The bot is gone: the file is removed and the agent registers a new one |
@@ -543,3 +545,43 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 3 | The post mentions an agent that is no crown holder (or no coordinator is known) | The answer is posted as usual |
 | 3 | The coordinator lookup fails (roster unreadable) | The answer names the trusted humans, as without a coordinator; the failure is not cached |
 | 5 | An agent that was itself injected passes a request on as its own | Not caught: the gate narrows who reaches a worker, it does not close that relay (Section 7.3) |
+
+---
+
+## 6.17 Turn hooks ask the MCP server
+
+**Purpose:** The Turn hooks and the background listener need a few values from the bus every turn, and they need no bot token for them: the MCP server, which holds it anyway, answers them over a local API. That is the step before keeping the token out of the sandbox altogether, where only the server outside it would hold one.
+
+**Trigger:** A Turn hook runs (`UserPromptSubmit`, `Stop`, `SessionStart` after compaction, IF-05), or the background listener polls (RT-6.2 step 4).
+
+**Participants:** Turn hooks, MCP server, Shell CLI; Agent runtime, Mattermost REST API
+
+**Quality goal illustrated:** `#secure` Secret confinement — the hooks hold no token; `#reliable` Never wedges a coding session
+
+### Sequence
+
+1. At start, with a bus configured, the MCP server serves HTTP/1.1 on `127.0.0.1` only, on an ephemeral port, in its own event loop next to the WebSocket inbox. It draws a random key per start (32 bytes, URL-safe). Every request carries `Authorization: Bearer <key>`, compared in constant time; any other gets `401`, for unknown routes too. The hooks hand the key to `curl` on stdin, never in its argv, and never log it.
+2. The hooks take endpoint and key from `MM_BUS_ENDPOINT` / `MM_BUS_KEY` when set, else from the file the server writes in the state directory, 0600, keyed like the session file (RT-6.10): `endpoint-sid-<sha1(CLAUDE_CODE_SESSION_ID)>.env`, without a session id `endpoint-<sha1(dir)>.env`. They read it on every call. The server removes it when it ends, unless a newer server of the same session wrote its own. The transport is the same in every mode, host-managed and self-registered.
+3. The API answers JSON under `/v1`:
+
+   | Route | Answer | Asked by |
+   |-------|--------|----------|
+   | `GET /v1/me` | `user_id`, `username`, `project` (a project channel is set), `crown_until` (epoch, 0 without the 👑) | every hook, the listener |
+   | `GET /v1/pending` | `count`: unread mentions, DMs and posts for all agents; with `?detail=1` up to 5 `channels` (`id`, `type`, `pending`, `fyi`) | Stop hook (drain, RT-6.2 step 1), listener |
+   | `GET /v1/last-post` | `at` (ms), `message`: the own latest post in the work channel, `at` 0 when there is none | Stop hook (sign-off and window, RT-6.2 steps 2–3) |
+   | `GET /v1/posts` | `posts`, newest first, of the work channel (`?limit=N`, at most 200, or `?since=MS`): `id`, `user_id`, `root_id`, `create_at`, `type`, `message`, `to` (`all` for all agents), `intent`, `fyi` (an agent's fyi post, RT-6.14), `gated` (RT-6.16) | compaction hook (RT-6.7), listener |
+   | `GET /v1/ask-reactions` | `fresh`: reactions on open asks not yet handed to the agent (RT-6.11) | listener |
+   | `POST /v1/presence` | `{state: working \| idle \| listening, label?, until?}` → `ok` | prompt and Stop hooks (RT-6.2, RT-6.3) |
+
+4. The server answers with its own client and token. Where the logic lives in the Shell CLI, it runs the CLI with that token, as for the lease (RT-6.6): `mm-agent-unread.sh` for the counters, `mm-agent-status.sh` for the status. What the hooks decide from the answers is unchanged (RT-6.2 to RT-6.7).
+5. The hooks keep their per-bot files in the state directory (turn state, listen window, overhead counters), keyed on the `user_id` from `/v1/me`.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1–2 | No MCP server (not started, crashed, a runtime without it), no endpoint file, a wrong key | The hook exits 0 without output, like a hook without a bus session (RT-6.4); the listener says there is no bus session and ends. Accepted: a host-managed session's hooks used to work without the server |
+| 3 | No bus session yet (`503`: a self-registering session before `session_start`) | As without a server |
+| 3 | Mattermost fails (`502`), or the hook's request times out (`MM_BUS_MAX_TIME`, default 5 s) | The check counts as nothing to do (RT-6.4); the listener asks again next round |
+| 2 | The server restarts during a listen window (`claude --continue`, a reconnect) with a new port and key | Without the variables the listener reads the file on every call and reaches the new server on its next round |
+| 2 | A crash leaves the file behind | It names a port nobody listens on, so the hooks stay quiet; the sweep leaves it alone, the session's next server overwrites it |

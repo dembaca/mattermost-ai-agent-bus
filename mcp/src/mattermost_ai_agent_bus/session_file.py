@@ -64,13 +64,19 @@ def session_id() -> str:
     return os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
 
 
-def session_file_path() -> Path:
-    # Must match mm_hook_session_file in bin/mm-agent-lib.sh.
+def keyed_path(prefix: str) -> Path:
+    """A file of this session in the state dir: <prefix>-sid-<key>.env keyed on
+    the session id, else <prefix>-<key>.env keyed on the project directory.
+    Must match mm_hook_session_file in bin/mm-agent-lib.sh."""
     sid = session_id()
     if sid:
-        return state_dir() / f"mcp-sid-{hashlib.sha1(sid.encode()).hexdigest()[:16]}.env"
+        return state_dir() / f"{prefix}-sid-{hashlib.sha1(sid.encode()).hexdigest()[:16]}.env"
     key = hashlib.sha1(project_dir().encode()).hexdigest()[:16]
-    return state_dir() / f"mcp-{key}.env"
+    return state_dir() / f"{prefix}-{key}.env"
+
+
+def session_file_path() -> Path:
+    return keyed_path("mcp")
 
 
 def write(info: SessionInfo, team: str, channel: str) -> Path:

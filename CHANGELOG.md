@@ -3,6 +3,43 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.37.0
+
+The turn hooks and the listener no longer hold the bot token: they ask the
+MCP server (#80, #69). The step before keeping the token out of the sandbox.
+
+### Changed
+
+- **Hooks ask the MCP server, not Mattermost (RT-6.17):** the server serves a
+  small JSON API on `127.0.0.1` (ephemeral port, HTTP/1.1, a random key per
+  start sent as `Authorization: Bearer`, compared in constant time, `401`
+  otherwise): `GET /v1/me`, `/v1/pending`, `/v1/last-post`, `/v1/posts`,
+  `/v1/ask-reactions` and `POST /v1/presence`. `turn-status.sh`,
+  `stop-inbox-check.sh`, `after-compact.sh` and `mm-agent-listen.sh` call
+  only these; none reads `MM_BOT_TOKEN` or the session file any more. The
+  server runs `mm-agent-unread.sh` and `mm-agent-status.sh` with its own
+  token, so counters and status follow the same rules as before; it reads
+  `last-<uid>.env`, the crown, the asks and the gate list for them, and says
+  per post whether it is an agent's fyi post and whether it was gated.
+- **Finding the server:** `MM_BUS_ENDPOINT` / `MM_BUS_KEY` when set, else
+  `endpoint-sid-<sha1(session id)>.env` in the state directory (0600, keyed
+  like the session file), which the server removes when it ends. The key
+  goes to `curl` on stdin, never in its argv; each request is bounded by
+  `MM_BUS_MAX_TIME` (default 5 s). Same transport in every mode.
+- **Trade-off:** without a running MCP server (or before a self-registering
+  session has its bot) the hooks do nothing and the listener ends at once,
+  as without a bus session. A host-managed session's hooks used to work on
+  the token alone. The Stop hook's fallback for an unknown bot id
+  (`stop_hook_active`) is gone: the server always names the bot.
+- **Sweep:** `mm-agent-sweep.sh` takes the endpoint files for neither
+  sessions nor per-bot state.
+
+### Checked
+
+- `mcp/tests/test_hook_api.py`: auth, every route, the file's lifecycle.
+  The hook tests run every hook and the listener against the real API over
+  the fake Mattermost, without the token in their environment.
+
 ## 0.36.4
 
 ### Fixed

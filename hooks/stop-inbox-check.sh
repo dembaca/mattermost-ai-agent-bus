@@ -13,18 +13,18 @@
 # Only when all three let go does the status flip to 💤 idle.
 # Spec: RT-6.2, RT-6.3, RT-6.4 in docs/arc42/06-runtime-view.md.
 #
-# Reads Mattermost's unread counters (cheap, non-destructive); delivery stays on
-# exactly one path: wait_for_events. The human ends the listen window with their
-# next prompt, which stops the listener; the 👂 status expires on its own.
+# Asks the MCP server (RT-6.17), which reads Mattermost's unread counters
+# (cheap, non-destructive); delivery stays on exactly one path:
+# wait_for_events. The human ends the listen window with their next prompt,
+# which stops the listener; the 👂 status expires on its own.
 #
-# Fails open in every direction — no bus, no token, no jq, an API hiccup: exit 0.
-# A chat integration must never be able to wedge a coding session.
+# Fails open in every direction — no MCP server, no bus session, no jq, an API
+# hiccup: exit 0. A chat integration must never be able to wedge a coding session.
 set -uo pipefail
 
 # shellcheck source=../bin/mm-agent-lib.sh
 source "$(cd "$(dirname "$0")/../bin" && pwd)/mm-agent-lib.sh"
 mm_read_hook_input
-mm_load_hook_session || true
 
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 
@@ -48,19 +48,22 @@ LISTEN_COORD_SEC="${MM_LISTEN_COORD_SEC:-7200}"
 (( LISTEN_SEC > MAX_BG_SEC )) && LISTEN_SEC=$MAX_BG_SEC
 (( LISTEN_COORD_SEC > MAX_BG_SEC )) && LISTEN_COORD_SEC=$MAX_BG_SEC
 
-input="$MM_HOOK_INPUT"
+# Who the bot is, its project channel and crown: from the MCP server. Without
+# it there is no bus session to answer for.
+mm_bus_me || exit 0
 
-command -v jq >/dev/null 2>&1 || exit 0
-[[ -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]] || exit 0
+# The status for this turn, set by the MCP server (mm-agent-status.sh).
+presence() {  # presence working|idle | presence listening UNTIL
+  local body
+  if [[ "$1" == listening ]]; then
+    body="$(jq -nc --argjson u "$2" '{state: "listening", until: $u}')"
+  else
+    body="$(jq -nc --arg s "$1" --arg l "$(basename "${CORRAL_WORKDIR:-$PWD}")" '{state: $s, label: $l}')"
+  fi
+  mm_bus POST /v1/presence "$body" || true
+}
 
-if [[ -z "${MM_BOT_USER_ID:-}" ]]; then
-  mm_api GET "/api/v4/users/me" && [[ "$MM_API_STATUS" == "200" ]] &&
-    MM_BOT_USER_ID="$(jq -r '.id' <<<"$MM_API_BODY")"
-fi
-
-# Turn state: which checks already ran this turn. Without a state file (bot id
-# unknown) fall back to Claude Code's stop_hook_active: one extra round per
-# turn, no listening.
+# Turn state: which checks already ran this turn, keyed on the bot.
 DRAINS=0 SIGNOFF_ASKED=0 BY_BUS=0
 STATE="$(mm_turn_state_file 2>/dev/null)" || STATE=""
 if [[ -n "$STATE" && -f "$STATE" ]]; then
@@ -70,9 +73,6 @@ if [[ -n "$STATE" && -f "$STATE" ]]; then
       DRAINS) DRAINS="$v" ;; SIGNOFF_ASKED) SIGNOFF_ASKED="$v" ;; BY_BUS) BY_BUS="$v" ;;
     esac
   done <"$STATE"
-elif [[ -z "$STATE" && "$(jq -r '.stop_hook_active // false' <<<"$input" 2>/dev/null)" == "true" ]]; then
-  "$BIN/mm-agent-status.sh" idle >/dev/null 2>&1 || true
-  exit 0
 fi
 
 # Listen window (bin/mm-agent-listen.sh): kept outside the turn state, because a
@@ -129,7 +129,7 @@ update_note() {
 
 # The turn really is ending: flip the status back to idle and forget the turn.
 go_idle() {
-  "$BIN/mm-agent-status.sh" idle >/dev/null 2>&1 || true
+  presence idle
   [[ -n "$STATE" ]] && rm -f "$STATE"
   [[ -n "$LF" ]] && rm -f "$LF"
   local note
@@ -141,38 +141,29 @@ go_idle() {
 
 # Latest own post in the work channel: sets LAST_MSG and LAST_AT (epoch ms).
 # Without the 👑 the MCP server puts before a coordinator's posts (RT-6.6).
-# Whoever posts as the agent keeps it in last-<uid>.env (RT-6.2, ownpost.py,
-# mm-agent-post.sh): no request then. Without that file (an older server, an
-# agent that never posted) the channel's last 100 posts are read.
+# The server keeps it in last-<uid>.env (RT-6.2, ownpost.py, mm-agent-post.sh)
+# and reads the channel's last 100 posts only without that file. Fails when the
+# server cannot tell; LAST_AT 0 when the agent never posted there.
 LAST_MSG="" LAST_AT=0
 my_last_post() {
-  local cid lf k v at="" msg=""
-  [[ -n "${MM_BOT_USER_ID:-}" ]] || return 1
-  if lf="$(mm_bot_state_file last 2>/dev/null)" && [[ -f "$lf" ]]; then
-    while IFS='=' read -r k v; do
-      case "$k" in AT) at="$v" ;; MSG) msg="$v" ;; esac
-    done <"$lf"
-    if [[ "$at" =~ ^[0-9]+$ && -n "$msg" ]]; then
-      LAST_AT="$at" LAST_MSG="$msg"
-      return 0
-    fi
-  fi
-  cid="$(mm_work_channel_id 2>/dev/null)" || return 1
-  mm_api GET "/api/v4/channels/${cid}/posts?per_page=100" &&
-    [[ "$MM_API_STATUS" == "200" ]] || return 1
-  read -r LAST_AT LAST_MSG < <(jq -r --arg me "$MM_BOT_USER_ID" '
-    first(.order[] as $i | .posts[$i] | select(.user_id == $me)
-          | "\(.create_at) \(.message | ltrimstr("👑 ") | gsub("\n"; " "))") // "0 "' \
-    <<<"$MM_API_BODY" 2>/dev/null) || return 1
+  mm_bus GET /v1/last-post || return 1
+  LAST_AT="$(jq -r '.at // 0' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
+  LAST_MSG="$(jq -r '.message // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
   [[ "$LAST_AT" =~ ^[0-9]+$ ]] || LAST_AT=0
 }
 
 # --- 1. drain ---------------------------------------------------------------
-pending="$("$BIN/mm-agent-unread.sh" count 2>/dev/null || echo 0)"
+# Unread mentions, DMs and posts for all agents, counted by the MCP server
+# (mm-agent-unread.sh there); per channel, with the fyi posts, for the reason.
+pending=0
+if [[ "$DRAINS" -lt "$MAX_DRAIN" ]] && mm_bus GET '/v1/pending?detail=1'; then
+  pending="$(jq -r '.count // 0' <<<"$MM_BUS_BODY" 2>/dev/null || echo 0)"
+fi
 [[ "$pending" =~ ^[0-9]+$ ]] || pending=0
 if [[ "$pending" -gt 0 && "$DRAINS" -lt "$MAX_DRAIN" ]]; then
   DRAINS=$((DRAINS + 1))
-  detail="$("$BIN/mm-agent-unread.sh" detail 2>/dev/null | head -5)"
+  detail="$(jq -r '(.channels // [])[:5][] | "\(.id)\t\(.type)\tpending=\(.pending)"
+                   + (if (.fyi // 0) > 0 then "\tfyi=\(.fyi)" else "" end)' <<<"$MM_BUS_BODY" 2>/dev/null)"
   # Ranked by intent (RT-6.14): an agent's fyi post needs no answer.
   fyi="$(awk -F'fyi=' 'NF > 1 { n += $2 } END { print n + 0 }' <<<"$detail")"
   reason="You have ${pending} unread message(s) on the Mattermost agent bus"
@@ -224,8 +215,7 @@ fi
 # The coordinator listens longer (RT-6.6): while it listens it stays reachable
 # and keeps the crown, so the role does not move the moment its human steps
 # away.
-crown_until="$(sed -n 's/^CROWN_UNTIL=//p' "$(mm_bot_state_file coord 2>/dev/null)" 2>/dev/null | head -1)"
-if [[ "$crown_until" =~ ^[0-9]+$ ]] && (( crown_until > $(date +%s) )); then
+if (( MM_CROWN_UNTIL > $(date +%s) )); then
   LISTEN_SEC="$LISTEN_COORD_SEC"
 fi
 # A request or a reply to the agent's own post typically arrives within a turn
@@ -236,7 +226,7 @@ fi
 # Started as a channel (RT-6.12) and confirmed by the agent,
 # the MCP server pushes messages into the session itself: nothing to listen for.
 if [[ -n "$LF" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] && ! mm_channel_push &&
-  [[ -n "${MM_PROJECT_CHANNEL_ID:-}${MM_PROJECT_CHANNEL:-}" ]] &&
+  [[ "$MM_BUS_PROJECT" == 1 ]] &&
   ! [[ "$LAST_MSG" =~ ^BYE([^A-Za-z]|$) ]]; then
   now="$(date +%s)"
   # A listener is already waiting in the background: let the turn end and keep
@@ -256,7 +246,7 @@ if [[ -n "$LF" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] && ! mm_channel_p
   if [[ "$remaining" -gt 5 ]] && ! [[ "$LISTEN_ASKED" -gt 0 && "$LISTEN_STARTED" -lt "$LISTEN_ASKED" ]]; then
     LISTEN_ASKED="$now"
     save_listen
-    "$BIN/mm-agent-status.sh" listening "$LISTEN_UNTIL" >/dev/null 2>&1 || true
+    presence listening "$LISTEN_UNTIL"
     # The runtime's default limit for a background command (30 min) would
     # cut the window short, so the hook names the timeout to pass.
     bg_ms=$(( (remaining + 60 < MAX_BG_SEC ? remaining + 60 : MAX_BG_SEC) * 1000 ))

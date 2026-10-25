@@ -819,6 +819,33 @@ class MattermostClient:
             "posts": [links.read_post(posts[pid], self.permalink_base) for pid in order if pid in posts],
         }
 
+    async def work_channel_id(self) -> str:
+        """The work channel's id, resolved in the shell CLI's order
+        (mm_work_channel_id): MM_PROJECT_CHANNEL_ID, the project channel's name,
+        MM_CHANNEL_ID, the default channel's name."""
+        if env("MM_PROJECT_CHANNEL_ID"):
+            return env("MM_PROJECT_CHANNEL_ID")
+        if not self.project_channel_name and env("MM_CHANNEL_ID"):
+            return env("MM_CHANNEL_ID")
+        return await self.get_channel_id()
+
+    async def channel_posts(self, channel_id: str, *, per_page: int | None = None,
+                            since_ms: int | None = None) -> list[dict[str, Any]]:
+        """A channel's posts as Mattermost returns them, newest first: the last
+        `per_page`, or those created or edited since `since_ms`."""
+        params: dict[str, Any] = {}
+        if per_page is not None:
+            params["per_page"] = per_page
+        if since_ms is not None:
+            params["since"] = since_ms
+        data = await self._api("GET", f"/api/v4/channels/{channel_id}/posts", params=params) or {}
+        posts = data.get("posts") or {}
+        order = [i for i in data.get("order") or [] if i in posts]
+        listed = set(order)
+        rest = sorted((i for i in posts if i not in listed),
+                      key=lambda i: posts[i].get("create_at", 0), reverse=True)
+        return [posts[i] for i in order + rest]
+
     async def list_recent(
         self,
         *,
