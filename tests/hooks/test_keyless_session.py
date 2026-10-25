@@ -90,7 +90,8 @@ def _shims(tmp_path, extra: dict[str, str] | None = None) -> tuple[str, object]:
     initial environment (what another sandbox reads with KERN_PROCARGS2 on
     macOS, /proc/<pid>/environ on Linux), then runs the real one. Helper
     scripts start through `#!/usr/bin/env bash`, so their bash is wrapped, too;
-    the hook itself (started by the test) is not. `extra`: more commands."""
+    the hook itself (started by the test) is not, nor the sweep: its own
+    environment is the operator's. `extra`: more commands."""
     shim = tmp_path / "shim"
     shim.mkdir()
     fake = tmp_path / "fake-bin"
@@ -111,7 +112,7 @@ def _shims(tmp_path, extra: dict[str, str] | None = None) -> tuple[str, object]:
                     "_", "").replace("+", "").isalnum() or not os.access(real, os.X_OK):
                 continue
             (shim / name).write_text(
-                '#!/bin/sh\ncase "$1" in */adapters/corral/*-mm-session-*.sh) ;;\n'
+                '#!/bin/sh\ncase "$1" in */adapters/corral/*-mm-session-*.sh|*/bin/mm-agent-sweep.sh) ;;\n'
                 f'*) {{ echo "== {name} $*"; /usr/bin/env; }} >>"{dump}" ;;\nesac\n'
                 f'exec "{real}" "$@"\n')
             (shim / name).chmod(0o755)

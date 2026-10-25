@@ -72,6 +72,29 @@ Keyless corral session: the bot token stays on the host (#81, #69).
 - `postEnd` no longer signals a host process without a recorded start time;
   host files are named by the validated session key throughout.
 
+### Security (third review of #81)
+
+- **The installer runs nothing a clone's git config names
+  ([§7.1](docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)):**
+  git runs without system or global config, attributes file, fsmonitor or
+  hooks; a clone whose config has a filter, diff or merge driver or an
+  include, or that has `info/attributes`, is refused, and so is one whose
+  repository lies where a sandbox writes. It prints the commit it installs.
+  Use a clone that was never a session's workdir.
+- **No command from the workdir:** both corral hooks, the installer and
+  `mm-agent-sweep.sh` keep only absolute `PATH` entries outside the places a
+  sandbox writes and work from `/`.
+- **The location check** compares without regard to case, refuses a `..`
+  component and resolves every step's directory, and adds corral's temporary
+  directories.
+- **`mm-agent-sweep.sh`** exports no token or secret: helpers get them on
+  fd 3 ([§7.3](docs/arc42/07-deployment-view.md#73-trust-assumptions)).
+- **`mm-agent-register.sh`** passes the registrar's answer to jq through a
+  pipe, not a here-string (a temporary file on bash ≤ 5.0), and a failure
+  prints the registrar's `message`, never the answer.
+- **The version notice** reads the installed plugins' files only as regular
+  files, bounded in size and time: a FIFO no longer stalls `preStart`.
+
 ### Upgrade
 
 - Rerun `bin/mm-agent-host-install.sh` on the host, from a clone you

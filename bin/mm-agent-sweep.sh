@@ -39,10 +39,19 @@
 # Runs on the HOST: session files never enter a sandbox.
 set -uo pipefail
 
-LIB="$(cd "$(dirname "$0")" && pwd)/mm-agent-lib.sh"
-BIN="$(cd "$(dirname "$0")" && pwd)"
+here="${0%/*}"
+[[ "$here" != "$0" ]] || here=.
+BIN="$(cd -P "$here" && pwd -P)"
+LIB="$BIN/mm-agent-lib.sh"
 # shellcheck source=mm-agent-lib.sh
 source "$LIB"
+# Commands only from PATH entries no sandbox can write, and from / (arc42 §7.3).
+mm_safe_path
+cd /
+# No credential in any process environment (arc42 §7.3): the operator's token
+# and secret stay in this shell; helpers get them on fd 3 (mm_with_token,
+# mm_with_secret), curl on stdin.
+export -n MM_BOT_TOKEN MATTERMOST_TOKEN MM_REG_SECRET 2>/dev/null || true
 
 APPLY=0
 FORCE=0
@@ -151,7 +160,8 @@ for f in "$STATE_DIR"/*.env; do
   if err="$( (
       export MM_AGENT_SESSION_FILE="$f"
       mm_load_session_file || exit 1
-      exec "$BIN/mm-agent-unregister.sh" "$name" 2>&1 >/dev/null
+      export -n MM_BOT_TOKEN MATTERMOST_TOKEN
+      mm_with_token "$BIN/mm-agent-unregister.sh" "$name" 2>&1 >/dev/null
      ) )"; then
     note "unregistered ${name}"
     rm -f "$f"
@@ -159,6 +169,7 @@ for f in "$STATE_DIR"/*.env; do
   elif [[ "$( (
       export MM_AGENT_SESSION_FILE="$f"
       mm_load_session_file >/dev/null 2>&1 || exit 0
+      export -n MM_BOT_TOKEN MATTERMOST_TOKEN
       mm_api GET "/api/v4/users/me" >/dev/null 2>&1 || exit 0
       printf '%s' "$MM_API_STATUS"
      ) )" == "401" ]]; then
@@ -200,7 +211,7 @@ if [[ -n "${MM_REG_SECRET:-}" && -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]];
         echo "would unregister ${uname}  (orphan, no session file)"
         continue
       fi
-      if MM_AGENT_PREFIX="$PREFIX" "$BIN/mm-agent-unregister.sh" "$short" >/dev/null 2>&1; then
+      if MM_AGENT_PREFIX="$PREFIX" mm_with_secret "$BIN/mm-agent-unregister.sh" "$short" >/dev/null 2>&1; then
         note "unregistered ${uname}"
         removed=$((removed + 1))
       else

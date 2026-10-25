@@ -30,8 +30,12 @@ The installer copies from the clone it runs from, or from `--from DIR`, and only
 is committed there (`git archive HEAD`): a clone with uncommitted changes or untracked
 files in the copied paths is refused, and so is a symlink among them. It never takes
 its source from the installed plugin, and refuses one under `~/.cache/corral/`,
-`~/.claude/` or the session's workdir: a sandbox can write those
-([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
+`~/.claude/`, corral's temporary directories or the session's workdir: a sandbox can
+write those. Use a clone that was never a session's workdir and is not a worktree of
+one: a sandbox can write a clone's git config, which can make git run commands. The
+installer reads none outside the clone and refuses a clone whose config could run
+anything; it prints the commit it installs — check the sha against the one you
+reviewed ([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
 The host copy is only as trustworthy as the clone you reviewed.
 
 It copies `adapters/corral/`, `bin/` and the MCP server (`mcp/`) to

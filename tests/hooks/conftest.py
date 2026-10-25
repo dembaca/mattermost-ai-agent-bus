@@ -17,6 +17,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -26,6 +27,13 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# Inside a corral session the temporary directory is corral's own
+# (/private/tmp/corral-*), which the host scripts refuse as sandbox-writable
+# (arc42 §7.1): the tests' trees and PATH entries go next to this checkout.
+if os.path.realpath(tempfile.gettempdir()).lower().startswith("/private/tmp/corral-"):
+    os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", str(ROOT / ".pytest-tmp"))
+    (ROOT / ".pytest-tmp").mkdir(exist_ok=True)
 sys.path.insert(0, str(ROOT / "mcp" / "src"))
 
 from mattermost_ai_agent_bus import hookapi  # noqa: E402
@@ -53,6 +61,7 @@ class FakeMattermost:
     reactions: dict[str, list] = field(default_factory=dict)  # post id → reactions
     bot_description: str | None = None  # the bot's profile; None: not in its user object
     prefix: str = "agent-"  # the registrar's BOT_USERNAME_PREFIX (arc42 §7.1)
+    register_reply: dict | None = None  # the registrar's answer instead of a bot
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -155,6 +164,8 @@ def _handler(fake: FakeMattermost):
             if (p.startswith("/register/v1/agents/") and self.command == "DELETE"
                     and self.headers.get("Authorization") != "Bearer bot-token-for-tests"):
                 return self._send({"message": "unauthorized"}, 401)
+            if p == "/register/v1/agents" and self.command == "POST" and fake.register_reply:
+                return self._send(fake.register_reply)
             if p == "/register/v1/agents" and self.command == "POST":
                 return self._send({"username": f"{fake.prefix}{body['name']}",
                                    "bot_token": "bot-token-for-tests", "user_id": ME})

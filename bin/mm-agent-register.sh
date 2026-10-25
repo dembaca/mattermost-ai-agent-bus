@@ -50,14 +50,22 @@ RESP="$(mm_json_post "$REG_URL" "$MM_REG_SECRET" \
      + (if $r != "" then {responsible:$r} else {} end)
      + (if ($t | length) > 0 then {trusted:$t} else {} end)')")"
 
-USER_NAME="$(jq -r '.username // empty' <<<"$RESP")"
-BOT_TOKEN="$(jq -r '.bot_token // empty' <<<"$RESP")"
-USER_ID="$(jq -r '.user_id // empty' <<<"$RESP")"
-URL="$(jq -r '.url // empty' <<<"$RESP")"
+# The answer holds the bot token: to jq through a pipe from the builtin printf,
+# never a here-string (bash up to 5.0, macOS's 3.2 among them, writes those to a
+# temporary file) and never into a message (arc42 §7.3).
+field() { printf '%s' "$RESP" | jq -r --arg k "$1" '.[$k] // empty | tostring' 2>/dev/null; }
+USER_NAME="$(field username)"
+BOT_TOKEN="$(field bot_token)"
+USER_ID="$(field user_id)"
+URL="$(field url)"
 URL="${URL:-$CHAT_URL}"
 
 if [[ -z "$BOT_TOKEN" || -z "$USER_NAME" ]]; then
-  echo "register failed: $RESP" >&2
+  # The registrar's own words only, never the body; an HTTP error curl has
+  # reported already (mm_json_post fails on one).
+  why="$(printf '%s' "$RESP" | jq -r '(.message // .error // empty) | tostring' 2>/dev/null |
+         head -c 200 | tr -cd '[:print:]')" || why=""
+  echo "register failed: the registrar's answer has no bot_token or username${why:+ (${why})}" >&2
   exit 1
 fi
 

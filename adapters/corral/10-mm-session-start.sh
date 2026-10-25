@@ -19,6 +19,38 @@ set -euo pipefail
 unset MM_BOT_TOKEN MATTERMOST_TOKEN CDPATH
 export -n MM_REG_SECRET 2>/dev/null || true
 
+# --- what a sandbox can write (arc42 §7.1, §7.3) -------------------------------
+# Every corral home, ~/.claude (the homes share it), the session's workdir and
+# corral's temporary directories; a path that is not absolute or has a . or ..
+# component counts as one, too. Compared without regard to case, as macOS
+# volumes do: ~/.CLAUDE is ~/.claude there. Same as mm_sandbox_can_write in
+# bin/mm-agent-lib.sh, inline: nothing of the tree is sourced before the check.
+shopt -s nocasematch
+sandbox_dirs=(/tmp/corral- /private/tmp/corral-)
+for r in "$HOME/.cache/corral" "$HOME/.claude" "${CORRAL_WORKDIR:-}" "${TMPDIR:-}"; do
+  [[ -n "$r" && ( "$r" != "${TMPDIR:-}" || "$r" == *corral* ) ]] || continue
+  sandbox_dirs+=("${r%/}/")
+  if real="$(cd -P "$r" 2>/dev/null && pwd -P)"; then sandbox_dirs+=("$real/"); fi
+done
+sandbox_can_write() {
+  local d
+  [[ "$1" == /* && "$1/" != */../* && "$1/" != */./* ]] || return 0
+  for d in "${sandbox_dirs[@]}"; do [[ "$1/" == "$d"* ]] && return 0; done
+  return 1
+}
+# Commands only from absolute PATH entries no sandbox can write, and from /:
+# the workdir is the sandbox's (a `.` or relative entry would find its curl).
+path_rest="${PATH:-}:" safe_path=""
+while [[ -n "$path_rest" ]]; do
+  e="${path_rest%%:*}" path_rest="${path_rest#*:}"
+  sandbox_can_write "${e%/}" || safe_path="${safe_path:+$safe_path:}$e"
+done
+export PATH="${safe_path:-/usr/bin:/bin:/usr/sbin:/sbin}"
+self="$0"
+[[ "$self" == /* ]] || self="$PWD/$self"
+START_DIR="$PWD"
+cd /
+
 log() { echo "mm-bus: $*" >&2; }
 
 REGISTERED=0
@@ -52,14 +84,17 @@ no_bus() {
 # tree around it. Checked here, inline, before anything of that tree is sourced
 # or run: the path corral ran, every symlink on the way to this file, the real
 # tree and the Python it would start (and its symlinks) must all lie outside
-# every corral home, ~/.claude (the plugin's marketplace clone and cache, which
-# sandboxes write) and the session's workdir. A symlink in such a place could
-# be pointed at another tree.
+# every place a sandbox can write (sandbox_can_write above: the corral homes,
+# ~/.claude with the plugin's marketplace clone and cache, the session's
+# workdir, corral's temporary directories). A symlink in such a place could be
+# pointed at another tree. Each step is checked as written (no `..`) and with
+# its directory resolved, so neither `..` through a symlink nor a change of
+# case gets past it.
 seen=()
-self="$0"
 while :; do
-  seen+=("$(cd "$(dirname "$self")" 2>/dev/null && pwd)/")
-  [[ -L "$self" && "${#seen[@]}" -lt 40 ]] || break
+  d="$(cd -P "$(dirname "$self")" 2>/dev/null && pwd -P)" || d=""
+  seen+=("$self" "$d")
+  [[ -L "$self" && "${#seen[@]}" -lt 80 ]] || break
   link="$(readlink "$self")"
   [[ "$link" == /* ]] || link="$(dirname "$self")/$link"
   self="$link"
@@ -67,25 +102,22 @@ done
 ROOT="$(cd -P "$(dirname "$self")/../.." && pwd -P)"
 BIN="$ROOT/bin"
 HOST_PY="$ROOT/mcp/.venv/bin/python"
-seen+=("$ROOT/")
+seen+=("$ROOT")
+# The Python's symlinks may go through `..` (Homebrew's do): each by its
+# resolved directory.
 py="$HOST_PY" hops=0
-while [[ -L "$py" && "$hops" -lt 40 ]]; do
+while :; do
+  if d="$(cd -P "$(dirname "$py")" 2>/dev/null && pwd -P)"; then seen+=("$d"); fi
+  [[ -L "$py" && "$hops" -lt 40 ]] || break
   link="$(readlink "$py")"
   [[ "$link" == /* ]] || link="$(dirname "$py")/$link"
   py="$link" hops=$((hops + 1))
-  seen+=("$py")
 done
-if py_dir="$(cd -P "$(dirname "$py")" 2>/dev/null && pwd -P)"; then
-  seen+=("$py_dir/")
-fi
 unsafe=""
-for r in "$HOME/.cache/corral" "$HOME/.claude" "${CORRAL_WORKDIR:-}"; do
-  [[ -n "$r" ]] || continue
-  real="$(cd -P "$r" 2>/dev/null && pwd -P)" || real="$r"
-  for p in "${seen[@]}"; do
-    if [[ "$p" == "$r/"* || "$p" == "$real/"* ]]; then unsafe="${p%/}"; fi
-  done
+for p in "${seen[@]}"; do
+  if sandbox_can_write "$p"; then unsafe="${p:-$0}"; fi
 done
+shopt -u nocasematch
 if [[ -n "$unsafe" ]]; then
   no_bus "the host hooks run from ${unsafe}, which a sandbox can change — install them from a reviewed clone with bin/mm-agent-host-install.sh and point corral's exec at ~/.local/share/mm-agent-bus/current/adapters/corral/"
 fi
@@ -156,7 +188,7 @@ slugify() {
 
 host_raw="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo host)"
 HOST="$(slugify "${host_raw%%.*}")"
-PROJECT_RAW="$(basename "${CORRAL_WORKDIR:-$PWD}")"
+PROJECT_RAW="$(basename "${CORRAL_WORKDIR:-$START_DIR}")"
 PROJECT="$(slugify "$PROJECT_RAW")"
 SID="$(slugify "${CORRAL_SESSION_ID:-$$}")"
 SID="${SID##*-}"            # the trailing segment is the distinctive part

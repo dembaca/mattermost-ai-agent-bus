@@ -59,10 +59,20 @@ environment there with `uv sync --locked` (RT-6.18): without it corral sessions 
 no bus, and the host process runs that code with the bot token. It copies only what is
 committed (`git archive HEAD`, so no untracked file and no cache), and refuses a clone
 with uncommitted changes or untracked files in the copied paths and a symlink among
-them. Host-side code takes no input from the corral homes or the session's workdir
+them. git runs with no system or global config, no attributes file, fsmonitor or
+hook, and a clone whose own config names a filter, diff or merge driver or an include,
+or that has `info/attributes`, is refused: those make git run commands, and a sandbox
+can write the config of any clone that was ever a session's workdir. It refuses a
+clone whose repository (`--git-dir`, `--git-common-dir`) lies where a sandbox writes,
+and prints the commit it installs (`<sha> <subject>`) to compare with the one
+reviewed. Host-side code takes no input from the corral homes or the session's workdir
 that decides what runs on the host: the installer never looks its source up among the
 installed plugins, and refuses a source (symlinks resolved) under `~/.cache/corral/`,
-`~/.claude/` (which the homes share by default) or `$CORRAL_WORKDIR`. corral's `exec`
+`~/.claude/` (which the homes share by default), `$CORRAL_WORKDIR` or corral's
+temporary directories (`/private/tmp/corral-*`, a corral `$TMPDIR`), compared without
+regard to case (macOS volumes ignore it); a path with a `..` component counts as
+sandbox-writable. It cannot know which clones were a session's workdir before: use
+one that never was and is not a worktree of one, and check the printed sha. corral's `exec`
 points there once; after a plugin update the developer updates the clone, reviews it
 and reruns the installer, and corral asks to approve the changed hook. The start hook
 says when a newer plugin is installed than the host copy; it names that plugin by
@@ -71,7 +81,13 @@ version only, with no path, as does `--check`.
 **The installed copy is the only mode.** Before they source anything, both hooks
 check, inline, where they run from: the path corral ran, every symlink on the way to
 the hook file, the real tree and the Python the start hook would run (with its
-symlinks) must lie outside `~/.cache/corral/`, `~/.claude/` and `$CORRAL_WORKDIR`.
+symlinks) must lie outside `~/.cache/corral/`, `~/.claude/`, `$CORRAL_WORKDIR` and
+corral's temporary directories — each step as written (no `..` component) and with its
+directory resolved, without regard to case. Then they keep only the absolute `PATH`
+entries outside those places (no `.`, empty or relative entry) and work from `/`, so
+no command is found in the workdir; the installer and `mm-agent-sweep.sh` do the same.
+The version notice reads the installed plugins' files, which sandboxes write, only as
+regular files, bounded in size and time, so a FIFO there cannot stall a session's start.
 Otherwise the start hook contributes only `MM_BUS_UNAVAILABLE` with how to install
 (fail closed, no bot), and the stop hook runs nothing but a note on stderr. Pointing
 `exec` at the marketplace clone, which earlier versions allowed by choice, is no
@@ -107,7 +123,7 @@ The bus treats a trusted human's Mattermost account like the session's terminal 
 | What reaches Mattermost may be stored there | The instance's retention, search, exports, admin access and backups are acceptable for every post, DMs included | The permission relay DMs tool input to the responsible human (RT-6.13): a shell command in full, paths and short arguments, which the terminal shows only to the developer; file content only as its size. A secret in a command that Claude Code does not recognise and mask reaches the server |
 | The profile says whom an agent answers to | Host-managed session: the registrar writes `for @… · trusts @…` and the agent holds no registration secret (Section 7.1) | A session that registers itself holds `MM_REG_SECRET` and names its responsible and trusted humans at registration (RT-6.10, Section 7.2): the registrar writes what the caller names, nobody verifies it. The registrar may write only part of a long trusted list into the profile (RT-6.8 warns) |
 | The sandbox can act as its bot only through the session's MCP server | corral session (RT-6.18): the agent has the relay's and the hook API's endpoints and key in its environment | It can call both itself with that key and gets exactly what its runtime gets: the MCP tools of its session (the relay only while Claude Code's is not connected) and the hook API's routes (RT-6.17) — never the token, so nothing beyond them. The handshake's values only name the session's files; the server's files stay in the directory the host chose |
-| No credential is in any process environment on the host | The host hooks keep the bot token and the registration secret in shell variables they do not export; every helper (`mm-agent-register.sh`, `-channels`, `-status`, `-unread`, `-unregister`) gets its credential on fd 3 (`MM_BOT_TOKEN_FD`, `MM_REG_SECRET_FD`), curl on stdin, jq from a pipe (`--rawfile`), the host process on stdin; the secret comes from gopass | On macOS a process in a corral sandbox can read the initial argv and environment of every process of the same user that runs a non-platform binary (`sysctl KERN_PROCARGS2`; `ps` is denied, the sysctl is not). A secret in the login environment (`MM_REG_SECRET`) is therefore visible in the hooks' own processes (the start hook warns). A session's `MM_BUS_KEY` is in its sandbox's environment and so readable by other sandboxes, which can then drive that session's relay and hook API — the closed set of RT-6.17/RT-6.18 actions — as its bot, never get the token. The root fix belongs in corral's sandbox profile |
+| No credential is in any process environment on the host | The host hooks keep the bot token and the registration secret in shell variables they do not export; `mm-agent-sweep.sh` likewise for a session file's token and the operator's token and secret; every helper (`mm-agent-register.sh`, `-channels`, `-status`, `-unread`, `-unregister`) gets its credential on fd 3 (`MM_BOT_TOKEN_FD`, `MM_REG_SECRET_FD`), curl on stdin, jq from a pipe (`--rawfile`, never a here-string, which bash up to 5.0 writes to a temporary file), the host process on stdin; no message prints the registrar's answer; the secret comes from gopass | On macOS a process in a corral sandbox can read the initial argv and environment of every process of the same user that runs a non-platform binary (`sysctl KERN_PROCARGS2`; `ps` is denied, the sysctl is not). A secret in the login environment (`MM_REG_SECRET`) is therefore visible in the hooks' own processes (the start hook warns). A session's `MM_BUS_KEY` is in its sandbox's environment and so readable by other sandboxes, which can then drive that session's relay and hook API — the closed set of RT-6.17/RT-6.18 actions — as its bot, never get the token. The root fix belongs in corral's sandbox profile |
 | A session's token ends with the session | `postEnd` runs, or the host process's watchdog sees corral gone (every 5 s) | corral SIGKILLed and the watchdog not running, or a reboot: an orphan holds the token until the next `preStart` stops it, or the bot stays until `mm-agent-sweep.sh` removes it |
 | The sandbox reaches the host process on loopback | corral's network mode is `net: open`, its only one today | A corral that cuts the sandbox off from `127.0.0.1` leaves the relay and the hooks without the server: the session has no bus (fail closed), never a token |
 | Everyone who can post in the channel may steer the agents | One human per channel, or only people you would let type into the session; with trusted humans configured, the wake gate holds it for the workers (RT-6.16) | Without trusted humans, any channel member wakes an agent with a mention, and the agent reads the text. With them, a post by anyone else wakes no worker and is no task, but the coordinator still reads it; an agent that was itself injected can pass a request on as its own; and with the MCP server down nothing is gated. Only approvals are verified by the server; that the rest of a post is data is a rule for the agent, not a technical barrier |

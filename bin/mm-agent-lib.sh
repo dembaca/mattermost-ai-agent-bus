@@ -62,6 +62,57 @@ mm_creds_from_fds
 mm_with_token() { MM_BOT_TOKEN_FD=3 "$@" 3< <(printf '%s\n' "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}"); }
 mm_with_secret() { MM_REG_SECRET_FD=3 "$@" 3< <(printf '%s\n' "${MM_REG_SECRET:-}"); }
 
+# What a corral sandbox can write (arc42 §7.1, §7.3): every corral home,
+# ~/.claude (the homes share it), the session's workdir and corral's temporary
+# directories. A path that is not absolute or has a . or .. component counts as
+# one, too: what it names depends on where one stands and on the symlinks on the
+# way. Compared without regard to case, as macOS volumes do. The corral hooks
+# carry the same check inline (they source nothing before it).
+mm_sandbox_can_write() {
+  local p="$1/" r real nc=0 rc=1
+  [[ "$1" == /* && "$p" != */../* && "$p" != */./* ]] || return 0
+  shopt -q nocasematch && nc=1
+  shopt -s nocasematch
+  case "$p" in /tmp/corral-* | /private/tmp/corral-*) rc=0 ;; esac
+  for r in "$HOME/.cache/corral" "$HOME/.claude" "${CORRAL_WORKDIR:-}" "${TMPDIR:-}"; do
+    [[ "$rc" -eq 1 && -n "$r" ]] || continue
+    [[ "$r" != "${TMPDIR:-}" || "$r" == *corral* ]] || continue
+    real="$(cd -P "$r" 2>/dev/null && pwd -P)" || real="$r"
+    if [[ "$p" == "${r%/}/"* || "$p" == "${real%/}/"* ]]; then rc=0; fi
+  done
+  [[ "$nc" -eq 1 ]] || shopt -u nocasematch
+  return "$rc"
+}
+
+# Host scripts (installer, sweep) look commands up only in absolute PATH
+# entries no sandbox can write, and work from /: started in a workdir, a `.` or
+# relative entry would find the sandbox's curl (arc42 §7.3).
+mm_safe_path() {
+  local rest="${PATH:-}:" e out=""
+  while [[ -n "$rest" ]]; do
+    e="${rest%%:*}" rest="${rest#*:}"
+    mm_sandbox_can_write "${e%/}" || out="${out:+$out:}$e"
+  done
+  PATH="${out:-/usr/bin:/bin:/usr/sbin:/sbin}"
+  export PATH
+}
+
+# Print a regular file, at most $2 bytes (default 64 KiB), giving up after one
+# second: for files a sandbox may have replaced with a FIFO or a device, which
+# would block a host hook (arc42 §7.1).
+mm_read_file() {
+  local f="$1" max="${2:-65536}" pid w rc
+  [[ -f "$f" ]] || return 1
+  head -c "$max" <"$f" 2>/dev/null &
+  pid=$!
+  { sleep 1; kill "$pid"; } >/dev/null 2>&1 &
+  w=$!
+  wait "$pid" 2>/dev/null
+  rc=$?
+  kill "$w" 2>/dev/null && wait "$w" 2>/dev/null
+  return "$rc"
+}
+
 mm_state_dir() {
   printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
 }
@@ -523,14 +574,18 @@ mm_responsible_name() {
 # and by default ~/.claude too, so nothing read here may decide which code runs
 # on the host. Hence a bare version (digits and dots, an optional suffix;
 # anything else is dropped), never an install path.
+# Every read is of a regular file, bounded in size and time (mm_read_file), and
+# all of them together stop after a few seconds: a FIFO or a long list there
+# must not stall a session's start.
 mm_newest_plugin_version() {
-  local f d v
+  local f d v deadline=$((SECONDS + 5))
   for f in "$HOME/.claude/plugins/installed_plugins.json" \
            "$HOME"/.cache/corral/home-*/.claude/plugins/installed_plugins.json; do
-    [[ -f "$f" ]] || continue
-    jq -r '.. | objects | select(has("installPath")) | .installPath
-           | select(test("mattermost-ai-agent-bus"))' "$f" 2>/dev/null || true
-  done | while read -r d; do
+    (( SECONDS < deadline )) || break
+    mm_read_file "$f" 1048576 | jq -r '.. | objects | select(has("installPath")) | .installPath
+           | select(type == "string" and test("mattermost-ai-agent-bus"))' 2>/dev/null || true
+  done | head -n 64 | while read -r d; do
+    (( SECONDS < deadline )) || break
     v="$(mm_tree_version "$d")"
     if [[ "$v" =~ ^[0-9]+(\.[0-9]+)*([-+][0-9A-Za-z.]+)?$ ]]; then printf '%s\n' "$v"; fi
   done | sort -V -r | sed -n 1p | grep .
@@ -555,7 +610,9 @@ mm_newer_plugin() {
 
 # Version of a mattermost-ai-agent-bus tree (checkout, plugin or host copy).
 mm_tree_version() {
-  jq -r '.version // "?"' "$1/.claude-plugin/plugin.json" 2>/dev/null || echo "?"
+  local v
+  v="$(mm_read_file "$1/.claude-plugin/plugin.json" | jq -r '.version // "?"' 2>/dev/null)" || v=""
+  printf '%s\n' "${v:-?}"
 }
 
 # Epoch seconds → RFC 3339 UTC / local HH:MM, on GNU and BSD date alike.

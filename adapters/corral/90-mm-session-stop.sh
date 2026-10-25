@@ -16,6 +16,34 @@ set -uo pipefail
 unset MM_BOT_TOKEN MATTERMOST_TOKEN CDPATH
 export -n MM_REG_SECRET 2>/dev/null || true
 
+# --- what a sandbox can write (arc42 §7.1, §7.3) -------------------------------
+# Same as preStart's, inline: the corral homes, ~/.claude, the workdir and
+# corral's temporary directories, without regard to case; a relative path or
+# one with a . or .. component counts as one. PATH keeps the absolute entries
+# outside them, and the hook works from /.
+shopt -s nocasematch
+sandbox_dirs=(/tmp/corral- /private/tmp/corral-)
+for r in "$HOME/.cache/corral" "$HOME/.claude" "${CORRAL_WORKDIR:-}" "${TMPDIR:-}"; do
+  [[ -n "$r" && ( "$r" != "${TMPDIR:-}" || "$r" == *corral* ) ]] || continue
+  sandbox_dirs+=("${r%/}/")
+  if real="$(cd -P "$r" 2>/dev/null && pwd -P)"; then sandbox_dirs+=("$real/"); fi
+done
+sandbox_can_write() {
+  local d
+  [[ "$1" == /* && "$1/" != */../* && "$1/" != */./* ]] || return 0
+  for d in "${sandbox_dirs[@]}"; do [[ "$1/" == "$d"* ]] && return 0; done
+  return 1
+}
+path_rest="${PATH:-}:" safe_path=""
+while [[ -n "$path_rest" ]]; do
+  e="${path_rest%%:*}" path_rest="${path_rest#*:}"
+  sandbox_can_write "${e%/}" || safe_path="${safe_path:+$safe_path:}$e"
+done
+export PATH="${safe_path:-/usr/bin:/bin:/usr/sbin:/sbin}"
+self="$0"
+[[ "$self" == /* ]] || self="$PWD/$self"
+cd /
+
 log() { echo "mm-bus: $*" >&2; }
 
 # --- where this hook runs from (arc42 §7.1) ------------------------------------
@@ -24,26 +52,23 @@ log() { echo "mm-bus: $*" >&2; }
 # to register from such a tree, so there is no bot of it to remove; a session
 # file left by an earlier install the sweep handles.
 seen=()
-self="$0"
 while :; do
-  seen+=("$(cd "$(dirname "$self")" 2>/dev/null && pwd)/")
-  [[ -L "$self" && "${#seen[@]}" -lt 40 ]] || break
+  d="$(cd -P "$(dirname "$self")" 2>/dev/null && pwd -P)" || d=""
+  seen+=("$self" "$d")
+  [[ -L "$self" && "${#seen[@]}" -lt 80 ]] || break
   link="$(readlink "$self")"
   [[ "$link" == /* ]] || link="$(dirname "$self")/$link"
   self="$link"
 done
 ROOT="$(cd -P "$(dirname "$self")/../.." && pwd -P)"
-seen+=("$ROOT/")
-for r in "$HOME/.cache/corral" "$HOME/.claude" "${CORRAL_WORKDIR:-}"; do
-  [[ -n "$r" ]] || continue
-  real="$(cd -P "$r" 2>/dev/null && pwd -P)" || real="$r"
-  for p in "${seen[@]}"; do
-    if [[ "$p" == "$r/"* || "$p" == "$real/"* ]]; then
-      log "the host hooks run from ${p%/}, which a sandbox can change — nothing run from it; install them from a reviewed clone with bin/mm-agent-host-install.sh and point corral's exec at ~/.local/share/mm-agent-bus/current/adapters/corral/"
-      exit 0
-    fi
-  done
+seen+=("$ROOT")
+for p in "${seen[@]}"; do
+  if sandbox_can_write "$p"; then
+    log "the host hooks run from ${p:-$0}, which a sandbox can change — nothing run from it; install them from a reviewed clone with bin/mm-agent-host-install.sh and point corral's exec at ~/.local/share/mm-agent-bus/current/adapters/corral/"
+    exit 0
+  fi
 done
+shopt -u nocasematch
 
 BIN="$ROOT/bin"
 # shellcheck source=../../bin/mm-agent-lib.sh
