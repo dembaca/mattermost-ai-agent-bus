@@ -7,7 +7,7 @@ server gets these values instead. Posts themselves are still plain dicts.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -29,3 +29,7 @@ class UnreadChannel:
     channel_id: str
     channel_type: str = "O"
     since: int = 0
+    # The counters: mentions (in a DM or group: unread messages) and unread
+    # posts. Not the channel's identity, so comparisons leave them out.
+    pending: int = field(default=0, compare=False)
+    unread: int = field(default=0, compare=False)

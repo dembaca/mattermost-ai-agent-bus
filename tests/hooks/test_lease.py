@@ -1,146 +1,107 @@
-"""RT-6.6 coordinator crown and presence lease (docs/arc42/06-runtime-view.md)."""
+"""RT-6.6 the status by hand and from the host session hooks: mm-agent-status.sh
+(docs/arc42/06-runtime-view.md). The lease and the crown are the MCP server's
+(mcp/tests/test_lease.py); the script hands them to it when it runs."""
 
 from __future__ import annotations
 
+import asyncio
+import os
 import time
 
-from conftest import ME
+import pytest
+from conftest import CHANNEL, ME, TEAM, hook_api
+from mattermost_ai_agent_bus import lease
 
-LEASE = "bin/mm-agent-lease.sh"
 STATUS = "bin/mm-agent-status.sh"
-ROSTER = "bin/mm-agent-roster.sh"
-OLDER = "o" * 26
-YOUNGER = "y" * 26
 
 
-def coord(run) -> dict[str, int]:
-    f = run.state_dir / f"coord-{ME}.env"
-    if not f.exists():
-        return {}
-    return {k: int(v) for k, v in (l.split("=") for l in f.read_text().split())}
+def live_crown(run) -> None:
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / f"coord-{ME}.env").write_text(
+        f"CROWN_UNTIL={int(time.time()) + 600}\nPENDING=0\nYIELD_UNTIL=0\n")
 
 
-def holds(run) -> bool:
-    return coord(run).get("CROWN_UNTIL", 0) > time.time()
+def server_env(mm, run) -> dict[str, str]:
+    """The environment the MCP server of this session runs with."""
+    return {"PATH": os.environ["PATH"], "HOME": str(run.state_dir.parents[1]),
+            "XDG_STATE_HOME": str(run.state_dir.parent), "MM_CHAT_URL": mm.url,
+            "MM_BOT_TOKEN": "bot-token-for-tests", "MM_BOT_USER_ID": ME, "MM_TEAM_ID": TEAM,
+            "MM_CHANNEL_ID": CHANNEL}
 
 
-def me(mm, emoji="hammer_and_wrench", **kw):
-    mm.agent(ME, "agent-me", 2000, emoji, **kw)
-
-
-def test_every_status_is_a_lease(mm, run):
-    """RT-6.6 step 1: a status always carries an expiry, so a dead session's runs out."""
-    run(STATUS, "working")
+def test_without_a_server_every_status_is_a_plain_lease(mm, run):
+    """RT-6.6 step 1: the host's first status (no MCP server yet) carries an
+    expiry and no crown when coord-<uid>.env holds none."""
+    assert run(STATUS, "idle", "proj").code == 0
     s = mm.custom_status()
-    assert s["emoji"] == "hammer_and_wrench" and s["duration"] == "date_and_time"
+    assert s["emoji"] == "zzz" and s["duration"] == "date_and_time"
     assert s["expires_at"].endswith("Z")
+    assert (run.state_dir / f"presence-{ME}.env").read_text() == "STATE=idle\nLABEL=proj\n"
 
 
-def test_oldest_reachable_takes_the_free_crown(mm, run):
-    """RT-6.6 step 2: no crown anywhere → the oldest reachable agent takes it."""
-    me(mm)
-    mm.agent(YOUNGER, "agent-young", 3000, "hammer_and_wrench")
-    mm.agent(OLDER, "agent-old-idle", 1000, "zzz")           # idle: not reachable
-    mm.agent("s" * 26, "agent-stale", 500, "hammer_and_wrench", expires_in=None)
-    run(STATUS, "working")
-    assert run(LEASE, "tick").code == 0
-    assert holds(run)
+def test_without_a_server_a_live_crown_keeps_its_text(mm, run):
+    """RT-6.6 step 1: written directly, a crown whose lease still runs keeps
+    the coordinator text until that lease ends, not longer."""
+    live_crown(run)
+    assert run(STATUS, "working", "proj").code == 0
     s = mm.custom_status()
-    assert s["emoji"] == "crown" and s["text"].startswith("coordinator · working")
+    assert s["emoji"] == "crown" and s["text"] == "coordinator · working · proj"
+    crown = int((run.state_dir / f"coord-{ME}.env").read_text().split()[0].split("=")[1])
+    assert s["expires_at"] == time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(crown))
 
 
-def test_younger_agent_does_not_claim(mm, run):
-    me(mm)
-    mm.agent(OLDER, "agent-old", 1000, "hammer_and_wrench")
-    run(LEASE, "tick")
-    assert not holds(run)
+@pytest.mark.parametrize("failure", ["error", "slow"])
+def test_a_failed_hand_over_writes_nothing(mm, run, monkeypatch, failure):
+    """RT-6.6, RT-6.17: the session's server answers /v1/me but its presence
+    fails (502) or times out: the script exits 0 and writes no status itself,
+    so it cannot clobber the crown the server holds."""
+    live_crown(run)
+
+    async def set_status(client, state, label=""):
+        if failure == "slow":
+            await asyncio.sleep(1.5)
+        raise RuntimeError("Mattermost down")
+
+    monkeypatch.setattr(lease, "set_status", set_status)
+    with hook_api(server_env(mm, run)) as bus:
+        r = run(STATUS, "working", "proj", MM_BUS_MAX_TIME="1", **bus)
+        time.sleep(1)  # the slow route ends before the server closes
+    assert r.code == 0
+    assert not [w for w in mm.writes if w[0] in ("PUT", "DELETE")]
 
 
-def test_take_waits_for_the_holder_then_takes(mm, run):
-    """RT-6.6 step 4: on ACK the new coordinator's take waits for the release."""
-    me(mm)
-    mm.agent(OLDER, "agent-old", 1000, "crown")
-    r = run(LEASE, "take")
-    assert "pending" in r.stdout and "@agent-old" in r.stdout
-    assert not holds(run) and coord(run)["PENDING"] == 1
-    mm.agent(OLDER, "agent-old", 1000, "hammer_and_wrench")   # released
-    run(LEASE, "tick")
-    assert holds(run) and coord(run)["PENDING"] == 0
+def test_with_the_server_it_keeps_the_crown(mm, run):
+    """RT-6.6, RT-6.17: by hand (runtimes without turn hooks) the state goes to
+    the session's MCP server, which shows the 👑 it holds; no token needed."""
+    live_crown(run)
+    with hook_api(server_env(mm, run)) as bus:
+        r = run(STATUS, "working", "proj", MM_BOT_TOKEN=None, **bus)
+        assert r.code == 0
+        until = str(int(time.time()) + 300)
+        run(STATUS, "listening", until, MM_BOT_TOKEN=None, **bus)
+    statuses = [b for m, p, b in mm.writes if p == "/api/v4/users/me/status/custom"]
+    assert statuses[0]["emoji"] == "crown" and statuses[0]["text"] == "coordinator · working · proj"
+    assert statuses[1]["text"].startswith("coordinator · listening · until")
 
 
-def test_release_leaves_room_for_the_successor(mm, run):
-    """RT-6.6 step 4: after a release the oldest agent does not grab it back."""
-    me(mm)
-    run(LEASE, "take")
-    assert holds(run)
-    assert run(LEASE, "release").stdout.strip() == "released"
-    run(LEASE, "tick")
-    assert not holds(run)
-    assert mm.custom_status()["emoji"] != "crown"
+def test_another_sessions_server_is_not_asked(mm, run):
+    """RT-6.6: a server found by directory that serves another bot is left alone."""
+    live_crown(run)
+    with hook_api(server_env(mm, run)) as bus:
+        run(STATUS, "working", "proj", MM_BOT_USER_ID="z" * 26, **bus)
+    assert mm.custom_status()["emoji"] == "hammer_and_wrench"
 
 
-def test_two_crowns_the_younger_yields(mm, run):
-    """RT-6.6 error handling: a race leaves two crowns; the older keeps it."""
-    me(mm, "crown")
-    run(LEASE, "take")
-    mm.agent(OLDER, "agent-old", 1000, "crown")
-    run(LEASE, "tick")
-    assert not holds(run)
+def test_offline_ends_the_status_and_the_lease_files(mm, run):
+    """RT-6.1: the host's session end: offline, no custom status, no lease files."""
+    live_crown(run)
+    run(STATUS, "working")
+    assert run(STATUS, "offline").code == 0
+    assert mm.custom_status() is None
+    assert ("PUT", f"/api/v4/users/{ME}/status", {"user_id": ME, "status": "offline"}) in mm.writes
+    assert not list(run.state_dir.glob(f"*-{ME}.env"))
 
 
-def test_idle_coordinator_loses_the_crown_when_its_lease_runs_out(mm, run):
-    """RT-6.6 step 5: idle extends nothing; once the lease ends the crown is gone."""
-    me(mm)
-    run(LEASE, "take")
-    until = coord(run)["CROWN_UNTIL"]
-    run(STATUS, "idle")
-    assert coord(run)["CROWN_UNTIL"] == until
-    assert mm.custom_status()["emoji"] == "crown"
-    f = run.state_dir / f"coord-{ME}.env"
-    f.write_text(f.read_text().replace(f"CROWN_UNTIL={until}", "CROWN_UNTIL=1"))
-    run(STATUS, "renew")
-    assert mm.custom_status()["emoji"] == "zzz" and not holds(run)
-
-
-def test_roster_lists_coordinator_first_and_skips_the_unreachable(mm, run):
-    """RT-6.6: the crown holder heads the roster; idle and stale bots are left out."""
-    mm.agent(OLDER, "agent-old", 1000, "hammer_and_wrench")
-    mm.agent(YOUNGER, "agent-young", 3000, "crown")
-    mm.agent("i" * 26, "agent-idle", 1500, "zzz")
-    mm.agent("s" * 26, "agent-stale", 500, "hammer_and_wrench", expires_in=None)
-    lines = run(ROSTER).stdout.splitlines()
-    assert [l.split("\t")[0] for l in lines] == ["agent-young", "agent-old"]
-    assert len(run(ROSTER, "--all").stdout.splitlines()) == 4
-    assert run(LEASE, "who").stdout.strip() == "agent-young"
-
-
-def test_roster_json_for_the_mcp_server(mm, run):
-    """RT-6.14: the same rows as JSON, coordinator first and marked, for
-    coordinator("roster") — one place for the reachability rules."""
-    import json
-
-    mm.agent(OLDER, "agent-old", 1000, "hammer_and_wrench")
-    mm.agent(YOUNGER, "agent-young", 3000, "crown")
-    mm.agent("i" * 26, "agent-idle", 1500, "zzz")
-    rows = json.loads(run(ROSTER, "--json").stdout)
-    assert [(r["username"], r["coordinator"]) for r in rows] == [
-        ("agent-young", True), ("agent-old", False)]
-    assert rows[1]["emoji"] == "hammer_and_wrench"
-
-
-def test_roster_and_crown_follow_the_registrar_prefix(mm, run):
-    """RT-6.6, arc42 §7.1: the bus's bots are the ones with the registrar's
-    prefix, handed in as MM_AGENT_PREFIX or derived from the session's own bot."""
-    mm.agent(OLDER, "bot-old", 1000, "hammer_and_wrench")
-    mm.agent(YOUNGER, "bot-young", 3000, "crown")
-    mm.agent("x" * 26, "agent-other", 2000, "hammer_and_wrench")
-
-    def names(**env) -> list[str]:
-        return [l.split("\t")[0] for l in run(ROSTER, **env).stdout.splitlines()]
-
-    assert names(MM_AGENT_PREFIX="bot-") == ["bot-young", "bot-old"]
-    assert run(LEASE, "who", MM_AGENT_PREFIX="bot-").stdout.strip() == "bot-young"
-    derived = {"MM_BOT_USERNAME": "bot-me", "MM_REG_BOT_NAME": "me"}
-    assert run(LEASE, "who", **derived).stdout.strip() == "bot-young"
-    assert names() == ["agent-other"]
-    assert run(LEASE, "who").stdout.strip() == "agent-other"
+def test_a_wrong_call_says_how(run):
+    assert run(STATUS, "listening", "soon").code == 2
+    assert run(STATUS, "renew").code == 2

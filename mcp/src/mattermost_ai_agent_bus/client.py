@@ -687,13 +687,15 @@ class MattermostClient:
                 self._is_human[(u.get("username") or "").lower()] = not u.get("is_bot", False)
         return {n for n in names if self._is_human.get(n.lower())}
 
-    async def unread_channels(self) -> list[UnreadChannel]:
+    async def unread_channels(self, *, unread_posts: bool = False) -> list[UnreadChannel]:
         """Channels with something pending, each with the time to read from.
 
         A DM counts unread messages (total minus the watermark); elsewhere only
         an explicit mention means someone wants this agent. Read from the last
         view, never before the bot was created: nothing older can be for this
         session, and a fresh bot's channels can report never viewed (0).
+        With unread_posts also the other channels with unread posts but no
+        mention, where a post for all agents may wait (unread.py, RT-6.11).
 
         Note `member.msg_count` is the watermark, not a pending count — unread
         is channel.total_msg_count - member.msg_count.
@@ -710,16 +712,16 @@ class MattermostClient:
             cid = member.get("channel_id")
             channel = by_id.get(cid) or {}
             ctype = channel.get("type") or "O"
+            unread = (channel.get("total_msg_count") or 0) - (member.get("msg_count") or 0)
             if ctype in ("D", "G"):
-                pending = (channel.get("total_msg_count") or 0) - (
-                    member.get("msg_count") or 0
-                )
+                pending = unread
             else:
                 pending = member.get("mention_count") or 0
-            if pending > 0:
+            if pending > 0 or (unread_posts and ctype not in ("D", "G") and unread > 0):
                 out.append(UnreadChannel(
                     channel_id=cid, channel_type=ctype,
-                    since=max(member.get("last_viewed_at") or 0, floor)))
+                    since=max(member.get("last_viewed_at") or 0, floor),
+                    pending=max(pending, 0), unread=max(unread, 0)))
         return out
 
     async def view_channel(self, channel_id: str) -> None:
@@ -806,6 +808,31 @@ class MattermostClient:
                              json={"channel_id": cid, "message": message})
             resp.raise_for_status()
         return True
+
+    # --- presence: status, custom status, a channel's accounts (lease.py, RT-6.6)
+
+    async def channel_users(self, channel_id: str) -> list[dict[str, Any]]:
+        """The accounts in a channel, at most 200, as Mattermost returns them."""
+        return await self._api("GET", "/api/v4/users",
+                               params={"in_channel": channel_id, "per_page": 200}) or []
+
+    async def presences(self, user_ids: list[str]) -> dict[str, str]:
+        """{user_id: online | away | dnd | offline}, in one request."""
+        rows = await self._api("POST", "/api/v4/users/status/ids", json=user_ids) or []
+        return {str(r["user_id"]): str(r.get("status") or "") for r in rows
+                if isinstance(r, dict) and r.get("user_id")}
+
+    async def set_presence(self, user_id: str, status: str) -> None:
+        await self._api("PUT", f"/api/v4/users/{user_id}/status",
+                        json={"user_id": user_id, "status": status})
+
+    async def set_custom_status(self, emoji: str, text: str, expires_at: str) -> None:
+        """The bot's own custom status, until an RFC 3339 time."""
+        await self._api("PUT", "/api/v4/users/me/status/custom", json={
+            "emoji": emoji, "text": text, "duration": "date_and_time", "expires_at": expires_at})
+
+    async def clear_custom_status(self) -> None:
+        await self._api("DELETE", "/api/v4/users/me/status/custom")
 
     async def add_reaction(self, post_id: str, emoji: str) -> None:
         me = await self.get_me()

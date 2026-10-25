@@ -14,7 +14,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "mattermost_ai_agent_bus"
 ALLOWED = {
     "client.py": "the Mattermost adapter: REST, unread counters, profile, Mattermost's own props",
     "a2a.py": "the bus's props: agent_card and a2a, written and read back",
-    "lease.py": "custom status and crown, through mm-agent-lease.sh and mm-agent-roster.sh",
+    "lease.py": "custom status, crown and roster: the lease, read and written through client.py",
 }
 # Keys that are a carrier wherever they appear.
 CARRIERS = {

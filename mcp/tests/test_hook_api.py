@@ -10,7 +10,7 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import hookapi, lease, session_file
+from mattermost_ai_agent_bus import hookapi, lease, session_file, unread
 
 UID = "u" * 26
 OTHER = "o" * 26
@@ -121,35 +121,32 @@ async def test_me_names_the_bot_its_project_and_crown(api, tmp_path, monkeypatch
     assert (await h.get("/v1/me")).json()["project"] is True
 
 
-async def test_pending_runs_the_unread_counters(api, monkeypatch):
-    """RT-6.17, RT-6.2 step 1: the counters by the shell CLI's rules, run with
-    the server's token; per channel with fyi counts only when asked."""
-    runs = []
+async def test_pending_counts_and_details_when_asked(api, monkeypatch):
+    """RT-6.17, RT-6.2 step 1: the count over all channels (unread.py, with
+    the server's token); per channel with fyi counts only when asked."""
+    calls = []
+    rows = [("dm", 3), ("chan", 1)]
 
-    async def script(client, name, *args):
-        runs.append((name, *args))
-        if args == ("count",):
-            return "4"
-        return ("d" * 26 + "\tD\tpending=3\tfyi=1\n" + "c" * 26 + "\tO\tpending=1\n"
-                + "".join(f"{i}\tO\tpending=0\n" for i in range(6)))
+    async def channels(client):
+        calls.append("channels")
+        return list(rows)
 
-    monkeypatch.setattr(lease, "script", script)
+    async def detail(client, got):
+        calls.append(("detail", tuple(got)))
+        return [{"id": "dm", "type": "D", "pending": 3, "fyi": 1}]
+
+    monkeypatch.setattr(unread, "channels", channels)
+    monkeypatch.setattr(unread, "detail", detail)
     _, h = await api(FakeClient())
     assert (await h.get("/v1/pending")).json() == {"count": 4}
-    assert runs == [("mm-agent-unread.sh", "count")]
+    assert calls == ["channels"]
     body = (await h.get("/v1/pending?detail=1")).json()
-    assert body["count"] == 4 and len(body["channels"]) == 5
-    assert body["channels"][:2] == [{"id": "d" * 26, "type": "D", "pending": 3, "fyi": 1},
-                                    {"id": "c" * 26, "type": "O", "pending": 1, "fyi": 0}]
-    runs.clear()
-
-    async def nothing(client, name, *args):
-        runs.append(args)
-        return "0"
-
-    monkeypatch.setattr(lease, "script", nothing)
+    assert body == {"count": 4, "channels": [{"id": "dm", "type": "D", "pending": 3, "fyi": 1}]}
+    assert calls[-1] == ("detail", tuple(rows))
+    rows.clear()
+    calls.clear()
     assert (await h.get("/v1/pending?detail=1")).json() == {"count": 0}
-    assert runs == [("count",)]
+    assert calls == ["channels"]
 
 
 async def test_last_post_from_the_file_else_the_channel(api):
@@ -214,28 +211,27 @@ async def test_ask_reactions_counts_only_what_was_not_handed_over(api):
     assert (await h.get("/v1/ask-reactions")).json() == {"fresh": 1}
 
 
-async def test_presence_runs_the_status_script(api, monkeypatch):
-    """RT-6.17, RT-6.2, RT-6.3: working / idle with the hook's label, listening
-    until an epoch, through mm-agent-status.sh; nothing else."""
+async def test_presence_sets_the_status_lease(api, monkeypatch):
+    """RT-6.17, RT-6.2, RT-6.3, RT-6.6: working / idle / bus with the caller's
+    label, listening until an epoch, kept by lease.py; nothing else."""
     runs = []
 
-    async def script(client, name, *args):
-        runs.append((name, *args))
-        return ""
+    async def set_status(client, state, label=""):
+        runs.append((state, label))
 
-    monkeypatch.setattr(lease, "script", script)
+    monkeypatch.setattr(lease, "set_status", set_status)
     _, h = await api(FakeClient())
     assert (await h.post("/v1/presence", json={"state": "working", "label": "proj"})).json() == {"ok": True}
     await h.post("/v1/presence", json={"state": "idle"})
     until = int(time.time()) + 600
     await h.post("/v1/presence", json={"state": "listening", "until": until})
-    assert runs == [("mm-agent-status.sh", "working", "proj"), ("mm-agent-status.sh", "idle", ""),
-                    ("mm-agent-status.sh", "listening", str(until))]
+    await h.post("/v1/presence", json={"state": "bus", "label": "proj"})
+    assert runs == [("working", "proj"), ("idle", ""), ("listening", str(until)), ("bus", "proj")]
     for body in ({"state": "offline"}, {"state": "listening"}, {"state": "listening", "until": "x"}):
         assert (await h.post("/v1/presence", json=body)).status_code == 400
     assert (await h.post("/v1/presence", content=b"[1]")).status_code == 400
     assert (await h.post("/v1/presence", content=b"{nope")).status_code == 400
-    assert len(runs) == 3
+    assert len(runs) == 4
 
 
 async def test_the_file_names_endpoint_and_key_and_goes_at_exit(api, monkeypatch):
@@ -272,15 +268,14 @@ async def test_a_malformed_request_is_refused(api):
 
 async def test_presence_takes_a_short_label_and_a_near_until(api, monkeypatch):
     """RT-6.17 step 3: the label is one line of at most 64 characters (stripped),
-    `until` an epoch within a day, `state` one of three; anything else is 400
-    and runs nothing."""
+    `until` an epoch within a day, `state` one of four; anything else is 400
+    and sets nothing."""
     runs = []
 
-    async def script(client, name, *args):
-        runs.append(args)
-        return ""
+    async def set_status(client, state, label=""):
+        runs.append((state, label))
 
-    monkeypatch.setattr(lease, "script", script)
+    monkeypatch.setattr(lease, "set_status", set_status)
     _, h = await api(FakeClient())
     assert (await h.post("/v1/presence", json={"state": "idle", "label": "  " + "x" * 64 + " "})).status_code == 200
     assert runs == [("idle", "x" * 64)]
@@ -372,25 +367,32 @@ async def test_a_client_that_does_not_read_is_dropped(api, monkeypatch):
     assert w.aborted and w.closed
 
 
-async def test_script_runs_are_limited(api, monkeypatch):
-    """RT-6.17 step 4: requests that run a shell CLI script (pending,
-    presence) run MAX_SCRIPT_RUNS at a time; the others are not held up."""
+async def test_heavy_routes_are_limited(api, monkeypatch):
+    """RT-6.17 step 4: requests to the Mattermost-heavy routes (pending,
+    presence) run MAX_HEAVY_RUNS at a time; the others are not held up."""
     running, peak, gate_ = 0, 0, asyncio.Event()
 
-    async def script(client, name, *args):
+    async def hold():
         nonlocal running, peak
         running += 1
         peak = max(peak, running)
         await gate_.wait()
         running -= 1
-        return "0"
 
-    monkeypatch.setattr(lease, "script", script)
+    async def channels(client):
+        await hold()
+        return []
+
+    async def set_status(client, state, label=""):
+        await hold()
+
+    monkeypatch.setattr(unread, "channels", channels)
+    monkeypatch.setattr(lease, "set_status", set_status)
     _, h = await api(FakeClient())
     calls = [asyncio.create_task(h.get("/v1/pending")) for _ in range(3)]
     calls.append(asyncio.create_task(h.post("/v1/presence", json={"state": "idle"})))
     await asyncio.sleep(0.3)
-    assert running == hookapi.MAX_SCRIPT_RUNS == 2
+    assert running == hookapi.MAX_HEAVY_RUNS == 2
     assert (await h.get("/v1/me")).status_code == 200
     gate_.set()
     assert [r.status_code for r in await asyncio.gather(*calls)] == [200] * 4

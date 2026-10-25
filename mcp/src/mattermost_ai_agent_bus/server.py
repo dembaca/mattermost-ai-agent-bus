@@ -808,7 +808,7 @@ async def coordinator(action: str = "who") -> str:
         return _out("coordinator", {"roster": tasks.roster(await lease.roster(client), posts, names)})
     if action not in ("who", "take", "release"):
         return _refused("coordinator", 'action must be "who", "take", "release", "tasks" or "roster"')
-    out = await lease.run(_get_client(), action)
+    out = await lease.command(_get_client(), action)
     return _out("coordinator", {"action": action, "result": out or "(no coordinator)"})
 
 

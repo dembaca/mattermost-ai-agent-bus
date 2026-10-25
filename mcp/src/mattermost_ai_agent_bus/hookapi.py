@@ -13,20 +13,20 @@ WebSocket inbox in the server's event loop:
                             message, to, intent, fyi, gated}]}, work channel,
                             newest first (?limit=N, at most 200, or ?since=MS)
     GET  /v1/ask-reactions  {fresh}: reactions to open asks not handed over yet
-    POST /v1/presence       {state: working|idle|listening, label?, until?} → {ok}
+    POST /v1/presence       {state: working|idle|listening|bus, label?, until?} → {ok}
 
 HTTP/1.1 on 127.0.0.1 only, an ephemeral port, one random key per server: every
 request carries ``Authorization: Bearer <key>``, compared in constant time, or
 gets 401 (a malformed request: 400, before the key is looked at). 503 means
 no bus session (no token yet), 502 that Mattermost failed. At most
-MAX_CONNECTIONS connections at once and MAX_SCRIPT_RUNS script-running requests.
+MAX_CONNECTIONS connections at once and MAX_HEAVY_RUNS Mattermost-heavy requests.
 The hooks find endpoint and key in MM_BUS_ENDPOINT / MM_BUS_KEY, else in the
 discovery file ``endpoint-sid-<key>.env`` (0600) in the state dir, keyed like the
 session file (session_file.keyed_path), with the bot's id once known; it is
 removed when the server ends.
 
-What the shell CLI already does with the token stays there, run by the server:
-the status (mm-agent-status.sh) and the unread counters (mm-agent-unread.sh).
+The answers come from the server's own modules, no script runs behind them:
+the status from lease.py, the pending count from unread.py.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import a2a, asks, gate, lease, ownpost, session_file
+from . import a2a, asks, gate, lease, ownpost, session_file, unread
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -59,15 +59,14 @@ READ_TIMEOUT_SEC = 5.0
 WRITE_TIMEOUT_SEC = 5.0
 # Connections served at once; one more is closed without an answer.
 MAX_CONNECTIONS = 32
-# Requests that run a shell CLI script (a process with the token) at once.
-MAX_SCRIPT_RUNS = 2
-# A route may run a shell CLI script, which lease.py gives 60 s.
+# Requests that make several Mattermost calls each (pending, presence) at once.
+MAX_HEAVY_RUNS = 2
+# The pending detail reads up to six channels' posts.
 ROUTE_TIMEOUT_SEC = 90.0
-PRESENCE = ("working", "idle", "listening")
+PRESENCE = ("working", "idle", "listening", "bus")
 MAX_LABEL = 64
 # A listen window ends within Claude Code's 2 h limit; a day is ample.
 MAX_UNTIL_AHEAD_SEC = 86400
-DETAIL_CHANNELS = 5
 MAX_POSTS = 200
 _REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 404: "Not Found",
             413: "Payload Too Large", 502: "Bad Gateway", 503: "Service Unavailable"}
@@ -97,7 +96,7 @@ class HookAPI:
         self._file: Path | None = None
         self._uid = ""
         self._open = 0
-        self._scripts = asyncio.Semaphore(MAX_SCRIPT_RUNS)
+        self._heavy = asyncio.Semaphore(MAX_HEAVY_RUNS)
 
     async def start(self, *, write_file: bool = True) -> str:
         """Listen on 127.0.0.1 and (by default) write the discovery file."""
@@ -229,9 +228,9 @@ class HookAPI:
 
     async def _run(self, route: Route, client: MattermostClient,
                    query: Mapping[str, str], payload: Mapping[str, Any]) -> Reply:
-        if route not in _SCRIPT_ROUTES:
+        if route not in _HEAVY_ROUTES:
             return await route(client, query, payload)
-        async with self._scripts:  # each runs a shell CLI process: a few at a time
+        async with self._heavy:  # each makes several Mattermost calls: a few at a time
             return await route(client, query, payload)
 
 
@@ -265,26 +264,13 @@ async def me(client: MattermostClient, query: Mapping[str, str], body: Mapping[s
                  "project": project, "crown_until": lease.crown_until(uid)}
 
 
-def _channel_row(line: str) -> dict[str, Any]:
-    cid, _, rest = line.partition("\t")
-    ctype, _, rest = rest.partition("\t")
-    row: dict[str, Any] = {"id": cid, "type": ctype, "pending": 0, "fyi": 0}
-    for pair in rest.split("\t"):
-        k, _, v = pair.partition("=")
-        if k in ("pending", "fyi") and v.isdigit():
-            row[k] = int(v)
-    return row
-
-
 async def pending(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
-    """Unread mentions, DMs and posts for all agents (RT-6.2 step 1), by the
-    shell CLI's rules; with detail=1 per channel, with its fyi posts (RT-6.14)."""
-    out = await lease.script(client, "mm-agent-unread.sh", "count")
-    count = int(out) if out.isdigit() else 0
-    result: dict[str, Any] = {"count": count}
-    if count and query.get("detail") == "1":
-        lines = [x for x in (await lease.script(client, "mm-agent-unread.sh", "detail")).splitlines() if x]
-        result["channels"] = [_channel_row(x) for x in lines[:DETAIL_CHANNELS]]
+    """Unread mentions, DMs and posts for all agents (RT-6.2 step 1, unread.py);
+    with detail=1 per channel, with its fyi posts (RT-6.14)."""
+    rows = await unread.channels(client)
+    result: dict[str, Any] = {"count": sum(n for _, n in rows)}
+    if rows and query.get("detail") == "1":
+        result["channels"] = await unread.detail(client, rows)
     return 200, result
 
 
@@ -363,12 +349,11 @@ async def ask_reactions(client: MattermostClient, query: Mapping[str, str],
 
 async def presence(client: MattermostClient, query: Mapping[str, str],
                    body: Mapping[str, Any]) -> Reply:
-    """Set the status for a turn (RT-6.2, RT-6.3, RT-6.6) through
-    mm-agent-status.sh: working or idle with the project label, listening until
-    an epoch."""
+    """Set the status for a turn (RT-6.2, RT-6.3, RT-6.6, lease.py): working,
+    idle or bus with the project label, listening until an epoch."""
     state = body.get("state")
     if state not in PRESENCE:
-        raise BadRequest("state: working, idle or listening")
+        raise BadRequest("state: working, idle, listening or bus")
     if state == "listening":
         until = body.get("until")
         if type(until) is not int or not 0 < until <= time.time() + MAX_UNTIL_AHEAD_SEC:
@@ -381,7 +366,7 @@ async def presence(client: MattermostClient, query: Mapping[str, str],
         arg = label.strip()
         if len(arg) > MAX_LABEL or any(c < " " or c == "\x7f" for c in arg):
             raise BadRequest(f"label: one line, at most {MAX_LABEL} characters")
-    await lease.script(client, "mm-agent-status.sh", state, arg)
+    await lease.set_status(client, state, arg)
     return 200, {"ok": True}
 
 
@@ -393,5 +378,5 @@ _ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/ask-reactions"): ask_reactions,
     ("POST", "/v1/presence"): presence,
 }
-# Routes that run a shell CLI script: at most MAX_SCRIPT_RUNS at once.
-_SCRIPT_ROUTES = frozenset({pending, presence})
+# Routes that make several Mattermost calls: at most MAX_HEAVY_RUNS at once.
+_HEAVY_ROUTES = frozenset({pending, presence})
