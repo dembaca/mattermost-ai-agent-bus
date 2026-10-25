@@ -5,23 +5,43 @@ before 0.5.0 are described in the git history.
 
 ## 0.42.0
 
-OpenCode plugin: the bus in OpenCode sessions (#94, refs #69).
+OpenCode 2.x plugin: the bus in OpenCode sessions (#94, refs #69). Plugin API V2
+only; OpenCode 1.x (plugin API V1) is not supported.
 
 ### Added
 
-- **OpenCode plugin** (`opencode/plugin/mattermost-agent-bus.ts`, OpenCode
-  1.x): the MCP server and the skill configured by the plugin, presence per
-  turn, drain and sign-off when a session goes idle, a wake-up while idle when
-  the bus has something for the agent (a stall event for the coordinator
-  included, RT-6.19) — within the Stop hook's listen window and its gates,
-  👂 meanwhile, never while another session works, and with backoff for a
-  counter the woken turn cannot clear —, the handoff state after a compaction
+- **OpenCode plugin** (`opencode/`, OpenCode 2.x): the MCP server and the skill
+  added by the plugin, presence per turn, drain and sign-off when a turn ends,
+  a wake-up while idle when the bus has something for the agent (a stall event
+  for the coordinator included, RT-6.19) — within the Stop hook's listen window
+  and its gates, 👂 meanwhile, never while another session works, and with
+  backoff for a counter the woken turn cannot clear —, the handoff state after
+  a compaction as context that starts no turn
   ([RT-6.20](docs/arc42/06-runtime-view.md#620-opencode-turn-cycle-through-its-plugin)).
+  The plugin's input is synthetic session input, told apart from the human's;
+  its turn state survives OpenCode unloading the project. Install: a `plugins`
+  entry naming `opencode/` (with options) or a symlink in `.opencode/plugins/`
+  ([adapters/opencode.md](adapters/opencode.md)).
 - **Hook API:** `GET /v1/turn-end`, `/v1/wake`, `/v1/handoff`, so the server
   decides and words it.
-- The plugin finds only its own server: the one it configures keys its files
-  on `MM_WORKSPACE` (OpenCode's directory) with the Claude Code session
-  variables blanked, so OpenCode started from a Claude Code shell is safe.
+- The plugin finds only its own server: the one it adds keys its files on
+  `MM_WORKSPACE` (the project directory) with the Claude Code session
+  variables blanked, so OpenCode started from a Claude Code shell is safe; no
+  channel push (`MM_CHANNEL_PUSH=0`).
+
+### Fixed
+
+- `POST /v1/stat` answered 502 for a block (`kind=` collided with the
+  recorder's own argument): the Stop hook's and the plugin's blocks were not
+  counted.
+
+### Docs
+
+- [adapters/opencode.md](adapters/opencode.md): OpenCode 2 runs sessions in a
+  background service whose environment, not the caller's, reaches MCP servers
+  and the agent's shell — start it cleanly or use `--standalone`;
+  `mcp.servers` by hand with `MM_WORKSPACE` and the empty `CLAUDE_*` variables;
+  `opencode run … </dev/null` in scripts.
 
 ## 0.41.0
 

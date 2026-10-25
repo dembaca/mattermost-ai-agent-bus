@@ -292,3 +292,18 @@ async def test_handoff_hands_back_the_own_posts(api):
     assert "Your HELLO thread: root h; read it with get_thread for more." in text
     client.posts = [post("o", "other")]
     assert (await h.get("/v1/handoff")).json() == {"context": ""}
+
+
+async def test_a_block_counts_its_kind(api):
+    """RT-6.20 (RT-6.9): the plugin and the Stop hook count a block with its
+    kind= (drain, signoff); the field must not collide with stats.record's own
+    argument, which made the route answer 502."""
+    from mattermost_ai_agent_bus import stats
+
+    h = await api(FakeClient())
+    assert (await h.post("/v1/stat", json={"k": "block", "kind": "drain"})).json() == {"ok": True}
+    rows = []
+    for path in session_file.state_dir().glob("stats-*.jsonl"):
+        rows += [line for line in path.read_text().splitlines() if '"block"' in line]
+    assert rows and '"kind": "drain"' in rows[-1]
+    stats.record("block", kind="signoff")  # no TypeError

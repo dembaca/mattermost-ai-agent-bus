@@ -69,8 +69,9 @@ def _path() -> Path | None:
     return session_file.state_dir() / f"stats-{uid}.jsonl"
 
 
-def record(kind: str, **values: Any) -> None:
-    """Append one event. Never raises: a counter must not disturb a session."""
+def record(kind: str, /, **values: Any) -> None:
+    """Append one event. Never raises: a counter must not disturb a session.
+    kind is positional only: a block's own kind= is one of the values (RT-6.9)."""
     f = _path()
     if f is None or not channel():
         return
