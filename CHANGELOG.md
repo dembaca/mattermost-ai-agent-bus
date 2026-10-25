@@ -3,6 +3,46 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.36.0
+
+What waiting for humans costs, and which harness works longest alone: the
+stats now time the agent's asks and its turns, per coding harness.
+
+### Added
+
+- **How long a human takes to answer an ask (RT-6.9, RT-6.11):** `STATS`
+  gets `asks`, `asks_answered`, `ask_wait_sec`, `ask_wait_max_sec`,
+  `asks_open`, `ask_open_sec` and `ask_open_max_sec`. The wait runs from the
+  ask to the first answer by a trusted human, a reaction with an agreed
+  emoji or a reply in its thread (the matching of `expired`), by the
+  answer's server time; a late answer counts with its full wait. The asks
+  file notes `ANSWERED=` per ask, so a second reaction, a re-delivered event
+  or a restarted server counts nothing again; old lines still read. Asks
+  never answered on the bus, also those the agent resolved, count as open at
+  session end. A permission prompt (RT-6.13) is no ask. Seconds and counts
+  only: no names, no text.
+- **How long turns take (RT-6.9):** the prompt hook notes who started a turn
+  (the bus, by a channel push or a listener that ended, or the human); the
+  Stop hook notes the end when it does not block, so a forced round belongs
+  to its turn. `STATS` gets `turns_timed`, `turn_sec`, `turn_max_sec` and the
+  same for the turns the bus started (`bus_turns`, `bus_turns_timed`,
+  `bus_turn_sec`, `bus_turn_max_sec`). A turn that waits on a permission
+  prompt or a human includes the wait; an interrupted turn gets no duration.
+- **The coding harness in `rt` (RT-6.9):** the MCP client's name from the
+  `initialize` handshake as `claude-code`, `cursor`, `opencode`, `codex`, or
+  its own name lowercased; without one the `CLAUDECODE` fallback, else
+  `other`. Older lines keep grouping under `claude-code` and `other`.
+- **Report:** `mm-agent-stats.sh report` (and `--json`, as `harness` per
+  version) gets a Turns table (turns per human prompt, mean and longest
+  turn, the bus's share of turn time, turn time per human input) and an Asks
+  table (asks per hour, share answered, mean and longest wait, asks open at
+  the end, waiting share), one row per version and harness. Missing data
+  shows `–`, never zero. Only Claude Code has turn hooks: Cursor, OpenCode
+  and Codex show `–` in the Turns table, so comparing how long harnesses
+  work on their own needs turn signals from their adapters (Cursor hooks,
+  OpenCode plugin events, Codex notify), a follow-up. The waiting share adds
+  overlapping asks to different humans twice.
+
 ## 0.35.0
 
 More from the review in #61:

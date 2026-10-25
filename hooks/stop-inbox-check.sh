@@ -28,6 +28,13 @@ mm_load_hook_session || true
 
 BIN="$(cd "$(dirname "$0")/../bin" && pwd)"
 
+# Whatever way the hook ends, a stop it did not block ends the turn: note it, so
+# the summary can say how long turns run (RT-6.9). A blocked stop is a forced
+# round inside the same turn.
+TURN_BLOCKED=0
+turn_end() { [[ "$TURN_BLOCKED" -eq 1 ]] || mm_stat turn_end; }
+trap turn_end EXIT
+
 # Drain rounds per turn before a counter that wait_for_events cannot clear is
 # treated as stale. Bounds the hook against looping forever.
 MAX_DRAIN=3
@@ -101,6 +108,7 @@ save_listen() {
 # they can tell at a glance why the turn has not ended yet.
 block() {
   mm_stat block kind="${3:-other}"
+  TURN_BLOCKED=1
   save_state
   jq -nc --arg r "$1" --arg m "${2:-}" \
     '{decision:"block", reason:$r} + (if $m == "" then {} else {systemMessage:$m} end)'

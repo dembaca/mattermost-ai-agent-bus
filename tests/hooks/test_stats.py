@@ -32,6 +32,35 @@ def test_hooks_and_listener_count_what_the_plugin_causes(mm, run):
     assert all(isinstance(e["t"], int) for e in events(run))
 
 
+def test_a_turn_ends_at_the_stop_that_lets_go(mm, run):
+    """RT-6.9 step 1: the start is noted by the prompt hook, the end by the Stop
+    hook that does not block; forced rounds belong to the same turn."""
+    run(PROMPT)
+    mm.unread_dm(1)
+    assert all(run(STOP).blocked for _ in range(3))     # three drain rounds: no end
+    assert [e["k"] for e in events(run)] == ["turn", "block", "block", "block"]
+    assert run(STOP).passed                              # the counter is stale: let go
+    kinds = [e["k"] for e in events(run)]
+    assert kinds.count("turn") == 1 and kinds[-1] == "turn_end"
+    assert kinds.count("turn_end") == 1
+    assert events(run)[0]["by"] == "human"
+
+
+def test_the_bus_starts_a_turn_by_a_listener_that_ended_on_a_message(mm, run):
+    """RT-6.9 step 1: a turn the listener's wake-up started is the bus's; a
+    prompt with the listener gone, or still waiting, is the human's."""
+    f = run.state_dir / f"listen-{ME}.env"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("PID=0\nENDED=event\n")
+    run(PROMPT)
+    f.write_text("PID=0\nENDED=over\n")               # fresh: the window's end woke it
+    run(PROMPT)
+    f.write_text("PID=0\nENDED=\n")                   # nothing woke it: the human typed
+    run(PROMPT)
+    run(PROMPT)                                         # no window at all
+    assert [e["by"] for e in events(run) if e["k"] == "turn"] == ["bus", "bus", "human", "human"]
+
+
 def test_report_aggregates_per_version(mm, run):
     """RT-6.9 step 3: the report groups the STATS lines by version; the share
     counts the plugin's turns against all turns, its own included (never > 100 %)."""
@@ -73,6 +102,47 @@ def test_report_shows_tokens_per_version(mm, run):
     assert (t["req_per_h"], t["bus_req_per_h"], t["bus_per_h"], t["fixed"]) == (50, 5.0, 10_000, 1500)
     out = run(REPORT, "report", "agents-stats").stdout
     assert "bus tok/h" in out and "10%" in out
+
+
+def test_report_groups_turns_and_asks_by_harness(mm, run):
+    """RT-6.9 step 3: turns and asks get a table each, one row per version and
+    harness. A harness without turn hooks (cursor) has no turn data: a dash,
+    never a zero; sessions before 0.36.0 carry neither and weigh nothing."""
+    n = iter(range(100))
+
+    def line(v, rt, minutes=60, **fields):
+        return {"id": f"s{next(n)}", "user_id": "x" * 26, "create_at": 1, "message":
+                "STATS " + json.dumps({"v": v, "rt": rt, "min": minutes, "static": 28000, **fields})}
+    quiet = dict(asks=0, asks_answered=0, ask_wait_sec=0, ask_wait_max_sec=0,
+                 asks_open=0, ask_open_sec=0, ask_open_max_sec=0)
+    mm.posts[:0] = [
+        line("0.35.0", "claude-code", turns=10),
+        line("0.36.0", "claude-code", turns=10, turns_timed=8, turn_sec=1200, turn_max_sec=600,
+             bus_turns=4, bus_turns_timed=3, bus_turn_sec=90, bus_turn_max_sec=60,
+             asks=3, asks_answered=2, ask_wait_sec=600, ask_wait_max_sec=500,
+             asks_open=1, ask_open_sec=5400, ask_open_max_sec=5400),
+        line("0.36.0", "claude-code", turns=2, turns_timed=2, turn_sec=30, turn_max_sec=20,
+             bus_turns=0, bus_turns_timed=0, bus_turn_sec=0, bus_turn_max_sec=0, **quiet),
+        line("0.36.0", "cursor", minutes=120, turns=0, asks=1, asks_answered=1, ask_wait_sec=300,
+             ask_wait_max_sec=300, asks_open=0, ask_open_sec=0, ask_open_max_sec=0),
+    ]
+    rows = {r["version"]: {h["harness"]: h for h in r["harness"]}
+            for r in json.loads(run(REPORT, "report", "agents-stats", "--json").stdout)}
+    assert rows["0.35.0"]["claude-code"]["turns"] is None and rows["0.35.0"]["claude-code"]["asks"] is None
+    cc, cur = rows["0.36.0"]["claude-code"], rows["0.36.0"]["cursor"]
+    t, a = cc["turns"], cc["asks"]
+    assert (t["sessions"], t["turns_per_prompt"], t["mean_sec"], t["max_sec"]) == (2, 1.5, 123, 600)
+    assert (t["bus_mean_sec"], t["bus_max_sec"], t["bus_share_pct"], t["sec_per_input"]) == (30, 60, 7, 123)
+    assert (a["sessions"], a["asks_per_h"], a["answered_pct"], a["mean_wait_sec"]) == (2, 1.5, 67, 300)
+    assert (a["max_wait_sec"], a["open"], a["open_max_sec"], a["waiting_pct"]) == (500, 1, 5400, 83)
+    assert cur["turns"] is None                                  # no turn hooks: absent, not zero
+    assert (cur["asks"]["asks_per_h"], cur["asks"]["waiting_pct"]) == (0.5, 4)
+    out = run(REPORT, "report", "agents-stats").stdout
+    cells = [l.split() for l in out.splitlines()]
+    assert ["0.36.0", "claude-code", "2", "1.5", "2", "min", "10", "min", "7%", "2", "min"] in cells
+    assert ["0.36.0", "cursor", "–", "–", "–", "–", "–", "–"] in cells
+    assert ["0.36.0", "cursor", "1", "0.5", "100%", "5", "min", "5", "min", "0", "4%"] in cells
+    assert ["0.36.0", "claude-code", "2", "1.5", "67%", "5", "min", "8", "min", "1", "83%"] in cells
 
 
 def test_off_counts_nothing(mm, run):

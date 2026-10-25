@@ -229,6 +229,25 @@ async def _tasks(client: MattermostClient, posts: list[dict[str, Any]],
     return tasks.build(posts, names, untrusted=untrusted)
 
 
+async def _note_client(ctx: Any, call_next: Any) -> Any:
+    """The harness's name from the initialize handshake, for the stats (RT-6.9)."""
+    try:
+        if ctx.method == "initialize":
+            info = (ctx.params or {}).get("clientInfo")
+            name = info.get("name") if isinstance(info, dict) else None
+            if isinstance(name, str):
+                stats.set_client(name)
+    except Exception as exc:  # noqa: BLE001 — the handshake goes on; rt from the environment
+        log.info("client name not read: %s", exc)
+    return await call_next(ctx)
+
+
+try:
+    mcp._lowlevel_server.middleware.append(_note_client)
+except AttributeError as exc:  # another SDK: the stats fall back to the environment
+    log.info("no middleware for the client name: %s", exc)
+
+
 def _done_typing() -> None:
     """A post is the answer the typing indicator promised (RT-6.5)."""
     if _inbox is not None:
@@ -713,6 +732,7 @@ async def ask_human(
     post = await client.post(text, root_id=root_id or None, props=props)
     # With its thread: a reply there may answer it, too late after 24 h (RT-6.11).
     asks.add(me.get("id", ""), post["id"], who, post.get("root_id") or root_id)
+    stats.record("ask", id=post["id"])  # RT-6.9
     out = await slim.post(client, post)
     out["ask"] = post["id"]
     return _out("ask_human", _with_unmentioned(out, everyone))
@@ -881,6 +901,14 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         if uid and root and cls == gate.TRUSTED and asks.expired(
                 uid, root, (e.post.get("create_at") or 0) / 1000, thread=e.kind != "reaction"):
             item["expired"] = True
+        # RT-6.9: the first answer by a trusted human ends the ask's wait. A
+        # remark emoji answers nothing; the file remembers, so a second
+        # reaction or a restarted server counts nothing again.
+        if uid and root and cls == gate.TRUSTED and (e.kind != "reaction" or item.get("answer")):
+            got = asks.answered(uid, root, (e.post.get("create_at") or 0) / 1000,
+                                thread=e.kind != "reaction")
+            if got:
+                stats.record("answer", id=got[0], wait=got[1])
         if raw:
             item |= {"post": e.post, "channel": e.channel}
         else:
