@@ -146,7 +146,7 @@ def test_report_groups_turns_and_asks_by_harness(mm, run):
     out = run(REPORT, "report", "agents-stats").stdout
     cells = [l.split() for l in out.splitlines()]
     assert ["0.36.0", "claude-code", "2", "1.5", "2", "min", "10", "min", "7%", "2", "min"] in cells
-    assert ["0.36.0", "cursor", "–", "–", "–", "–", "–", "–"] in cells
+    assert ["0.36.0", "cursor", "-", "-", "-", "-", "-", "-"] in cells
     assert ["0.36.0", "cursor", "1", "0.5", "100%", "5", "min", "5", "min", "0", "4%"] in cells
     assert ["0.36.0", "claude-code", "2", "1.5", "67%", "5", "min", "8", "min", "1", "83%"] in cells
 

@@ -19,7 +19,7 @@
 # longest turn, the share of turn time the bus started on its own, turn time per
 # human input) and an Asks table (asks per hour, share answered by a trusted
 # human, mean and longest wait, asks open at the session's end, the share of
-# time spent waiting for answers). Missing data shows "–".
+# time spent waiting for answers). Missing data shows "-".
 # Read-only; needs a bot token and reads at most the last 2000 posts.
 set -euo pipefail
 
@@ -149,8 +149,8 @@ fi
 [[ "$(jq length <<<"$report")" -gt 0 ]] || { echo "no STATS posts in ~${CHANNEL} yet"; exit 0; }
 {
   printf 'version\tsessions\thours\tplugin turns/h\tshare of turns\tbus chars/turn\tposted chars/session\tfixed chars/turn\n'
-  jq -r '.[] | [.version, .sessions, .hours, (.plugin_turns_per_h // "–"),
-                ((.plugin_share_pct // "–") | tostring + "%"), (.bus_chars_per_turn // "–"),
+  jq -r '.[] | [.version, .sessions, .hours, (.plugin_turns_per_h // "-"),
+                ((.plugin_share_pct // "-") | tostring + "%"), (.bus_chars_per_turn // "-"),
                 .post_chars_per_session, .static] | @tsv' <<<"$report"
 } | column -t -s $'\t'
 # Tokens from the transcript (Claude Code sessions since 0.32.0), in input-token
@@ -160,28 +160,28 @@ if [[ "$(jq '[.[] | select(.tok)] | length' <<<"$report")" -gt 0 ]]; then
   {
     printf 'version\tsessions\thours\trequests/h\tbus requests/h\tfixed tok/request\tbus tok/h\tall tok/h\tbus share\n'
     jq -r '.[] | select(.tok) | .version as $v | .tok | [$v, .sessions, (.hours * 10 | round / 10),
-                  (.req_per_h // "–"), (.bus_req_per_h // "–"), .fixed, (.bus_per_h // "–"),
-                  (.all_per_h // "–"), ((.bus_share_pct // "–") | tostring + "%")] | @tsv' <<<"$report"
+                  (.req_per_h // "-"), (.bus_req_per_h // "-"), .fixed, (.bus_per_h // "-"),
+                  (.all_per_h // "-"), ((.bus_share_pct // "-") | tostring + "%")] | @tsv' <<<"$report"
   } | column -t -s $'\t'
 fi
 # Turns and asks (since 0.36.0), one row per version and harness. A turn runs
 # from the prompt, or the wake-up, to the Stop that ends it; a wait on a permission
 # prompt or a human is part of it. Only harnesses with turn hooks (Claude Code
-# today) send turn data: the others show "–". A wait for an ask is the time to the
+# today) send turn data: the others show "-". A wait for an ask is the time to the
 # first answer by a trusted human; the waiting share adds the age of asks still
 # open at the end (asks to different humans at once count twice). Seconds as
 # 45s, 12 min, 1:30 h.
-FMT='def fmt(s): if s == null then "–" elif s < 60 then "\(s)s"
+FMT='def fmt(s): if s == null then "-" elif s < 60 then "\(s)s"
   elif (s / 60 | round) < 60 then "\(s / 60 | round) min"
   else (s / 60 | round) as $m
     | "\($m / 60 | floor):\($m % 60 | tostring | if length < 2 then "0" + . else . end) h" end;
-  def dash(x): if x == null then "–" else x end;
-  def pct(x): if x == null then "–" else "\(x)%" end;'
+  def dash(x): if x == null then "-" else x end;
+  def pct(x): if x == null then "-" else "\(x)%" end;'
 echo
 {
   printf 'version\tharness\tsessions\tturns/prompt\tmean turn\tlongest turn\tbus time\twork/input\n'
   jq -r "$FMT"'.[] | .version as $v | .harness[] | .harness as $h | .turns as $t
-    | if $t == null then [$v, $h, "–", "–", "–", "–", "–", "–"]
+    | if $t == null then [$v, $h, "-", "-", "-", "-", "-", "-"]
       else [$v, $h, $t.sessions, dash($t.turns_per_prompt), fmt($t.mean_sec), fmt($t.max_sec),
             pct($t.bus_share_pct), fmt($t.sec_per_input)] end | @tsv' <<<"$report"
 } | column -t -s $'\t'
@@ -189,7 +189,7 @@ echo
 {
   printf 'version\tharness\tsessions\tasks/h\tanswered\tmean wait\tlongest wait\topen at end\twaiting\n'
   jq -r "$FMT"'.[] | .version as $v | .harness[] | .harness as $h | .asks as $a
-    | if $a == null then [$v, $h, "–", "–", "–", "–", "–", "–", "–"]
+    | if $a == null then [$v, $h, "-", "-", "-", "-", "-", "-", "-"]
       else [$v, $h, $a.sessions, dash($a.asks_per_h), pct($a.answered_pct), fmt($a.mean_wait_sec),
             fmt(if $a.answered > 0 then $a.max_wait_sec else null end), $a.open,
             pct($a.waiting_pct)] end | @tsv' <<<"$report"

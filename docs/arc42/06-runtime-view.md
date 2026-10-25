@@ -279,7 +279,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
    - **Asks** (always): `asks` posted, `asks_answered`, `ask_wait_sec` and `ask_wait_max_sec` (waits of the answered ones), `asks_open` (never answered by a trusted human on the bus, also one the agent resolved without an answer), `ask_open_sec` (the sum of their ages at session end) and `ask_open_max_sec`. Counts and seconds only: no names, no post ids, no text.
    `MM_STATS_CHANNEL=off` counts and posts nothing.
 3. `bin/mm-agent-stats.sh report` reads the channel and shows per version: sessions, hours, turns the plugin caused per hour and as a share of all turns (`turns` counts every prompt, the bus's included, so all turns are those plus the rounds the Stop hook forced; the plugin's are `bus_turns` plus those rounds, and before 0.36.0 the listener's wake-ups stand in for `bus_turns`), bus characters per turn of all turns, characters posted per session, fixed characters per turn. Versions with `tok` get a second table in input-token equivalents (cache read 0.1, cache write 1.25 / 2, output 5): requests per hour, requests the bus caused per hour, fixed tokens per request, the bus's tokens per hour, all tokens per hour, and the bus's share. Two more tables, one row per version and harness (`rt`), answer how much waiting for humans slows a session down and which harness works longest on its own; `--json` carries the same grouping (`harness` per version):
-   - **Turns:** turns per human prompt (human prompts are the turns the bus did not start), mean and longest turn, the share of turn time the bus started, and turn time per human input (human prompts plus answered asks). Without turn data (Cursor, OpenCode, versions before 0.36.0) the cells show `–`, never zero: comparing autonomy across harnesses needs turn signals from their adapters (Cursor hooks, OpenCode plugin events, Codex notify), which is still to do.
+   - **Turns:** turns per human prompt (human prompts are the turns the bus did not start), mean and longest turn, the share of turn time the bus started, and turn time per human input (human prompts plus answered asks). Without turn data (Cursor, OpenCode, versions before 0.36.0) the cells show `-`, never zero: comparing autonomy across harnesses needs turn signals from their adapters (Cursor hooks, OpenCode plugin events, Codex notify), which is still to do.
    - **Asks:** asks per hour on the bus, the share answered, mean and longest wait, asks open at the session's end, and the waiting share: (`ask_wait_sec` + `ask_open_sec`) over the time on the bus. Asks to different humans at once each count their own wait, so the share can add overlaps twice; it is not a union of intervals. Seconds read as `45s`, `12 min` or `1:30 h`.
 
 ### Error Handling
@@ -292,7 +292,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 2 | The bus's share of a request is an estimate | Characters at 4 per token against the request's exact input; requests the bus caused are exact |
 | 2 | Subagents' requests | Not counted: they do not use the bus |
 | 1 | A turn is interrupted or its hook is missing (installed mid-turn, crash) | No end, no duration: the start is dropped at the next one, and the turn counts in `turns` but not in `turns_timed` |
-| 1 | The harness has no turn hooks | The turn fields are absent from `STATS`, and the report shows `–` |
+| 1 | The harness has no turn hooks | The turn fields are absent from `STATS`, and the report shows `-` |
 | 1 | The same answer arrives twice (another reaction, a re-delivery, a restart) | Counted once: `ANSWERED=` in the asks file; an ask the agent resolved before any answer stays unanswered in the counts |
 | 2 | The client sends no name | `rt` falls back to the environment, then `other` |
 
@@ -406,7 +406,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Purpose:** An agent waiting on a tool permission prompt is not stuck until someone looks at its terminal: its responsible human answers from Mattermost, the one place they coordinate from.
 
-**Trigger:** In a session started as a channel (RT-6.12), Claude Code opens a permission dialog for a tool call (Bash, Write, Edit, an MCP tool) and sends `notifications/claude/channel/permission_request` with a request id (five letters `a`–`z` without `l`), `tool_name`, `description` and `input_preview`. Research preview, Claude Code ≥ 2.1.234.
+**Trigger:** In a session started as a channel (RT-6.12), Claude Code opens a permission dialog for a tool call (Bash, Write, Edit, an MCP tool) and sends `notifications/claude/channel/permission_request` with a request id (five letters `a`-`z` without `l`), `tool_name`, `description` and `input_preview`. Research preview, Claude Code ≥ 2.1.234.
 
 **Participants:** MCP server; Agent runtime, Mattermost REST API, Mattermost WebSocket, Developer / operator
 

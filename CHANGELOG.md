@@ -37,8 +37,8 @@ stats now time the agent's asks and its turns, per coding harness.
   turn, the bus's share of turn time, turn time per human input) and an Asks
   table (asks per hour, share answered, mean and longest wait, asks open at
   the end, waiting share), one row per version and harness. Missing data
-  shows `–`, never zero. Only Claude Code has turn hooks: Cursor, OpenCode
-  and Codex show `–` in the Turns table, so comparing how long harnesses
+  shows `-`, never zero. Only Claude Code has turn hooks: Cursor, OpenCode
+  and Codex show `-` in the Turns table, so comparing how long harnesses
   work on their own needs turn signals from their adapters (Cursor hooks,
   OpenCode plugin events, Codex notify), a follow-up. The waiting share adds
   overlapping asks to different humans twice.
