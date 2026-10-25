@@ -84,15 +84,19 @@ mm_require_reg_secret() {
   fi
 }
 
-mm_auth_header() {
+# curl with "Authorization: Bearer <token>" read from stdin (-H @-), never in
+# its argv, where `ps` shows it to every user of the machine. The other
+# arguments are curl's; a body goes in them (-d), stdin is the header's.
+#   mm_curl_auth "$tok" -fsS "$url"
+mm_curl_auth() {
   local tok="$1"
-  printf 'Authorization: Bearer %s' "$tok"
+  shift
+  printf 'Authorization: Bearer %s\n' "$tok" | curl -H @- "$@"
 }
 
 mm_json_post() {
   local url="$1" tok="$2" body="$3"
-  curl -fsS -X POST "$url" \
-    -H "$(mm_auth_header "$tok")" \
+  mm_curl_auth "$tok" -fsS -X POST "$url" \
     -H "Content-Type: application/json" \
     -d "$body"
 }
@@ -110,12 +114,11 @@ mm_api() {
   tok="$(mm_bot_token)" || return $?
   # Status is appended on its own line rather than written to a temp file:
   # no writable TMPDIR is needed, which matters inside a sandbox.
-  local args=(-sS -w $'\n%{http_code}' -X "$method"
-    -H "$(mm_auth_header "$tok")")
+  local args=(-sS -w $'\n%{http_code}' -X "$method")
   if [[ -n "$payload" ]]; then
     args+=(-H "Content-Type: application/json" -d "$payload")
   fi
-  resp="$(curl "${args[@]}" "${chat}${path}" || true)"
+  resp="$(mm_curl_auth "$tok" "${args[@]}" "${chat}${path}" || true)"
   MM_API_STATUS="${resp##*$'\n'}"
   MM_API_BODY="${resp%$'\n'*}"
   [[ "$MM_API_STATUS" =~ ^[0-9]{3}$ ]] || return 1
@@ -219,15 +222,16 @@ mm_load_session_file() {
 # server runs in, the project directory Claude Code was started in. A hook may
 # run deeper (the agent cd'ed into a subdirectory), so that lookup walks up from
 # CLAUDE_PROJECT_DIR / $PWD to the root and takes the nearest session file. The
-# keys must match session_file_path() there.
+# keys must match keyed_path() there. The prefix names the file: mcp (the
+# session file, default) or endpoint (the hook API's, mm_bus).
 mm_hook_session_file() {
-  local dir state key f sid
+  local prefix="${1:-mcp}" dir state key f sid
   state="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
   sid="${CLAUDE_CODE_SESSION_ID:-}"
   sid="${sid//[[:space:]]/}"
   if [[ -n "$sid" ]]; then
     key="$(printf '%s' "$sid" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16)"
-    f="${state}/mcp-sid-${key}.env"
+    f="${state}/${prefix}-sid-${key}.env"
     [[ -n "$key" && -f "$f" ]] || return 1
     printf '%s' "$f"
     return 0
@@ -235,7 +239,7 @@ mm_hook_session_file() {
   dir="$(cd "${CLAUDE_PROJECT_DIR:-$PWD}" 2>/dev/null && pwd -P)" || return 1
   while :; do
     key="$(printf '%s' "$dir" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16)"
-    f="${state}/mcp-${key}.env"
+    f="${state}/${prefix}-${key}.env"
     if [[ -n "$key" && -f "$f" ]]; then
       printf '%s' "$f"
       return 0
@@ -258,13 +262,87 @@ mm_read_hook_input() {
   return 0
 }
 
-# For hooks: pick up the bot token of an MCP-managed session. A no-op when the
-# environment already carries a token (host-managed session).
+# For the shell CLI in an agent's session: pick up the bot token of an
+# MCP-managed session. A no-op when the environment already carries a token
+# (host-managed session). The turn hooks and the listener do not: they ask the
+# MCP server (mm_bus, RT-6.17).
 mm_load_hook_session() {
   [[ -z "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]] || return 0
   local f
   f="$(mm_hook_session_file)" || return 1
   mm_load_env_file "$f"
+}
+
+# The MCP server's hook API (RT-6.17, mcp/.../hookapi.py): the turn hooks and
+# the listener ask it instead of Mattermost and hold no token.
+#   mm_bus GET /v1/me                       → MM_BUS_STATUS, MM_BUS_BODY
+#   mm_bus POST /v1/presence '{"state":"idle"}'
+# Endpoint and key come from MM_BUS_ENDPOINT / MM_BUS_KEY, else from the file
+# the server writes (endpoint-sid-<key>.env, mm_hook_session_file endpoint),
+# read on every call: a restarted server has a new port and key. The key goes
+# to curl on stdin, never in its argv. Succeeds only on HTTP 200; no endpoint,
+# no server or a timeout fail, and the caller fails open. Each call takes at
+# most MM_BUS_MAX_TIME (whole seconds, default 3), and none runs past
+# MM_BUS_DEADLINE (epoch seconds) when a hook set one for its whole run.
+mm_bus() {
+  local method="$1" path="$2" payload="${3:-}" ep="${MM_BUS_ENDPOINT:-}" key="${MM_BUS_KEY:-}" f k v resp
+  MM_BUS_STATUS="" MM_BUS_BODY=""
+  if [[ -z "$ep" || -z "$key" ]]; then
+    f="$(mm_hook_session_file endpoint)" || return 1
+    while IFS='=' read -r k v; do
+      case "$k" in MM_BUS_ENDPOINT) ep="$v" ;; MM_BUS_KEY) key="$v" ;; esac
+    done <"$f"
+    [[ -n "$ep" && -n "$key" ]] || return 1
+  fi
+  local max="${MM_BUS_MAX_TIME:-3}" left
+  [[ "$max" =~ ^[1-9][0-9]*$ ]] || max=3
+  if [[ "${MM_BUS_DEADLINE:-}" =~ ^[0-9]+$ ]]; then
+    left=$((MM_BUS_DEADLINE - $(date +%s)))
+    (( left > 0 )) || return 1
+    (( left < max )) && max="$left"
+  fi
+  local args=(-sS --max-time "$max" -w $'\n%{http_code}' -X "$method")
+  if [[ -n "$payload" ]]; then
+    args+=(-H "Content-Type: application/json" --data-raw "$payload")
+  fi
+  resp="$(mm_curl_auth "$key" "${args[@]}" "${ep%/}${path}" 2>/dev/null)" || return 1
+  MM_BUS_STATUS="${resp##*$'\n'}"
+  MM_BUS_BODY="${resp%$'\n'*}"
+  [[ "$MM_BUS_STATUS" == 200 ]]
+}
+
+# This session's bot id without asking anyone: MM_BOT_USER_ID from the
+# environment, else the one the MCP server put into its endpoint file. For the
+# local steps that must not wait on the server (the prompt hook stopping the
+# listener and clearing the turn state, RT-6.17 error handling). Exports it.
+mm_bus_uid() {
+  local uid="${MM_BOT_USER_ID:-}" f
+  if ! [[ "$uid" =~ ^[a-z0-9]{26}$ ]]; then
+    f="$(mm_hook_session_file endpoint)" || return 1
+    uid="$(sed -n 's/^MM_BOT_USER_ID=//p' "$f" 2>/dev/null | head -1)"
+    [[ "$uid" =~ ^[a-z0-9]{26}$ ]] || return 1
+  fi
+  export MM_BOT_USER_ID="$uid"
+}
+
+# Who this session's bot is, from the hook API: exports MM_BOT_USER_ID and
+# MM_BOT_USERNAME (the per-bot state files key on them), sets MM_BUS_PROJECT
+# (1 in a project channel) and MM_CROWN_UNTIL (epoch, 0 without the 👑). Fails
+# without jq or a bus session: the hook then exits 0 and stays quiet (RT-6.4).
+# shellcheck disable=SC2034  # MM_BUS_PROJECT, MM_CROWN_UNTIL are read by the callers
+mm_bus_me() {
+  local uid name project crown
+  command -v jq >/dev/null 2>&1 || return 1
+  mm_bus GET /v1/me || return 1
+  { read -r uid; read -r name; read -r project; read -r crown; } < <(jq -r '
+    (.user_id // ""), (.username // ""), (if .project then 1 else 0 end), (.crown_until // 0)' \
+    <<<"$MM_BUS_BODY" 2>/dev/null)
+  [[ "${uid:-}" =~ ^[a-z0-9]{26}$ ]] || return 1
+  export MM_BOT_USER_ID="$uid" MM_BOT_USERNAME="${name:-}"
+  MM_BUS_PROJECT="${project:-0}"
+  MM_CROWN_UNTIL="${crown:-0}"
+  [[ "$MM_CROWN_UNTIL" =~ ^[0-9]+$ ]] || MM_CROWN_UNTIL=0
+  return 0
 }
 
 # Per-turn state of the Stop hook (which checks already ran, the listen window),

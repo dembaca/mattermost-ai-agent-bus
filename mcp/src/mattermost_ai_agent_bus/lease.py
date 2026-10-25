@@ -58,6 +58,11 @@ def crown_held(user_id: str) -> bool:
     return _coord(user_id).get("CROWN_UNTIL", 0) > time.time()
 
 
+def crown_until(user_id: str) -> int:
+    """Epoch until which this agent holds the crown; 0 without one."""
+    return _coord(user_id).get("CROWN_UNTIL", 0)
+
+
 def take_pending(user_id: str) -> bool:
     return _coord(user_id).get("PENDING", 0) == 1
 
@@ -114,6 +119,14 @@ def entry(row: Mapping[str, Any]) -> RosterEntry:
     status = text[0] if text and text[0] else _STATUS.get(str(row.get("emoji", "")), "")
     return RosterEntry(username=str(row.get("username") or ""), status=status,
                        coordinator=bool(row.get("coordinator")), crown=bool(row.get("crown")))
+
+
+async def script(client: MattermostClient, name: str, *args: str) -> str:
+    """Run bin/<name> with this session's token, for the hook API (RT-6.17):
+    the status (mm-agent-status.sh) and the unread counters (mm-agent-unread.sh)
+    stay in the shell CLI, run by the server; the hooks hold no token. '' when
+    it cannot run."""
+    return await _script(client, LEASE_SCRIPT.with_name(name), *args)
 
 
 async def _script(client: MattermostClient, script: Path, *args: str) -> str:

@@ -80,15 +80,15 @@ after its bot is removed), joins `MM_PROJECT_CHANNEL`, marks the welcome DM read
 file under `~/.local/state/mm-agent-bus/`, named after the Claude Code session
 (`CLAUDE_CODE_SESSION_ID`), so two sessions in one checkout keep their own bots; only
 without that variable is it keyed on the directory the server runs in
-([arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)). The
-`UserPromptSubmit` / `Stop` hooks read the bot token from there — they run in a
-different process than the MCP server and would otherwise never see it. `session_end`
-removes the file. When the process ends the server keeps its bot, so that
+([arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
+`session_end` removes the file. The turn hooks and the background listener do not read
+it: they hold no token and ask the MCP server over a local API
+([arc42 §6.17](../docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)). When the process ends the server keeps its bot, so that
 `claude --continue` — which keeps the session id — takes the same bot over instead of
 starting under a new name; a bot whose session does not resume is unregistered by a
 later session's `session_start` after `MM_SESSION_KEEP_SEC` (24 h), or by
 `bin/mm-agent-sweep.sh` ([arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)). The hooks run under `bash` (the scripts use bash syntax; `sh` is dash
-on Debian). Without a session file and without `MM_BOT_TOKEN` they do nothing.
+on Debian). Without a running MCP server with a bus session they do nothing.
 
 Under host-managed sessions, `session_start` / `session_end` are unused — they exist for
 runtimes without session hooks.

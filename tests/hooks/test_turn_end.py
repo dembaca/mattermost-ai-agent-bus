@@ -8,7 +8,7 @@ import os
 import subprocess
 import time
 
-from conftest import CHANNEL, ME, PROJECT, ROOT, TEAM
+from conftest import CHANNEL, ME, PROJECT, ROOT, TEAM, hook_api
 
 STOP = "hooks/stop-inbox-check.sh"
 PROMPT = "hooks/turn-status.sh"
@@ -272,10 +272,17 @@ def test_no_window_after_bye_or_when_off_or_without_project(mm, run):
     assert run(STOP).passed
 
 
-def test_stateless_fallback_without_bot_id(mm, run):
-    """RT-6.2 error handling: bot id unknown → stop_hook_active ends the turn."""
-    r = run(STOP, stdin='{"stop_hook_active": true}', MM_BOT_USER_ID="not-an-id")
-    assert r.passed
+def test_without_the_mcp_server_the_hooks_stay_quiet(mm, run):
+    """RT-6.17 error handling, RT-6.4: no hook API (MCP server not running) →
+    the hooks exit 0 without a word, though a mention waits and the token is in
+    their environment: they no longer read Mattermost themselves."""
+    mm.unread_dm(1)
+    mm.own_post("PROGRESS · building")
+    r = run(STOP, bus=None, **IN_PROJECT)
+    assert r.passed and r.stdout == ""
+    assert run(PROMPT, bus=None).code == 0 and mm.writes == []
+    r = run(LISTEN, "--until", str(int(time.time()) + 30), bus=None)
+    assert r.code == 0 and "No bus session" in r.stdout
 
 
 def test_listener_wakes_on_a_dm(mm, run):
@@ -505,12 +512,13 @@ def test_stopped_listener_ends_cleanly(mm, run, tmp_path):
            "XDG_STATE_HOME": str(tmp_path / "state"), "MM_CHAT_URL": mm.url,
            "MM_BOT_TOKEN": "bot-token-for-tests", "MM_BOT_USER_ID": ME, "MM_TEAM_ID": TEAM,
            "MM_CHANNEL_ID": CHANNEL, "MM_LISTEN_POLL_SEC": "1", **IN_PROJECT}
-    p = subprocess.Popen(["bash", str(ROOT / LISTEN), "--until", str(int(time.time()) + 30)],
-                         env=env, stdout=subprocess.PIPE, text=True)
-    time.sleep(1.5)
-    (run.state_dir / f"listen-{ME}.env").unlink()   # what the prompt hook does
-    p.terminate()
-    out, _ = p.communicate(timeout=10)
+    with hook_api(env) as bus:
+        p = subprocess.Popen(["bash", str(ROOT / LISTEN), "--until", str(int(time.time()) + 30)],
+                             env=env | bus, stdout=subprocess.PIPE, text=True)
+        time.sleep(1.5)
+        (run.state_dir / f"listen-{ME}.env").unlink()   # what the prompt hook does
+        p.terminate()
+        out, _ = p.communicate(timeout=10)
     assert p.returncode == 0 and "nothing to do" in out
     assert not (run.state_dir / f"listen-{ME}.env").exists()
 

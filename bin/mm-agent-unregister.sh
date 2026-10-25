@@ -27,9 +27,8 @@ fi
 # Status on its own trailing line instead of a temp file: unregister must still
 # work where TMPDIR is not writable (e.g. inside a sandbox), otherwise teardown
 # fails silently and leaves bot accounts behind.
-RESP="$(curl -sS -w $'\n%{http_code}' -X DELETE \
-  "${REG_URL}/${NAME}" \
-  -H "$(mm_auth_header "$TOKEN")" || true)"
+RESP="$(mm_curl_auth "$TOKEN" -sS -w $'\n%{http_code}' -X DELETE \
+  "${REG_URL}/${NAME}" || true)"
 CODE="${RESP##*$'\n'}"
 BODY="${RESP%$'\n'*}"
 

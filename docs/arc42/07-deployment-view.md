@@ -31,7 +31,7 @@ sweep, the mentions it leaves in place, a task's assignee) and strips it to
 unregister. It learns the prefix from its own registration: the username the
 registrar returns minus the name it sent. A host-managed sandbox never sees that
 name, so the host session hooks hand the prefix in as `MM_AGENT_PREFIX`; the session
-files carry it for the turn hooks and the listener. With neither, `agent-`. It is
+files carry it for the MCP server and the shell CLI. With neither, `agent-`. It is
 derived, not a setting.
 
 ### Software-to-Infrastructure Mapping
@@ -71,8 +71,8 @@ a registration secret that can do no more than create bots that may delete
 themselves. The start hook does not warn for this path; it still says when the
 installed plugin is newer than the clone (`/plugin update`), and it still warns for
 a versioned plugin directory, the corral home's plugins and the session's workdir.
-| MCP server | corral sandbox, child of the agent runtime (`uv run`) | 1 per session | Long-lived; holds the WebSocket |
-| Turn hooks | corral sandbox, run by Claude Code | Per turn | Must finish within the hook timeout |
+| MCP server | corral sandbox, child of the agent runtime (`uv run`) | 1 per session | Long-lived; holds the WebSocket and the bot token; serves the hook API on `127.0.0.1`, ephemeral port, per-session key (RT-6.17) |
+| Turn hooks | corral sandbox, run by Claude Code | Per turn | Must finish within the hook timeout; ask the MCP server, hold no token |
 | Agent skill | corral sandbox, loaded by the agent runtime | 1 per session | Plain Markdown, part of the plugin |
 
 ---

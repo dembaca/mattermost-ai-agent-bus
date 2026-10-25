@@ -1,14 +1,20 @@
 """Run the shell hooks against an in-process fake Mattermost + registrar.
 
 Each test gets a fresh server (random port), a private XDG state dir and a
-minimal environment, so nothing from the developer's machine leaks in.
+minimal environment, so nothing from the developer's machine leaks in. The
+turn hooks and the listener hold no token: they ask the MCP server's hook API
+(RT-6.17), which runs here for each of their runs, in-process, with the run's
+environment and a real client against the fake.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -18,6 +24,13 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "mcp" / "src"))
+
+from mattermost_ai_agent_bus import hookapi  # noqa: E402
+from mattermost_ai_agent_bus.client import MattermostClient  # noqa: E402
+
+# Scripts that ask the hook API instead of Mattermost.
+API_USERS = ("hooks/", "bin/mm-agent-listen.sh")
 ME = "a" * 26
 TEAM = "t" * 26
 CHANNEL = "c" * 26
@@ -163,6 +176,40 @@ def mm():
     srv.shutdown()
 
 
+@contextlib.contextmanager
+def hook_api(env: dict[str, str], *, write_file: bool = False):
+    """The MCP server's hook API (RT-6.17) as it runs under this environment:
+    yields MM_BUS_ENDPOINT / MM_BUS_KEY for the hook. The server side reads
+    os.environ (state dir, channel ids), so it is the run's for the duration."""
+    saved = dict(os.environ)
+    os.environ.clear()
+    os.environ.update(env)
+    loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    try:
+        client = MattermostClient.from_env()
+    except RuntimeError:
+        client = None
+
+    async def get_client():
+        return client
+
+    api = hookapi.HookAPI(get_client)
+    try:
+        asyncio.run_coroutine_threadsafe(api.start(write_file=write_file), loop).result(5)
+        yield {"MM_BUS_ENDPOINT": api.endpoint, "MM_BUS_KEY": api.key}
+    finally:
+        asyncio.run_coroutine_threadsafe(api.close(), loop).result(5)
+        if client is not None:
+            asyncio.run_coroutine_threadsafe(client.close(), loop).result(5)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(5)
+        loop.close()
+        os.environ.clear()
+        os.environ.update(saved)
+
+
 @dataclass
 class Result:
     code: int
@@ -198,10 +245,11 @@ class Result:
 @pytest.fixture
 def run(mm, tmp_path):
     """run(script, *args, stdin=..., **env) → Result. Bot session env is set by default;
-    pass key=None to drop a variable."""
+    pass key=None to drop a variable. Hooks and the listener get the hook API
+    (RT-6.17) by env (bus="env"), by its file (bus="file") or none (bus=None)."""
     state = tmp_path / "state"
 
-    def _run(script: str, *args: str, stdin: str = "{}", **env) -> Result:
+    def _run(script: str, *args: str, stdin: str = "{}", bus: str | None = "env", **env) -> Result:
         base = {
             "PATH": os.environ["PATH"],
             "HOME": str(tmp_path),
@@ -216,8 +264,16 @@ def run(mm, tmp_path):
         for k, v in env.items():
             if v is None:
                 base.pop(k, None)
-        p = subprocess.run(["bash", str(ROOT / script), *args], input=stdin, env=base,
-                           capture_output=True, text=True, timeout=30)
+        with contextlib.ExitStack() as stack:
+            if script.startswith(API_USERS):
+                if bus:
+                    found = stack.enter_context(hook_api(base, write_file=bus == "file"))
+                    if bus == "env":
+                        base |= found
+                # The token is the MCP server's alone: hooks and listener never see it.
+                base = {k: v for k, v in base.items() if k not in ("MM_BOT_TOKEN", "MATTERMOST_TOKEN")}
+            p = subprocess.run(["bash", str(ROOT / script), *args], input=stdin, env=base,
+                               capture_output=True, text=True, timeout=30)
         return Result(p.returncode, p.stdout, p.stderr)
 
     _run.state_dir = state / "mm-agent-bus"

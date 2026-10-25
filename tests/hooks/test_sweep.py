@@ -142,3 +142,29 @@ def test_orphans_are_found_by_the_registrar_prefix(mm, run):
     assert "would unregister bot-orphan" in r.stdout and "agent-foreign" not in r.stdout
     run(SWEEP, "--apply", MM_REG_SECRET="s")
     assert deletes(mm) == ["/register/v1/agents/orphan"]
+
+
+def test_endpoint_files_of_gone_servers_are_removed(run):
+    """RT-6.17 error handling: a crashed MCP server leaves its endpoint file;
+    the sweep removes it once its MM_BUS_PID is dead and the file an hour old.
+    A live server's file and a fresh one stay."""
+    import time
+
+    d = run.state_dir
+    d.mkdir(parents=True, exist_ok=True)
+
+    def endpoint(key: str, pid: str, hours_ago: float) -> str:
+        f = d / f"endpoint-sid-{key}.env"
+        f.write_text(f"MM_BUS_ENDPOINT=http://127.0.0.1:9\nMM_BUS_KEY=x\nMM_BUS_PID={pid}\n")
+        t = time.time() - hours_ago * 3600
+        os.utime(f, (t, t))
+        return f.name
+
+    gone = endpoint("a" * 16, DEAD_PID, 2)
+    fresh = endpoint("b" * 16, DEAD_PID, 0)
+    live = endpoint("c" * 16, str(os.getpid()), 2)
+    dry = run(SWEEP, MM_BOT_TOKEN=None)
+    assert "would remove 1 endpoint file(s)" in dry.stdout and (d / gone).exists()
+    r = run(SWEEP, "--apply", MM_BOT_TOKEN=None)
+    assert "removed 1 endpoint file(s)" in r.stderr
+    assert not (d / gone).exists() and (d / fresh).exists() and (d / live).exists()

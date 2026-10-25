@@ -28,14 +28,15 @@
 # (window opened), ASKED_AT (Stop hook asked), STARTED, PID, ENDED (event |
 # over). A new prompt from the human kills the listener (turn-status.sh).
 #
-# Polls the REST counters every MM_LISTEN_POLL_SEC (default 15 s): two cheap
-# GETs, no WebSocket. Fails open: no bus, no token → exits at once.
+# Asks the MCP server's hook API (RT-6.17) every MM_LISTEN_POLL_SEC (default
+# 15 s), never Mattermost: it holds no token. Fails open: no server, no bus
+# session → exits at once; a server that goes away mid-window (or comes back
+# with a new port) is asked again on the next round.
 set -uo pipefail
 
 BIN="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=mm-agent-lib.sh
 source "$BIN/mm-agent-lib.sh"
-mm_load_hook_session || true
 
 UNTIL=""
 while [[ $# -gt 0 ]]; do
@@ -47,46 +48,36 @@ while [[ $# -gt 0 ]]; do
 done
 [[ "$UNTIL" =~ ^[0-9]+$ ]] || { echo "usage: $0 --until EPOCH" >&2; exit 2; }
 
-[[ -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]] || { echo "No bus session: nothing to listen to. Finish."; exit 0; }
 command -v jq >/dev/null 2>&1 || { echo "jq missing: cannot listen. Finish."; exit 0; }
-if [[ -z "${MM_BOT_USER_ID:-}" ]]; then
-  mm_api GET "/api/v4/users/me" && [[ "$MM_API_STATUS" == "200" ]] ||
-    { echo "Bus unreachable: cannot listen. Finish."; exit 0; }
-  MM_BOT_USER_ID="$(jq -r '.id' <<<"$MM_API_BODY")"
-  export MM_BOT_USER_ID
+if ! mm_bus_me; then
+  if [[ "$MM_BUS_STATUS" == 502 ]]; then
+    echo "Bus unreachable: cannot listen. Finish."
+  else
+    echo "No bus session: nothing to listen to. Finish."
+  fi
+  exit 0
 fi
 ME="$MM_BOT_USER_ID"
 LF="$(mm_bot_state_file listen "$ME")" || exit 0
-CID="$(mm_work_channel_id 2>/dev/null)" || CID=""
 
 POLL="${MM_LISTEN_POLL_SEC:-15}"
 [[ "$POLL" =~ ^[0-9]+$ && "$POLL" -gt 0 ]] || POLL=15
 DIGEST="${MM_LISTEN_DIGEST_SEC:-1800}"
 [[ "$DIGEST" =~ ^[0-9]+$ ]] || DIGEST=1800
-COORD="$(mm_bot_state_file coord "$ME" 2>/dev/null)" || COORD=""
-ASKS="$(mm_bot_state_file asks "$ME" 2>/dev/null)" || ASKS=""
-GATE="$(mm_bot_state_file gate "$ME" 2>/dev/null)" || GATE=""
 
 # Who am I to a post: the username (for @mentions in the text), the threads
 # this agent posted in and those it started, read once — the agent is idle
 # while this runs.
 MY_NAME="${MM_BOT_USERNAME:-}"
-if [[ -z "$MY_NAME" ]] && mm_api GET "/api/v4/users/me" && [[ "$MM_API_STATUS" == "200" ]]; then
-  MY_NAME="$(jq -r '.username // empty' <<<"$MM_API_BODY")"
-fi
 MY_THREADS="[]"
 MY_ROOTS="[]"
-if [[ -n "$CID" ]] && mm_api GET "/api/v4/channels/${CID}/posts?per_page=200" &&
-  [[ "$MM_API_STATUS" == "200" ]]; then
-  MY_THREADS="$(jq -c --arg me "$ME" '[.posts // {} | .[] | select(.user_id == $me)
-                  | if (.root_id // "") == "" then .id else .root_id end] | unique' \
-    <<<"$MM_API_BODY" 2>/dev/null || echo "[]")"
-  MY_ROOTS="$(jq -c --arg me "$ME" '[.posts // {} | .[] | select(.user_id == $me and (.root_id // "") == "") | .id]' \
-    <<<"$MM_API_BODY" 2>/dev/null || echo "[]")"
+if mm_bus GET '/v1/posts?limit=200'; then
+  MY_THREADS="$(jq -c --arg me "$ME" '[.posts[] | select(.user_id == $me)
+                  | if .root_id == "" then .id else .root_id end] | unique' \
+    <<<"$MM_BUS_BODY" 2>/dev/null || echo "[]")"
+  MY_ROOTS="$(jq -c --arg me "$ME" '[.posts[] | select(.user_id == $me and .root_id == "") | .id]' \
+    <<<"$MM_BUS_BODY" 2>/dev/null || echo "[]")"
 fi
-# Authors of fyi posts looked up so far, and which of them are agents.
-CHECKED="[]"
-AGENTS="[]"
 
 get() { [[ -f "$LF" ]] && sed -n "s/^$1=//p" "$LF" | head -1; }
 SINCE="$(get SINCE)"; [[ "$SINCE" =~ ^[0-9]+$ ]] || SINCE="$(date +%s)"
@@ -107,7 +98,10 @@ trap '[[ "${ENDED_AS:-}" == killed ]] || write 0 "${ENDED_AS:-over}"' EXIT
 
 since_ms=$((STARTED * 1000))
 while (( $(date +%s) < UNTIL )); do
-  pending="$("$BIN/mm-agent-unread.sh" count 2>/dev/null || echo 0)"
+  pending=0
+  if mm_bus GET /v1/pending; then
+    pending="$(jq -r '.count // 0' <<<"$MM_BUS_BODY" 2>/dev/null || echo 0)"
+  fi
   [[ "$pending" =~ ^[0-9]+$ ]] || pending=0
   if (( pending > 0 )); then
     ENDED_AS=event
@@ -115,66 +109,43 @@ while (( $(date +%s) < UNTIL )); do
     echo "Mattermost: ${pending} unread mention(s) or DM(s) for you. Collect them with wait_for_events(timeout_sec=1), answer in their threads, then finish your turn."
     exit 0
   fi
-  # A reaction to an open ask (RT-6.11) raises no unread counter: look at the
-  # asks themselves, and wake for any reaction not yet handed to the agent.
-  if [[ -n "$ASKS" && -f "$ASKS" ]]; then
-    seen="$(sed -n 's/^SEEN=//p' "$ASKS" | jq -R . | jq -sc . 2>/dev/null || echo '[]')"
-    fresh=0
-    while read -r pid; do
-      [[ "$pid" =~ ^[a-z0-9]{26}$ ]] || continue
-      mm_api GET "/api/v4/posts/${pid}/reactions" && [[ "$MM_API_STATUS" == "200" ]] || continue
-      n="$(jq --arg me "$ME" --arg pid "$pid" --argjson seen "$seen" '
-        [(. // [])[] | select(.user_id != $me)
-         | "\($pid):\(.user_id):\(.emoji_name)" | select(. as $k | $seen | index($k) | not)]
-        | length' <<<"$MM_API_BODY" 2>/dev/null || echo 0)"
-      [[ "$n" =~ ^[0-9]+$ ]] && fresh=$((fresh + n))
-    done < <(sed -n 's/^ASK=\([^ ]*\).*/\1/p' "$ASKS")
-    if (( fresh > 0 )); then
-      ENDED_AS=event
-      mm_stat wake reason=reaction
-      echo "Mattermost: ${fresh} reaction(s) to your ask(s). Collect them with wait_for_events(timeout_sec=1), act on the answer, call resolve_ask once it is settled, then finish your turn."
-      exit 0
-    fi
+  # A reaction to an open ask (RT-6.11) raises no unread counter: the server
+  # looks at the asks themselves and counts reactions not yet handed over.
+  fresh=0
+  if mm_bus GET /v1/ask-reactions; then
+    fresh="$(jq -r '.fresh // 0' <<<"$MM_BUS_BODY" 2>/dev/null || echo 0)"
   fi
-  if [[ -n "$CID" ]] && mm_api GET "/api/v4/channels/${CID}/posts?since=${since_ms}" &&
-    [[ "$MM_API_STATUS" == "200" ]]; then
-    coordinator=false
-    c_until="$(sed -n 's/^CROWN_UNTIL=//p' "$COORD" 2>/dev/null | head -1)"
-    [[ "$c_until" =~ ^[0-9]+$ ]] && (( c_until > $(date +%s) )) && coordinator=true
-    gated='[]'
-    if [[ -n "$GATE" && -f "$GATE" ]]; then
-      gated="$(sed -n 's/^GATED=\([^ ]*\).*/\1/p' "$GATE" | jq -R . | jq -sc . 2>/dev/null || echo '[]')"
-    fi
-    # An fyi post counts as one only from an agent: look up authors not seen yet.
-    fresh_authors="$(jq -c --arg me "$ME" --argjson t "$since_ms" --argjson checked "$CHECKED" '
-      [.posts // {} | .[] | select(.user_id != $me and .create_at >= $t
-          and ((.props | objects | .a2a | objects | .intent) // "") == "fyi") | .user_id]
-      | unique - $checked' <<<"$MM_API_BODY" 2>/dev/null || echo "[]")"
-    if [[ -n "$fresh_authors" && "$fresh_authors" != "[]" ]]; then
-      AGENTS="$(jq -c --argjson more "$(mm_agent_ids "$fresh_authors")" '. + $more' <<<"$AGENTS")"
-      CHECKED="$(jq -c --argjson more "$fresh_authors" '. + $more' <<<"$CHECKED")"
-    fi
+  [[ "$fresh" =~ ^[0-9]+$ ]] || fresh=0
+  if (( fresh > 0 )); then
+    ENDED_AS=event
+    mm_stat wake reason=reaction
+    echo "Mattermost: ${fresh} reaction(s) to your ask(s). Collect them with wait_for_events(timeout_sec=1), act on the answer, call resolve_ask once it is settled, then finish your turn."
+    exit 0
+  fi
+  coordinator=false
+  if mm_bus_me && (( MM_CROWN_UNTIL > $(date +%s) )); then
+    coordinator=true
+  fi
+  if mm_bus GET "/v1/posts?since=${since_ms}"; then
     # ?since= also returns posts edited since then; look only at new ones.
     # Named: a mention, @channel/@all/@here or to all; seen: the coordinator, or
-    # a thread it posted in. An agent's fyi post wakes only whom it names and
-    # the author of its thread's root (RT-6.14).
+    # a thread it posted in. An agent's fyi post (the server tells, RT-6.14)
+    # wakes only whom it names and the author of its thread's root; a post the
+    # server gated (RT-6.16) wakes nobody here.
     read -r addressed others oldest fyi < <(jq -r --arg me "$ME" --arg name "$MY_NAME" \
         --argjson t "$since_ms" --argjson threads "$MY_THREADS" --argjson roots "$MY_ROOTS" \
-        --argjson coord "$coordinator" --argjson gated "$gated" --argjson agents "$AGENTS" '
-      [.posts // {} | .[] | select(.user_id != $me and (.type // "") == "" and .create_at >= $t)]
-      | map((.root_id // "") as $r
-        | . + {fyi: (((.props | objects | .a2a | objects | .intent) // "") == "fyi"
-                     and (.user_id as $u | $agents | index($u)) != null),
-               named: (((.message // "") | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
+        --argjson coord "$coordinator" '
+      [.posts[] | select(.user_id != $me and .type == "" and .create_at >= $t)]
+      | map(.root_id as $r
+        | . + {named: ((.message | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
                         | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))
-                       or (((.props | objects | .a2a | objects | .to) // "") == "all")),
+                       or .to == "all"),
                seen: ($coord or ($r != "" and ($threads | index($r)) != null)),
                mine: ($r != "" and ($roots | index($r)) != null)})
-      | map(. + {addressed: ((.id as $id | $gated | index($id)) == null
-                             and (.named or (.seen and (.mine or (.fyi | not)))))})
+      | map(. + {addressed: ((.gated | not) and (.named or (.seen and (.mine or (.fyi | not)))))})
       | map(select(.addressed)) as $a | map(select(.addressed | not)) as $o
       | "\($a | length) \($o | length) \($o | map(.create_at) | min // 0) \($o | map(select(.fyi)) | length)"' \
-      <<<"$MM_API_BODY" 2>/dev/null || echo "0 0 0 0")
+      <<<"$MM_BUS_BODY" 2>/dev/null || echo "0 0 0 0")
     if [[ "${addressed:-0}" =~ ^[0-9]+$ ]] && (( addressed > 0 )); then
       ENDED_AS=event
       mm_stat wake reason=addressed

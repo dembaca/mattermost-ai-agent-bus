@@ -69,7 +69,13 @@ is_live() {
 
 # Per-bot state, not a session: the uid in its name, never a token.
 STATE_RE='^(asks|coord|gate|last|listen|presence|turn|update)-[a-z0-9]{26}\.env$|^stats-[a-z0-9]{26}\.jsonl$'
+# The MCP server's hook API endpoint (RT-6.17, endpoint-[sid-]<key>.env): no
+# session and no token. A server removes its own at exit; one left by a crash
+# names a port nobody listens on, and the hooks stay quiet. Section 4 removes
+# those whose server is gone.
+ENDPOINT_RE='^endpoint-(sid-)?[0-9a-f]{16}\.env$'
 is_state_file() { [[ "$(basename "$1")" =~ $STATE_RE ]]; }
+not_a_session() { is_state_file "$1" || [[ "$(basename "$1")" =~ $ENDPOINT_RE ]]; }
 
 # The registrar's username prefix (arc42 §7.1): this shell's own bot tells it,
 # else the first session file that does, else the default "agent-".
@@ -77,7 +83,7 @@ PREFIX="$(mm_agent_prefix)"
 if [[ -z "${MM_AGENT_PREFIX:-}" && -z "${MM_REG_BOT_NAME:-}" ]]; then
   shopt -s nullglob
   for f in "$STATE_DIR"/*.env; do
-    is_state_file "$f" && continue
+    not_a_session "$f" && continue
     [[ -n "$(field "$f" MM_AGENT_PREFIX)$(field "$f" MM_REG_BOT_NAME)" ]] || continue
     PREFIX="$(MM_AGENT_PREFIX="$(field "$f" MM_AGENT_PREFIX)" \
       MM_BOT_USERNAME="$(field "$f" MM_BOT_USERNAME)" \
@@ -90,7 +96,7 @@ fi
 # --- 1. session files --------------------------------------------------------
 shopt -s nullglob
 for f in "$STATE_DIR"/*.env; do
-  is_state_file "$f" && continue
+  not_a_session "$f" && continue
   name="$(field "$f" MM_REG_BOT_NAME)"
   # Files from before MM_REG_BOT_NAME carry only the username.
   [[ -n "$name" ]] || { name="$(field "$f" MM_BOT_USERNAME)"; name="${name#"$PREFIX"}"; }
@@ -199,7 +205,7 @@ fi
 KEEP_UIDS=" ${MM_BOT_USER_ID:-} "
 shopt -s nullglob
 for f in "$STATE_DIR"/*.env; do
-  is_state_file "$f" || KEEP_UIDS+="$(field "$f" MM_BOT_USER_ID) "
+  not_a_session "$f" || KEEP_UIDS+="$(field "$f" MM_BOT_USER_ID) "
 done
 stale=0
 for f in "$STATE_DIR"/*-*.env "$STATE_DIR"/stats-*.jsonl; do
@@ -216,6 +222,26 @@ if (( stale > 0 )); then
     note "removed ${stale} state file(s) of bots without a session"
   else
     echo "would remove ${stale} state file(s) of bots without a session"
+  fi
+fi
+
+# --- 4. endpoint files of servers that are gone ------------------------------
+# A crashed MCP server leaves its endpoint file (RT-6.17). Removed once its
+# MM_BUS_PID is no longer alive and the file is an hour old: a server starting
+# right now may not have been seen alive yet.
+gone=0
+for f in "$STATE_DIR"/endpoint-*.env; do
+  [[ "$(basename "$f")" =~ $ENDPOINT_RE ]] || continue
+  is_live "$(field "$f" MM_BUS_PID)" && continue
+  [[ -n "$(find "$f" -mmin +60 2>/dev/null)" ]] || continue
+  gone=$((gone + 1))
+  [[ "$APPLY" -eq 1 ]] && rm -f "$f"
+done
+if (( gone > 0 )); then
+  if [[ "$APPLY" -eq 1 ]]; then
+    note "removed ${gone} endpoint file(s) of MCP servers that are gone"
+  else
+    echo "would remove ${gone} endpoint file(s) of MCP servers that are gone"
   fi
 fi
 

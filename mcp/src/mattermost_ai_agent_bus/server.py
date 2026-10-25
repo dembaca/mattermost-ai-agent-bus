@@ -18,7 +18,9 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import a2a, asks, channel, gate, lease, overhead, ownpost, permission, session_file, slim, stats, tasks
+from . import (
+    a2a, asks, channel, gate, hookapi, lease, overhead, ownpost, permission, session_file, slim, stats, tasks,
+)
 from .client import MattermostClient, attachment_props
 from .websocket_inbox import WebSocketInbox
 
@@ -87,10 +89,32 @@ async def _bus_client() -> MattermostClient | None:
 async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
     # The session's heartbeat: renews its status lease and the crown (RT-6.6).
     task = asyncio.create_task(lease.heartbeat(_bus_client))
+    api = await _start_hook_api()
     try:
         yield {}
     finally:
         task.cancel()
+        if api is not None:
+            await api.close()
+
+
+_hook_api: hookapi.HookAPI | None = None
+
+
+async def _start_hook_api() -> hookapi.HookAPI | None:
+    """The turn hooks' and the listener's way to the bus (RT-6.17): they hold
+    no token and ask this server. None without a bus configured."""
+    global _hook_api
+    if await _bus_client() is None:
+        return None
+    api = hookapi.HookAPI(_bus_client)
+    try:
+        await api.start()
+    except OSError as exc:
+        log.warning("hook API not started, the turn hooks stay inert: %s", exc)
+        return None
+    _hook_api = api
+    return api
 
 
 # A host hook registered the bot and passed its token in: the lifecycle tools
@@ -1132,6 +1156,8 @@ def _cleanup_on_exit() -> None:
     global _exit_handled
     if _confirmed is not None:
         _confirmed.unlink(missing_ok=True)
+    if _hook_api is not None:
+        _hook_api.remove_file()
     if _exit_handled or _client is None:
         return
     _exit_handled = True
