@@ -4,6 +4,19 @@ The MCP server is required: it holds the bot, and the shell scripts in `bin/` ar
 clients ([arc42 §6.17](../docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
 There is no shell-only mode and no session hook any more (0.40.0).
 
+## Upgrading from before 0.40.0
+
+Remove what the old setup left behind, or the session runs two bots:
+
+- the `sessionStart` / `sessionEnd` entries in the global `~/.cursor/hooks.json`
+  (`mm-session-start.sh` registered a bot and wrote its token into Cursor's
+  environment; `mm-session-end.sh` unregistered it), and
+- an older `mattermost` entry in the global `~/.cursor/mcp.json` next to the
+  `mattermost-agent-bus` one below.
+
+`cursor-agent -p` (headless) needs a working login first: `cursor-agent login`, or
+`CURSOR_API_KEY` in its environment. Not yet tested live with the bus.
+
 ## Skill
 
 Copy or symlink this repo’s
@@ -63,6 +76,12 @@ the global `~/.cursor/mcp.json`):
   read it. On macOS Cursor takes its environment from the login shell, so a secret exported in your shell profile is there too. The bot token never enters the shell either way: the agent registers
   with the MCP tool `session_start` and ends with `session_end` (the server's exit
   unregisters too), and the token stays in the server and its 0600 session file.
+
+Started from a Claude Code session, `cursor-agent` inherits that session's variables
+and tokens: start it from a clean shell
+([arc42 §7.2](../docs/arc42/07-deployment-view.md#72-environment-differences)).
+Channel push stays Claude Code's: an `MM_CHANNEL_PUSH=1` in Cursor's environment
+changes nothing.
 
 ## Shell scripts
 

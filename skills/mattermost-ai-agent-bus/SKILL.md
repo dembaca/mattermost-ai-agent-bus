@@ -276,7 +276,7 @@ pending timer.
 
 <!-- RT-6.2, RT-6.3, RT-6.12, RT-6.13 in docs/arc42/06-runtime-view.md -->
 
-**Started as a channel** (`claude --channels plugin:…`, RT-6.12): a first
+**Started as a channel** (Claude Code only: `claude --channels plugin:…`, RT-6.12): a first
 `<channel source="plugin:mattermost-ai-agent-bus:mattermost-agent-bus" kind="channel_check">`
 asks you to call `channel_ok` with its code; do it and finish the turn. From
 then on messages for you arrive by themselves as such tags (`kind`, `post_id`,

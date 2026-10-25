@@ -9,7 +9,7 @@ instead, served next to the WebSocket inbox in the server's event loop:
     GET  /v1/pending        {count[, channels: [{id, type, pending, fyi}]]}
                             (?detail=1: up to 5 channels, with fyi counts)
     GET  /v1/last-post      {at, message}: the own latest post in the work channel
-    GET  /v1/posts          {posts: [{id, user_id, root_id, create_at, type,
+    GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
                             message, to, intent, fyi, gated}]}, work channel
                             (or ?channel=ID|NAME of the project or default
                             channel, else 403), newest first (?limit=N, at
@@ -50,12 +50,12 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import http.client
 import json
 import logging
 import os
 import re
 import secrets
-import socket
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -104,16 +104,25 @@ class Forbidden(ValueError):
     """A request the key does not cover: a 403."""
 
 
-def _answers(endpoint: str) -> bool:
-    """Something listens at this loopback endpoint (http://127.0.0.1:<port>)."""
+# How long another server's hook API may take to show it is alive.
+PROBE_TIMEOUT_SEC = 1.0
+
+
+def _answers(endpoint: str, key: str) -> bool:
+    """The server at this loopback endpoint (http://127.0.0.1:<port>) answers
+    an authenticated GET /v1/me within PROBE_TIMEOUT_SEC. Listening is not
+    enough: an orphan whose event loop is stuck still accepts connections."""
     host, _, port = urlsplit(endpoint).netloc.rpartition(":")
-    if host != "127.0.0.1" or not port.isdigit():
+    if host != "127.0.0.1" or not port.isdigit() or not key:
         return False
+    conn = http.client.HTTPConnection(host, int(port), timeout=PROBE_TIMEOUT_SEC)
     try:
-        with socket.create_connection((host, int(port)), timeout=0.5):
-            return True
-    except OSError:
+        conn.request("GET", "/v1/me", headers={"Authorization": f"Bearer {key}"})
+        return conn.getresponse().status == 200
+    except (OSError, http.client.HTTPException):
         return False
+    finally:
+        conn.close()
 
 
 def file_path() -> Path:
@@ -209,8 +218,8 @@ class HookAPI:
         pid = data.get("MM_BUS_PID", "")
         if not data or data.get("MM_BUS_KEY") == self.key or not _pid_alive(pid):
             return None
-        if not _answers(data.get("MM_BUS_ENDPOINT", "")):
-            return None  # a crash left it behind; its pid may be reused
+        if not _answers(data.get("MM_BUS_ENDPOINT", ""), data.get("MM_BUS_KEY", "")):
+            return None  # a crash or a stuck orphan left it behind; its pid may be reused
         return {"file": str(path), "pid": int(pid), "client": data.get("MM_BUS_CLIENT", "")}
 
     def _write_file(self, uid: str | None = None) -> None:
@@ -486,7 +495,9 @@ async def posts(client: MattermostClient, query: Mapping[str, str], body: Mappin
         log.info("hook API: fyi authors unknown: %s", type(exc).__name__)
         agents = set()
     gated = gate.gated(uid)
-    return 200, {"posts": [_slim(p, agents, gated) for p in raw]}
+    # Which channel this is, for mm-agent-poll.sh to say: as asked, else the work channel's name.
+    return 200, {"channel": query.get("channel", "") or client.work_channel_name,
+                 "posts": [_slim(p, agents, gated) for p in raw]}
 
 
 async def ask_reactions(client: MattermostClient, query: Mapping[str, str],

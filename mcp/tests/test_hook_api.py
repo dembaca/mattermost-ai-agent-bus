@@ -24,6 +24,7 @@ class FakeClient:
     def __init__(self, posts=(), reactions=None, agents=(), token="t", fail=False):
         self.token = token
         self.project_channel_name = ""
+        self.work_channel_name = "agents"
         self.posts = list(posts)
         self._reactions = reactions or {}
         self._agents = set(agents)
@@ -184,7 +185,9 @@ async def test_posts_say_what_the_listener_needs(api):
     d.mkdir(parents=True, exist_ok=True)
     (d / f"gate-{UID}.env").write_text(f"GATED=p3 {int(time.time())}\n")
     _, h = await api(client)
-    got = (await h.get("/v1/posts?limit=500")).json()["posts"]
+    body = (await h.get("/v1/posts?limit=500")).json()
+    assert body["channel"] == "agents"  # the work channel's name, for mm-agent-poll.sh
+    got = body["posts"]
     assert client.calls == [("posts", 200, None)]
     assert [p["id"] for p in got] == ["p1", "p2", "p3", "p4"]
     assert [p["fyi"] for p in got] == [True, False, False, False]
@@ -308,7 +311,7 @@ async def test_the_file_learns_the_bot_id(api, monkeypatch):
     assert stat.S_IMODE(os.stat(f).st_mode) == 0o600
     monkeypatch.setenv("MM_BOT_USER_ID", OTHER)
     # a looks gone to b (`claude --continue`), so b takes the session's file over.
-    monkeypatch.setattr(hookapi, "_answers", lambda endpoint: False)
+    monkeypatch.setattr(hookapi, "_answers", lambda endpoint, key: False)
     b, _ = await api(FakeClient(), write_file=True)
     assert session_file.parse(f)["MM_BOT_USER_ID"] == OTHER
     await h.get("/v1/me")   # a's file is b's now: a leaves it alone
@@ -500,6 +503,9 @@ async def test_a_harness_with_an_inherited_session_id_leaves_the_file(api, monke
     a.note_client("claude-code")
     f = hookapi.file_path()
     assert session_file.parse(f)["MM_BUS_CLIENT"] == "claude-code"
+    # Both serve on this test's one loop: b's probe of a (GET /v1/me within
+    # 1 s) cannot be answered here, so it is taken as answered.
+    monkeypatch.setattr(hookapi, "_answers", lambda endpoint, key: key == a.key)
     b, _ = await api(FakeClient(), write_file=True)
     b.note_client("codex-mcp-client")
     assert session_file.parse(f)["MM_BUS_KEY"] == a.key

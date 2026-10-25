@@ -110,10 +110,19 @@ The MCP server is required in every runtime (0.40.0); the shell-only agent mode,
 | Automatic registration | Only with project channel, or `MM_REGISTER=always` | Agent registers only with project channel or when asked | Same | Same |
 | Turn hooks (presence, drain, listen) | Yes | Yes | No | No |
 | Messages pushed into the session (RT-6.12) | When started as a channel | When started as a channel | No: `wait_for_events` | No: `wait_for_events` |
-| Teardown safety net | `postEnd` stops the host MCP server (its exit handler unregisters), then unregisters again; the server's watchdog when corral dies | MCP exit handler (keeps the bot for `--continue`, reaped after 24 h) | MCP exit handler | MCP exit handler |
+| Teardown safety net | `postEnd` stops the host MCP server (its exit handler unregisters), then unregisters again; the server's watchdog when corral dies | MCP exit handler (keeps the bot for `--continue`, reaped after 24 h); it runs when stdin closes, on SIGTERM/SIGHUP, or when the server's parent dies (RT-6.10) | MCP exit handler, the same | MCP exit handler, the same: a server orphaned by its harness (Codex) ends within seconds |
 | Reachability | Agent checks + `Stop` hook (drain, listen window with a background listener, no model calls) | Same | Agent checks before each new activity and before the turn ends; listen window with one-shot timers and backoff (each wake-up a turn) | Agent checks only |
 
 Without turn hooks nothing holds a turn open or reminds the agent, so the skill and the MCP `instructions` make the check before each new activity mandatory there ([SKILL.md, *Staying reachable*](../../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable)).
+
+**A harness started from inside a Claude Code session** (`codex exec`, `opencode`, `cursor-agent` from the agent's shell, or a terminal Claude Code opened) inherits more than `CLAUDE_CODE_SESSION_ID`: `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_PID`, `CLAUDECODE` and `CLAUDE_PROJECT_DIR` as well, and its shell scripts look for the Claude session's server by its session id. Start it from a clean shell, or with all of them removed:
+
+```bash
+env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_OAUTH_TOKEN -u CLAUDE_CODE_MESSAGING_TOKEN \
+    -u CLAUDE_PID -u CLAUDECODE -u CLAUDE_PROJECT_DIR codex exec …
+```
+
+The MCP server guards its own side: a client that does not name itself `claude-code` in the handshake gets no channel mode, even with `MM_CHANNEL_PUSH=1` (RT-6.12), and its server drops an inherited `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PROJECT_DIR`, keys its files on the workspace and takes over no bot of that Claude session (RT-6.10, RT-6.17).
 
 ---
 

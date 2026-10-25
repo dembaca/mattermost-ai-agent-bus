@@ -9,8 +9,10 @@ import asyncio
 import contextlib
 import json
 import os
+import socket
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -97,7 +99,11 @@ def test_poll_prints_new_posts_oldest_first(mm, run):
     lines = [json.loads(x) for x in r.stdout.splitlines()]
     assert [x["id"] for x in lines] == ["p1", "p2"] and lines[0]["to"] == "all"
     assert {"user_id", "root_id", "create_at", "intent", "fyi", "gated"} <= set(lines[0])
-    assert run(POLL, "--once", "--channel", "proj-x", MM_PROJECT_CHANNEL="proj-x").code == 0
+    # The server names the channel it reads: the work channel when none is given.
+    assert "polling channel=agents since_ms=1000" in r.stderr
+    assert "polling channel=proj-x " in run(POLL, "--once", MM_PROJECT_CHANNEL="proj-x").stderr
+    r = run(POLL, "--once", "--channel", "proj-x", MM_PROJECT_CHANNEL="proj-x")
+    assert r.code == 0 and "polling channel=proj-x " in r.stderr
     r = run(POLL, "--once", "--channel", "o" * 26)  # a DM, say: not a channel the bus watches
     assert r.code == 1 and "HTTP 403" in r.stderr
     assert run(POLL, "--team", "x").code == 2
@@ -254,6 +260,29 @@ def test_a_second_server_in_the_workspace_leaves_the_first_ones_file(mm, ws):
         assert found(state, ws / "one") == a.endpoint
     with server(mm, state, ws / "one") as c:
         assert not c.conflict and found(state, ws / "one") == c.endpoint
+
+
+def test_a_stuck_owner_of_the_file_is_taken_over(mm, ws):
+    """RT-6.17 error handling: the file's owner counts as live only when its
+    pid runs and it answers an authenticated GET /v1/me within 1 s. An
+    orphan that still listens but never answers (Codex left one behind) does
+    not block the next server."""
+    state = ws / "state"
+    with server(mm, state, ws / "one") as a:
+        path = a._file
+        key = a.key
+    stuck = socket.socket()
+    stuck.bind(("127.0.0.1", 0))
+    stuck.listen(8)  # accepts connections into the backlog, never answers
+    try:
+        path.write_text(f"MM_BUS_ENDPOINT=http://127.0.0.1:{stuck.getsockname()[1]}\n"
+                        f"MM_BUS_KEY={key}\nMM_BUS_PID={os.getpid()}\n")
+        t = time.monotonic()
+        with server(mm, state, ws / "one") as b:
+            assert not b.conflict and time.monotonic() - t < 5
+            assert found(state, ws / "one") == b.endpoint
+    finally:
+        stuck.close()
 
 
 def test_the_walk_stops_at_the_repository(mm, ws, run):

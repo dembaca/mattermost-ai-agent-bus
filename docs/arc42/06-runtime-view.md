@@ -321,7 +321,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 3. The status line helper (`mm-agent-statusline.sh`, which shows the bot's name and 👑 in Claude Code's status line and in a host-managed session reads `MM_BOT_USERNAME` instead, in a keyless one asking the server for the 👑, RT-6.18) finds the file under the same name and reads only name and id from it. The Turn hooks and the background listener (`mm-agent-listen.sh`) find the server's hook API file under the same key (`endpoint-sid-…`, RT-6.17) and ask the server, which counts unread messages, sets presence and reads the channel as that bot; a hook whose environment lacks the variable takes `session_id` from its JSON input.
 4. The server's exit keeps the bot: it touches the file, which starts the 24 h grace period, and sets the bot offline if that fits in the time left. Claude Code kills an MCP server about 0.5 s after asking it to stop, so only the local part is certain.
 5. `claude --continue` resumes under the same session id. The new server finds the file at start and takes the bot over while its token is accepted: same name, same threads and DMs, crown included. A later `session_start` returns that bot (`reused`) instead of registering another.
-6. `session_end` unregisters the bot and removes the file at once.
+6. `session_end` unregisters the bot and removes the file at once; it answers with the registered name (`ended`).
 
 ### Error Handling
 
@@ -333,6 +333,8 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 4 | Killed before the file was touched | The grace period counts from the session's start instead; the bot may be reaped sooner |
 | 5 | The taken-over token is rejected (`401`) | The bot is gone: the file is removed and the agent registers a new one |
 | 4–5 | No `CLAUDE_CODE_SESSION_ID` | Old behaviour: the exit unregisters the bot, nothing is taken over |
+| 4 | The client goes without closing stdin (Codex killed the `uv` that started the server; its stdin pipe stays open elsewhere), or SIGTERM / SIGHUP | The server runs the exit work all the same (BYE, stats, offline, unregister or keep the bot, endpoint file) and leaves with `os._exit` within 2.5 s: a watchdog sees its parent process gone, a signal ends it directly; after stdin closes it allows 8 s. Before 0.40.0 such a server lived on as an orphan: the SDK reads stdin in a worker thread that is no daemon and cannot be cancelled, so the interpreter waited for it forever |
+| 1–2 | A harness started from a Claude Code shell (`codex exec`, `opencode`) inherits `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PROJECT_DIR` | A client that does not name itself `claude-code` in the handshake has them dropped: its server keys its files on the workspace and takes over no bot of that Claude session; taking over waits for the handshake for that reason (Section 7.2) |
 
 ---
 
@@ -380,7 +382,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Purpose:** A message for the agent reaches its session the moment it is posted, without a background listener, listen windows or turns spent waiting.
 
-**Trigger:** The developer starts Claude Code with the MCP server as a channel (research preview): `claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus` once the plugin is on the organisation's `allowedChannelPlugins`, otherwise `--dangerously-load-development-channels` with the same entry. The MCP server finds the nearest ancestor process named `claude` and reads its command line for one of the two flags naming this plugin. `MM_CHANNEL_PUSH` overrides that (`1` on, `0` off); under corral the host session hook passes it into the sandbox with the bot's other variables, and the relay in the sandbox, which has Claude Code among its ancestors, tells the MCP server on the host (RT-6.18).
+**Trigger:** The developer starts Claude Code with the MCP server as a channel (research preview): `claude --channels plugin:mattermost-ai-agent-bus@mattermost-ai-agent-bus` once the plugin is on the organisation's `allowedChannelPlugins`, otherwise `--dangerously-load-development-channels` with the same entry. The MCP server finds the nearest ancestor process named `claude` and reads its command line for one of the two flags naming this plugin. `MM_CHANNEL_PUSH` overrides that (`1` on, `0` off), for Claude Code only: a client that names itself otherwise than `claude-code` in `initialize` gets the plain server, so an `MM_CHANNEL_PUSH=1` from the user's shell puts no Codex, OpenCode or Cursor server into channel mode. Under corral the host session hook passes it into the sandbox with the bot's other variables, and the relay in the sandbox, which has Claude Code among its ancestors, tells the MCP server on the host (RT-6.18).
 
 **Participants:** MCP server, Turn hooks; Agent runtime, Mattermost WebSocket, Developer / operator
 
@@ -404,7 +406,8 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 2 | The agent calls `channel_ok` with another code | Refused: only the session that received the check can confirm it |
 | 2 | No bus yet (before `session_start`) or the WebSocket dropped | The pusher retries every 5 s; nothing is lost, the backfill on reconnect queues what came meanwhile |
 | 3 | The server ends with posts held for the digest | They are not pushed; they were marked read, as posts the agent never needed to answer |
-| — | Another runtime (Cursor, OpenCode) | No channels there: no `claude` ancestor, so everything works as in RT-6.2 and RT-6.3 |
+| — | Another runtime (Cursor, OpenCode, Codex) | No channels there: no `claude` ancestor, so everything works as in RT-6.2 and RT-6.3 |
+| 1 | `MM_CHANNEL_PUSH=1` reaches another runtime's server (inherited from the user's shell) | At `initialize` the client names itself otherwise than `claude-code`: the server answers without the channel capability, offers no `channel_ok`, gives the instructions to check `wait_for_events` itself, starts no pusher and logs it |
 
 ---
 
@@ -581,7 +584,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
    | `GET /v1/me` | `user_id`, `username`, `project` (a project channel is set), `crown_until` (epoch, 0 without the 👑), `channel` (the agent confirmed the channel check, RT-6.12) | every hook, the listener, the status line in a keyless session (RT-6.18) |
    | `GET /v1/pending` | `count`: unread mentions, DMs and posts for all agents; with `?detail=1` up to 5 `channels` (`id`, `type`, `pending`, `fyi`) | Stop hook (drain, RT-6.2 step 1), listener |
    | `GET /v1/last-post` | `at` (ms), `message`: the own latest post in the work channel, `at` 0 when there is none | Stop hook (sign-off and window, RT-6.2 steps 2–3) |
-   | `GET /v1/posts` | `posts`, newest first, of the work channel or `?channel=` (an id, or a name in the bot's team) when it is the work, project or default channel, else `403`: no DM, no group, no other channel the bot is in (Section 7.3) (`?limit=N`, at most 200, or `?since=MS`): `id`, `user_id`, `root_id`, `create_at`, `type`, `message`, `to` (`all` for all agents), `intent`, `fyi` (an agent's fyi post, RT-6.14), `gated` (RT-6.16) | compaction hook (RT-6.7), listener, `mm-agent-poll.sh` |
+   | `GET /v1/posts` | `channel` (the name asked for, else the work channel's; `mm-agent-poll.sh` prints it) and `posts`, newest first, of the work channel or `?channel=` (an id, or a name in the bot's team) when it is the work, project or default channel, else `403`: no DM, no group, no other channel the bot is in (Section 7.3) (`?limit=N`, at most 200, or `?since=MS`): `id`, `user_id`, `root_id`, `create_at`, `type`, `message`, `to` (`all` for all agents), `intent`, `fyi` (an agent's fyi post, RT-6.14), `gated` (RT-6.16) | compaction hook (RT-6.7), listener, `mm-agent-poll.sh` |
    | `GET /v1/ask-reactions` | `fresh`: reactions on open asks not yet handed to the agent (RT-6.11) | listener |
    | `POST /v1/presence` | `{state: working \| idle \| listening \| bus, label?, until?}` → `ok`; `label` one line of at most 64 characters (stripped), `until` an epoch within a day, else `400` | prompt and Stop hooks (RT-6.2, RT-6.3), `mm-agent-status.sh` by hand (RT-6.6) |
    | `POST /v1/stat` | `{k: turn \| turn_end \| block \| compact \| wake \| transcript, …}` → `ok`: one overhead counter (RT-6.9) into the server's own file, at most 4 fields with short lowercase names, numbers or strings up to 4096 characters, else `400` | every hook and the listener in a keyless session (RT-6.18), whose files the server cannot share |
@@ -597,7 +600,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | Step | Failure | System Response |
 |------|---------|----------------|
 | 1–2 | No MCP server (not started, crashed), no endpoint file, a wrong key | The hook exits 0 without output, like a hook without a bus session (RT-6.4); the listener says no server of this session answers and ends. The scripts an agent runs exit 3 and say to start the session's MCP server (and how the shell finds it); none falls back to a token |
-| 2 | A second MCP server starts where the endpoint file names a server that still runs (its pid lives and its port answers): the same workspace, or the same `CLAUDE_CODE_SESSION_ID` — a harness started from a Claude Code shell (`codex exec`, `opencode`) inherits it | It leaves that file alone: the hooks and scripts there keep reaching the first one. `session_start` and `bus_info` carry a `warning` naming the other server's pid, MCP client and file, and for a session id this server's client and to start that harness with `env -u CLAUDE_CODE_SESSION_ID`. A file whose server is gone is overwritten: a newer server of the same Claude Code session (`claude --continue`) takes over |
+| 2 | A second MCP server starts where the endpoint file names a server that still runs (its pid lives and it answers an authenticated `GET /v1/me` within 1 s): the same workspace, or the same `CLAUDE_CODE_SESSION_ID` — two Claude Code sessions sharing one, or a harness started from a Claude Code shell (`codex exec`, `opencode`) until its handshake (RT-6.10 error handling: then it moves to its workspace's file) | It leaves that file alone: the hooks and scripts there keep reaching the first one. `session_start` and `bus_info` carry a `warning` naming the other server's pid, MCP client and file, and for a session id this server's client and to start that harness with `env -u CLAUDE_CODE_SESSION_ID`. A file whose server is gone is overwritten: a newer server of the same Claude Code session (`claude --continue`) takes over |
 | 2 | Without a session id the server's working directory or root is `/`, the home directory or above it | No endpoint file until the client's roots name the workspace; the scripts exit 3, `bus_info` says why and to set `MM_WORKSPACE` |
 | 2 | The client's roots arrive and the file moves to the workspace's name | The new file is written before the old one is removed: a script looking meanwhile finds one of them |
 | 3 | `GET /v1/posts?channel=` names a DM, a group or a channel the bus does not watch | `403`, nothing read |
@@ -609,6 +612,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 3 | `/v1/presence` with a label longer than 64 characters or over several lines, an `until` not within a day, an unknown state | `400`, nothing runs |
 | 5 | No server, or none with a bus session, when a new prompt arrives | The prompt hook still removes the turn state and stops a running listener, by the bot id from `MM_BOT_USER_ID` or the endpoint file, so the next Stop hook drains and asks for the sign-off as usual; only the 🛠 status is not set. Without either id it does nothing |
 | 2 | The server restarts during a listen window (`claude --continue`, a reconnect) with a new port and key | Without the variables the listener reads the file on every call and reaches the new server on its next round |
+| 2 | The file's server still runs but does not answer: an orphan whose event loop is stuck accepts connections and answers none | It counts as gone: the next server takes the file over, so the shell clients reach that one instead of exiting 3 |
 | 2 | A crash leaves the file behind | It names a port nobody listens on, so the hooks stay quiet; the session's next server overwrites it. `mm-agent-sweep.sh --apply` removes it once its `MM_BUS_PID` is no longer alive and the file is an hour old |
 
 ---

@@ -46,12 +46,15 @@ command -v jq >/dev/null 2>&1 || { echo "mm-agent-poll.sh: jq is required" >&2; 
 if [[ -z "$SINCE_MS" ]]; then
   SINCE_MS="$(( $(date +%s) * 1000 - 60000 ))"
 fi
-echo "polling channel=${CHANNEL:-work} since_ms=${SINCE_MS}" >&2
 
 declare -A SEEN=()
 reached=0
 while true; do
   if MM_BUS_MAX_TIME="${MM_BUS_MAX_TIME:-10}" mm_bus GET "/v1/posts?since=${SINCE_MS}${CHANNEL:+&channel=${CHANNEL}}"; then
+    if [[ "$reached" -eq 0 ]]; then
+      # The server names the channel: the work channel when none was given.
+      echo "polling channel=$(jq -r '.channel // empty' <<<"$MM_BUS_BODY") since_ms=${SINCE_MS}" >&2
+    fi
     reached=1
     while IFS= read -r line; do
       [[ -z "$line" ]] && continue

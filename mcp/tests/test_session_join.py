@@ -516,3 +516,20 @@ async def test_reaping_strips_the_prefix_the_session_file_names(monkeypatch):
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     assert await c.reap_stale_sessions() == ["bot-old"]
     assert deleted == ["/register/v1/agents/old"] and not gone.exists()
+
+
+async def test_session_end_names_the_bot_it_ended(monkeypatch):
+    """RT-6.10: session_end() without a name answers with the registered bot's
+    name, not MM_REG_BOT_NAME (which a self-registered server never sets)."""
+    from mattermost_ai_agent_bus import server
+
+    monkeypatch.delenv("MM_REG_BOT_NAME", raising=False)
+    c = MattermostClient(base_url="https://mm.example", token="t",
+                         register_url="https://mm.example/register/v1/agents")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(204)))
+    c.session = SessionInfo(url="https://mm.example", name="agent-codex-1a2b", username="agent-codex-1a2b",
+                            user_id="u" * 26, bot_token="t")
+    monkeypatch.setattr(server, "_client", c)
+    monkeypatch.setattr(server, "_inbox", None)
+    out = json.loads(await server.session_end())
+    assert out["ended"] == "agent-codex-1a2b" and c.session is None

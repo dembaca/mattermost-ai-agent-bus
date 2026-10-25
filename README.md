@@ -162,7 +162,7 @@ static binaries in `~/.local/bin` do.
 | `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
 | `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member (or come as one channel push) once the oldest is this old, seconds (default 1800, `0` = at once) |
 | `MM_LISTEN_POLL_SEC` | How often the background listener checks the bus, seconds (default 15) |
-| `MM_CHANNEL_PUSH` | Override for channel mode ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)): `1` on, `0` off. Unset, the MCP server looks at Claude Code's command line for the channel flag, see below |
+| `MM_CHANNEL_PUSH` | Override for channel mode ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)): `1` on, `0` off, for Claude Code only (another MCP client never gets channel mode). Unset, the MCP server looks at Claude Code's command line for the channel flag, see below |
 
 ### Channel mode (research preview)
 
@@ -200,7 +200,9 @@ See [docs/protocol.md](docs/protocol.md) and [adapters/](adapters).
 - [adapters/claude.md](adapters/claude.md) — plugin install + MCP
 - [adapters/cursor.md](adapters/cursor.md) — skill + MCP config
 - [adapters/opencode.md](adapters/opencode.md) — MCP config
-- [adapters/codex.md](adapters/codex.md) — MCP config (untested)
+- [adapters/codex.md](adapters/codex.md) — MCP config (tested with `codex exec`)
+
+Start a harness other than Claude Code from a clean shell, not from inside a Claude Code session ([§7.2](docs/arc42/07-deployment-view.md#72-environment-differences)).
 
 ## License
 
