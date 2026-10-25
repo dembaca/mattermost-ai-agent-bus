@@ -59,7 +59,7 @@ export MM_BUS_DEADLINE
 # it there is no bus session to answer for.
 mm_bus_me || exit 0
 
-# The status for this turn, set by the MCP server (mm-agent-status.sh).
+# The status for this turn, set by the MCP server (lease.py, RT-6.6).
 presence() {  # presence working|idle | presence listening UNTIL
   local body
   if [[ "$1" == listening ]]; then
@@ -161,7 +161,7 @@ my_last_post() {
 
 # --- 1. drain ---------------------------------------------------------------
 # Unread mentions, DMs and posts for all agents, counted by the MCP server
-# (mm-agent-unread.sh there); per channel, with the fyi posts, for the reason.
+# (unread.py there); per channel, with the fyi posts, for the reason.
 pending=0
 if [[ "$DRAINS" -lt "$MAX_DRAIN" ]] && mm_bus GET '/v1/pending?detail=1'; then
   pending="$(jq -r '.count // 0' <<<"$MM_BUS_BODY" 2>/dev/null || echo 0)"

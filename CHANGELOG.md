@@ -3,6 +3,44 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.38.0
+
+The MCP server runs no scripts any more: crown lease, roster, presence and
+the pending counters live in Python (#82, #69).
+
+### Changed
+
+- **Lease and presence in the server ([RT-6.6](docs/arc42/06-runtime-view.md)):**
+  `lease.py` keeps the status lease, the coordinator crown
+  (tick/take/release/who, the oldest reachable agent, `coord-<uid>.env` for
+  the status line) and the roster; `unread.py` counts what waits for the
+  agent (RT-6.2 step 1). The hook API, the gate, the tasks, the
+  `coordinator` tool and the heartbeat call them directly. Status changes,
+  takes, releases and ticks run one at a time, so a release during a
+  heartbeat stays a release.
+- **Shell CLI:** `mm-agent-lease.sh` and `mm-agent-roster.sh` are gone; agents
+  use `coordinator("who")` / `coordinator("roster")`. An operator without a
+  session has no shell replacement. `mm-agent-unread.sh` keeps only
+  `baseline` (the host session start).
+- **`mm-agent-status.sh` is a client of the server:** it hands the state to
+  the session's server (`POST /v1/presence`, new state `bus`). When that
+  server answers but the hand-over fails, it writes nothing (exit 0). Only
+  without a server of its session does it write the status itself, keeping
+  a 👑 while the crown lease in `coord-<uid>.env` still runs.
+- **Small differences:** a custom status's expiry is parsed as a time, not
+  compared as text; the floor for posts to all agents is the last view, a
+  day back at most and never before the bot was created; `/v1/pending`
+  answers `502` when Mattermost fails instead of a count of 0.
+- **Limits:** the 2-at-a-time limit of the hook API now guards its
+  Mattermost-heavy routes (`/v1/pending`, `/v1/presence`).
+
+### Checked
+
+- `mcp/tests/test_lease.py` and `mcp/tests/test_unread.py` (the lease and
+  roster cases of the old shell tests, ported to `httpx.MockTransport`; a
+  release during a tick); `tests/hooks/test_lease.py`: a failed hand-over
+  writes no status.
+
 ## 0.37.0
 
 The turn hooks and the listener no longer hold the bot token: they ask the

@@ -190,7 +190,7 @@ def open_asks(posts: list[Mapping[str, Any]], names: Mapping[str, str]) -> list[
 
 def roster(rows: list[RosterEntry], posts: list[Mapping[str, Any]],
            names: Mapping[str, str]) -> list[dict[str, Any]]:
-    """One row per reachable agent: its lease status (mm-agent-roster.sh) and
+    """One row per reachable agent: its lease status (lease.roster, RT-6.6) and
     its newest card (HELLO props, else the HELLO text)."""
     cards: dict[str, dict[str, Any]] = {}
     for p in _live(posts):

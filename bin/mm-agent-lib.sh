@@ -127,7 +127,7 @@ mm_api() {
 # Print the id of the work channel: the argument (an id or a channel name in
 # MM_TEAM) when given, else the project channel, else the default channel.
 # Prefers resolved ids from the environment and asks the API only for names.
-# shellcheck disable=SC2120  # the argument comes from other scripts (roster, stats)
+# shellcheck disable=SC2120  # the argument comes from other scripts (stats)
 mm_work_channel_id() {
   local arg="${1:-}" id="" name="" team_id
   if [[ -n "$arg" ]]; then
@@ -355,9 +355,10 @@ mm_turn_state_file() {
   printf '%s' "$(mm_state_dir)/turn-${uid}.env"
 }
 
-# Local state of the presence lease (RT-6.6), keyed on the bot like the turn
-# state: presence-<uid>.env (last state and label the hooks reported) and
-# coord-<uid>.env (crown lease, pending take, yield after a release).
+# Local state of the presence lease (RT-6.6, kept by the MCP server's lease.py),
+# keyed on the bot like the turn state: presence-<uid>.env (last state and
+# label reported) and coord-<uid>.env (crown lease, pending take, yield after a
+# release).
 mm_bot_state_file() {
   local kind="$1" uid="${2:-${MM_BOT_USER_ID:-}}"
   [[ "$uid" =~ ^[a-z0-9]{26}$ ]] || return 1
@@ -394,54 +395,6 @@ mm_lease_sec() {
   local s="${MM_LEASE_SEC:-900}"
   [[ "$s" =~ ^[0-9]+$ && "$s" -gt 0 ]] || s=900
   printf '%s' "$s"
-}
-
-# The agent-* bots (the registrar's prefix, mm_agent_prefix) in a channel with
-# what the lease rules need, oldest first, into ROSTER_JSON: [{id, username,
-# create_at, presence, emoji, text, crown, reachable}]. A custom status counts
-# while its lease has not expired; one without an expiry predates the lease (or
-# was set by hand) and proves nothing about a live session, so it does not
-# count. Reachable: not offline, a live status, not 💤.
-# Crown: reachable with a live 👑 — that agent coordinates.
-# shellcheck disable=SC2034  # ROSTER_JSON is this function's output, read by the callers
-mm_roster_json() {
-  local cid="$1" users now
-  mm_api GET "/api/v4/users?in_channel=${cid}&per_page=200" || return 1
-  [[ "$MM_API_STATUS" == "200" ]] || return 1
-  users="$(jq -c --arg p "$(mm_agent_prefix)" '[.[] | select(.username | startswith($p))
-                       | select(.delete_at == 0)] | sort_by(.create_at)' <<<"$MM_API_BODY")" || return 1
-  if [[ "$(jq 'length' <<<"$users")" -eq 0 ]]; then
-    ROSTER_JSON="[]"
-    return 0
-  fi
-  mm_api POST "/api/v4/users/status/ids" "$(jq -c '[.[].id]' <<<"$users")" || return 1
-  [[ "$MM_API_STATUS" == "200" ]] || return 1
-  now="$(mm_epoch_rfc3339 "$(date +%s)")"
-  ROSTER_JSON="$(jq -c --argjson st "$MM_API_BODY" --arg now "$now" '
-    ($st | map({(.user_id): .status}) | add // {}) as $s
-    | map(
-        ((.props.customStatus // "") | if . == "" then {} else (try fromjson catch {}) end) as $c
-        | ($c.emoji // "") as $e
-        | ($e != "" and ($c.duration // "") != "" and (($c.expires_at // "") > $now)) as $live
-        | {id, username, create_at, presence: ($s[.id] // "offline"), emoji: $e,
-           text: ($c.text // "")}
-        | .reachable = (.presence != "offline" and $live and .emoji != "zzz")
-        | .crown = (.reachable and .emoji == "crown"))' <<<"$users")" || return 1
-}
-
-# Of a JSON array of user ids, those of bus agents: bot accounts with the
-# registrar's prefix, as the MCP server's client.agents (RT-6.16). Prints a JSON
-# array; [] when the lookup fails, so nobody counts as an agent. Only an agent's
-# props.a2a.intent counts (RT-6.14): anyone can write props through the API.
-mm_agent_ids() {
-  local ids="${1:-[]}"
-  if [[ "$ids" == "[]" ]] || ! mm_api POST "/api/v4/users/ids" "$ids" ||
-    [[ "$MM_API_STATUS" != "200" ]]; then
-    echo '[]'
-    return 0
-  fi
-  jq -c --arg p "$(mm_agent_prefix)" '[.[] | select(.is_bot == true and ((.username // "") | startswith($p))) | .id]' \
-    <<<"$MM_API_BODY" 2>/dev/null || echo '[]'
 }
 
 # Overhead counters (RT-6.9): one JSON line per event in stats-<uid>.jsonl,

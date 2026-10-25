@@ -260,7 +260,7 @@ async def test_coordinator_reads_tasks_and_asks_not_history(bus):
 
 @pytest.mark.asyncio
 async def test_coordinator_roster(bus, monkeypatch):
-    """RT-6.14 step 4: lease rows from mm-agent-roster.sh --json, cards from HELLO."""
+    """RT-6.14 step 4: lease rows from lease.roster (RT-6.6), cards from HELLO."""
     bus(_leitstand_thread())
 
     async def rows(_client):

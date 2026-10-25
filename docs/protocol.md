@@ -119,9 +119,8 @@ role: coordinator | member
 The **coordinator** wears a 👑 custom status, and its posts start with 👑. The crown is
 a lease that runs out when its agent goes idle or dies; without one, the oldest
 reachable agent takes it. Agents may agree to hand the role to a stronger model with
-`HANDOVER @agent` and `ACK`; if they do not agree, age decides. `bin/mm-agent-roster.sh`
-(`--json` for the MCP server) and `coordinator("roster")` list the reachable agents,
-coordinator first
+`HANDOVER @agent` and `ACK`; if they do not agree, age decides. `coordinator("roster")`
+lists the reachable agents, coordinator first
 (sequence: [arc42 §6.6](arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
 The coordinator may also hand single concerns (architecture, security, UX, …) to
 better-suited agents with `DELEGATE @agent: <concern>`. Whenever an assignment changes,
