@@ -3,6 +3,16 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.36.4
+
+### Fixed
+
+- **A refused bus input says why (#87):** an unknown or contradicting `kind`,
+  a `to` other than `all` on a reply, a bad `role` or `action`, or no human to
+  ask no longer ends in a bare "Error executing tool": the tool returns
+  `{"posted": false, "refused": "<reason>"}` (plus `kinds`, the allowed words,
+  for a `kind`) and nothing is posted ([arc42 RT-6.14](docs/arc42/06-runtime-view.md)).
+
 ## 0.36.3
 
 ### Fixed

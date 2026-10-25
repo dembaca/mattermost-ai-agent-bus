@@ -475,6 +475,15 @@ async def _responsible_and_trusted(client: MattermostClient) -> tuple[str | None
     return responsible, names
 
 
+def _refused(tool: str, reason: str, kinds: bool = False) -> str:
+    """A refused input is the tool's result, not an error: the agent sees why and
+    that nothing was posted (RT-6.14)."""
+    out: dict[str, Any] = {"posted": False, "refused": reason}
+    if kinds:
+        out["kinds"] = list(a2a.WORDS)
+    return _out(tool, out)
+
+
 @mcp.tool()
 async def announce(
     project: str,
@@ -493,7 +502,7 @@ async def announce(
     "autonomous" if so) and trusts:. Later changes go in replies to this post.
     """
     if role not in ("coordinator", "member"):
-        raise ValueError('role must be "coordinator" or "member"')
+        return _refused("announce", 'role must be "coordinator" or "member"')
     client = _get_client()
     me = await client.get_me()
     responsible, trusted = await _responsible_and_trusted(client)
@@ -549,7 +558,10 @@ async def post_message(
     post starts with 👑.
     """
     _done_typing()
-    message = a2a.lead(message, kind)
+    try:
+        message = a2a.lead(message, kind)
+    except ValueError as exc:
+        return _refused("post_message", str(exc), kinds=True)
     client = _get_client()
     everyone = to.strip().lower() == a2a.ALL
     if to.strip() and not everyone:
@@ -588,11 +600,14 @@ async def reply_in_thread(
     crown the reply starts with 👑.
     """
     _done_typing()
-    message = a2a.lead(message, kind)
+    try:
+        message = a2a.lead(message, kind)
+    except ValueError as exc:
+        return _refused("reply_in_thread", str(exc), kinds=True)
     client = _get_client()
     everyone = to.strip().lower() == a2a.ALL
     if to.strip() and not everyone:
-        raise ValueError('to must be "all" or empty: a reply stays in its thread')
+        return _refused("reply_in_thread", 'to must be "all" or empty: a reply stays in its thread')
     message, removed = await _unmention(client, message)
     uid = await _my_id(client)
     stats.record("post", chars=len(message))
@@ -684,7 +699,7 @@ async def ask_human(
     responsible, _ = await _responsible_and_trusted(client)
     who = human.strip().lstrip("@") or responsible
     if not who:
-        raise ValueError("no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
+        return _refused("ask_human", "no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
     pending = asks.open_to(me.get("id", ""), who)
     if pending:
         # The human answers one question at a time, each in a word (RT-6.11).
@@ -768,7 +783,7 @@ async def coordinator(action: str = "who") -> str:
                                         "asks": tasks.open_asks(posts, names)})
         return _out("coordinator", {"roster": tasks.roster(await lease.roster(client), posts, names)})
     if action not in ("who", "take", "release"):
-        raise ValueError('action must be "who", "take", "release", "tasks" or "roster"')
+        return _refused("coordinator", 'action must be "who", "take", "release", "tasks" or "roster"')
     out = await lease.run(_get_client(), action)
     return _out("coordinator", {"action": action, "result": out or "(no coordinator)"})
 

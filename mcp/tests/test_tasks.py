@@ -380,8 +380,8 @@ async def test_kind_is_written_to_text_and_props(bus):
     await server.post_message(message="relay · @agent-a", kind="TASK")
     assert [p["message"] for p in c.posted] == ["DONE · merged", "TASK · relay · @agent-a"]
     assert [p["props"]["a2a"]["intent"] for p in c.posted] == ["fyi", "action"]
-    with pytest.raises(ValueError):
-        await server.reply_in_thread(root_id="t", message="DONE", kind="ACK")
+    out = json.loads(await server.reply_in_thread(root_id="t", message="DONE", kind="ACK"))
+    assert "kind is ACK" in out["refused"] and "ACK" in out["kinds"]
     assert len(c.posted) == 2
 
 

@@ -224,8 +224,7 @@ async def test_to_all_wakes_every_agent_through_the_props(monkeypatch):
     assert "unmentioned" not in out
     await server.post_message("anyone seen #46?")
     assert c.posted[-1]["props"] is None
-    with pytest.raises(ValueError, match="to must be"):
-        await server.reply_in_thread("r1", "hi", to="agent-x")
+    assert "to must be" in json.loads(await server.reply_in_thread("r1", "hi", to="agent-x"))["refused"]
 
 
 @pytest.mark.asyncio
@@ -504,3 +503,43 @@ def test_old_ask_lines_still_parse_and_the_marker_goes_with_the_ask(stats_state)
     assert f"ANSWERED={'f' * 26}" in asks._path(BOT).read_text()
     asks.resolve(BOT, "f" * 26)
     assert "ANSWERED" not in asks._path(BOT).read_text()
+
+
+class _Refuse(_Client):
+    async def direct_channel_with_bot(self, name):
+        raise AssertionError("refused before any lookup")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call,kinds", [
+    (lambda: server.reply_in_thread(ASK, "PR #85 · x", kind="PR"), True),
+    (lambda: server.post_message("on it", kind="PR"), True),
+    (lambda: server.reply_in_thread(ASK, "DONE · x", kind="ACK"), True),
+    (lambda: server.post_message("DONE · x", kind="ACK"), True),
+    (lambda: server.reply_in_thread(ASK, "x", to="agent-other"), False),
+    (lambda: server.announce("p", "t", "m", role="boss"), False),
+    (lambda: server.coordinator("bogus"), False),
+])
+async def test_refused_input_is_a_result_and_posts_nothing(monkeypatch, call, kinds):
+    """RT-6.14 step 2: a refusal is the tool's result with the reason, not an error."""
+    c = _Refuse()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await call())
+    assert out["posted"] is False and out["refused"]
+    assert ("kinds" in out) is kinds
+    if kinds:
+        assert out["kinds"] == list(server.a2a.WORDS) and "PR" not in out["kinds"]
+    assert c.posted == []
+
+
+@pytest.mark.asyncio
+async def test_ask_without_a_human_is_refused_as_a_result(monkeypatch):
+    c = _Refuse()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+
+    async def nobody(client):
+        return "", set()
+    monkeypatch.setattr(server, "_responsible_and_trusted", nobody)
+    out = json.loads(await server.ask_human(need="Go?"))
+    assert out["posted"] is False and "no human to ask" in out["refused"]
+    assert c.posted == []
