@@ -121,11 +121,11 @@ def _shims(tmp_path, extra: dict[str, str] | None = None) -> tuple[str, object]:
 
 def _initial_env(pid: int) -> bytes | None:
     """A process's initial argv and environment as another same-user process
-    reads them: /proc/<pid>/environ, or sysctl KERN_PROCARGS2 on macOS."""
-    proc = f"/proc/{pid}/environ"
+    reads them: /proc/<pid>/cmdline and environ, or sysctl KERN_PROCARGS2 on macOS."""
+    proc = f"/proc/{pid}"
     if os.path.exists(proc):
-        with open(proc, "rb") as f:
-            return f.read()
+        with open(f"{proc}/cmdline", "rb") as c, open(f"{proc}/environ", "rb") as e:
+            return c.read() + e.read()
     try:
         import ctypes
         libc = ctypes.CDLL(None, use_errno=True)
