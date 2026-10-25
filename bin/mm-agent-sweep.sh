@@ -29,6 +29,13 @@
 # live session keeps writing them, and one whose token was exported by hand has
 # no session file but would lose its crown lease if they went sooner.
 #
+# A keyless corral session (RT-6.18) has its MCP server running on the host:
+# its session file records MM_BUS_HOST_PID, and the process keeps its files in
+# <sid>.host.json, <sid>.host.log and hosted/<sid>/. While that process runs,
+# its session is left alone (it ends with its watchdog and unregisters the bot
+# itself); the files go only once the session file is gone: the readiness
+# file at once, the log after a day, the state directory after an hour.
+#
 # Runs on the HOST: session files never enter a sandbox.
 set -uo pipefail
 
@@ -43,7 +50,7 @@ for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
     --force) FORCE=1 ;;
-    -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -103,6 +110,13 @@ for f in "$STATE_DIR"/*.env; do
   [[ -n "$name" ]] || { note "skip $(basename "$f") (no bot name)"; continue; }
 
   pid="$(field "$f" MM_SESSION_PID)"
+  hpid="$(field "$f" MM_BUS_HOST_PID)"
+  if [[ "$FORCE" -eq 0 ]] && ! is_live "$pid" && is_live "$hpid"; then
+    note "HOSTED  ${name} (its MCP server on the host, pid ${hpid}, still runs and ends with its watchdog) — leaving it alone"
+    ACTIVE_NAMES+=("$name")
+    skipped=$((skipped + 1))
+    continue
+  fi
   if [[ "$FORCE" -eq 0 ]] && is_live "$pid"; then
     note "ACTIVE  ${name} (pid ${pid} alive) — leaving it alone"
     ACTIVE_NAMES+=("$name")
@@ -242,6 +256,31 @@ if (( gone > 0 )); then
     note "removed ${gone} endpoint file(s) of MCP servers that are gone"
   else
     echo "would remove ${gone} endpoint file(s) of MCP servers that are gone"
+  fi
+fi
+
+# --- 5. the host process's files of ended sessions (RT-6.18) -------------------
+hostfiles=0
+shopt -s nullglob
+for f in "$STATE_DIR"/*.host.json "$STATE_DIR"/*.host.log; do
+  [[ -f "${f%.host.*}.env" ]] && continue
+  [[ "$f" == *.json || -n "$(find "$f" -mmin +1440 2>/dev/null)" ]] || continue
+  hostfiles=$((hostfiles + 1))
+  [[ "$APPLY" -eq 1 ]] && rm -f "$f"
+done
+for d in "$STATE_DIR"/hosted/*; do
+  [[ -d "$d" && ! -L "$d" ]] || continue
+  [[ -f "$STATE_DIR/$(basename "$d").env" ]] && continue
+  [[ -n "$(find "$d" -maxdepth 0 -mmin +60 2>/dev/null)" ]] || continue
+  hostfiles=$((hostfiles + 1))
+  [[ "$APPLY" -eq 1 ]] && rm -rf "$d"
+done
+shopt -u nullglob
+if (( hostfiles > 0 )); then
+  if [[ "$APPLY" -eq 1 ]]; then
+    note "removed ${hostfiles} file(s) of host processes whose session ended"
+  else
+    echo "would remove ${hostfiles} file(s) of host processes whose session ended"
   fi
 fi
 

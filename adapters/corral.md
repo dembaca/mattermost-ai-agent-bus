@@ -3,16 +3,17 @@
 [corral](https://github.com/go-corral/corral) sandboxes Claude Code and can run host-side
 scripts around a session. That is the best place for the bus lifecycle:
 
-- `preStart` registers an ephemeral bot **on the host** and contributes only the minted
-  bot token into the sandbox — `MM_REG_SECRET` never crosses the boundary.
-- The bundled MCP server unregisters the bot itself when it exits (using the bot's own
-  token; `agent-*` only), so no `postEnd` is needed for a normal end.
-- `postEnd` stays worthwhile as a safety net: it runs on the host, survives a SIGKILL of
-  the sandbox or an aborted launch, and sets the status offline. It is idempotent next
-  to the MCP cleanup — a second unregister answers 404, which counts as done.
+- `preStart` registers an ephemeral bot **on the host**, starts the session's MCP server
+  there and contributes only its two local endpoints and a per-session key — neither
+  `MM_REG_SECRET` nor the bot token crosses the boundary ([arc42 §6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)).
+  If that server does not come up, the session gets no bus at all, never the token.
+- `postEnd` stops that server, whose exit work posts the `BYE`, the overhead stats and
+  unregisters the bot with its own token (`agent-*` only); then it sets the status
+  offline and unregisters again as a safety net — a 404 counts as done. If corral is
+  killed, the server notices within 5 s and does the same.
 
-The agent therefore starts with a working identity and resolved channel ids, and cannot
-register or delete agents itself.
+The agent therefore starts with a working identity and resolved channel ids, reaches the
+bus only through the MCP tools, and cannot register or delete agents itself.
 
 ## Config
 
@@ -31,11 +32,13 @@ or `~/.claude/`: a sandbox can write those
 ([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
 The host copy is only as trustworthy as the checkout you reviewed.
 
-It copies `adapters/corral/` and `bin/` to `~/.local/share/mm-agent-bus/current/`,
-where no sandbox can change them, and prints the config below. **Rerun it after every
-plugin update**, from the checkout updated to that version;
-`mm-agent-host-install.sh --check` tells whether the host copy is current, and the
-start hook says so in the banner when it is not.
+It copies `adapters/corral/`, `bin/` and the MCP server (`mcp/`) to
+`~/.local/share/mm-agent-bus/current/`, where no sandbox can change them, prepares the
+server's Python environment there with `uv sync --locked` (needs `uv`; without it
+sessions get no bus), and prints the config below. The host process runs that code with
+the bot token. **Rerun it after every plugin update**, from the checkout updated to that
+version; `mm-agent-host-install.sh --check` tells whether the host copy is current, and
+the start hook says so in the banner when it is not.
 
 **Or follow `/plugin update` without installing:** point both `exec` entries at the
 host's marketplace clone instead:
@@ -114,7 +117,9 @@ With neither set the hook exits 0 silently — a machine without a bus is not an
 
 ## What the sandbox receives
 
-`MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_TOKEN`, `MM_BOT_USERNAME`, `MM_AGENT_PREFIX`
+`MM_BUS_MCP_ENDPOINT` and `MM_BUS_ENDPOINT` (the session's MCP server on the host, for
+the plugin's relay and the hooks), `MM_BUS_KEY` (their per-session key),
+`MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_BOT_USERNAME`, `MM_AGENT_PREFIX`
 (the registrar's username prefix,
 [arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)),
 `MM_BOT_USER_ID`, `MM_TEAM`, `MM_TEAM_ID`, `MM_CHANNEL`, `MM_CHANNEL_ID` and — when set —
@@ -141,9 +146,16 @@ and only the agent's `HELLO` says so. The start banner shows
 approval key for your sessions: protect them with 2FA. `MM_OWNER` (one name) is
 still read until 0.17.
 
+When the server cannot start on the host, the sandbox gets only `MM_BUS_UNAVAILABLE`
+(the reason and what to do), the bot is unregistered again, and the banner says why.
+
 Deliberately **not** contributed:
 
 - `MM_REG_SECRET` — the whole point; it stays on the host.
+- `MM_BOT_TOKEN` — it stays with the session's MCP server on the host. The shell CLI in
+  the sandbox therefore has no token; the agent uses the MCP tools. A plugin older than
+  0.39.0 in the sandbox does not know the relay: it gets no MCP bus until updated
+  (`/plugin update`, then restart the session) ([arc42 §6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)).
 - `MM_REG_BOT_NAME` — the registrar's short name for the bot (the username without
   its prefix). Not a secret: the registrar deletes a bot only with `MM_REG_SECRET` or that
   bot's own token, so from inside the sandbox an agent can remove at most its own bot.
@@ -191,6 +203,9 @@ other failure is printed with its HTTP status and the file kept. Per-bot state
 files (presence, listen window, turn, crown, stats) are no sessions; the sweep
 removes those of bots without a session file once they are a day old
 ([arc42 §6.1](../docs/arc42/06-runtime-view.md#61-host-managed-session-lifecycle)).
+While a session's MCP server still runs on the host, the sweep leaves that session
+alone (it ends with its watchdog); the files of host processes whose session ended
+(`<session>.host.json`, `.host.log`, `hosted/<session>/`) go with `--apply`.
 A bot an agent registered itself (`mcp-*.env`, outside corral) is kept for
 `claude --continue`; the sweep reports it as `KEPT` until its file is untouched for
 `MM_SESSION_KEEP_SEC` (24 h), and `--force` includes it sooner

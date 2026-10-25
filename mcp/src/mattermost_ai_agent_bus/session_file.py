@@ -22,8 +22,11 @@ the messages for its own (RT-6.10).
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
+import stat
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -51,13 +54,100 @@ def agent_prefix(values: Mapping[str, str] | None = None) -> str:
     return DEFAULT_AGENT_PREFIX
 
 
+# The state directory the host process chose for its session (RT-6.18): set,
+# this process is the host side of a keyless corral session.
+_hosted_dir: Path | None = None
+
+
+def use_hosted_dir(path: Path) -> Path:
+    """Make ``path`` this process's state directory for good (RT-6.18).
+
+    The host process of a keyless session keeps its per-bot files there, never
+    in a directory the sandbox names: HOME and XDG_STATE_HOME of the session
+    are the agent's. Created 0700; refused unless it is a real directory of
+    this user that nobody else may write.
+    """
+    global _hosted_dir
+    if not path.is_absolute():
+        raise ValueError(f"not an absolute path: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    ensure_private_dir(path.parent)
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    ensure_private_dir(path)
+    _hosted_dir = path
+    return path
+
+
+def hosted() -> bool:
+    """This process is the host side of a keyless session (RT-6.18)."""
+    return _hosted_dir is not None
+
+
 def state_dir() -> Path:
+    if _hosted_dir is not None:
+        return _hosted_dir
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
     return Path(base) / "mm-agent-bus"
 
 
 def project_dir() -> str:
+    if _hosted_dir is not None:
+        # The sandbox's directory, from the relay's handshake: a name only,
+        # never resolved, opened or entered on the host (RT-6.18).
+        return os.path.normpath(os.environ.get("CLAUDE_PROJECT_DIR") or "/")
     return os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+
+
+# --- writing state files --------------------------------------------------------
+
+def ensure_private_dir(path: Path) -> None:
+    """A directory of this user, not a symlink, writable by nobody else."""
+    st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+        raise OSError(errno.ENOTDIR, "not a real directory", str(path))
+    if st.st_uid != os.geteuid():
+        raise OSError(errno.EPERM, "not this user's directory", str(path))
+    if st.st_mode & 0o022:
+        raise OSError(errno.EPERM, "writable by others", str(path))
+
+
+def _state_parent(path: Path) -> Path:
+    d = path.parent
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.path.islink(d):
+        raise OSError(errno.ELOOP, "state directory is a symlink", str(d))
+    if os.path.islink(path):
+        raise OSError(errno.ELOOP, "state file is a symlink", str(path))
+    return d
+
+
+def write_private(path: Path, text: str) -> None:
+    """Replace a state file, 0600: a new file in its directory (mkstemp,
+    exclusive), then renamed over it. Refuses a symlink in its place: nothing
+    written here may land in the file it points to (RT-6.18)."""
+    d = _state_parent(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def append_private(path: Path, text: str) -> None:
+    """Append to a state file, 0600, never through a symlink (O_NOFOLLOW)."""
+    _state_parent(path)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a") as fh:
+        fh.write(text)
 
 
 def session_id() -> str:

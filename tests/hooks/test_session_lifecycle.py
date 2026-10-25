@@ -23,12 +23,15 @@ def test_no_project_channel_no_bot(mm, run):
 
 
 def test_project_channel_registers_and_contributes_no_secret(mm, run):
-    """RT-6.1 steps 3-5: registers, joins the project channel, hands over only the bot token."""
+    """RT-6.1 steps 3-5: registers, joins the project channel, hands over no
+    credential: the token stays with the host process (RT-6.18)."""
     r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
     assert r.code == 0, r.stderr
     contribution = json.loads(r.stdout)
     env = contribution["env"]
-    assert env["MM_BOT_TOKEN"] == "bot-token-for-tests"
+    assert "MM_BOT_TOKEN" not in env and "MATTERMOST_TOKEN" not in env
+    assert "bot-token-for-tests" not in r.stdout
+    assert env["MM_BUS_MCP_ENDPOINT"].startswith("tcp://127.0.0.1:") and env["MM_BUS_KEY"]
     assert env["MM_PROJECT_CHANNEL"] == "proj-x"
     assert "MM_REG_SECRET" not in env and "MM_REG_BOT_NAME" not in env
     assert env["MM_AGENT_PREFIX"] == "agent-"
@@ -40,7 +43,7 @@ def test_register_always_without_project_channel(mm, run):
     """RT-6.1 step 2: MM_REGISTER=always registers every session."""
     r = run(START, MM_REG_SECRET="test-secret", MM_REGISTER="always", **HOST)
     assert r.code == 0, r.stderr
-    assert json.loads(r.stdout)["env"]["MM_BOT_TOKEN"]
+    assert json.loads(r.stdout)["env"]["MM_BUS_KEY"]
 
 
 # --- RT-6.8 -------------------------------------------------------------------

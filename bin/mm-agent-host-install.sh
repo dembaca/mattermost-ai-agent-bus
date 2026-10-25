@@ -17,6 +17,10 @@
 # ~/.local/share/mm-agent-bus/current), which the sandbox neither sees nor
 # writes. Point corral's `exec` there once; rerun this after a plugin update.
 # corral then asks to approve the changed hook — that prompt is the point.
+# It also copies the MCP server (mcp/, without a checkout's .venv or caches)
+# and, with uv, prepares its Python environment there (uv sync --locked): the
+# start hook runs each session's MCP server on the host from this tree, so the
+# bot token never enters the sandbox (RT-6.18). Without it sessions get no bus.
 #
 # Spec: arc42 §7.1 (docs/arc42/07-deployment-view.md).
 set -euo pipefail
@@ -32,7 +36,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="${2:-}"; shift 2 ;;
     --check) CHECK=1; shift ;;
-    -h|--help) sed -n '2,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -72,7 +76,8 @@ if sandbox_writable "$FROM"; then
   die "$FROM can be changed from inside a corral sandbox; run the installer from a checkout you reviewed, outside corral and outside every session's workdir (or pass --from <checkout>)"
 fi
 for f in adapters/corral/10-mm-session-start.sh adapters/corral/90-mm-session-stop.sh \
-         bin/mm-agent-lib.sh .claude-plugin/plugin.json; do
+         bin/mm-agent-lib.sh .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock \
+         mcp/src/mattermost_ai_agent_bus/hosted.py; do
   [[ -f "$FROM/$f" ]] || die "$FROM is not a mattermost-ai-agent-bus tree (missing $f)"
 done
 [[ "$FROM" != "$(cd -P "$DEST" 2>/dev/null && pwd -P)" ]] ||
@@ -91,6 +96,16 @@ mkdir -p "$new/adapters" "$new/.claude-plugin"
 cp -R "$FROM/bin" "$new/bin"
 cp -R "$FROM/adapters/corral" "$new/adapters/corral"
 cp "$FROM/.claude-plugin/plugin.json" "$new/.claude-plugin/plugin.json"
+# The MCP server, for the host process (RT-6.18); the skill, whose size its
+# overhead stats count (RT-6.9).
+mkdir -p "$new/mcp" "$new/skills"
+cp "$FROM/mcp/pyproject.toml" "$FROM/mcp/uv.lock" "$new/mcp/"
+if [[ -f "$FROM/mcp/README.md" ]]; then cp "$FROM/mcp/README.md" "$new/mcp/"; fi
+cp -R "$FROM/mcp/src" "$new/mcp/src"
+find "$new/mcp" -name __pycache__ -prune -exec rm -rf {} +
+if [[ -d "$FROM/skills/mattermost-ai-agent-bus" ]]; then
+  cp -R "$FROM/skills/mattermost-ai-agent-bus" "$new/skills/"
+fi
 chmod -R go-w "$new"
 chmod +x "$new"/adapters/corral/*.sh "$new"/bin/*.sh
 
@@ -103,10 +118,20 @@ mv "$new" "$DEST"
 trap - EXIT
 [[ -n "$old" ]] && rm -rf "$old"
 
+# After the swap: a virtual environment does not survive a move. From the host
+# tree only (--directory), never from the source or the working directory.
+if command -v uv >/dev/null 2>&1 &&
+  (cd "$DEST/mcp" && uv sync --locked --no-dev --quiet --directory "$DEST/mcp") >&2; then
+  server="MCP server environment ready: the bot token stays on the host (RT-6.18)"
+else
+  server="WARNING: no Python environment for the MCP server (needs uv): corral sessions get no bus until this is rerun"
+fi
+
 cat <<EOF
 Installed mattermost-ai-agent-bus $(version_of "$DEST") host hooks
   from: $FROM
   to:   $DEST
+$server
 
 corral config (~/.config/corral/config.yml), set once:
 

@@ -19,7 +19,6 @@ handed to the agent as expired. Asks older than MAX_AGE_SEC are forgotten.
 
 from __future__ import annotations
 
-import os
 import time
 from pathlib import Path
 
@@ -104,10 +103,7 @@ def _write(uid: str, asks: dict[str, float], seen: set[str],
     if not lines:
         path.unlink(missing_ok=True)
         return
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text("\n".join(lines) + "\n")
-    os.replace(tmp, path)
+    session_file.write_private(path, "\n".join(lines) + "\n")
 
 
 def open_asks(uid: str) -> list[str]:

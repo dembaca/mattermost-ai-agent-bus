@@ -97,8 +97,7 @@ def _write(path: Path | None, text: str) -> None:
     if path is None:
         return
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text)
+        session_file.write_private(path, text)
     except OSError:
         pass
 

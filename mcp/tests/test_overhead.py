@@ -160,3 +160,15 @@ def test_the_summary_carries_the_tokens(state, tmp_path):
     assert s["tok"]["req"] == 1 and s["tok"]["all"]["read"] == 100_000
     stats.record("transcript", path=str(tmp_path / "gone.jsonl"))
     assert "tok" not in stats.summary("0.32.0", 1, FIXED)
+
+
+def test_never_through_a_symlink(tmp_path):
+    """RT-6.18 (security): the transcript is opened with O_NOFOLLOW; a symlink
+    in its place, which the agent could plant, measures nothing."""
+    t = Transcript()
+    t.user("fix the bug", origin="human")
+    t.request()
+    real = t.write(tmp_path / "t.jsonl")
+    assert overhead.measure(real, 0, FIXED) is not None
+    (tmp_path / "link.jsonl").symlink_to(real)
+    assert overhead.measure(tmp_path / "link.jsonl", 0, FIXED) is None

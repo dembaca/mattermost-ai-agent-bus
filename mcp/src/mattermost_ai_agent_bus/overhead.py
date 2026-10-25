@@ -20,6 +20,7 @@ the transcript has them anyway. Only the main thread counts (no subagents).
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -104,8 +105,11 @@ class _Count:
 def measure(path: str | Path, since: float, fixed: Fixed) -> dict[str, Any] | None:
     """Overhead and totals of the requests after `since`, or None without a transcript."""
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines()
-    except OSError:
+        # Never through a symlink in its last part (RT-6.18).
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with open(fd, encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except (OSError, ValueError):
         return None
     resident = 0                      # bus characters in the context since the last compaction
     deferred = skill = by_bus = False

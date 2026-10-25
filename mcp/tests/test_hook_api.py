@@ -10,7 +10,7 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import hookapi, lease, session_file, unread
+from mattermost_ai_agent_bus import channel, hookapi, lease, session_file, unread
 
 UID = "u" * 26
 OTHER = "o" * 26
@@ -108,7 +108,8 @@ async def test_me_names_the_bot_its_project_and_crown(api, tmp_path, monkeypatch
     client = FakeClient()
     _, h = await api(client)
     assert (await h.get("/v1/me")).json() == {
-        "user_id": UID, "username": "agent-me", "project": False, "crown_until": 0}
+        "user_id": UID, "username": "agent-me", "project": False, "crown_until": 0,
+        "channel": False}
     until = int(time.time()) + 600
     d = session_file.state_dir()
     d.mkdir(parents=True, exist_ok=True)
@@ -397,3 +398,27 @@ async def test_heavy_routes_are_limited(api, monkeypatch):
     gate_.set()
     assert [r.status_code for r in await asyncio.gather(*calls)] == [200] * 4
     assert peak == 2
+
+
+async def test_stat_counts_into_the_servers_own_file(api):
+    """RT-6.18 (RT-6.9): the hooks of a keyless session cannot reach the
+    server's state dir; they count through the API, names and values only."""
+    _, h = await api(FakeClient())
+    assert (await h.post("/v1/stat", json={"k": "turn", "by": "bus"})).json() == {"ok": True}
+    assert (await h.post("/v1/stat", json={"k": "transcript", "path": "/x/t.jsonl", "t": 5})).status_code == 200
+    rows = [json.loads(line) for line in
+            (session_file.state_dir() / f"stats-{UID}.jsonl").read_text().splitlines()]
+    assert [(e["k"], e.get("by") or e.get("path")) for e in rows] == [
+        ("turn", "bus"), ("transcript", "/x/t.jsonl")]
+    assert rows[1]["t"] != 5  # the server's own time
+    for bad in ({"k": "evil"}, {"k": "turn", "Bad": 1}, {"k": "turn", "a": [1]},
+                {"k": "turn", "a": 1, "b": 2, "c": 3, "d": 4, "e": 5}, {"k": "wake", "a": "x" * 5000}):
+        assert (await h.post("/v1/stat", json=bad)).status_code == 400
+
+
+async def test_me_says_whether_the_channel_is_confirmed(api):
+    """RT-6.18 (RT-6.12): the hooks of a keyless session ask, they cannot see the file."""
+    _, h = await api(FakeClient())
+    assert (await h.get("/v1/me")).json()["channel"] is False
+    session_file.write_private(channel.confirmed_file(UID), "CONFIRMED=1\n")
+    assert (await h.get("/v1/me")).json()["channel"] is True

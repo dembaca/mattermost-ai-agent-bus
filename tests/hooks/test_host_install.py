@@ -13,6 +13,9 @@ import shutil
 from conftest import ROOT
 
 INSTALL = "bin/mm-agent-host-install.sh"
+# uv sync in the installer: offline, from the developer's cache when there is one.
+UV = {"UV_OFFLINE": "1", **({"UV_CACHE_DIR": os.environ["UV_CACHE_DIR"]}
+                           if os.environ.get("UV_CACHE_DIR") else {})}
 START = "adapters/corral/10-mm-session-start.sh"
 VERSION = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]
 
@@ -26,26 +29,31 @@ def registry(home, install_path) -> None:
 
 def test_installs_hooks_and_libs_out_of_the_sandbox(run, tmp_path):
     dest = tmp_path / "host" / "current"
-    r = run(INSTALL, "--from", str(ROOT), MM_BUS_HOST_DIR=str(dest))
+    r = run(INSTALL, "--from", str(ROOT), **UV, MM_BUS_HOST_DIR=str(dest))
     assert r.code == 0, r.stderr
     for f in ("adapters/corral/10-mm-session-start.sh", "adapters/corral/90-mm-session-stop.sh",
               "bin/mm-agent-lib.sh", "bin/mm-agent-register.sh"):
         assert os.access(dest / f, os.X_OK if f.endswith(".sh") else os.R_OK), f
     assert f"{dest}/adapters/corral/10-mm-session-start.sh" in r.stdout
     assert VERSION in r.stdout
+    # RT-6.18: the MCP server goes along, to run on the host; a checkout's caches do not.
+    assert (dest / "mcp" / "src" / "mattermost_ai_agent_bus" / "hosted.py").is_file()
+    assert (dest / "mcp" / "uv.lock").is_file() and (dest / "skills" / "mattermost-ai-agent-bus").is_dir()
+    assert not list((dest / "mcp" / "src").rglob("__pycache__"))
+    assert "MCP server environment ready" in r.stdout or "WARNING: no Python environment" in r.stdout
 
 
 def test_reinstall_replaces_the_whole_tree(run, tmp_path):
     dest = tmp_path / "current"
-    run(INSTALL, "--from", str(ROOT), MM_BUS_HOST_DIR=str(dest))
+    run(INSTALL, "--from", str(ROOT), **UV, MM_BUS_HOST_DIR=str(dest))
     (dest / "bin" / "stray.sh").write_text("echo old\n")
-    assert run(INSTALL, "--from", str(ROOT), MM_BUS_HOST_DIR=str(dest)).code == 0
+    assert run(INSTALL, "--from", str(ROOT), **UV, MM_BUS_HOST_DIR=str(dest)).code == 0
     assert not (dest / "bin" / "stray.sh").exists()
     assert not any(p.name.startswith((".old", ".install")) for p in dest.parent.iterdir())
 
 
 def test_refuses_inside_corral(run, tmp_path):
-    r = run(INSTALL, "--from", str(ROOT), MM_BUS_HOST_DIR=str(tmp_path / "c"), CORRAL_SANDBOX="1")
+    r = run(INSTALL, "--from", str(ROOT), **UV, MM_BUS_HOST_DIR=str(tmp_path / "c"), CORRAL_SANDBOX="1")
     assert r.code != 0 and "on the host" in r.stderr
     assert not (tmp_path / "c").exists()
 
@@ -63,7 +71,7 @@ def test_installs_from_its_own_checkout_and_checks_the_plugin_version(run, tmp_p
     registry(tmp_path, ROOT)
     dest = tmp_path / "current"
     assert run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest)).code != 0
-    r = run(INSTALL, MM_BUS_HOST_DIR=str(dest))
+    r = run(INSTALL, **UV, MM_BUS_HOST_DIR=str(dest))
     assert r.code == 0 and f"from: {ROOT.resolve()}" in r.stdout
     c = run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest))
     assert c.code == 0 and f"plugin:     {VERSION}" in c.stdout
@@ -83,7 +91,7 @@ def test_a_newer_plugin_in_a_corral_home_is_never_the_source(run, tmp_path):
     plant = planted(tmp_path)
     registry(tmp_path, plant)  # the host's own registry may point there, too
     dest = tmp_path / "current"
-    r = run(INSTALL, MM_BUS_HOST_DIR=str(dest))
+    r = run(INSTALL, **UV, MM_BUS_HOST_DIR=str(dest))
     assert r.code == 0, r.stderr
     assert f"from: {ROOT.resolve()}" in r.stdout and str(plant) not in r.stdout
     assert not (dest / "bin" / "planted.sh").exists()
@@ -99,7 +107,7 @@ def test_refuses_a_source_a_sandbox_can_write(run, tmp_path):
     shared = tree(tmp_path / ".claude" / "plugins" / "marketplaces" / "mattermost-ai-agent-bus")
     for src in (plant, link, shared):
         dest = tmp_path / "current"
-        r = run(INSTALL, "--from", str(src), MM_BUS_HOST_DIR=str(dest))
+        r = run(INSTALL, "--from", str(src), **UV, MM_BUS_HOST_DIR=str(dest))
         assert r.code != 0 and "can be changed from inside a corral sandbox" in r.stderr, src
         assert "--from <checkout>" in r.stderr and not dest.exists()
 

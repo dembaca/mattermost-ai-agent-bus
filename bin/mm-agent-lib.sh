@@ -311,6 +311,13 @@ mm_bus() {
   [[ "$MM_BUS_STATUS" == 200 ]]
 }
 
+# A keyless corral session (RT-6.18): the MCP server runs on the host, the
+# sandbox has its endpoints and no token. The server's state files are not
+# here; what the hooks need of them comes through the hook API.
+mm_bus_keyless() {
+  [[ -n "${MM_BUS_MCP_ENDPOINT:-}" ]]
+}
+
 # This session's bot id without asking anyone: MM_BOT_USER_ID from the
 # environment, else the one the MCP server put into its endpoint file. For the
 # local steps that must not wait on the server (the prompt hook stopping the
@@ -327,19 +334,21 @@ mm_bus_uid() {
 
 # Who this session's bot is, from the hook API: exports MM_BOT_USER_ID and
 # MM_BOT_USERNAME (the per-bot state files key on them), sets MM_BUS_PROJECT
-# (1 in a project channel) and MM_CROWN_UNTIL (epoch, 0 without the 👑). Fails
+# (1 in a project channel), MM_CROWN_UNTIL (epoch, 0 without the 👑) and
+# MM_BUS_CHANNEL (1 once the agent confirmed the channel check, RT-6.12). Fails
 # without jq or a bus session: the hook then exits 0 and stays quiet (RT-6.4).
 # shellcheck disable=SC2034  # MM_BUS_PROJECT, MM_CROWN_UNTIL are read by the callers
 mm_bus_me() {
-  local uid name project crown
+  local uid name project crown channel
   command -v jq >/dev/null 2>&1 || return 1
   mm_bus GET /v1/me || return 1
-  { read -r uid; read -r name; read -r project; read -r crown; } < <(jq -r '
-    (.user_id // ""), (.username // ""), (if .project then 1 else 0 end), (.crown_until // 0)' \
-    <<<"$MM_BUS_BODY" 2>/dev/null)
+  { read -r uid; read -r name; read -r project; read -r crown; read -r channel; } < <(jq -r '
+    (.user_id // ""), (.username // ""), (if .project then 1 else 0 end), (.crown_until // 0),
+    (if .channel then 1 else 0 end)' <<<"$MM_BUS_BODY" 2>/dev/null)
   [[ "${uid:-}" =~ ^[a-z0-9]{26}$ ]] || return 1
   export MM_BOT_USER_ID="$uid" MM_BOT_USERNAME="${name:-}"
   MM_BUS_PROJECT="${project:-0}"
+  MM_BUS_CHANNEL="${channel:-0}"
   MM_CROWN_UNTIL="${crown:-0}"
   [[ "$MM_CROWN_UNTIL" =~ ^[0-9]+$ ]] || MM_CROWN_UNTIL=0
   return 0
@@ -401,6 +410,8 @@ mm_lease_sec() {
 #   mm_stat KIND [key=value …]     e.g. mm_stat wake reason=digest
 # Counted by hooks, listener and MCP server, posted once at session end to
 # MM_STATS_CHANNEL (default agents-stats); MM_STATS_CHANNEL=off counts nothing.
+# In a keyless corral session the server's state dir is on the host (RT-6.18):
+# the counter goes to its hook API instead (POST /v1/stat, at most 1 s).
 # Never fails, never prints: a counter must not disturb a session.
 mm_stats_off() { [[ "${MM_STATS_CHANNEL:-agents-stats}" =~ ^(off|none|0|false)$ ]]; }
 mm_stat() {
@@ -410,10 +421,14 @@ mm_stat() {
   [[ "${MM_BOT_USER_ID:-}" =~ ^[a-z0-9]{26}$ ]] || return 0
   f="$(mm_state_dir)/stats-${MM_BOT_USER_ID}.jsonl"
   command -v jq >/dev/null 2>&1 || return 0
-  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
   kv="$(printf '%s\n' "$@" | jq -cRn --arg k "$kind" --argjson t "$(date +%s)" '
     [inputs | select(contains("=")) | capture("^(?<k>[^=]+)=(?<v>.*)$")
      | {(.k): (.v | tonumber? // .)}] | add // {} | {k: $k, t: $t} + .' 2>/dev/null)" || return 0
+  if mm_bus_keyless; then
+    MM_BUS_MAX_TIME=1 mm_bus POST /v1/stat "$kv" >/dev/null 2>&1 || true
+    return 0
+  fi
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
   printf '%s\n' "$kv" >>"$f" 2>/dev/null || true
   return 0
 }
@@ -519,12 +534,18 @@ mm_epoch_hhmm() {
 # Claude Code was started with the MCP server as a channel (RT-6.12): the
 # server pushes bus messages into the session, so no listener is needed. The
 # server finds that out itself; it counts once the agent confirmed the server's
-# check (channel-<uid>.env). MM_CHANNEL_PUSH=0 turns it off.
+# check (channel-<uid>.env). MM_CHANNEL_PUSH=0 turns it off. In a keyless
+# session that file is on the host: /v1/me says (MM_BUS_CHANNEL, RT-6.18).
 mm_channel_push() {
   case "$(printf '%s' "${MM_CHANNEL_PUSH:-}" | tr '[:upper:]' '[:lower:]')" in
     0 | false | no | off) return 1 ;;
   esac
   local f
+  if mm_bus_keyless; then
+    [[ -n "${MM_BUS_CHANNEL:-}" ]] || mm_bus_me || return 1
+    [[ "${MM_BUS_CHANNEL:-0}" == 1 ]]
+    return
+  fi
   f="$(mm_bot_state_file channel "${1:-}")" && [[ -f "$f" ]]
 }
 

@@ -75,11 +75,26 @@ def record(kind: str, **values: Any) -> None:
     if f is None or not channel():
         return
     try:
-        f.parent.mkdir(parents=True, exist_ok=True)
-        with f.open("a") as out:
-            out.write(json.dumps({"k": kind, "t": int(time.time()), **values}) + "\n")
+        session_file.append_private(f, json.dumps({"k": kind, "t": int(time.time()), **values}) + "\n")
     except OSError:
         pass
+
+
+def transcript(path: str) -> str | None:
+    """The transcript a hook noted, if this process may read it (RT-6.9).
+
+    The host process of a keyless session (RT-6.18) got the path from the
+    agent's side: it reads only a file whose real path lies under the host's
+    ~/.claude/projects/, else measures nothing.
+    """
+    if not session_file.hosted():
+        return path
+    try:
+        real = os.path.realpath(path)
+        root = os.path.realpath(Path.home() / ".claude" / "projects")
+    except (OSError, ValueError):
+        return None
+    return real if real.startswith(root + os.sep) else None
 
 
 def static_chars(skill: Path, instructions: str, tool_docs: list[str]) -> int:
@@ -149,9 +164,10 @@ def summary(version: str, static: int,
     start = min(e.get("t", 0) for e in events)
     paths = [e.get("path") for e in events if e.get("k") == "transcript" and e.get("path")]
     tok = None
-    if paths and fixed is not None:
+    path = transcript(str(paths[-1])) if paths else None
+    if path and fixed is not None:
         try:
-            tok = overhead.measure(paths[-1], start, fixed)
+            tok = overhead.measure(path, start, fixed)
         except Exception:  # noqa: BLE001 — a transcript we cannot read costs only this field
             tok = None
     turns = _turns(events)

@@ -3,6 +3,53 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.39.0
+
+Keyless corral session: the bot token stays on the host (#81, #69).
+
+### Changed
+
+- **The MCP server runs on the host in a corral session
+  ([RT-6.18](docs/arc42/06-runtime-view.md)):** `preStart` starts it as one
+  host process per session (`python -I -m mattermost_ai_agent_bus --host` from
+  the host copy, a scrubbed environment, key and token on stdin) and
+  contributes only `MM_BUS_MCP_ENDPOINT`, `MM_BUS_ENDPOINT` and `MM_BUS_KEY`
+  besides the ids and names: no `MM_BOT_TOKEN` in the sandbox any more. The
+  plugin's MCP entry point relays stdio to it after a handshake with the key
+  and the session's names (session id, project directory, working directory,
+  channel flag, `CLAUDECODE`), checked and used only to name files. The host
+  process serves the hook API (RT-6.17) with the same key for the whole
+  session, keeps its files in its own state directory
+  (`~/.local/state/mm-agent-bus/hosted/<session>/`, 0700), and ends with
+  `postEnd` (SIGTERM: BYE, stats, offline, unregister) or when corral is gone
+  (watchdog every 5 s).
+- **Fail closed:** when that process cannot start, the bot is unregistered
+  again and the sandbox gets only `MM_BUS_UNAVAILABLE` with the reason — never
+  the token. The MCP server tells the agent so instead of offering
+  `session_start`.
+- **Hooks in a keyless session:** the overhead counters go to the new
+  `POST /v1/stat`, the channel confirmation comes from `/v1/me` (`channel`),
+  and `mm-agent-statusline.sh` asks `/v1/me` for the 👑 (1 s at most).
+  `HOST_MANAGED`, the skill and the docs key on `MM_BUS_MCP_ENDPOINT` as well
+  as `MM_BOT_TOKEN` (older host installs).
+- **State files** are written through one helper (mkstemp and rename, append
+  with `O_NOFOLLOW`) that refuses a symlink in their place; a transcript is
+  opened without following a symlink, and on the host only under
+  `~/.claude/projects/`.
+- **`mm-agent-host-install.sh`** copies the MCP server and the skill as well
+  and prepares the server's environment with `uv sync --locked` (needs `uv`).
+- **`mm-agent-sweep.sh`** leaves a session alone while its host process runs
+  and removes the files of host processes whose session ended.
+
+### Upgrade
+
+- Rerun `bin/mm-agent-host-install.sh` on the host, from a clone you
+  reviewed: the host process runs that code with the bot token. Without its
+  Python environment corral sessions get no bus.
+- Update the plugin in the sandboxes (`/plugin update`, then restart): a
+  plugin older than 0.39.0 does not know the relay, so a keyless session gets
+  no MCP bus until it is updated.
+
 ## 0.38.0
 
 The MCP server runs no scripts any more: crown lease, roster, presence and

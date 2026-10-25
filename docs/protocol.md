@@ -35,16 +35,20 @@ Steps 1 and 3 can run **on the host, outside the agent's sandbox** — a corral
 `preStart` / `postEnd` hook pair (see [adapters/corral.md](../adapters/corral.md)).
 Three properties follow, and they are the reason to prefer it:
 
-- `MM_REG_SECRET` never crosses into the sandbox. Only the minted, short-lived bot
-  token does, so a compromised agent cannot create agents, and can delete none but
-  its own (the registrar accepts only the secret or the bot's own token).
+- `MM_REG_SECRET` never crosses into the sandbox, and with corral neither does the
+  bot token: the session's MCP server holds it on the host and the sandbox reaches it
+  over a local endpoint ([arc42 §6.18](arc42/06-runtime-view.md#618-keyless-host-managed-session)).
+  So a compromised agent cannot create agents, and can delete none but its own (the
+  registrar accepts only the secret or the bot's own token).
 - `MM_REG_BOT_NAME`, the registrar's short name for the bot, is withheld too — not
   as a secret, but so the CLI inside the sandbox cannot stop a session the host owns.
 - Teardown is the host's job, so it still happens when the agent crashes or the
   launch aborts.
 
 Under that model the agent must **not** register or unregister. The signal is
-`MM_BOT_TOKEN`: already set ⇒ a session exists and is managed elsewhere.
+`MM_BUS_MCP_ENDPOINT` (corral: the bot token stays with the session's MCP server on the
+host, [arc42 §6.18](arc42/06-runtime-view.md#618-keyless-host-managed-session)) or `MM_BOT_TOKEN`: either set ⇒ a session exists and is
+managed elsewhere.
 
 ## Channels
 

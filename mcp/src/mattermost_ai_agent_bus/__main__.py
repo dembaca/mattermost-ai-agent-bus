@@ -1,4 +1,4 @@
-from .server import main
+from .hosted import main
 
 if __name__ == "__main__":
     main()
