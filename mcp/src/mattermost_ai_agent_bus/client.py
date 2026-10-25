@@ -13,7 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import links, session_file
+from . import links, ownpost, profile, session_file
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +131,7 @@ class MattermostClient:
     _is_human: dict[str, bool] = field(default_factory=dict, repr=False, init=False)
     session: SessionInfo | None = field(default=None, repr=False, init=False)
     _trusted: dict[str, str] | None = field(default=None, repr=False, init=False)
+    profile_warning: str = field(default="", repr=False, init=False)
     trusted_source: str = field(default="", repr=False, init=False)
     session_file_status: dict[str, Any] = field(
         default_factory=dict, repr=False, init=False
@@ -146,6 +147,13 @@ class MattermostClient:
     def keeps_bot_on_exit(self) -> bool:
         """A bot of our own, in a session `claude --continue` can resume (RT-6.10)."""
         return self.session is not None and bool(session_file.session_id())
+
+    @property
+    def bot_id(self) -> str:
+        """The bot's user id as far as it is known without a request."""
+        if self.session:
+            return self.session.user_id
+        return str((self._me or {}).get("id") or env("MM_BOT_USER_ID"))
 
     @property
     def work_channel_name(self) -> str:
@@ -235,13 +243,14 @@ class MattermostClient:
         if not _NAME_RE.match(name) or not (3 <= len(name) <= 32):
             raise ValueError("name must be 3–32 lowercase alnum/hyphen")
         display = (display_name or name).strip()
+        fields = _registration_fields(name, display)
         resp = await self._http().post(
             self.register_url,
             headers={
                 "Authorization": f"Bearer {self.reg_secret}",
                 "Content-Type": "application/json",
             },
-            json=_registration_fields(name, display),
+            json=fields,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -253,7 +262,33 @@ class MattermostClient:
             bot_token=data["bot_token"],
         )
         self._take(info)
+        self.profile_warning = await self._profile_warning(info, fields.get("trusted", []))
         return info
+
+    async def _profile_warning(self, info: SessionInfo, sent: list[str]) -> str:
+        """Does the profile the registrar wrote carry every trusted name sent
+        (RT-6.8)? A bot's user object carries its description as
+        `bot_description`; `/bots/<id>` is the second try, which its owner may
+        read. '' when it does, or when neither can be read; never fails."""
+        if not sent:
+            return ""
+        description: str | None = None
+        for path, key in ((f"/api/v4/users/{info.user_id}", "bot_description"),
+                          (f"/api/v4/bots/{info.user_id}", "description")):
+            try:
+                data = await self._api("GET", path)
+            except Exception:  # noqa: BLE001 — not readable: try the next
+                continue
+            if isinstance(data, dict) and isinstance(data.get(key), str):
+                description = data[key]
+                break
+        if description is None:
+            log.info("profile not readable: trusted names not compared")
+            return ""
+        text = profile.warning(info.username, sent, description)
+        if text:
+            log.warning("trusted list vs profile: %s", text)
+        return text
 
     def _take(self, info: SessionInfo) -> None:
         """Make ``info`` this process's bot and hand it to the hooks."""
@@ -395,6 +430,7 @@ class MattermostClient:
         if not short:
             raise RuntimeError("no agent name; pass name or call session_start first")
         short = short.removeprefix(session_file.agent_prefix())
+        uid = self.bot_id
         if not self.register_url:
             raise RuntimeError("MM_REGISTER_URL is required for session_end")
         bearer = self.reg_secret or self.token
@@ -410,6 +446,7 @@ class MattermostClient:
         self.token = None
         self._me = None
         session_file.remove()
+        ownpost.remove(uid)
         for key in (
             "MM_REG_BOT_NAME",
             "MM_BOT_USERNAME",
@@ -432,6 +469,7 @@ class MattermostClient:
         if not self.token or not self.register_url:
             return "no session"
         headers = {"Authorization": f"Bearer {self.token}"}
+        uid = self.bot_id
         if self.keeps_bot_on_exit and self.session is not None:
             # Kept for `claude --continue`, which reuses the session id: the next
             # server takes the bot over (adopt_sync). The file's mtime starts the
@@ -482,6 +520,7 @@ class MattermostClient:
             self.token = None
         if ok:
             session_file.remove()
+            ownpost.remove(uid)
             return f"unregistered {short}"
         return f"unregister failed: HTTP {resp.status_code}"
 
@@ -688,8 +727,19 @@ class MattermostClient:
             body["root_id"] = root_id
         if props:
             body["props"] = props
-        return links.read_post(await self._api("POST", "/api/v4/posts", json=body),
+        post = links.read_post(await self._api("POST", "/api/v4/posts", json=body),
                                self.permalink_base)
+        await self._remember(cid, post)
+        return post
+
+    async def _remember(self, channel_id: str, post: dict[str, Any]) -> None:
+        """Keep the bot's latest post in the work channel for the Stop hook and
+        the exit handler (ownpost.py). Bookkeeping: never fails the post."""
+        try:
+            if self.bot_id and channel_id == await self.get_channel_id():
+                ownpost.record(self.bot_id, channel_id, post)
+        except Exception as exc:  # noqa: BLE001
+            log.info("own post not remembered: %s", exc)
 
     async def add_reaction(self, post_id: str, emoji: str) -> None:
         me = await self.get_me()

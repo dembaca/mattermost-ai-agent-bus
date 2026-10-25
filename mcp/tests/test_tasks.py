@@ -31,10 +31,17 @@ def test_first_word_is_the_kind(message, kind):
 
 def test_annotation_and_kind_from_props_or_text():
     """RT-6.14 step 2: props say it when there; old posts are read from their text."""
-    assert a2a.annotate("👑 BLOCKED on review of #44") == {"v": 1, "kind": "blocked",
-                                                         "state": "input-required"}
+    assert a2a.annotate("👑 BLOCKED on review of #44") == {
+        "v": 1, "kind": "blocked", "state": "input-required", "intent": "reply"}
     assert a2a.annotate("thanks") is None
-    assert a2a.annotate("IDLE · done") == {"v": 1, "kind": "idle"}
+    assert a2a.annotate("thanks", "all") == {"v": 1, "to": "all"}  # RT-6.11
+    assert a2a.annotate("IDLE · done", "all") == {"v": 1, "kind": "idle", "intent": "fyi",
+                                                  "to": "all"}
+    assert a2a.kind_of({"message": "x", "props": {"a2a": {"v": 1, "to": "all"}}}) is None
+    assert [a2a.to_all({"props": {"a2a": a}}) for a in ({"to": "all"}, {"to": "x"}, "all", None)] == [
+        True, False, False, False]
+    assert not a2a.to_all({"message": "x"}) and not a2a.to_all({"props": "all"})
+    assert a2a.annotate("IDLE · done") == {"v": 1, "kind": "idle", "intent": "fyi"}
     assert a2a.kind_of({"message": "x", "props": {"a2a": {"kind": "result"}}}) == "RESULT"
     assert a2a.kind_of({"message": "👑 🙋 @dembaca — **Go?**"}) == a2a.ASK
     assert a2a.state(a2a.PERMISSION) == "auth-required"
@@ -238,7 +245,8 @@ async def test_posts_carry_their_kind(bus):
     c = bus([])
     await server.reply_in_thread(root_id="t", message="ACK – on it")
     await server.post_message(message="anyone seen #46?")
-    assert c.posted[0]["props"] == {"a2a": {"v": 1, "kind": "ack", "state": "working"}}
+    assert c.posted[0]["props"] == {"a2a": {"v": 1, "kind": "ack", "state": "working",
+                                            "intent": "fyi"}}
     assert c.posted[1]["props"] is None
 
 
@@ -324,3 +332,99 @@ def test_static_budget():
     assert len((skill / "coordinator.md").read_text()) <= 5_020  # + RT-6.16: posts not trusted
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
     assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90
+
+
+@pytest.mark.parametrize("message,kind,out", [
+    ("on it", "ack", "ACK · on it"), ("ACK – on it", "ACK", "ACK – on it"),
+    ("**DONE** #46 merged", "done", "**DONE** #46 merged"), ("PR #57", "RESULT", "PR #57"),
+    ("PR #57 merged", "DONE", "DONE · PR #57 merged"), ("", "IDLE", "IDLE"),
+    ("No worries", "ACK", "ACK · No worries"), ("on it", "", "on it"),
+])
+def test_kind_leads_the_text(message, kind, out):
+    """RT-6.14 step 2: kind is put first unless the text starts with it, so
+    text and props say the same; any case."""
+    assert a2a.lead(message, kind) == out
+    assert a2a.word(out) == (kind.upper() or None)
+
+
+@pytest.mark.parametrize("message,kind,error", [
+    ("on it", "OK", "kind must be one of TASK, DELEGATE, ACK"),
+    ("DONE · merged", "ACK", "kind is ACK but the message starts with DONE"),
+])
+def test_kind_is_a_bus_word_and_agrees_with_the_text(message, kind, error):
+    """RT-6.14 step 2: an unknown kind, or one the first word contradicts, is refused."""
+    with pytest.raises(ValueError, match=error):
+        a2a.lead(message, kind)
+
+
+def test_intent_follows_the_kind():
+    """RT-6.14 step 2: action, reply or fyi from the kind; nothing for a plain
+    post. Read from props only, never from the text."""
+    by = {w: a2a.intent(w) for w in a2a.WORDS}
+    assert {w for w, i in by.items() if i == a2a.ACTION} == {"TASK", "DELEGATE", "HANDOVER", "CANCEL"}
+    assert {w for w, i in by.items() if i == a2a.REPLY} == {"BLOCKED", "NO"}
+    assert a2a.intent(a2a.ASK) == a2a.intent(a2a.PERMISSION) == a2a.REPLY
+    assert a2a.annotate(kind=a2a.ASK) == {"v": 1, "kind": "ask", "state": "input-required",
+                                          "intent": "reply"}
+    assert a2a.intent("plain") is None and a2a.annotate("plain") is None
+    assert a2a.intent_of({"props": {"a2a": {"intent": "fyi"}}}) == a2a.FYI
+    for odd in ({"a2a": {"intent": "later"}}, {"a2a": "fyi"}, "fyi", None):
+        assert a2a.intent_of({"message": "DONE", "props": odd}) is None
+
+
+@pytest.mark.asyncio
+async def test_kind_is_written_to_text_and_props(bus):
+    """RT-6.14 step 2: post_message and reply_in_thread take kind; a refused
+    kind posts nothing."""
+    c = bus([])
+    await server.reply_in_thread(root_id="t", message="merged", kind="done")
+    await server.post_message(message="relay · @agent-a", kind="TASK")
+    assert [p["message"] for p in c.posted] == ["DONE · merged", "TASK · relay · @agent-a"]
+    assert [p["props"]["a2a"]["intent"] for p in c.posted] == ["fyi", "action"]
+    with pytest.raises(ValueError):
+        await server.reply_in_thread(root_id="t", message="DONE", kind="ACK")
+    assert len(c.posted) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_late_claim_learns_who_has_the_task(bus, monkeypatch):
+    """RT-6.14 step 3: the first ACK, PROGRESS or RESULT in thread order takes
+    the task; a later one gets taken_by back. Once the bot holds a task, its
+    next claims there read no thread."""
+    monkeypatch.setattr(server, "_my_tasks", set())
+    root = P("t", LEIT, "TASK · relay", at=0)
+    c = bus([root, P("a1", A, "ACK", root="t", at=10), P("m1", ME, "ACK", root="t", at=20)])
+    out = json.loads(await server.reply_in_thread(root_id="t", message="on it", kind="ACK"))
+    assert out["taken_by"] == "agent-a"
+    out = json.loads(await server.reply_in_thread(root_id="t", message="BLOCKED on #44"))
+    assert "taken_by" not in out  # no claim: no thread read
+    c = bus([root, P("m1", ME, "ACK", root="t", at=10), P("a1", A, "ACK", root="t", at=20)])
+    reads = []
+    orig = c.thread
+
+    async def thread(r):
+        reads.append(r)
+        return await orig(r)
+    c.thread = thread
+    for _ in range(2):
+        out = json.loads(await server.reply_in_thread(root_id="t", message="PROGRESS · half"))
+        assert "taken_by" not in out
+    assert reads == ["t"]
+
+
+@pytest.mark.asyncio
+async def test_an_fyi_reply_wakes_the_threads_starter(bus, monkeypatch):
+    """RT-6.14, RT-6.12 step 3: the delegator waits for the RESULT in its TASK
+    thread, so it is pushed; an agent that only posted in a thread gets it in
+    the digest."""
+    monkeypatch.setattr(server, "_my_roots", set())
+    monkeypatch.setenv("MM_BOT_USER_ID", ME)
+    bus([P("t", ME, "TASK · x"), P("a1", A, "ACK", root="t"),
+         P("t2", LEIT, "TASK · y"), P("m1", ME, "ACK", root="t2")])
+
+    def item(root):
+        return {"kind": "watched_channel", "from_agent": True, "intent": "fyi",
+                "post": {"id": "n", "root_id": root, "message": "RESULT · PR #5"}}
+    assert await server._push_addressed(item("t"))
+    assert not await server._push_addressed(item("t2"))
+    assert server._my_roots == {"t"}

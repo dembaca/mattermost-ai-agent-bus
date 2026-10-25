@@ -25,7 +25,8 @@ COMPACT = frozenset({"IDLE", "BYE", "ACK", "PROGRESS", "ASSIGNMENTS"})
 # coordinator only close it.
 _ASSIGNEE = frozenset({"ACK", "PROGRESS", "BLOCKED", "WAITING", "RESULT", "DONE", "NO"})
 _CLOSERS = frozenset({"DONE", "CANCEL"})
-_TAKES = frozenset({"ACK", "PROGRESS", "RESULT"})
+# The words that claim a task (RT-6.14 step 3).
+TAKES = frozenset({"ACK", "PROGRESS", "RESULT"})
 
 _PR = re.compile(r"(?:\bPR\s*#|\bMR\s*!|/pull/|/merge_requests/)(\d+)", re.I)
 _ISSUE = re.compile(r"(?<![\w/&])#(\d+)\b")
@@ -137,7 +138,7 @@ def _apply(t: dict[str, Any], p: Mapping[str, Any], author: str) -> None:
     msg = str(p.get("message", ""))
     kind = a2a.kind_of(p) or ""
     crowned = msg.lstrip().startswith("👑")
-    if t["agent"] is None and kind in _TAKES and author != t["by"]:
+    if t["agent"] is None and kind in TAKES and author != t["by"]:
         if not t["_candidates"] or author in t["_candidates"]:
             t["agent"] = author
     if author == t["agent"]:

@@ -1,4 +1,5 @@
-"""ask_human: one easy-to-spot post per ask, and reactions as answers (RT-6.11)."""
+"""ask_human: one easy-to-spot post per ask, and reactions as answers (RT-6.11).
+Also what no other post of an agent may do: notify a person, or everyone."""
 
 import json
 import time
@@ -152,8 +153,79 @@ async def test_posts_never_mention_a_human(monkeypatch):
               "in thread, @kollegin too. @channel heads-up, mail a@b.de, `@dembaca` in code"))
     msg = c.posted[0]["message"]
     assert msg == ("dembaca gave the coordination to @agent-mac-1; APPROVE from Dembaca "
-                   "in thread, kollegin too. @channel heads-up, mail a@b.de, `@dembaca` in code")
-    assert out["unmentioned"] == ["Dembaca", "dembaca", "kollegin"] and "ask_human" in out["hint"]
+                   "in thread, kollegin too. channel heads-up, mail a@b.de, `@dembaca` in code")
+    assert out["unmentioned"] == ["Dembaca", "dembaca", "kollegin", "channel"]
+    assert "ask_human" in out["hint"] and 'to="all"' in out["hint"]
+
+
+EVERYONE = "@channel heads-up, @Here too, and @all. @@all, `@channel` in code, a@all.example, @all-hands"
+PLAIN = "channel heads-up, Here too, and all. all, `@channel` in code, a@all.example, all-hands"
+
+
+@pytest.mark.asyncio
+async def test_posts_never_notify_everyone(monkeypatch):
+    """RT-6.11 step 1: @channel, @here and @all become plain words in post_message,
+    reply_in_thread and the note of resolve_ask, as a person's name does; the
+    result says why and names the way to wake the agents."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.post_message(EVERYONE))
+    assert c.posted[0]["message"] == PLAIN
+    assert out["unmentioned"] == ["all", "channel", "here"]
+    assert 'to="all"' in out["hint"] and "ask_human" not in out["hint"]
+    await server.reply_in_thread("r1", EVERYONE)
+    await server.resolve_ask(ASK, note=EVERYONE)
+    assert [p["message"] for p in c.posted[1:]] == [PLAIN, PLAIN]
+
+
+@pytest.mark.asyncio
+async def test_everyone_is_rewritten_when_the_name_lookup_fails(monkeypatch):
+    """RT-6.11 error handling: a failed lookup leaves names as written (fail
+    open) but never lets @channel through."""
+    class Down(_NamingClient):
+        async def humans_among(self, names):
+            raise RuntimeError("HTTP 500")
+
+    c = Down()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.post_message("@dembaca and @channel")
+    assert c.posted[0]["message"] == "@dembaca and channel"
+
+
+@pytest.mark.asyncio
+async def test_an_ask_never_notifies_everyone(monkeypatch):
+    """RT-6.11 step 1: the ask mentions its human only; @channel in any field
+    of it is written plain, and the result says so."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(
+        need="Merge #61 @channel?", context="@here is waiting", recommendation="yes",
+        decision="Merge @all", where="PR @channel", answers="go / @all"))
+    text = json.dumps([c.posted[0]["message"], c.posted[0]["props"]])
+    for word in ("@channel", "@here", "@all"):
+        assert word not in text
+    assert c.posted[0]["message"] == "🙋 @dembaca — **Merge #61 channel?**"
+    assert out["unmentioned"] == ["all", "channel", "here"]
+
+
+@pytest.mark.asyncio
+async def test_to_all_wakes_every_agent_through_the_props(monkeypatch):
+    """RT-6.11 step 1: to="all" writes props.a2a.to (with the kind a first word
+    gives); the text needs no @channel. Anything else for a reply is refused."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.post_message("main is red, hold merges", to="all"))
+    await server.post_message("IDLE · done: x", to="All")
+    await server.reply_in_thread("r1", "freeze lifted", to="all")
+    assert [p["props"] for p in c.posted] == [
+        {"a2a": {"v": 1, "to": "all"}},
+        {"a2a": {"v": 1, "kind": "idle", "intent": "fyi", "to": "all"}},
+        {"a2a": {"v": 1, "to": "all"}}]
+    assert "unmentioned" not in out
+    await server.post_message("anyone seen #46?")
+    assert c.posted[-1]["props"] is None
+    with pytest.raises(ValueError, match="to must be"):
+        await server.reply_in_thread("r1", "hi", to="agent-x")
 
 
 @pytest.mark.asyncio
