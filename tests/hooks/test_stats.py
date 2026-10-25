@@ -63,20 +63,26 @@ def test_the_bus_starts_a_turn_by_a_listener_that_ended_on_a_message(mm, run):
 
 def test_report_aggregates_per_version(mm, run):
     """RT-6.9 step 3: the report groups the STATS lines by version; the share
-    counts the plugin's turns against all turns, its own included (never > 100 %)."""
-    def stats(v, minutes, turns, wakes, blocks, chars):
+    counts the plugin's turns against all turns, its own included (never > 100 %).
+    `turns` already holds the turns a listener's end started: they count once,
+    and from 0.36.0 bus_turns (pushes too) replaces the wake-ups."""
+    def stats(v, minutes, turns, wakes, blocks, chars, **more):
         return {"id": f"s-{v}", "user_id": "x" * 26, "create_at": 1, "message":
                 "STATS " + json.dumps({"v": v, "min": minutes, "turns": turns,
                                         "wakes": {"addressed": wakes}, "blocks": {"listen": blocks},
                                         "tools": {"wait_for_events": [wakes, chars]},
-                                        "posts": [1, 120], "compact": [0, 0], "static": 29500})}
+                                        "posts": [1, 120], "compact": [0, 0], "static": 29500, **more})}
     mm.posts[:0] = [stats("0.20.0", 60, 20, 4, 2, 4000), stats("0.21.0", 120, 40, 2, 2, 1000),
+                    stats("0.36.0", 60, 10, 2, 1, 1100, bus_turns=3),
                     {"id": "noise", "user_id": "x" * 26, "create_at": 1, "message": "hello"}]
     r = run(REPORT, "report", "agents-stats", "--json")
     assert r.code == 0, r.stderr
     rows = {row["version"]: row for row in json.loads(r.stdout)}
-    assert rows["0.20.0"]["plugin_turns_per_h"] == 6.0 and rows["0.20.0"]["plugin_share_pct"] == 23
-    assert rows["0.21.0"]["plugin_turns_per_h"] == 2.0 and rows["0.21.0"]["bus_chars_per_turn"] == 23
+    # 4 wake-ups + 2 forced rounds of 20 prompts + 2 forced rounds
+    assert rows["0.20.0"]["plugin_turns_per_h"] == 6.0 and rows["0.20.0"]["plugin_share_pct"] == 27
+    assert rows["0.21.0"]["plugin_turns_per_h"] == 2.0 and rows["0.21.0"]["bus_chars_per_turn"] == 24
+    # 3 bus-started prompts (not the 2 wake-ups) + 1 forced round of 10 + 1
+    assert rows["0.36.0"]["plugin_turns_per_h"] == 4.0 and rows["0.36.0"]["plugin_share_pct"] == 36
     assert rows["0.21.0"]["static"] == 29500
     assert "0.21.0" in run(REPORT, "report", "agents-stats").stdout
 

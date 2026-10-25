@@ -43,6 +43,16 @@ stats now time the agent's asks and its turns, per coding harness.
   OpenCode plugin events, Codex notify), a follow-up. The waiting share adds
   overlapping asks to different humans twice.
 
+### Fixed
+
+- **The bus's turns counted twice in the report (RT-6.9):** `turns` counts
+  every prompt, so it already holds the turn a listener's end starts; the
+  report added the listener's wake-ups on top, for "turns the plugin caused"
+  and again for "all turns", which put the share too low. All turns are now
+  the prompts plus the rounds the Stop hook forced; the plugin's are
+  `bus_turns` (pushes included) plus those rounds, and before 0.36.0 the
+  wake-ups stand in for `bus_turns` (pushes uncounted there).
+
 ## 0.35.0
 
 More from the review in #61:

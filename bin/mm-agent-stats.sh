@@ -6,8 +6,9 @@
 #   mm-agent-stats.sh report --json      # the aggregated numbers as JSON
 #
 # Columns: sessions, hours on the bus, turns the plugin caused per hour
-# (listener wake-ups + rounds the Stop hook forced), their share of all turns
-# (the human's prompts plus those the plugin caused), bus data put into the context per turn (tool results + compaction handoff),
+# (prompts the bus started — pushes, listener wake-ups — + rounds the Stop hook
+# forced), their share of all turns (every prompt plus the forced rounds), bus
+# data put into the context per turn (tool results + compaction handoff),
 # characters posted per session, and the fixed text in every turn (skill,
 # instructions, tool docs). Characters, not tokens: roughly 4 per token.
 # Claude Code sessions since 0.32.0 add a token table from their transcripts:
@@ -118,8 +119,13 @@ report="$(jq -c '
     version: .[0].v,
     sessions: length,
     hours: (sum(.min) / 60 * 10 | round / 10),
+    # `turns` counts every prompt, those the bus started (a push, a listener that
+    # ended) included; the rounds the Stop hook forced are not prompts. Before
+    # 0.36.0 (no bus_turns) the listener'"'"'s wake-ups stand in for the bus'"'"'s
+    # turns, pushes uncounted.
     turns: sum(.turns),
-    plugin_turns: sum(((.wakes // {}) | add // 0) + ((.blocks // {}) | add // 0)),
+    forced: sum((.blocks // {}) | add // 0),
+    plugin_turns: sum((.bus_turns // ((.wakes // {}) | add // 0)) + ((.blocks // {}) | add // 0)),
     bus_chars: sum(((.tools // {}) | map(.[1]) | add // 0) + ((.compact // [0, 0])[1])),
     post_chars: sum((.posts // [0, 0])[1]),
     static: (map(.static) | max),
@@ -129,7 +135,7 @@ report="$(jq -c '
     }))
   } | . + {
     plugin_turns_per_h: (if .hours > 0 then (.plugin_turns / .hours * 10 | round / 10) else null end),
-    all_turns: (.turns + .plugin_turns)
+    all_turns: (.turns + .forced)
   } | . + {
     plugin_share_pct: (if .all_turns > 0 then (.plugin_turns * 100 / .all_turns | round) else null end),
     bus_chars_per_turn: (if .all_turns > 0 then (.bus_chars / .all_turns | round) else null end),
