@@ -1,3 +1,3 @@
 """Mattermost AI agent bus — client, WebSocket inbox, MCP server."""
 
-__version__ = "0.36.3"
+__version__ = "0.36.4"

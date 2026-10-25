@@ -1,5 +1,7 @@
 """announce posts the HELLO in one format, with for:/trusts: from configuration."""
 
+import json
+
 import pytest
 
 from mattermost_ai_agent_bus import server
@@ -100,5 +102,4 @@ async def test_announce_without_trust_and_autonomous(monkeypatch):
     lines = c.posted[0][0].splitlines()
     assert "for: ops-team (autonomous) · trusts: –" in lines
     assert "branch/PR: –" in lines[1] and lines[-1] == "role: member"
-    with pytest.raises(ValueError):
-        await server.announce(project="x", task="y", model="z", role="boss")
+    assert "refused" in json.loads(await server.announce(project="x", task="y", model="z", role="boss"))
