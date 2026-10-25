@@ -91,6 +91,20 @@ def test_registration_says_whom_the_agent_answers_to(mm, run):
     assert "for @dembaca" in json.loads(r.stdout)["status"][0]
 
 
+def test_a_short_profile_is_warned_about(mm, run):
+    """RT-6.8 step 1: the registrar may write only some of the trusted names. The
+    bot reads its profile back and the banner names the missing ones; a profile
+    that cannot be read is not compared."""
+    env = dict(MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
+    mm.bot_description = "for @dembaca · trusts @dembaca · via agent-registrar"
+    r = run(START, MM_TRUSTED_HUMANS="dembaca,kollegin", **env)
+    assert "lacks some of the 2 trusted names (kollegin)" in r.stderr and "maxTrusted" in r.stderr
+    mm.bot_description = "for @dembaca · trusts @dembaca, @kollegin · via agent-registrar"
+    assert "WARNING" not in run(START, MM_TRUSTED_HUMANS="dembaca,Kollegin", **env).stderr
+    mm.bot_description = None
+    assert "WARNING" not in run(START, MM_TRUSTED_HUMANS="dembaca,kollegin", **env).stderr
+
+
 def test_autonomous_agent(mm, run):
     r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x",
             MM_RESPONSIBLE_HUMAN="@ops-team", MM_AGENT_KIND="autonomous", **HOST)

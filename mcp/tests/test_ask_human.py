@@ -219,7 +219,7 @@ async def test_to_all_wakes_every_agent_through_the_props(monkeypatch):
     await server.reply_in_thread("r1", "freeze lifted", to="all")
     assert [p["props"] for p in c.posted] == [
         {"a2a": {"v": 1, "to": "all"}},
-        {"a2a": {"v": 1, "kind": "idle", "to": "all"}},
+        {"a2a": {"v": 1, "kind": "idle", "intent": "fyi", "to": "all"}},
         {"a2a": {"v": 1, "to": "all"}}]
     assert "unmentioned" not in out
     await server.post_message("anyone seen #46?")

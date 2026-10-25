@@ -72,6 +72,11 @@ export MM_BOT_TOKEN="$BOT_TOKEN"
 export MATTERMOST_URL="$URL"
 export MATTERMOST_TOKEN="$BOT_TOKEN"
 
+# The registrar may have written fewer trusted names than were sent (RT-6.8).
+SENT_TRUSTED=()
+while read -r n; do SENT_TRUSTED+=("$n"); done < <(mm_trusted_names)
+mm_warn_profile_trusted "$USER_ID" "$USER_NAME" ${SENT_TRUSTED[@]+"${SENT_TRUSTED[@]}"}
+
 mm_write_session_file
 if [[ "$EXPORTS_ONLY" -eq 0 ]]; then
   echo "registered ${USER_NAME} (${USER_ID}) ephemeral" >&2

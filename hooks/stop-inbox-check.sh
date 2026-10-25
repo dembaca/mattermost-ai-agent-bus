@@ -133,10 +133,22 @@ go_idle() {
 
 # Latest own post in the work channel: sets LAST_MSG and LAST_AT (epoch ms).
 # Without the 👑 the MCP server puts before a coordinator's posts (RT-6.6).
+# Whoever posts as the agent keeps it in last-<uid>.env (RT-6.2, ownpost.py,
+# mm-agent-post.sh): no request then. Without that file (an older server, an
+# agent that never posted) the channel's last 100 posts are read.
 LAST_MSG="" LAST_AT=0
 my_last_post() {
-  local cid
+  local cid lf k v at="" msg=""
   [[ -n "${MM_BOT_USER_ID:-}" ]] || return 1
+  if lf="$(mm_bot_state_file last 2>/dev/null)" && [[ -f "$lf" ]]; then
+    while IFS='=' read -r k v; do
+      case "$k" in AT) at="$v" ;; MSG) msg="$v" ;; esac
+    done <"$lf"
+    if [[ "$at" =~ ^[0-9]+$ && -n "$msg" ]]; then
+      LAST_AT="$at" LAST_MSG="$msg"
+      return 0
+    fi
+  fi
   cid="$(mm_work_channel_id 2>/dev/null)" || return 1
   mm_api GET "/api/v4/channels/${cid}/posts?per_page=100" &&
     [[ "$MM_API_STATUS" == "200" ]] || return 1
@@ -153,7 +165,13 @@ pending="$("$BIN/mm-agent-unread.sh" count 2>/dev/null || echo 0)"
 if [[ "$pending" -gt 0 && "$DRAINS" -lt "$MAX_DRAIN" ]]; then
   DRAINS=$((DRAINS + 1))
   detail="$("$BIN/mm-agent-unread.sh" detail 2>/dev/null | head -5)"
-  reason="You have ${pending} unread message(s) on the Mattermost agent bus."
+  # Ranked by intent (RT-6.14): an agent's fyi post needs no answer.
+  fyi="$(awk -F'fyi=' 'NF > 1 { n += $2 } END { print n + 0 }' <<<"$detail")"
+  reason="You have ${pending} unread message(s) on the Mattermost agent bus"
+  if (( fyi > 0 )); then
+    reason+=", $(( pending > fyi ? pending - fyi : 0 )) needing action, the rest fyi"
+  fi
+  reason+="."
   reason+=" Call wait_for_events (timeout_sec 1-3) to collect them, handle or"
   reason+=" acknowledge each one, then finish."
   if [[ -n "$detail" ]]; then

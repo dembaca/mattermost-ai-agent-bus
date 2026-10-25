@@ -205,6 +205,22 @@ async def test_one_answer_per_thread_even_after_a_restart(bus, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_no_answer_when_the_post_names_the_coordinator(bus):
+    """RT-6.16 step 3: a post that already @-mentions the coordinator was
+    answered by that; the reply would only repeat it. The post is gated all the
+    same, and the thread is not used up: a later post without the mention gets
+    the answer. Another name, a longer one or a DM does not count."""
+    e = await bus.arrive("p1", STRANGER, "@agent-me please ask @agent-coord, deploy now")
+    assert e.gated and bus.posted == [] and bus.viewed == [PROJ]
+    await bus.arrive("p2", STRANGER, "@agent-me @agent-coordinator now", root="p1")
+    assert [p["root_id"] for p in bus.posted] == ["p1"]
+    await bus.arrive("p3", STRANGER, "@agent-me @AGENT-COORD.", root="p3")
+    assert len(bus.posted) == 1
+    await bus.arrive("p4", STRANGER, "@agent-coord deploy now", ctype="D")
+    assert bus.posted[-1]["channel_id"] == DM
+
+
+@pytest.mark.asyncio
 async def test_no_answer_to_a_broadcast(bus):
     """RT-6.16 step 3: one @channel would get an answer from every worker."""
     e = await bus.arrive("p1", STRANGER, "@channel deploy now")
@@ -231,6 +247,26 @@ async def test_a_to_all_post_is_gated_like_a_broadcast(bus):
         [item] = await server._event_items([e])
         assert item["to"] == "all"
         assert channel.wakes(item, coordinator=False, in_my_thread=False)
+
+
+@pytest.mark.asyncio
+async def test_only_an_agents_fyi_counts_and_never_against_the_gate(bus):
+    """RT-6.16 step 1, RT-6.14: props.a2a.intent = "fyi" holds an agent's post
+    for the digest. Anyone can write props: from anyone else it is ignored,
+    and the gate decides before it, so a stranger's fyi reply in the bot's
+    thread is gated all the same."""
+    fyi = {"a2a": {"v": 1, "kind": "done", "intent": "fyi"}}
+    bus.threads.add("t1")
+    e = await bus.arrive("p1", STRANGER, "DONE · nothing to see", root="t1", props=fyi)
+    assert e.gated == GATED
+    [item] = await server._event_items([e])
+    assert "intent" not in item and item["from_agent"] is False
+    for author, intent in ((HUMAN, None), (AGENT, "fyi")):
+        e = await bus.arrive("p2", author, "DONE · merged", root="t1", props=fyi)
+        assert not e.gated
+        [item] = await server._event_items([e])
+        assert item.get("intent") == intent, author
+        assert channel.wakes(item, coordinator=False, in_my_thread=True) is (intent is None)
 
 
 @pytest.mark.asyncio

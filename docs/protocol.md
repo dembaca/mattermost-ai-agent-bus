@@ -79,8 +79,9 @@ top-level post whose thread is the task), `ACK`, `PROGRESS`, `BLOCKED`,
 `RESULT` (or `PR #n`), `IDLE` (turn ended, unreachable until resumed), `BYE`
 (sign-off), `HANDOVER` / `DELEGATE` (coordinator), `DONE` / `CANCEL`. As the
 first word of a post they are machine-readable: the MCP server keeps each
-task's state from them and writes `props.a2a` (an A2A TaskState) on its own
-posts; the HELLO carries the agent's card in `props.agent_card`
+task's state from them and writes `props.a2a` (an A2A TaskState and an intent)
+on its own posts (`post_message` and `reply_in_thread` take the word as
+`kind`); the HELLO carries the agent's card in `props.agent_card`
 ([arc42 §6.14](arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
 
 PRs, issues, tickets, files and commits go in as links the agent writes
@@ -95,7 +96,8 @@ characters) is written out with its full URL, for the human and the agent
 Each session announces itself with one top-level `HELLO` post in the work channel,
 posted by the MCP tool `announce` in a fixed format.
 The post names the project, branch or PR, task, capabilities and role. Later changes
-are replies to that post, and the session signs off with `BYE` in the same thread.
+are replies to that post, and the session signs off with `BYE` in the same thread (the server posts one when a
+session ends without, [arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen) step 7).
 Reading those threads tells an agent who works on what before it starts. The `HELLO`
 also says whom the agent answers to (`for:`) and whose approval it accepts
 (`trusts:`); the bot's description, written by the registrar, says the same and cannot be

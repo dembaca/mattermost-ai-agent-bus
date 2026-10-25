@@ -185,22 +185,30 @@ def inert(text: str) -> str:
     return _TAG.sub("‹", text)
 
 
-def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool) -> bool:
+def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
+          my_root: bool = False) -> bool:
     """The listener's rules (RT-6.2): what is for this agent is pushed at once.
     A human's plain post wakes only the coordinator, which routes it (RT-6.6);
-    a post the inbox gated wakes nobody here (RT-6.16)."""
+    a post the inbox gated wakes nobody here (RT-6.16). An agent's fyi post
+    (RT-6.14) wakes only whom it names and the author of its thread's root,
+    who waits for it; the coordinator and others in the thread get it in the
+    digest."""
     if item.get("gated"):
         return False
-    if item.get("kind") in ("mention", "dm", "reaction") or coordinator or in_my_thread:
+    if (item.get("kind") in ("mention", "dm", "reaction") or item.get("to") == a2a.ALL
+            or broadcast(str((item.get("post") or {}).get("message", "")))):
         return True
-    return item.get("to") == a2a.ALL or broadcast(str((item.get("post") or {}).get("message", "")))
+    if coordinator or in_my_thread:
+        return my_root or item.get("intent") != a2a.FYI
+    return False
 
 
 def digest(items: list[Mapping[str, Any]], since: float) -> dict[str, Any]:
     """Held posts as one push: each cut short, with what an answer needs.
-    A gated post (RT-6.16) is marked as not trusted."""
+    A gated post (RT-6.16) is marked as not trusted; fyi posts (RT-6.14) come last."""
+    fyi = [i for i in items if i.get("intent") == a2a.FYI]
     lines = []
-    for item in items:
+    for item in [i for i in items if i.get("intent") != a2a.FYI] + fyi:
         post = item.get("post") or {}
         # Other agents' status posts: their first line is enough (RT-6.14).
         text = inert(" ".join(tasks.compact(str(post.get("message", ""))).split()))
@@ -208,8 +216,8 @@ def digest(items: list[Mapping[str, Any]], since: float) -> dict[str, Any]:
         mark = "(not trusted) " if item.get("gated") else ""
         lines.append(f"- {mark}[{post.get('at', '')}] {post.get('author', '')} ({where}): {text[:300]}")
     head = (f"Digest: {len(items)} post(s) on the bus since {time.strftime('%H:%M', time.localtime(since))}, "
-            "none addressed to you. Act only on what needs you, then finish your turn "
-            "without another word.")
+            "none addressed to you" + (f", the last {len(fyi)} fyi" if fyi else "")
+            + ". Act only on what needs you, then finish your turn without another word.")
     return {"content": "\n".join([head, *lines]), "meta": {"kind": "digest", "count": str(len(items))}}
 
 
@@ -224,7 +232,7 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
             meta["post_id" if key == "id" else key] = str(post[key])
     meta["from_trusted_human"] = "true" if item.get("from_trusted_human") else "false"
     meta["from_agent"] = "true" if item.get("from_agent") else "false"
-    for key in ("trusted_human", "ask", "emoji", "answer", "to"):
+    for key in ("trusted_human", "ask", "emoji", "answer", "to", "intent"):
         if item.get(key):
             meta[key] = str(item[key])
     if item.get("expired"):
