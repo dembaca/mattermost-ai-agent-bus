@@ -24,6 +24,15 @@ instead, served next to the WebSocket inbox in the server's event loop:
     POST /v1/reply          {root_id, message, channel_id?, to?, kind?} → what
                             reply_in_thread returns (mm-agent-post.sh): the tools'
                             own code (server.py), not a second implementation
+    GET  /v1/turn-end       {action: drain|signoff|idle, reason?, banner?, pending?,
+                            listen_since?, listen_until?} (?drains=N&signoff_asked=0|1
+                            &by_bus=0|1&push=0|1&listen_since=S): the Stop hook's
+                            decision, words and listen window for a turn plugin (RT-6.20)
+    GET  /v1/wake           {wake, reason: dm|stall|reaction|addressed|digest|'', count, text}
+                            (?since=MS&until=S): the listener's decision inside the
+                            listen window (RT-6.20)
+    GET  /v1/handoff        {context}: the own latest posts after a compaction
+                            (RT-6.7, RT-6.20)
 
 HTTP/1.1 on 127.0.0.1 only, an ephemeral port, one random key per server: every
 request carries ``Authorization: Bearer <key>``, compared in constant time, or
@@ -63,7 +72,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import a2a, asks, channel, gate, lease, ownpost, session_file, stall, stats, unread
+from . import a2a, asks, channel, gate, lease, ownpost, session_file, stall, stats, turnend, unread
 from .client import InvalidId, _pid_alive, mm_name
 
 if TYPE_CHECKING:
@@ -384,11 +393,15 @@ async def _uid(client: MattermostClient) -> str:
     return str((await client.get_me()).get("id") or "")
 
 
+def _project(client: MattermostClient) -> bool:
+    return bool(os.environ.get("MM_PROJECT_CHANNEL_ID") or client.project_channel_name)
+
+
 async def me(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """Who the bot is, whether it works in a project channel, its crown (RT-6.6)."""
     who = await client.get_me()
     uid = str(who.get("id") or "")
-    project = bool(os.environ.get("MM_PROJECT_CHANNEL_ID") or client.project_channel_name)
+    project = _project(client)
     # channel: the agent confirmed the channel check (RT-6.12); the hooks of a
     # keyless session cannot see the file that says so (RT-6.18).
     return 200, {"user_id": uid, "username": str(who.get("username") or ""),
@@ -620,6 +633,104 @@ async def reply_route(client: MattermostClient, query: Mapping[str, str],
     return 200, await tools.reply_as_bot(client, **_fields(body, "root_id"))
 
 
+def _flag(query: Mapping[str, str], name: str) -> bool:
+    value = query.get(name, "0")
+    if value not in ("0", "1"):
+        raise BadRequest(f"{name}: 0 or 1")
+    return value == "1"
+
+
+async def turn_end(client: MattermostClient, query: Mapping[str, str],
+                   body: Mapping[str, Any]) -> Reply:
+    """The Stop hook's checks for a turn plugin (RT-6.20; RT-6.2 steps 1–2):
+    drain while messages wait (at most turnend.MAX_DRAIN rounds a turn, the
+    caller counts them), then a sign-off once a turn, else idle. The caller
+    keeps the turn's state; push=1: the plugin wakes the agent between turns,
+    so a turn the bus started needs no sign-off. On idle, the listen window
+    (step 3) the plugin wakes the agent in: listen_since/listen_until in epoch
+    s, absent when there is none; ?listen_since= is the running one's start."""
+    drains, since = query.get("drains", "0"), query.get("listen_since", "0")
+    if not drains.isdigit():
+        raise BadRequest("drains: a count")
+    if not since.isdigit():
+        raise BadRequest("listen_since: epoch s")
+    asked, by_bus, push = (_flag(query, n) for n in ("signoff_asked", "by_bus", "push"))
+    if int(drains) < turnend.MAX_DRAIN:
+        rows = await unread.channels(client)
+        count = sum(n for _, n in rows) + (1 if stall.waiting() else 0)  # as /v1/pending
+        if count > 0:
+            return 200, turnend.drain(count, await unread.detail(client, rows) if rows else [])
+    _, last = await last_post(client, query, body)
+    message = str(last.get("message") or "")
+    if turnend.needs_signoff(message, asked=asked, by_bus=by_bus, push=push):
+        return 200, turnend.signoff(push=push)
+    uid = await _uid(client)
+    start, until = turnend.listen_window(message, int(last.get("at") or 0), project=_project(client),
+                                         coordinator=lease.crown_until(uid) > time.time(),
+                                         since=int(since))
+    return 200, {"action": "idle", **({"listen_since": start, "listen_until": until} if until else {})}
+
+
+# The agent's own recent posts (the threads it is in), per client and bot,
+# with the own latest post they were read at: an idle session's wake checks
+# read them again only once the agent posted or OWN_TTL_SEC passed.
+OWN_TTL_SEC = 300
+_own_cache: dict[tuple[int, str], tuple[str, float, list[dict[str, Any]]]] = {}
+
+
+async def _own_posts(client: MattermostClient, uid: str, body: Mapping[str, Any]) -> list[dict[str, Any]]:
+    key, mark = (id(client), uid), ownpost.read(uid).get("ID", "")
+    hit = _own_cache.get(key)
+    if hit and hit[0] == mark and time.monotonic() - hit[1] < OWN_TTL_SEC:
+        return hit[2]
+    _, recent = await posts(client, {"limit": str(MAX_POSTS)}, body)
+    own = [p for p in recent["posts"] if p.get("user_id") == uid]
+    _own_cache[key] = (mark, time.monotonic(), own)
+    return own
+
+
+async def wake(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
+    """The listener's checks for a turn plugin (RT-6.20; RT-6.2 step 4): is
+    anything on the bus for the agent since ?since=MS, or a stall event
+    (RT-6.19)? Only inside the listen window ending at ?until=S and while its
+    gates hold (RT-6.2 step 3). Only looks: the agent collects with
+    wait_for_events, which marks read."""
+    since, until = query.get("since", ""), query.get("until", "")
+    if not since.isdigit():
+        raise BadRequest("since: epoch ms")
+    if not until.isdigit():
+        raise BadRequest("until: epoch s")
+    _, last = await last_post(client, query, body)
+    if int(until) <= time.time() or not turnend.listens(str(last.get("message") or ""),
+                                                         project=_project(client)):
+        return 200, turnend.no_wake()
+    count = sum(n for _, n in await unread.channels(client))
+    waits = 1 if stall.waiting() else 0  # a stall event for the coordinator (RT-6.19)
+    if count > 0:
+        return 200, turnend.wake_pending(count + waits)
+    if waits:
+        return 200, turnend.wake_stall()
+    _, fresh = await ask_reactions(client, query, body)
+    if fresh["fresh"] > 0:
+        return 200, turnend.wake_reactions(fresh["fresh"])
+    who = await client.get_me()
+    uid = str(who.get("id") or "")
+    own = await _own_posts(client, uid, body)
+    _, new = await posts(client, {"since": since}, body)
+    return 200, turnend.wake(new["posts"], own, me=uid,
+                             username=str(who.get("username") or ""), since_ms=int(since),
+                             coordinator=lease.crown_until(uid) > time.time(),
+                             digest_sec=channel.digest_sec())
+
+
+async def handoff(client: MattermostClient, query: Mapping[str, str],
+                  body: Mapping[str, Any]) -> Reply:
+    """After a compaction (RT-6.7, RT-6.20): the compaction hook's context."""
+    uid = await _uid(client)
+    _, got = await posts(client, {"limit": str(MAX_POSTS)}, body)
+    return 200, {"context": turnend.handoff(got["posts"], uid)}
+
+
 _ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/me"): me,
     ("GET", "/v1/pending"): pending,
@@ -630,6 +741,9 @@ _ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "/v1/stat"): stat,
     ("POST", "/v1/post"): post_route,
     ("POST", "/v1/reply"): reply_route,
+    ("GET", "/v1/turn-end"): turn_end,
+    ("GET", "/v1/wake"): wake,
+    ("GET", "/v1/handoff"): handoff,
 }
 # Routes that make several Mattermost calls: at most MAX_HEAVY_RUNS at once.
-_HEAVY_ROUTES = frozenset({pending, presence, post_route, reply_route})
+_HEAVY_ROUTES = frozenset({pending, presence, post_route, reply_route, turn_end, wake, handoff})

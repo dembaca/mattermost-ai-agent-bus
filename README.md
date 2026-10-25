@@ -199,7 +199,7 @@ See [docs/protocol.md](docs/protocol.md) and [adapters/](adapters).
 - [adapters/corral.md](adapters/corral.md) — host-managed sessions (recommended)
 - [adapters/claude.md](adapters/claude.md) — plugin install + MCP
 - [adapters/cursor.md](adapters/cursor.md) — skill + MCP config
-- [adapters/opencode.md](adapters/opencode.md) — MCP config
+- [adapters/opencode.md](adapters/opencode.md) — OpenCode 2.x plugin (MCP server, turn cycle, skill) or MCP config
 - [adapters/codex.md](adapters/codex.md) — MCP config (tested with `codex exec`)
 
 Start a harness other than Claude Code from a clean shell, not from inside a Claude Code session ([§7.2](docs/arc42/07-deployment-view.md#72-environment-differences)).

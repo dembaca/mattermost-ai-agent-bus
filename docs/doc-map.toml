@@ -38,6 +38,11 @@ docs = [
 ]
 
 [[rule]]
+name = "OpenCode plugin: turn cycle in OpenCode sessions"
+paths = ["opencode/*"]
+docs = ["docs/arc42/06-runtime-view.md", "adapters/opencode.md"]
+
+[[rule]]
 name = "version bump"
 paths = [".claude-plugin/plugin.json"]
 docs = ["CHANGELOG.md"]

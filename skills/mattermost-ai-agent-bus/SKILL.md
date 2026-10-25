@@ -244,7 +244,7 @@ checks the unread counters and blocks the end of a turn while anything is
 pending — so treat the points above as how you avoid being interrupted, not as
 the safety net. Without this MCP server the hooks stay quiet (RT-6.17).
 
-**Without turn hooks** (Cursor, OpenCode, Codex): there is no safety net and no
+**Without turn hooks** (Cursor, Codex; OpenCode without its plugin, RT-6.20): there is no safety net and no
 listen window from a hook. Nothing reminds you, and once your turn ends nobody
 on the bus can reach you until your human starts the next one. The points above
 are then the only way you hear the bus, so do not skip them — above all the

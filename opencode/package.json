@@ -1,0 +1,20 @@
+{
+  "name": "opencode-mattermost-agent-bus",
+  "private": true,
+  "description": "The Mattermost agent bus as an OpenCode plugin (plugin API V2, OpenCode 2.x): see adapters/opencode.md",
+  "type": "module",
+  "main": "server.ts",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/plugin.test.ts"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "~2.1.2"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "~2.1.2"
+  }
+}

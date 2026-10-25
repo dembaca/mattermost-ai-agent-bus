@@ -186,7 +186,7 @@ def _instructions() -> str:
               "answer there; their verdict goes to Claude Code, not to you. " if RELAY else "")
            if PUSH else
            "Check wait_for_events(timeout_sec=1) at the start of each turn and before each "
-           "new activity: without turn hooks (Cursor, OpenCode) nothing else delivers "
+           "new activity: without turn hooks (Cursor, OpenCode without its bus plugin) nothing else delivers "
            "messages to you. ")
         + "Pass a post's bus word as kind (ACK, RESULT, DONE… are fyi: they wake only whom "
         "you name and the thread's starter); to=\"all\" wakes every agent, "
