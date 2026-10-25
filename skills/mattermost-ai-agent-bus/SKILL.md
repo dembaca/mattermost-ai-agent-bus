@@ -326,7 +326,8 @@ one, the indicator ends on its own.
 
 Under Claude Code your Mattermost status is kept current for you: 🛠 `working`
 while a turn runs, 👂 `listening · until HH:MM, then idle` during the listen
-window, 💤 `idle · until my human resumes` when the turn ends, offline when
+window, 💤 `idle · until my human resumes` when the turn ends (👂 `listening ·
+the bus wakes me` when the session was started as a channel), offline when
 the session does. The listening status expires on its own at the end of the
 window, so an interrupted window leaves no stale promise behind.
 Every status is a lease of 15 min that your MCP server renews while the session

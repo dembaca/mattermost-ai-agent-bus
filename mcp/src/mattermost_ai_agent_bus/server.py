@@ -23,7 +23,7 @@ from . import (
     a2a, asks, channel, gate, hookapi, lease, overhead, ownpost, permission, session_file, slim, stall, stats,
     tasks,
 )
-from .client import InvalidId, MattermostClient, attachment_props, mm_id
+from .client import InvalidId, MattermostClient, Refused, attachment_props, mm_id
 from .websocket_inbox import WebSocketInbox
 
 log = logging.getLogger(__name__)
@@ -303,9 +303,12 @@ async def _posted(client: MattermostClient, post: dict[str, Any]) -> None:
 
 
 async def _work_posts(client: MattermostClient) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """The work channel's posts of the task window, and their authors' names."""
-    posts = await client.list_recent(per_page=200, since_ms=tasks.since_ms())
-    names = await client.usernames({p.get("user_id", "") for p in posts} - {""})
+    """The work channel's posts of the task window, and the names of their
+    authors and of those who reacted (an agent's ✅ closes an ask)."""
+    posts = await client.posts_after(tasks.since_ms())
+    reactors = {str(r.get("user_id") or "") for p in posts
+                for r in (p.get("metadata") or {}).get("reactions") or []}
+    names = await client.usernames(({p.get("user_id", "") for p in posts} | reactors) - {""})
     return posts, names
 
 
@@ -767,14 +770,17 @@ async def post_as_bot(client: MattermostClient | None, message: str, channel_id:
         except Exception as exc:  # noqa: BLE001 — the post still goes out, without a table
             log.warning("ASSIGNMENTS without a table: %s", exc)
     stats.record("post", chars=len(message))
-    post = await client.post(
-        lease.with_crown(message, uid),
-        channel_id=channel_id or None,
-        root_id=root_id or None,
-        props=a2a.props(message, a2a.ALL if everyone else ""),
-    )
+    try:
+        post = await client.post(
+            lease.with_crown(message, uid),
+            channel_id=channel_id or None,
+            root_id=root_id or None,
+            props=a2a.props(message, a2a.ALL if everyone else ""),
+        )
+    except Refused as exc:
+        return _refusal(str(exc))
     await _posted(client, post)
-    return await _claimed(client, root_id, message, uid, _with_unmentioned(
+    return await _claimed(client, str(post.get("root_id") or root_id), message, uid, _with_unmentioned(
         await slim.post(client, post), removed, await _unasked(client, message, uid)))
 
 
@@ -808,14 +814,17 @@ async def reply_as_bot(client: MattermostClient | None, root_id: str, message: s
     message, removed = await _unmention(client, message)
     uid = await _my_id(client)
     stats.record("post", chars=len(message))
-    post = await client.post(
-        lease.with_crown(message, uid),
-        channel_id=channel_id or None,
-        root_id=root_id,
-        props=a2a.props(message, a2a.ALL if everyone else ""),
-    )
+    try:
+        post = await client.post(
+            lease.with_crown(message, uid),
+            channel_id=channel_id or None,
+            root_id=root_id,
+            props=a2a.props(message, a2a.ALL if everyone else ""),
+        )
+    except Refused as exc:
+        return _refusal(str(exc))
     await _posted(client, post)
-    return await _claimed(client, root_id, message, uid, _with_unmentioned(
+    return await _claimed(client, str(post.get("root_id") or root_id), message, uid, _with_unmentioned(
         await slim.post(client, post), removed, await _unasked(client, message, uid)))
 
 
@@ -974,7 +983,8 @@ async def coordinator(action: str = "who") -> str:
     after the agent you handed over to ACKed), "tasks" (open tasks and asks)
     or "roster" (reachable agents), one row each (RT-6.14). Without a crown
     anywhere, the oldest reachable agent takes it on its own; an idle
-    coordinator loses it when its lease runs out. Holding it, read
+    coordinator loses it when its lease runs out, unless its session was
+    started as a channel (RT-6.6). Holding it, read
     coordinator.md next to the skill.
     """
     if action in ("tasks", "roster"):

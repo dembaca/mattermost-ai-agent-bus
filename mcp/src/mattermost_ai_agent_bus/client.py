@@ -59,6 +59,18 @@ class InvalidId(ValueError):
     """An id or name that must not go into a Mattermost API path (#81)."""
 
 
+class Refused(Exception):
+    """Mattermost refused a post; the text says why, for the agent."""
+
+
+def _refused(exc: httpx.HTTPStatusError) -> Refused:
+    try:
+        why = str(exc.response.json().get("message") or "")
+    except ValueError:
+        why = ""
+    return Refused(f"Mattermost refused the post ({exc.response.status_code})" + (f": {why}" if why else ""))
+
+
 def mm_id(value: object, what: str) -> str:
     """`value` if it is a Mattermost id (26 lowercase letters and digits), else
     InvalidId: nothing an agent or hook passes reaches an API path unchecked."""
@@ -781,13 +793,22 @@ class MattermostClient:
         root_id: str | None = None,
         props: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if not channel_id and root_id:
-            # A reply belongs where its root is: a DM, or another channel.
-            root = await self._api("GET", f"/api/v4/posts/{mm_id(root_id, 'post')}")
-            channel_id = root.get("channel_id") or None
-        cid = mm_id(channel_id or await self.get_channel_id(), "channel")
+        """Post; Refused when Mattermost will not take it (a root it does not
+        find, no permission): the MCP SDK would hide the error's text."""
+        try:
+            return await self._post(message, channel_id=channel_id, root_id=root_id, props=props)
+        except httpx.HTTPStatusError as exc:
+            raise _refused(exc) from exc
+
+    async def _post(self, message: str, *, channel_id: str | None, root_id: str | None,
+                    props: dict[str, Any] | None) -> dict[str, Any]:
         if root_id:
-            mm_id(root_id, "post")
+            # A reply belongs where its root is: a DM, or another channel. A
+            # reply's id names its thread: Mattermost refuses it as root_id.
+            root = await self._api("GET", f"/api/v4/posts/{mm_id(root_id, 'post')}")
+            root_id = mm_id(root.get("root_id") or root_id, "post")
+            channel_id = channel_id or root.get("channel_id") or None
+        cid = mm_id(channel_id or await self.get_channel_id(), "channel")
         # RT-6.15: post ids as permalinks, odd links written out for the human.
         message = links.send(message, post_url=self.permalink_base)
         body: dict[str, Any] = {"channel_id": cid, "message": message}
@@ -941,4 +962,25 @@ class MattermostClient:
         )
         posts = data.get("posts") or {}
         return sorted((links.read_post(p, self.permalink_base) for p in posts.values()),
+                      key=lambda p: p.get("create_at", 0))
+
+    async def posts_after(self, since_ms: int, *, channel_id: str | None = None,
+                          max_pages: int = 25) -> list[dict[str, Any]]:
+        """A channel's posts created since `since_ms`, oldest first, as
+        list_recent gives them. Pages back from the newest: with `since`,
+        Mattermost answers at most 1000 posts in no set order, and in a busy
+        channel the newest are the ones missing."""
+        cid = mm_id(channel_id or await self.get_channel_id(), "channel")
+        found: dict[str, dict[str, Any]] = {}
+        for page in range(max_pages):
+            data = await self._api("GET", f"/api/v4/channels/{cid}/posts",
+                                   params={"page": page, "per_page": 200}) or {}
+            posts = data.get("posts") or {}
+            found |= {i: p for i, p in posts.items() if int(p.get("create_at") or 0) >= since_ms}
+            # The page is `order`; `posts` may add older thread roots besides.
+            page_posts = [posts[i] for i in data.get("order") or posts if i in posts]
+            if len(page_posts) < 200 or any(
+                    int(p.get("create_at") or 0) < since_ms for p in page_posts):
+                break
+        return sorted((links.read_post(p, self.permalink_base) for p in found.values()),
                       key=lambda p: p.get("create_at", 0))

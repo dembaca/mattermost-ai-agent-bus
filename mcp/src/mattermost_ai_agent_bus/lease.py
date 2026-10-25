@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import session_file
+from . import channel, session_file
 from .model import RosterEntry
 
 if TYPE_CHECKING:
@@ -150,7 +150,8 @@ async def set_status(client: MattermostClient, state: str, label: str = "") -> N
     task; without one, the directory the session works in. While the agent
     holds the crown, the emoji is 👑 and the text starts with "coordinator";
     the crown is extended only while the agent is reachable, so an idle
-    coordinator loses it when its lease runs out. ValueError for an unknown
+    coordinator loses it when its lease runs out. Idle in a session started as
+    a channel is reachable: the bus wakes it. ValueError for an unknown
     state; anything Mattermost answers is ignored."""
     if not client.token:
         return
@@ -184,6 +185,10 @@ async def _set_status(client: MattermostClient, state: str, label: str = "") -> 
         until = min(until, int(label))
     elif state == "working":
         emoji, text = "hammer_and_wrench", f"working · {label}"
+    elif state == "idle" and channel.confirmed_file(uid).exists():
+        # Started as a channel (RT-6.12): this server pushes what comes in, so
+        # the agent stays reachable, and keeps a crown, between its turns.
+        emoji, text = "ear", "listening · the bus wakes me"
     elif state == "idle":
         emoji, text, reachable = "zzz", "idle · until my human resumes", False
     elif state == "bus":

@@ -367,3 +367,20 @@ async def test_heartbeat_ticks_and_survives_errors(monkeypatch):
     await asyncio.sleep(0.05)
     task.cancel()
     assert calls.count("tick") >= 2
+
+
+async def test_idle_in_a_channel_session_is_reachable_and_keeps_the_crown(mm, client, tmp_path):
+    """RT-6.6 step 6, RT-6.12: the server pushes into a session started as a
+    channel, so between its turns it stays reachable and renews its crown."""
+    me(mm)
+    await lease.command(client, "take")
+    (_dir(tmp_path) / f"channel-{UID}.env").write_text("CONFIRMED=1\n")
+    until = coord(tmp_path)["CROWN_UNTIL"]
+    f = _dir(tmp_path) / f"coord-{UID}.env"
+    f.write_text(f.read_text().replace(f"CROWN_UNTIL={until}", f"CROWN_UNTIL={until - 60}"))
+    await lease.set_status(client, "idle")
+    assert mm.custom_status()["emoji"] == "crown" and holds()
+    assert coord(tmp_path)["CROWN_UNTIL"] >= until
+    await lease.command(client, "release")
+    await lease.set_status(client, "renew")
+    assert mm.custom_status()["emoji"] == "ear"
