@@ -24,6 +24,8 @@ def client(monkeypatch):
             return {"id": "tid00000000000000000000000"}
         if path == "/api/v4/teams/tid00000000000000000000000/channels/name/proj":
             return {"id": WORK}
+        if path.startswith("/api/v4/posts/"):  # a reply's root
+            return {"id": path.rsplit("/", 1)[1], "channel_id": WORK}
         assert path == "/api/v4/posts"
         return {"id": f"p{next(posts)}".ljust(26, "0"), "user_id": UID, "create_at": 1000 + len(json["message"]),
                 **json}

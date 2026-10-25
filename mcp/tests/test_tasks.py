@@ -201,8 +201,8 @@ class _Client:
     async def get_me(self):
         return {"id": ME, "username": "agent-me"}
 
-    async def list_recent(self, channel_id=None, per_page=20, since_ms=None):
-        assert since_ms and per_page == 200
+    async def posts_after(self, since_ms, channel_id=None):
+        assert since_ms
         return self.posts
 
     async def usernames(self, ids):
@@ -298,9 +298,9 @@ async def test_assignments_go_out_when_the_channel_cannot_be_read(bus):
     """RT-6.14 step 5: no table rather than no post."""
     c = bus([], crown=True)
 
-    async def broken(**kw):
+    async def broken(*a, **kw):
         raise RuntimeError("HTTP 500")
-    c.list_recent = broken
+    c.posts_after = broken
     await server.post_message(message="ASSIGNMENTS · x")
     assert c.posted[0]["message"] == "👑 ASSIGNMENTS · x"
 
@@ -430,3 +430,13 @@ async def test_an_fyi_reply_wakes_the_threads_starter(bus, monkeypatch):
     assert await server._push_addressed(item("t"))
     assert not await server._push_addressed(item("t2"))
     assert server._my_roots == {"t"}
+
+
+def test_an_ask_an_agent_resolved_is_not_open():
+    """RT-6.11, RT-6.19: resolve_ask's ✅ closes the ask, also one of an earlier
+    session of another bot; a ✅ by a human not asked or trusted does not."""
+    posts = [P("q1", A, "🙋 @dembaca — **Merge #44?**", at=0,
+               metadata={"reactions": [{"emoji_name": "white_check_mark", "user_id": B}]}),
+             P("q2", A, "🙋 @dembaca — **Rename it?**", at=1,
+               metadata={"reactions": [{"emoji_name": "white_check_mark", "user_id": "x" * 26}]})]
+    assert [a["ask"] for a in tasks.open_asks(posts, {**NAMES, "x" * 26: "someone"})] == ["q2"]

@@ -185,10 +185,19 @@ def ask_answered(ask: Mapping[str, Any], thread: Collection[Mapping[str, Any]],
                and not p.get("delete_at") and by_human(str(p.get("user_id") or "")) for p in thread)
 
 
+def resolved(reactions: Collection[Mapping[str, Any]], names: Mapping[str, str]) -> bool:
+    """An agent closed the ask with resolve_ask: its ✅ (RT-6.11). Any bus agent
+    may, also one that did not ask: a successor session closes its
+    predecessor's asks. It answers nothing: no approval comes of it."""
+    prefix = session_file.agent_prefix()
+    return any(r.get("emoji_name") == "white_check_mark"
+               and names.get(str(r.get("user_id") or ""), "").startswith(prefix) for r in reactions)
+
+
 def open_asks(posts: list[Mapping[str, Any]], names: Mapping[str, str],
               trusted: Collection[str] = ()) -> list[dict[str, Any]]:
     """Asks to humans still waiting: not answered by the human asked or a
-    trusted human (ask_answered)."""
+    trusted human (ask_answered), and not closed by an agent (resolved)."""
     order = _live(posts)
     out = []
     for p in order:
@@ -198,7 +207,8 @@ def open_asks(posts: list[Mapping[str, Any]], names: Mapping[str, str],
         human = re.search(r"🙋\s*@([\w.-]*\w)", msg)
         need = re.search(r"\*\*(.+?)\*\*", msg)
         reactions = (p.get("metadata") or {}).get("reactions") or []
-        if ask_answered(p, order, reactions, names, human[1] if human else "", trusted):
+        if (ask_answered(p, order, reactions, names, human[1] if human else "", trusted)
+                or resolved(reactions, names)):
             continue
         row = {"ask": p["id"], "by": names.get(p.get("user_id", ""), ""),
                "human": human[1] if human else None,

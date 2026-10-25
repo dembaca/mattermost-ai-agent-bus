@@ -230,7 +230,7 @@ async def check(client: MattermostClient, uid: str, now: float | None = None) ->
     now = now or time.time()
     now_ms = int(now * 1000)
     st = _read(uid)
-    posts = await client.list_recent(per_page=200, since_ms=tasks.since_ms(now))
+    posts = await client.posts_after(tasks.since_ms(now))
     reactors = {str(r.get("user_id") or "") for p in posts
                 for r in (p.get("metadata") or {}).get("reactions") or []}
     names = await client.usernames(({str(p.get("user_id") or "") for p in posts} | reactors | {uid}) - {""})

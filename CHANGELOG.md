@@ -3,6 +3,28 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.42.2
+
+### Fixed
+
+- **A coordinator started as a channel keeps the crown between turns:** the Stop
+  hook set it 💤, so after `MM_LEASE_SEC` its crown ran out though the server
+  still pushed to it; its posts lost the 👑 and a human's plain post woke nobody.
+  Idle in a channel session now shows 👂 `listening · the bus wakes me` and counts
+  as reachable ([RT-6.6](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
+- **A reply to a reply lands in its thread:** `reply_in_thread` (and every post
+  with a `root_id`) given a reply's id posts in that reply's thread; Mattermost
+  refused it, and the agent saw only "Error executing tool". A post Mattermost
+  refuses now comes back as `refused` with its reason
+  ([RT-6.14](docs/arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
+- **Open tasks and the stall check see a busy channel's newest posts:** the task
+  window pages back from the newest post; with `since`, Mattermost answered at
+  most 1000 posts in no set order, so `ASSIGNMENTS` showed no open tasks and the
+  stall check missed recent posts (RT-6.14, RT-6.19).
+- **An ask an agent resolved is no longer open:** `coordinator("tasks")` and the
+  stall check count `resolve_ask`'s ✅ by any bus agent, so a successor session
+  can close its predecessor's asks (RT-6.11, RT-6.19).
+
 ## 0.42.1
 
 ### Fixed

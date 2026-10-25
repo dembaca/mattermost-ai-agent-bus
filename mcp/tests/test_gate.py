@@ -57,6 +57,8 @@ class Bus:
         async def api(method, path, json=None, **_):
             if path == "/api/v4/users/ids":
                 return [USERS[i] for i in json if i in USERS]
+            if path.startswith("/api/v4/posts/"):  # a reply's root
+                return {"id": path.rsplit("/", 1)[1]}
             if path == "/api/v4/posts":
                 self.posted.append(json)
                 return {"id": "n" * 26, "user_id": ME, **json}

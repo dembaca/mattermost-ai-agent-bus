@@ -46,7 +46,7 @@ class Client:
         self.reacts: dict[str, list[dict]] = {}
         self.sent: list[dict] = []
 
-    async def list_recent(self, per_page=20, since_ms=None, channel_id=None):
+    async def posts_after(self, since_ms, channel_id=None):
         return sorted(self.posts, key=lambda p: p["create_at"])
 
     async def usernames(self, ids):

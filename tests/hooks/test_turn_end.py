@@ -162,14 +162,14 @@ def test_listen_window_opens_in_project_channel(mm, run):
 def test_channel_session_needs_no_listener(mm, run):
     """RT-6.12: started as a channel and confirmed, the MCP server pushes the
     messages into the session, so the stop goes idle instead of asking for a
-    listener."""
+    listener. Idle in a channel session is reachable (RT-6.6): 👂, no window."""
     mm.own_post("IDLE done x", 1000)
     run.state_dir.mkdir(parents=True, exist_ok=True)
     (run.state_dir / f"channel-{ME}.env").write_text("CONFIRMED=1\n")
     r = run(STOP, **IN_PROJECT)
     assert r.passed
     assert window(run).get("UNTIL", "0") == "0"
-    assert mm.custom_status().get("emoji") != "ear"
+    assert mm.custom_status().get("text") == "listening · the bus wakes me"
     # MM_CHANNEL_PUSH=0 overrides: back to the listener.
     assert run(STOP, MM_CHANNEL_PUSH="0", **IN_PROJECT).blocked
 
