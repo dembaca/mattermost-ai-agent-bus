@@ -1,11 +1,13 @@
-"""ask_human: one easy-to-spot post per ask, and reactions as answers (RT-6.11)."""
+"""ask_human: one easy-to-spot post per ask, and reactions as answers (RT-6.11).
+Also what no other post of an agent may do: notify a person, or everyone."""
 
 import json
+import time
 
 import pytest
 
-from mattermost_ai_agent_bus import asks, server
-from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
+from mattermost_ai_agent_bus import asks, channel, server
+from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
 BOT = "b" * 26
 HUMAN = "h" * 26
@@ -94,10 +96,10 @@ def _inbox(client):
     return inbox
 
 
-def _reaction_event(emoji, post_id=ASK, user=HUMAN):
+def _reaction_event(emoji, post_id=ASK, user=HUMAN, at=1):
     return {"event": "reaction_added", "broadcast": {"channel_id": "c1"},
             "data": {"reaction": json.dumps({"user_id": user, "post_id": post_id,
-                                             "emoji_name": emoji, "create_at": 1})}}
+                                             "emoji_name": emoji, "create_at": at})}}
 
 
 @pytest.mark.asyncio
@@ -151,8 +153,79 @@ async def test_posts_never_mention_a_human(monkeypatch):
               "in thread, @kollegin too. @channel heads-up, mail a@b.de, `@dembaca` in code"))
     msg = c.posted[0]["message"]
     assert msg == ("dembaca gave the coordination to @agent-mac-1; APPROVE from Dembaca "
-                   "in thread, kollegin too. @channel heads-up, mail a@b.de, `@dembaca` in code")
-    assert out["unmentioned"] == ["Dembaca", "dembaca", "kollegin"] and "ask_human" in out["hint"]
+                   "in thread, kollegin too. channel heads-up, mail a@b.de, `@dembaca` in code")
+    assert out["unmentioned"] == ["Dembaca", "dembaca", "kollegin", "channel"]
+    assert "ask_human" in out["hint"] and 'to="all"' in out["hint"]
+
+
+EVERYONE = "@channel heads-up, @Here too, and @all. @@all, `@channel` in code, a@all.example, @all-hands"
+PLAIN = "channel heads-up, Here too, and all. all, `@channel` in code, a@all.example, all-hands"
+
+
+@pytest.mark.asyncio
+async def test_posts_never_notify_everyone(monkeypatch):
+    """RT-6.11 step 1: @channel, @here and @all become plain words in post_message,
+    reply_in_thread and the note of resolve_ask, as a person's name does; the
+    result says why and names the way to wake the agents."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.post_message(EVERYONE))
+    assert c.posted[0]["message"] == PLAIN
+    assert out["unmentioned"] == ["all", "channel", "here"]
+    assert 'to="all"' in out["hint"] and "ask_human" not in out["hint"]
+    await server.reply_in_thread("r1", EVERYONE)
+    await server.resolve_ask(ASK, note=EVERYONE)
+    assert [p["message"] for p in c.posted[1:]] == [PLAIN, PLAIN]
+
+
+@pytest.mark.asyncio
+async def test_everyone_is_rewritten_when_the_name_lookup_fails(monkeypatch):
+    """RT-6.11 error handling: a failed lookup leaves names as written (fail
+    open) but never lets @channel through."""
+    class Down(_NamingClient):
+        async def humans_among(self, names):
+            raise RuntimeError("HTTP 500")
+
+    c = Down()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.post_message("@dembaca and @channel")
+    assert c.posted[0]["message"] == "@dembaca and channel"
+
+
+@pytest.mark.asyncio
+async def test_an_ask_never_notifies_everyone(monkeypatch):
+    """RT-6.11 step 1: the ask mentions its human only; @channel in any field
+    of it is written plain, and the result says so."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(
+        need="Merge #61 @channel?", context="@here is waiting", recommendation="yes",
+        decision="Merge @all", where="PR @channel", answers="go / @all"))
+    text = json.dumps([c.posted[0]["message"], c.posted[0]["props"]])
+    for word in ("@channel", "@here", "@all"):
+        assert word not in text
+    assert c.posted[0]["message"] == "🙋 @dembaca — **Merge #61 channel?**"
+    assert out["unmentioned"] == ["all", "channel", "here"]
+
+
+@pytest.mark.asyncio
+async def test_to_all_wakes_every_agent_through_the_props(monkeypatch):
+    """RT-6.11 step 1: to="all" writes props.a2a.to (with the kind a first word
+    gives); the text needs no @channel. Anything else for a reply is refused."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.post_message("main is red, hold merges", to="all"))
+    await server.post_message("IDLE · done: x", to="All")
+    await server.reply_in_thread("r1", "freeze lifted", to="all")
+    assert [p["props"] for p in c.posted] == [
+        {"a2a": {"v": 1, "to": "all"}},
+        {"a2a": {"v": 1, "kind": "idle", "intent": "fyi", "to": "all"}},
+        {"a2a": {"v": 1, "to": "all"}}]
+    assert "unmentioned" not in out
+    await server.post_message("anyone seen #46?")
+    assert c.posted[-1]["props"] is None
+    with pytest.raises(ValueError, match="to must be"):
+        await server.reply_in_thread("r1", "hi", to="agent-x")
 
 
 @pytest.mark.asyncio
@@ -272,6 +345,61 @@ async def test_one_question_per_ask(monkeypatch):
     assert c.posted == []
     await server.ask_human(need="Merge #62 now?", context="Review passed; CI is green.")
     assert len(c.posted) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_answer_more_than_24_hours_after_the_ask_comes_expired(monkeypatch):
+    """RT-6.11 step 5: a yes approves only within 24 h of the ask; a later
+    reaction or reply reaches the agent marked expired, a timely one does not."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    inbox = _inbox(c)
+    monkeypatch.setattr(server, "_get_inbox", lambda: inbox)
+    now, fresh = time.time(), "f" * 26
+    asks._write(BOT, {ASK: now - asks.APPROVAL_SEC - 60, fresh: now - 60}, set(),
+                {ASK: "dembaca", fresh: "kollegin"})
+    ms = int(now * 1000)
+    await inbox._on_reaction_event(_reaction_event("+1", at=ms))
+    await inbox._on_reaction_event(_reaction_event("+1", post_id=fresh, at=ms))
+    await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post={
+        "id": "r" * 26, "root_id": ASK, "user_id": HUMAN, "channel_id": "c1",
+        "create_at": ms, "message": "yes"}))
+    # Someone not trusted approves nothing anyway: no flag on that late post.
+    await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post={
+        "id": "s" * 26, "root_id": ASK, "user_id": "o" * 26, "channel_id": "c1",
+        "create_at": ms, "message": "looks good"}))
+    items = json.loads(await server.wait_for_events(timeout_sec=1))
+    got = {(i["kind"], i["post"]["id"]): i.get("expired", False) for i in items}
+    assert got == {("reaction", asks.seen_key(ASK, HUMAN, "+1")): True,
+                   ("reaction", asks.seen_key(fresh, HUMAN, "+1")): False,
+                   ("watched_channel", "r" * 26): True, ("watched_channel", "s" * 26): False}
+    late = next(i for i in items if i["kind"] == "reaction" and i["ask"] == ASK)
+    assert late["answer"] == "yes" and late["from_trusted_human"] is True  # what was meant
+    assert channel.notification(late)["meta"]["expired"] == "true"
+    out = json.loads(await server.ask_human(need="Merge #61?"))
+    assert out["posted"] is False and "more than 24 h old" in out["hint"]
+
+
+@pytest.mark.asyncio
+async def test_a_reply_in_the_thread_of_an_ask_in_a_thread(monkeypatch):
+    """RT-6.11 step 2: an ask posted in a thread is recorded with it, so a reply
+    there counts as late only when every ask of this bot in it is."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    task, fresh, day = "t" * 26, "f" * 26, asks.APPROVAL_SEC
+    await server.ask_human(need="Merge #61?", root_id=task)
+    assert not asks.expired(BOT, task, thread=True)
+    assert asks.expired(BOT, task, time.time() + day, thread=True)
+    assert not asks.expired(BOT, task, time.time() + day)  # no ask by that id
+    asks.add(BOT, fresh, "kollegin", task)
+    assert not asks.expired(BOT, task, time.time() + day - 30, thread=True)
+    assert asks.open_to(BOT, "dembaca") == [ASK] and asks.open_to(BOT, "kollegin") == [fresh]
+
+
+def test_asks_written_before_the_thread_was_recorded_still_read():
+    asks._path(BOT).parent.mkdir(parents=True, exist_ok=True)
+    asks._path(BOT).write_text(f"ASK={ASK} {int(time.time())} dembaca\n")
+    assert asks.open_to(BOT, "dembaca") == [ASK] and not asks.expired(BOT, ASK)
 
 
 class _AskedClient(_NamingClient):

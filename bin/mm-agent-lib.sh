@@ -124,6 +124,7 @@ mm_api() {
 # Print the id of the work channel: the argument (an id or a channel name in
 # MM_TEAM) when given, else the project channel, else the default channel.
 # Prefers resolved ids from the environment and asks the API only for names.
+# shellcheck disable=SC2120  # the argument comes from other scripts (roster, stats)
 mm_work_channel_id() {
   local arg="${1:-}" id="" name="" team_id
   if [[ -n "$arg" ]]; then
@@ -285,6 +286,31 @@ mm_bot_state_file() {
   printf '%s' "$(mm_state_dir)/${kind}-${uid}.env"
 }
 
+# Remember the bot's latest post in the work channel, for the Stop hook and the
+# MCP server's exit handler (RT-6.2; mcp/.../ownpost.py writes the same file):
+# mm_record_own_post <channel_id> <post JSON as the API returned it>. A post in
+# another channel leaves it as it was; when the work channel cannot be told, the
+# file goes, and the hook asks the channel as before. Never fails.
+mm_record_own_post() {
+  local cid="$1" post="$2" f work uid id root at msg hello=""
+  uid="$(jq -r '.user_id // empty' <<<"$post" 2>/dev/null)" || return 0
+  f="$(mm_bot_state_file last "$uid")" || return 0
+  work="$(mm_work_channel_id 2>/dev/null)" || { rm -f "$f"; return 0; }
+  [[ "$cid" == "$work" ]] || return 0
+  {
+    read -r id; read -r root; read -r at; read -r msg
+  } < <(jq -r '.id, (.root_id // ""), (.create_at // 0),
+               (.message | ltrimstr("👑 ") | gsub("\\s+"; " ") | .[0:80])' <<<"$post" 2>/dev/null)
+  [[ -n "$id" ]] || return 0
+  if [[ -z "$root" && "$msg" =~ ^[^A-Za-z0-9@#]*HELLO([^A-Za-z]|$) ]]; then
+    hello="$id"
+  elif [[ "$(sed -n 's/^CHANNEL=//p' "$f" 2>/dev/null)" == "$cid" ]]; then
+    hello="$(sed -n 's/^HELLO=//p' "$f" 2>/dev/null)"
+  fi
+  mkdir -p "$(dirname "$f")" 2>/dev/null || return 0
+  printf 'CHANNEL=%s\nID=%s\nAT=%s\nMSG=%s\nHELLO=%s\n' "$cid" "$id" "$at" "$msg" "$hello" >"$f" 2>/dev/null || true
+}
+
 # How long a custom status lives without renewal (MM_LEASE_SEC, default 900 s).
 mm_lease_sec() {
   local s="${MM_LEASE_SEC:-900}"
@@ -325,6 +351,21 @@ mm_roster_json() {
         | .crown = (.reachable and .emoji == "crown"))' <<<"$users")" || return 1
 }
 
+# Of a JSON array of user ids, those of bus agents: bot accounts with the
+# registrar's prefix, as the MCP server's client.agents (RT-6.16). Prints a JSON
+# array; [] when the lookup fails, so nobody counts as an agent. Only an agent's
+# props.a2a.intent counts (RT-6.14): anyone can write props through the API.
+mm_agent_ids() {
+  local ids="${1:-[]}"
+  if [[ "$ids" == "[]" ]] || ! mm_api POST "/api/v4/users/ids" "$ids" ||
+    [[ "$MM_API_STATUS" != "200" ]]; then
+    echo '[]'
+    return 0
+  fi
+  jq -c --arg p "$(mm_agent_prefix)" '[.[] | select(.is_bot == true and ((.username // "") | startswith($p))) | .id]' \
+    <<<"$MM_API_BODY" 2>/dev/null || echo '[]'
+}
+
 # Overhead counters (RT-6.9): one JSON line per event in stats-<uid>.jsonl,
 #   mm_stat KIND [key=value …]     e.g. mm_stat wake reason=digest
 # Counted by hooks, listener and MCP server, posted once at session end to
@@ -356,6 +397,34 @@ mm_trusted_names() {
     n="${n//[[:space:]]/}"; n="${n#@}"
     [[ -n "$n" ]] && printf '%s\n' "$n"
   done
+  return 0
+}
+
+# After a registration (RT-6.8): does the profile the registrar wrote carry every
+# trusted name sent? It may write only part of the list (it caps it, and keeps
+# human accounts only), while the bus trusts all of it. Reads the description
+# from the bot's own user object (bot_description), else /bots/<id>; when
+# neither is readable there is nothing to compare and it stays silent. Warns on
+# stderr, never fails. Same as mcp/.../profile.py.
+# mm_warn_profile_trusted <bot user id> <bot username> <name>...
+mm_warn_profile_trusted() {
+  local uid="$1" bot="$2" n desc="" got=0 listed missing=""
+  shift 2
+  [[ $# -gt 0 ]] || return 0
+  if mm_api GET "/api/v4/users/${uid}" && [[ "$MM_API_STATUS" == "200" ]] &&
+    jq -e 'has("bot_description")' >/dev/null 2>&1 <<<"$MM_API_BODY"; then
+    desc="$(jq -r '.bot_description // ""' <<<"$MM_API_BODY")" got=1
+  elif mm_api GET "/api/v4/bots/${uid}" && [[ "$MM_API_STATUS" == "200" ]] &&
+    jq -e 'has("description")' >/dev/null 2>&1 <<<"$MM_API_BODY"; then
+    desc="$(jq -r '.description // ""' <<<"$MM_API_BODY")" got=1
+  fi
+  [[ "$got" -eq 1 ]] || return 0
+  listed="$(sed -n 's/.*trusts @\([^·]*\).*/\1/p' <<<"$desc" | tr 'A-Z ' 'a-z,' | sed 's/,@/,/g')"
+  for n in "$@"; do
+    [[ ",${listed//,,/,}," == *",$(tr 'A-Z' 'a-z' <<<"$n"),"* ]] || missing+="${missing:+, }$n"
+  done
+  [[ -z "$missing" ]] ||
+    echo "mm-bus: WARNING: the profile of @${bot} lacks some of the $# trusted names (${missing}), but the bus trusts all of them: the registrar likely writes only part of the list (its maxTrusted), human accounts only" >&2
   return 0
 }
 

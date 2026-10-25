@@ -1,6 +1,7 @@
 """RT-6.13: Claude Code permission prompts relayed to the responsible human."""
 
 import asyncio
+import json
 
 import anyio
 import pytest
@@ -45,6 +46,54 @@ def test_prompt_shows_untrusted_text_as_code():
     assert "yes abcde" in text and "no abcde" in text
     long = permission.prompt(REQUEST | {"input_preview": "x" * 20000})
     assert len(long) < 13000 and "⋯ cut" in long
+
+
+def _shown(tool, args):
+    return json.loads(permission.preview(tool, json.dumps(args)))
+
+
+def test_bash_command_goes_in_full():
+    """RT-6.13 step 2: no decision without the command, however long; Claude
+    Code's masking of secrets stays as it came."""
+    cmd = "curl -H 'Authorization: [REDACTED]' https://x.example/" + "a/" * 400
+    assert _shown("Bash", {"command": cmd, "description": "fetch"}) == {
+        "command": cmd, "description": "fetch"}
+    assert permission.preview("Bash", "ls -la") == "ls -la"  # not JSON: as it came
+
+
+def test_file_content_stays_in_the_terminal():
+    """RT-6.13 step 2: tools that carry file content show the path and sizes,
+    never the content, however short."""
+    assert _shown("Write", {"file_path": "/r/a.py", "content": "API=1\nB=2\n"}) == {
+        "file_path": "/r/a.py", "content": "‹10 chars, 2 lines›"}
+    assert _shown("Edit", {"file_path": "/r/a.py", "old_string": "x", "replace_all": True,
+                           "new_string": "ab ⋯ 4000 code points elided ⋯ cd"}) == {
+        "file_path": "/r/a.py", "old_string": "‹1 chars›", "replace_all": True,
+        "new_string": "‹4004 chars›"}
+    assert _shown("MultiEdit", {"file_path": "/r/a.py", "edits": [
+        {"old_string": "a", "new_string": "bb"}]})["edits"] == [
+        {"old_string": "‹1 chars›", "new_string": "‹2 chars›"}]
+    assert _shown("NotebookEdit", {"notebook_path": "/n.ipynb", "cell_type": "code",
+                                   "new_source": "x = 1"}) == {
+        "notebook_path": "/n.ipynb", "cell_type": "code", "new_source": "‹5 chars›"}
+
+
+def test_other_tools_show_short_values_and_size_long_ones():
+    """RT-6.13 step 2: an MCP tool's short arguments are what the human decides
+    on; a long or multi-line string may be a file's content."""
+    assert _shown("mcp__jira__comment", {"issue": "PROJ-1", "body": "Done.",
+                                         "text": "x" * 201, "note": "a\nb"}) == {
+        "issue": "PROJ-1", "body": "Done.", "text": "‹201 chars›", "note": "‹3 chars, 2 lines›"}
+
+
+def test_a_preview_cut_inside_its_structure_shows_no_content():
+    """RT-6.13 step 2: Claude Code cuts each top-level field, so an array can
+    arrive unparseable: only Bash shows it then, or a short one."""
+    cut = '{"file_path": "/r/a.py", "edits": [{"old_string": "k ⋯ 9000 code points elided ⋯'
+    shown = permission.preview("MultiEdit", cut)
+    assert shown.startswith("file_path: /r/a.py ‹input not shown:") and "old_string" not in shown
+    assert "‹input not shown" in permission.preview("mcp__x__y", '{"a": [1, ⋯ 900 code points elided ⋯')
+    assert permission.preview("mcp__x__y", "short, not JSON") == "short, not JSON"
 
 
 def test_relay_only_with_someone_to_answer(monkeypatch):
@@ -164,6 +213,9 @@ async def test_prompt_goes_by_dm_to_the_responsible_human(relay):
     assert c.posted[0]["channel_id"] == DM and "abcde" in c.posted[0]["message"]
     assert server._relay.for_post(PROMPT) == "abcde"
     assert asks.is_open(BOT, PROMPT) and not asks.open_to(BOT, "dembaca")
+    await server._permission_request(REQUEST | {"request_id": "fghij", "tool_name": "Write",
+                                                "input_preview": '{"file_path": "/r/.env", "content": "PW=x"}'})
+    assert "/r/.env" in c.posted[1]["message"] and "PW=x" not in c.posted[1]["message"]
 
 
 @pytest.mark.anyio
@@ -226,6 +278,21 @@ async def test_unknown_id(relay):
     n = len(c.posted)
     assert not await server._push_intercept(_item("yes zzzzz", kind="watched_channel"))
     assert len(c.posted) == n and conn.sent == []
+
+
+@pytest.mark.anyio
+async def test_a_verdict_after_24_hours_counts_nothing(relay):
+    """RT-6.13 error handling: a prompt is open as long as a yes on an ask
+    approves (RT-6.11); a later verdict goes nowhere, and a 👍 on the old prompt
+    reaches the agent like an answer to an ask, marked expired there."""
+    c, conn = relay
+    assert permission.MAX_AGE_SEC == asks.APPROVAL_SEC
+    await server._permission_request(REQUEST)
+    server._relay.pending["abcde"].at -= permission.MAX_AGE_SEC + 1
+    assert await server._push_intercept(_item("yes abcde"))
+    assert "more than 24 h old" in c.posted[-1]["message"] and conn.sent == []
+    assert not await server._push_intercept(
+        _item(":+1:", kind="reaction", ask=PROMPT, emoji="+1", answer="yes"))
 
 
 @pytest.mark.anyio

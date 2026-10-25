@@ -56,6 +56,17 @@ async def test_announce_writes_the_fixed_format(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_announce_never_notifies_everyone(monkeypatch):
+    """RT-6.11 step 1: a task line that says @channel is written plain."""
+    c = _Client({"h" * 26: "dembaca"})
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.announce(project="vtpm-mds", task="tell @channel about the freeze",
+                          model="Claude Code · Opus 5.5")
+    lines = c.posted[0][0].splitlines()
+    assert lines[0] == "HELLO @agent-vtpm-hogan-1" and lines[2] == "task: tell channel about the freeze"
+
+
+@pytest.mark.asyncio
 async def test_announce_stores_the_card_in_props(monkeypatch):
     """RT-6.14 step 1: the same fields as an A2A-shaped card in the HELLO's
     props, which no slim post shows; the text alone gives the same card."""
@@ -66,7 +77,7 @@ async def test_announce_stores_the_card_in_props(monkeypatch):
     out = await server.announce(project="vtpm-mds", task="hogan", model="Claude Code · Opus 5.5",
                                 capabilities="Proxmox-Stack, VM 399", branch="#51")
     card = c.props["agent_card"]
-    assert c.props["a2a"] == {"v": 1, "kind": "hello"}
+    assert c.props["a2a"] == {"v": 1, "kind": "hello", "intent": "fyi"}
     assert card["name"] == "agent-vtpm-hogan-1" and card["description"] == "hogan"
     assert card["skills"] == [{"id": "proxmox-stack", "name": "Proxmox-Stack"},
                               {"id": "vm-399", "name": "VM 399"}]

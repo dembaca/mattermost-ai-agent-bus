@@ -6,7 +6,8 @@ Both live in Mattermost post props, which only the MCP server writes and
 reads; slim posts never carry them, so no model reads them unasked.
 
     props.agent_card  on the HELLO post (announce)
-    props.a2a         {"v": 1, "kind": <word>, "state": <TaskState>?}
+    props.a2a         {"v": 1, "kind": <word>?, "state": <TaskState>?,
+                       "intent": "action" | "reply" | "fyi"?, "to": "all"?}
 
 Ids are Mattermost's: messageId = post id, contextId = thread root,
 taskId = the root of a TASK thread. Posts without props (older versions,
@@ -21,28 +22,35 @@ from typing import Any
 
 V = 1
 
-# The bus's convention words (protocol.md) → (bus status, A2A TaskState).
+# What a post asks of its readers (RT-6.14): to do something, to answer, or
+# nothing. An fyi post wakes only whom it names and the thread's starter.
+ACTION, REPLY, FYI = "action", "reply", "fyi"
+
+# The bus's convention words (protocol.md) → (bus status, A2A TaskState, intent).
 # Status is what ASSIGNMENTS shows; None: the word moves no task.
-WORDS: dict[str, tuple[str | None, str | None]] = {
-    "TASK": ("open", "submitted"),
-    "DELEGATE": ("open", "submitted"),
-    "ACK": ("active", "working"),
-    "PROGRESS": ("active", "working"),
-    "BLOCKED": ("blocked", "input-required"),
-    "WAITING": ("blocked", "input-required"),
-    "RESULT": ("review", "input-required"),
-    "DONE": ("done", "completed"),
-    "NO": ("open", "rejected"),
-    "CANCEL": ("canceled", "canceled"),
-    "HELLO": (None, None),
-    "IDLE": (None, None),
-    "BYE": (None, None),
-    "HANDOVER": (None, None),
-    "ASSIGNMENTS": (None, None),
+WORDS: dict[str, tuple[str | None, str | None, str]] = {
+    "TASK": ("open", "submitted", ACTION),
+    "DELEGATE": ("open", "submitted", ACTION),
+    "ACK": ("active", "working", FYI),
+    "PROGRESS": ("active", "working", FYI),
+    "BLOCKED": ("blocked", "input-required", REPLY),
+    "WAITING": ("blocked", "input-required", FYI),
+    "RESULT": ("review", "input-required", FYI),
+    "DONE": ("done", "completed", FYI),
+    "NO": ("open", "rejected", REPLY),
+    "CANCEL": ("canceled", "canceled", ACTION),
+    "HELLO": (None, None, FYI),
+    "IDLE": (None, None, FYI),
+    "BYE": (None, None, FYI),
+    "HANDOVER": (None, None, ACTION),
+    "ASSIGNMENTS": (None, None, FYI),
 }
-# Kinds the server sets itself, not read from a word.
+_NONE = (None, None, None)
+# Kinds the server sets itself, not read from a word; both ask for an answer.
 ASK = "ask"
 PERMISSION = "permission"
+# props.a2a.to: the post is for every agent in the channel (RT-6.11, RT-6.2).
+ALL = "all"
 
 # The first word after an optional 👑, emoji or markdown; upper case only, so
 # "No worries" is no NO. `PR #57` (or a PR link) is a RESULT.
@@ -59,8 +67,23 @@ def word(message: str) -> str | None:
     return m[1] if m and m[1] in WORDS else None
 
 
+def lead(message: str, kind: str = "") -> str:
+    """The message with `kind` as its first word (RT-6.14): props come from the
+    text, so both say the same. A text that starts with it stays as it is;
+    an unknown kind, or a text that starts with another word, is refused."""
+    k = kind.strip().upper()
+    if not k or word(message) == k:
+        return message
+    if k not in WORDS:
+        raise ValueError(f"kind must be one of {', '.join(WORDS)}")
+    m = _FIRST.match(message or "")
+    if m and m[1] in WORDS:
+        raise ValueError(f"kind is {k} but the message starts with {m[1]}: drop one")
+    return f"{k} · {message.lstrip()}" if message.strip() else k
+
+
 def status(kind: str | None) -> str | None:
-    return WORDS.get((kind or "").upper(), (None, None))[0]
+    return WORDS.get((kind or "").upper(), _NONE)[0]
 
 
 def state(kind: str | None) -> str | None:
@@ -68,18 +91,48 @@ def state(kind: str | None) -> str | None:
         return "input-required"
     if kind == PERMISSION:
         return "auth-required"
-    return WORDS.get((kind or "").upper(), (None, None))[1]
+    return WORDS.get((kind or "").upper(), _NONE)[1]
 
 
-def annotate(message: str) -> dict[str, Any] | None:
-    """props.a2a for a post the server writes, or None for a plain message."""
-    w = word(message)
-    if w is None:
+def intent(kind: str | None) -> str | None:
+    if kind in (ASK, PERMISSION):
+        return REPLY
+    return WORDS.get((kind or "").upper(), _NONE)[2]
+
+
+def annotate(message: str = "", to: str = "", kind: str = "") -> dict[str, Any] | None:
+    """props.a2a for a post the server writes, or None for a plain message.
+    kind: one the server sets itself (ask, permission); else the first word."""
+    w = kind or word(message)
+    if w is None and not to:
         return None
-    out: dict[str, Any] = {"v": V, "kind": w.lower()}
-    if state(w):
-        out["state"] = state(w)
+    out: dict[str, Any] = {"v": V}
+    if w is not None:
+        out["kind"] = w if w in (ASK, PERMISSION) else w.lower()
+        for key, value in (("state", state(w)), ("intent", intent(w))):
+            if value:
+                out[key] = value
+    if to:
+        out["to"] = to
     return out
+
+
+def intent_of(post: Mapping[str, Any]) -> str | None:
+    """A post's intent, from its props only: older posts and people's have
+    none. Anyone can write props through the API, so callers honour it only
+    for an agent's post (server.py), and never for the wake gate (gate.py)."""
+    props = post.get("props")
+    a2a = props.get("a2a") if isinstance(props, Mapping) else None
+    value = a2a.get("intent") if isinstance(a2a, Mapping) else None
+    return value if value in (ACTION, REPLY, FYI) else None
+
+
+def to_all(post: Mapping[str, Any]) -> bool:
+    """The post says it is for every agent. Anyone can write props through the
+    API, so this tells who it is for, never who wrote it (gate.py)."""
+    props = post.get("props")
+    a2a = props.get("a2a") if isinstance(props, Mapping) else None
+    return isinstance(a2a, Mapping) and a2a.get("to") == ALL
 
 
 def kind_of(post: Mapping[str, Any]) -> str | None:

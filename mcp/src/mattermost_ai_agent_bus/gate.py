@@ -19,12 +19,13 @@ Entries older than MAX_AGE_SEC are dropped.
 from __future__ import annotations
 
 import os
+import re
 import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import channel, lease, session_file
+from . import a2a, channel, lease, session_file
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -59,14 +60,15 @@ async def author_classes(client: MattermostClient, posts: list[dict[str, Any]]) 
     return [author_class(p, trusted, agents) for p in posts]
 
 
-def wake_reason(kind: str, message: str, in_my_thread: bool) -> str:
+def wake_reason(kind: str, post: Mapping[str, Any], in_my_thread: bool) -> str:
     """Why the post would wake a worker (RT-6.2 step 4): mention, dm, thread or
-    broadcast; '' for a post that only goes into the digest."""
+    broadcast (@channel in the text, or props to="all"); '' for a post that
+    only goes into the digest."""
     if kind in ("mention", "dm"):
         return kind
     if in_my_thread:
         return "thread"
-    return "broadcast" if channel.broadcast(message) else ""
+    return "broadcast" if a2a.to_all(post) or channel.broadcast(str(post.get("message", ""))) else ""
 
 
 async def author_name(client: MattermostClient, post: Mapping[str, Any]) -> str:
@@ -88,6 +90,14 @@ async def coordinator_name(client: MattermostClient) -> str:
             return ""
         _coord = (now, next((str(r.get("username", "")) for r in rows if r.get("crown")), ""))
     return _coord[1]
+
+
+async def names_coordinator(client: MattermostClient, post: Mapping[str, Any]) -> bool:
+    """RT-6.16 step 3: the post already @-mentions the agent wearing the 👑: it was told, an
+    answer saying that it will look would only repeat it."""
+    name = await coordinator_name(client)
+    return bool(name) and re.search(
+        rf"(?<![\w.-])@{re.escape(name)}(?![\w-]|\.\w)", str(post.get("message", "")), re.I) is not None
 
 
 async def reply_text(client: MattermostClient, author: str, *, dm: bool) -> str:

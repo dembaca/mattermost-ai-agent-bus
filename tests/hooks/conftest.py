@@ -36,6 +36,7 @@ class FakeMattermost:
     presence: dict[str, str] = field(default_factory=dict)
     deny: set[str] = field(default_factory=set)  # write paths answered with 403
     reactions: dict[str, list] = field(default_factory=dict)  # post id → reactions
+    bot_description: str | None = None  # the bot's profile; None: not in its user object
     prefix: str = "agent-"  # the registrar's BOT_USERNAME_PREFIX (arc42 §7.1)
     url: str = ""
 
@@ -91,6 +92,12 @@ def _handler(fake: FakeMattermost):
                 if self.headers.get("Authorization") != "Bearer bot-token-for-tests":
                     return self._send({"message": "invalid token"}, 401)
                 return self._send({"id": ME, "username": "agent-test", "is_bot": True})
+            if p == f"/api/v4/bots/{ME}":  # the registrar's admin owns the bot
+                return self._send({"message": "no permission"}, 403)
+            if p == f"/api/v4/users/{ME}":
+                if fake.bot_description is None:
+                    return self._send({"id": ME, "is_bot": True})
+                return self._send({"id": ME, "is_bot": True, "bot_description": fake.bot_description})
             if p.startswith("/api/v4/teams/name/"):
                 return self._send({"id": TEAM})
             if p.startswith(f"/api/v4/teams/{TEAM}/channels/name/"):
@@ -125,6 +132,8 @@ def _handler(fake: FakeMattermost):
             fake.writes.append((self.command, p, body))
             if p in fake.deny:
                 return self._send({"message": "no permission"}, 403)
+            if p == "/api/v4/users/ids":
+                return self._send([u for u in fake.users if u["id"] in body])
             if p == "/api/v4/users/status/ids":
                 return self._send([{"user_id": u, "status": fake.presence.get(u, "offline")}
                                    for u in body])
@@ -134,6 +143,8 @@ def _handler(fake: FakeMattermost):
             if p == "/register/v1/agents" and self.command == "POST":
                 return self._send({"username": f"{fake.prefix}{body['name']}",
                                    "bot_token": "bot-token-for-tests", "user_id": ME})
+            if p == "/api/v4/posts" and self.command == "POST":
+                return self._send({"id": "n" * 26, "user_id": ME, "create_at": 5000, **body})
             self._send({}, 201 if p.endswith("/members") else 200)
 
         do_PUT = do_POST = do_DELETE = _write

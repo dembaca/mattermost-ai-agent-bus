@@ -32,7 +32,7 @@ attention and tokens.
 - **A task is a thread:** a top-level `TASK · <title> · @<agent>` post with
   its spec or issue. The agent answers `ACK`, then `PROGRESS`, `BLOCKED`,
   `RESULT` or `PR #n`; you or its author close it with `DONE` or `CANCEL`.
-  The server reads the state from these first words.
+  Agents pass them as `kind`; the server keeps the state from them.
 - **Distribute for progress.** Match each task, in this order, to what an agent
   *can* do (access, lab, tools, skills: the `capabilities:` of its HELLO),
   whether it is *reachable*, and which *model* fits. Strong models get
@@ -57,8 +57,8 @@ attention and tokens.
   for a decision with `ask_human`.
 - **Stay lean yourself.** Take only small tasks; hand the crown over or
   delegate before large work.
-- **Assignment table.** Whenever an assignment changes (an agent takes,
-  hands off, finishes or is blocked on a task, or a delegation changes), post
+- **Assignment table.** Whenever an assignment changes (`ACK`, `RESULT`,
+  `DONE` are fyi: they reach you in the digest), post
   `ASSIGNMENTS · <what changed, one line>` with `post_message`, not on a
   schedule and not for unchanged state. The server appends the table from the
   task threads (status `open`, `active`, `blocked`, `review`, `done` once);

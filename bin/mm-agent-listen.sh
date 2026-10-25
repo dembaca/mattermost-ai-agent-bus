@@ -6,10 +6,13 @@
 # Started by the agent as a background command when its Stop hook asks for it.
 # Claude Code wakes the agent when a background command exits, so this script
 # waits, costing no tokens, and exits as soon as something is for this agent:
-#   - an unread mention or DM, or @channel / @all / @here,
+#   - an unread mention or DM, or @channel / @all / @here, or a post for all
+#     agents (props.a2a.to = "all", what agents write instead, RT-6.11),
 #   - a reply in a thread the agent posted in,
 #   - any new post, while the agent holds the 👑 (the coordinator sees all,
 #     and routes a human's plain post to the agent it means, RT-6.6),
+#     for both not an agent's fyi post (props.a2a.intent, RT-6.14: ACK, RESULT,
+#     DONE, IDLE…) unless the agent started the thread: that waits for the digest,
 #   - a reaction to one of its open asks (asks-<uid>.env, RT-6.11) that the
 #     agent has not been handed yet.
 # A post the MCP server gated (GATED in gate-<uid>.env: by someone the agent
@@ -38,7 +41,7 @@ UNTIL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --until) UNTIL="${2:-}"; shift 2 ;;
-    -h|--help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "usage: $0 --until EPOCH" >&2; exit 2 ;;
   esac
 done
@@ -64,19 +67,26 @@ COORD="$(mm_bot_state_file coord "$ME" 2>/dev/null)" || COORD=""
 ASKS="$(mm_bot_state_file asks "$ME" 2>/dev/null)" || ASKS=""
 GATE="$(mm_bot_state_file gate "$ME" 2>/dev/null)" || GATE=""
 
-# Who am I to a post: the username (for @mentions in the text) and the threads
-# this agent posted in, read once — the agent is idle while this runs.
+# Who am I to a post: the username (for @mentions in the text), the threads
+# this agent posted in and those it started, read once — the agent is idle
+# while this runs.
 MY_NAME="${MM_BOT_USERNAME:-}"
 if [[ -z "$MY_NAME" ]] && mm_api GET "/api/v4/users/me" && [[ "$MM_API_STATUS" == "200" ]]; then
   MY_NAME="$(jq -r '.username // empty' <<<"$MM_API_BODY")"
 fi
 MY_THREADS="[]"
+MY_ROOTS="[]"
 if [[ -n "$CID" ]] && mm_api GET "/api/v4/channels/${CID}/posts?per_page=200" &&
   [[ "$MM_API_STATUS" == "200" ]]; then
   MY_THREADS="$(jq -c --arg me "$ME" '[.posts // {} | .[] | select(.user_id == $me)
                   | if (.root_id // "") == "" then .id else .root_id end] | unique' \
     <<<"$MM_API_BODY" 2>/dev/null || echo "[]")"
+  MY_ROOTS="$(jq -c --arg me "$ME" '[.posts // {} | .[] | select(.user_id == $me and (.root_id // "") == "") | .id]' \
+    <<<"$MM_API_BODY" 2>/dev/null || echo "[]")"
 fi
+# Authors of fyi posts looked up so far, and which of them are agents.
+CHECKED="[]"
+AGENTS="[]"
 
 get() { [[ -f "$LF" ]] && sed -n "s/^$1=//p" "$LF" | head -1; }
 SINCE="$(get SINCE)"; [[ "$SINCE" =~ ^[0-9]+$ ]] || SINCE="$(date +%s)"
@@ -135,19 +145,36 @@ while (( $(date +%s) < UNTIL )); do
     if [[ -n "$GATE" && -f "$GATE" ]]; then
       gated="$(sed -n 's/^GATED=\([^ ]*\).*/\1/p' "$GATE" | jq -R . | jq -sc . 2>/dev/null || echo '[]')"
     fi
+    # An fyi post counts as one only from an agent: look up authors not seen yet.
+    fresh_authors="$(jq -c --arg me "$ME" --argjson t "$since_ms" --argjson checked "$CHECKED" '
+      [.posts // {} | .[] | select(.user_id != $me and .create_at >= $t
+          and ((.props | objects | .a2a | objects | .intent) // "") == "fyi") | .user_id]
+      | unique - $checked' <<<"$MM_API_BODY" 2>/dev/null || echo "[]")"
+    if [[ -n "$fresh_authors" && "$fresh_authors" != "[]" ]]; then
+      AGENTS="$(jq -c --argjson more "$(mm_agent_ids "$fresh_authors")" '. + $more' <<<"$AGENTS")"
+      CHECKED="$(jq -c --argjson more "$fresh_authors" '. + $more' <<<"$CHECKED")"
+    fi
     # ?since= also returns posts edited since then; look only at new ones.
-    read -r addressed others oldest < <(jq -r --arg me "$ME" --arg name "$MY_NAME" \
-        --argjson t "$since_ms" --argjson threads "$MY_THREADS" \
-        --argjson coord "$coordinator" --argjson gated "$gated" '
+    # Named: a mention, @channel/@all/@here or to all; seen: the coordinator, or
+    # a thread it posted in. An agent's fyi post wakes only whom it names and
+    # the author of its thread's root (RT-6.14).
+    read -r addressed others oldest fyi < <(jq -r --arg me "$ME" --arg name "$MY_NAME" \
+        --argjson t "$since_ms" --argjson threads "$MY_THREADS" --argjson roots "$MY_ROOTS" \
+        --argjson coord "$coordinator" --argjson gated "$gated" --argjson agents "$AGENTS" '
       [.posts // {} | .[] | select(.user_id != $me and (.type // "") == "" and .create_at >= $t)]
-      | map(. + {addressed: ((.id as $id | $gated | index($id)) == null and (
-            $coord
-            or ((.root_id // "") as $r | $r != "" and ($threads | index($r)) != null)
-            or ((.message // "") | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
-                | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))
-          ))})
-      | "\(map(select(.addressed)) | length) \(map(select(.addressed | not)) | length) \(map(select(.addressed | not) | .create_at) | min // 0)"' \
-      <<<"$MM_API_BODY" 2>/dev/null || echo "0 0 0")
+      | map((.root_id // "") as $r
+        | . + {fyi: (((.props | objects | .a2a | objects | .intent) // "") == "fyi"
+                     and (.user_id as $u | $agents | index($u)) != null),
+               named: (((.message // "") | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
+                        | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))
+                       or (((.props | objects | .a2a | objects | .to) // "") == "all")),
+               seen: ($coord or ($r != "" and ($threads | index($r)) != null)),
+               mine: ($r != "" and ($roots | index($r)) != null)})
+      | map(. + {addressed: ((.id as $id | $gated | index($id)) == null
+                             and (.named or (.seen and (.mine or (.fyi | not)))))})
+      | map(select(.addressed)) as $a | map(select(.addressed | not)) as $o
+      | "\($a | length) \($o | length) \($o | map(.create_at) | min // 0) \($o | map(select(.fyi)) | length)"' \
+      <<<"$MM_API_BODY" 2>/dev/null || echo "0 0 0 0")
     if [[ "${addressed:-0}" =~ ^[0-9]+$ ]] && (( addressed > 0 )); then
       ENDED_AS=event
       mm_stat wake reason=addressed
@@ -158,7 +185,9 @@ while (( $(date +%s) < UNTIL )); do
       (( $(date +%s) - ${oldest:-0} / 1000 >= DIGEST )); then
       ENDED_AS=event
       mm_stat wake reason=digest
-      echo "Mattermost digest: ${others} post(s) in the work channel since $(mm_epoch_hhmm $(( oldest / 1000 ))), none addressed to you. Skim them with wait_for_events(timeout_sec=1); act only on what needs you, then finish your turn."
+      note=""
+      [[ "${fyi:-0}" =~ ^[0-9]+$ ]] && (( fyi > 0 )) && note=", ${fyi} of them fyi"
+      echo "Mattermost digest: ${others} post(s) in the work channel since $(mm_epoch_hhmm $(( oldest / 1000 )))${note}, none addressed to you. Skim them with wait_for_events(timeout_sec=1); act only on what needs you, then finish your turn."
       exit 0
     fi
   fi
