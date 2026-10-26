@@ -15,6 +15,10 @@ paths and short values, file content and long text only as their size. Claude
 Code masks well-known secrets before it sends the preview.
 A verdict counts only from a trusted human (server-verified author, RT-6.8):
 `yes <id>` / `no <id>`, or 👍/👎 on the prompt post.
+
+Claude Code says nothing when the terminal answers first. An open dialog lets
+no turn end, so the turn's end (the Stop hook's presence idle or listening)
+closes every prompt still open, with a note in the DM.
 """
 
 from __future__ import annotations
@@ -161,3 +165,9 @@ class Relay:
     def take(self, request_id: str) -> Pending | None:
         self._expire()
         return self.pending.pop(request_id, None)
+
+    def take_all(self) -> dict[str, Pending]:
+        """Every open prompt, now closed: the turn ended (RT-6.13 step 5)."""
+        self._expire()
+        taken, self.pending = self.pending, {}
+        return taken

@@ -16,6 +16,8 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             most 200, or ?since=MS)
     GET  /v1/ask-reactions  {fresh}: reactions to open asks not handed over yet
     POST /v1/presence       {state: working|idle|listening|bus, label?, until?} → {ok}
+                            (idle, listening: the turn ended, open permission
+                            prompts close, RT-6.13)
     POST /v1/stat           {k: turn|turn_end|block|compact|wake|transcript, …} → {ok}
                             (one overhead counter, RT-6.9: the hooks of a keyless
                             session cannot reach the server's state dir, RT-6.18)
@@ -556,6 +558,9 @@ async def presence(client: MattermostClient, query: Mapping[str, str],
         if len(arg) > MAX_LABEL or any(c < " " or c == "\x7f" for c in arg):
             raise BadRequest(f"label: one line, at most {MAX_LABEL} characters")
     await lease.set_status(client, state, arg)
+    tools = _tools()
+    if state in ("idle", "listening") and tools is not None:
+        await tools.permissions_obsolete(client)  # the turn ended (RT-6.13 step 5)
     return 200, {"ok": True}
 
 

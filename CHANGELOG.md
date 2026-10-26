@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.42.4
+
+### Fixed
+
+- **A permission prompt answered in the terminal closes in the DM too:** Claude
+  Code says nothing when the terminal answers first, so the DM showed nothing
+  and the id stayed open for 24 h; a late `yes <id>` was still sent and got a
+  misleading "✅ allowed". An open dialog lets no turn end, so when the turn
+  ends (the Stop hook sets the status idle or listening) every prompt still
+  open gets "🖥️ Answered in the terminal" under it and is closed; a later
+  `yes <id>` gets "No open permission prompt"
+  ([RT-6.13](docs/arc42/06-runtime-view.md#613-permission-prompts-answered-from-mattermost)).
+
 ## 0.42.3
 
 ### Fixed
