@@ -1312,6 +1312,22 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
         return False
 
 
+async def permissions_obsolete(client: MattermostClient) -> None:
+    """The turn ended (RT-6.13 step 5; hookapi.presence, idle or listening):
+    no prompt can still be open, the terminal answered each one left. Say so
+    under it and close it, so a late `yes <id>` gets the unknown-id reply."""
+    uid = ""
+    for rid, pending in _relay.take_all().items():
+        try:
+            uid = uid or (await client.get_me()).get("id", "")
+            await _posted(client, await client.post(
+                f"🖥️ Answered in the terminal · `{rid}`: this prompt is closed.",
+                root_id=pending.post_id))
+            asks.resolve(uid, pending.post_id)
+        except Exception as exc:  # noqa: BLE001 — a note, never fail the turn's end
+            log.info("permission prompt %s: no terminal note: %s", rid, exc)
+
+
 async def serve(read_stream: Any, write_stream: Any) -> None:
     """One MCP connection over these streams: stdio, or a relay's connection
     on the host (RT-6.18); as a channel when started as one (RT-6.12)."""

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 import anyio
 import pytest
@@ -11,7 +12,7 @@ from mcp.shared.message import SessionMessage
 from mcp_types import JSONRPCNotification, JSONRPCRequest
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
-from mattermost_ai_agent_bus import asks, channel, permission, server
+from mattermost_ai_agent_bus import asks, channel, hookapi, lease, permission, server
 
 BOT = "b" * 26
 HUMAN = "h" * 26
@@ -351,3 +352,33 @@ async def test_the_dm_holds_nothing_unread_after_prompt_and_verdict(relay, monke
     assert viewed == [DM, DM]
     assert await server._push_intercept(_item("yes fghij"))  # no such prompt: the note is a post too
     assert viewed == [DM, DM, DM]
+    await server._permission_request(REQUEST)
+    await server.permissions_obsolete(c)  # the turn's end note too (step 5)
+    assert viewed == [DM, DM, DM, DM, DM]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("state", ["idle", "listening"])
+async def test_the_turns_end_closes_prompts_the_terminal_answered(relay, monkeypatch, state):
+    """RT-6.13 step 5: Claude Code says nothing when the terminal answers, but
+    no turn ends with a dialog open. The Stop hook's idle or listening closes
+    every prompt still open, with a note in the DM; a late yes goes nowhere."""
+    c, conn = relay
+
+    async def set_status(client, state, label=""):
+        pass
+
+    monkeypatch.setattr(lease, "set_status", set_status)
+    end = {"state": state} | ({"until": int(time.time()) + 600} if state == "listening" else {})
+    await server._permission_request(REQUEST)
+    assert await hookapi.presence(c, {}, {"state": "working"}) == (200, {"ok": True})
+    assert "abcde" in server._relay.pending
+    assert await hookapi.presence(c, {}, end) == (200, {"ok": True})
+    assert "Answered in the terminal" in c.posted[-1]["message"]
+    assert c.posted[-1]["root_id"] == PROMPT
+    assert server._relay.pending == {} and not asks.is_open(BOT, PROMPT)
+    n = len(c.posted)
+    await hookapi.presence(c, {}, end)
+    assert len(c.posted) == n  # nothing open: no post
+    assert await server._push_intercept(_item("yes abcde"))
+    assert "No open permission prompt `abcde`" in c.posted[-1]["message"] and conn.sent == []
