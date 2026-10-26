@@ -6,8 +6,9 @@
 #   mm-agent-sweep.sh --apply --force   # include sessions that still look live
 #
 # A bot an agent registered itself (mcp-*.env) outlives its process for
-# `claude --continue`; it counts as abandoned only once its file is untouched
-# for MM_SESSION_KEEP_SEC (default 24 h). --force includes it sooner.
+# `claude --continue` or its workspace's next server; it counts as abandoned
+# only once its file is untouched for MM_SESSION_KEEP_SEC (default 24 h).
+# --force includes it sooner.
 #
 # A session file exists for the whole run of a session, so it is NOT evidence
 # that a bot is abandoned. Each file records MM_SESSION_PID, the supervising
@@ -120,6 +121,13 @@ for f in "$STATE_DIR"/*.env; do
 
   pid="$(field "$f" MM_SESSION_PID)"
   hpid="$(field "$f" MM_BUS_HOST_PID)"
+  # A server without a session id that ended marked its file and kept the bot
+  # for the workspace's next server (RT-6.10): its harness (MM_SESSION_PID)
+  # may live on, so only the grace period below counts.
+  ended=0
+  if [[ -n "$(field "$f" MM_SERVER_ENDED)" ]]; then
+    pid="" hpid="" ended=1
+  fi
   if [[ "$FORCE" -eq 0 ]] && ! is_live "$pid" && is_live "$hpid"; then
     note "HOSTED  ${name} (its MCP server on the host, pid ${hpid}, still runs and ends with its watchdog) — leaving it alone"
     ACTIVE_NAMES+=("$name")
@@ -132,7 +140,7 @@ for f in "$STATE_DIR"/*.env; do
     skipped=$((skipped + 1))
     continue
   fi
-  if [[ "$FORCE" -eq 0 && -z "$pid" ]]; then
+  if [[ "$FORCE" -eq 0 && -z "$pid" && "$ended" -eq 0 ]]; then
     # Written before this guard existed: cannot prove it is dead.
     note "UNKNOWN ${name} (no MM_SESSION_PID) — skipping; use --force to include"
     ACTIVE_NAMES+=("$name")
@@ -144,7 +152,7 @@ for f in "$STATE_DIR"/*.env; do
   if [[ "$FORCE" -eq 0 && "$(basename "$f")" == mcp-* ]]; then
     age=$(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") ))
     if (( age < KEEP_SEC )); then
-      note "KEPT    ${name} (ended $((age / 3600)) h ago, kept for claude --continue until $((KEEP_SEC / 3600)) h) — use --force to include"
+      note "KEPT    ${name} (ended $((age / 3600)) h ago, kept for a restart until $((KEEP_SEC / 3600)) h) — use --force to include"
       ACTIVE_NAMES+=("$name")
       skipped=$((skipped + 1))
       continue

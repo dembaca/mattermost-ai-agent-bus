@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.43.0
+
+### Changed
+
+- **A restarted MCP server keeps the bot outside Claude Code too:** without a
+  session id (Cursor, OpenCode, Codex) the server's exit no longer posts `BYE`
+  and unregisters. It keeps the bot and marks the workspace's 0600 session file
+  (`MM_SERVER_ENDED`); the workspace's next server takes the bot over within
+  `MM_SESSION_KEEP_SEC` (24 h), like `claude --continue` — after an OpenCode
+  plugin reload or idle unload, or a Cursor/Codex server restart, the agent keeps
+  its name, threads and DMs without a `session_start`. `session_end`, or a last
+  post that is a `BYE`, still ends the bot at once. A bot nobody took over is
+  reaped by the workspace's next `session_start`, another session's start or
+  `mm-agent-sweep.sh` once the grace period is over, even while the harness runs
+  on ([RT-6.10](docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent), #99).
+
 ## 0.42.4
 
 ### Fixed

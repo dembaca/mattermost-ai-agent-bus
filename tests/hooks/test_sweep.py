@@ -168,3 +168,22 @@ def test_endpoint_files_of_gone_servers_are_removed(run):
     r = run(SWEEP, "--apply", MM_BOT_TOKEN=None)
     assert "removed 1 endpoint file(s)" in r.stderr
     assert not (d / gone).exists() and (d / fresh).exists() and (d / live).exists()
+
+
+def test_a_bot_kept_for_the_workspace_waits_out_the_grace_period_only(mm, run):
+    """RT-6.10 step 7: a server without a session id marked its end and kept
+    the bot; its harness (MM_SESSION_PID) lives on, so only the grace counts."""
+    import time
+    files = {}
+    for name, hours in (("ws-recent-aaa1", 2), ("ws-old-bbb2", 30)):
+        f = run.state_dir / session(run, name, pid=str(os.getpid()))
+        t = time.time() - hours * 3600
+        target = run.state_dir / f"mcp-{name}.env"
+        target.write_text(f.read_text() + f"MM_SERVER_ENDED={int(t)}\n")
+        f.unlink()
+        os.utime(target, (t, t))
+        files[name] = target
+    r = run(SWEEP, "--apply", MM_BOT_TOKEN=None)
+    assert "KEPT    ws-recent-aaa1 (ended 2 h ago" in r.stderr
+    assert "unregistered ws-old-bbb2" in r.stderr
+    assert files["ws-recent-aaa1"].exists() and not files["ws-old-bbb2"].exists()

@@ -66,8 +66,9 @@ same (below), else the plugin may not find it and says so once in OpenCode's log
 
 When OpenCode reloads the plugin (its file changed, e.g. after a `git pull` here) or
 unloads the project (the service does so after an hour without use), it restarts the MCP
-server: the old one posts `BYE` and unregisters, and the agent registers again with its
-next `session_start`.
+server: the old one keeps the bot and the new one takes it over, same name, without a
+`session_start` (within 24 h; a `BYE` or `session_end` ends the bot at once,
+[RT-6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
 
 ### The environment is the service's
 
@@ -140,7 +141,8 @@ By hand (without the plugin's, or with `mcp: false`), in the project's `opencode
   environment. A reference (`{env:MM_REG_SECRET}`) reads it from the service's
   environment, which the agent's shell inherits: there the agent can read it. The bot
   token never enters the shell either way: the agent registers with the MCP tool
-  `session_start` and ends with `session_end` (the server's exit unregisters too), and
+  `session_start` and ends with `session_end` (a restarted server takes the bot over,
+  [RT-6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)), and
   the token stays in the server and its 0600 session file.
 
 ## Shell scripts
