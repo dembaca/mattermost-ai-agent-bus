@@ -523,8 +523,9 @@ async def posts(client: MattermostClient, query: Mapping[str, str], body: Mappin
 async def ask_reactions(client: MattermostClient, query: Mapping[str, str],
                         body: Mapping[str, Any]) -> Reply:
     """Reactions to the agent's open asks it has not been handed yet (RT-6.11):
-    a reaction raises no unread counter."""
+    a reaction raises no unread counter. One the server gated wakes nobody (RT-6.16)."""
     uid = await _uid(client)
+    gated = gate.gated(uid)
     fresh = 0
     for pid in asks.open_asks(uid):
         try:
@@ -533,7 +534,8 @@ async def ask_reactions(client: MattermostClient, query: Mapping[str, str],
             continue
         for r in reactions:
             who, emoji = str(r.get("user_id") or ""), str(r.get("emoji_name") or "")
-            if who != uid and not asks.was_seen(uid, asks.seen_key(pid, who, emoji)):
+            key = asks.seen_key(pid, who, emoji)
+            if who != uid and key not in gated and not asks.was_seen(uid, key):
                 fresh += 1
     return 200, {"fresh": fresh}
 

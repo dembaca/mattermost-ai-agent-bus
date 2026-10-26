@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.45.0
+
+### Changed
+
+- **A reaction by someone not trusted wakes no worker:** with trusted humans
+  configured, a reaction to an open ask by a person who is neither trusted nor
+  an agent approved nothing but still woke the agent. It is now gated like their
+  post: data only, last in `wait_for_events` and in the channel digest, not
+  counted by the listener, no answer posted. The coordinator and reactions by
+  trusted humans and agents are unchanged
+  ([RT-6.16](docs/arc42/06-runtime-view.md#616-who-may-wake-an-agent), #68).
+
 ## 0.44.0
 
 ### Added

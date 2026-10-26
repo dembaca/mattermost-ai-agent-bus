@@ -213,6 +213,9 @@ async def test_ask_reactions_counts_only_what_was_not_handed_over(api):
     assert (await h.get("/v1/ask-reactions")).json() == {"fresh": 0}
     client._reactions[ASK].append({"user_id": PERSON, "emoji_name": "+1"})
     assert (await h.get("/v1/ask-reactions")).json() == {"fresh": 1}
+    # RT-6.16 step 7: a reaction the server gated wakes nobody.
+    (d / f"gate-{UID}.env").write_text(f"GATED={ASK}:{PERSON}:+1 {int(time.time())}\n")
+    assert (await h.get("/v1/ask-reactions")).json() == {"fresh": 0}
 
 
 async def test_presence_sets_the_status_lease(api, monkeypatch):

@@ -12,6 +12,7 @@ never gated. What the gate did lives next to asks-<uid>.env, in gate-<uid>.env:
 
     REPLIED=<root_id> <epoch>   a thread this bot answered "Not woken" in
     GATED=<post_id> <epoch>     a gated post: the listener does not wake for it
+    GATED=<ask>:<user>:<emoji> <epoch>   a gated reaction to an open ask, likewise
     DEPARTED=<root_id>:<name> <epoch>  a thread told that agent is gone (RT-6.21)
 
 Entries older than MAX_AGE_SEC are dropped.
