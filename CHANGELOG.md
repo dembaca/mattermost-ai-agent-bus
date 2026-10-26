@@ -3,6 +3,16 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.42.3
+
+### Fixed
+
+- **No endless drain after a permission prompt:** the prompt DM, the verdict's
+  reply and the human's taken-out answer left the DM unread for the bot, and
+  nothing could collect it, so the Stop hook asked to drain an empty inbox on
+  every turn (`pending=1` in a `D` channel). Each of these posts now marks the
+  DM read ([RT-6.13](docs/arc42/06-runtime-view.md#613-permission-prompts-answered-from-mattermost)).
+
 ## 0.42.2
 
 ### Fixed
