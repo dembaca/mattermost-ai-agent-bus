@@ -445,6 +445,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 3 | A trusted `yes <id>` with an id that is not open | In the DM a short reply ("answered in the terminal, or more than 24 h old"); elsewhere it passes on untouched, it may be another agent's prompt |
 | 3 | A verdict more than 24 h after the prompt | The id is no longer open, as a yes on an ask approves only within 24 h (RT-6.11): `yes <id>` gets the reply above; 👍/👎 on the old prompt post reaches the agent as a reaction to an ask, marked `expired` |
 | 3 | Another emoji on the prompt post | A remark: no verdict, no wake-up |
+| 2–4 | The bot's own prompt, reply and verdict posts count as unread DMs for it, and the human's taken-out answer reaches no inbox | After each of these posts the server marks the DM read (as after every post of its own, RT-6.2), so the drain does not wake for a message nothing can collect |
 | 4 | The terminal answered first | Claude Code sends no event; the id stays open for 24 h and a later verdict is dropped by Claude Code. The reply says the verdict applies unless the terminal answered first |
 | — | Auto mode | The classifier decides most calls, so no dialog opens and nothing is relayed |
 | — | Prompts about sandbox, secrets or permissions | Claude Code does not mark them, so they cannot be filtered: they are relayed like any other. Anyone trusted can approve any tool call of this session from Mattermost: trust only humans you would hand the terminal to |

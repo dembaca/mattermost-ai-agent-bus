@@ -317,3 +317,37 @@ async def test_pusher_hands_intercepted_events_to_nobody():
     with anyio.move_on_after(0.3):
         await pusher.run(wait, intercept=intercept)
     assert [p["content"] for _, p in conn.sent] == ["hello"] and pusher.held == []
+
+
+@pytest.mark.anyio
+async def test_the_dm_holds_nothing_unread_after_prompt_and_verdict(relay, monkeypatch):
+    """RT-6.13, RT-6.2 step 1: the bot's own prompt and verdict posts count as
+    unread DMs for it, and the human's intercepted answer reaches no inbox, so
+    nothing would collect them: the Stop hook drained an empty inbox every turn.
+    Each of these posts marks the DM read."""
+    c, _ = relay
+    viewed = []
+
+    async def post(message, channel_id=None, root_id=None, props=None):
+        c.posted.append({"message": message, "channel_id": channel_id, "root_id": root_id})
+        return {"id": PROMPT, "channel_id": DM}
+
+    async def view_channel(cid):
+        viewed.append(cid)
+
+    class _Inbox:
+        def holds(self, cid):
+            return False
+
+        def stop_typing(self):
+            pass
+
+    monkeypatch.setattr(c, "post", post, raising=False)
+    c.view_channel = view_channel
+    monkeypatch.setattr(server, "_inbox", _Inbox())
+    await server._permission_request(REQUEST)
+    assert viewed == [DM]
+    assert await server._push_intercept(_item("yes abcde"))
+    assert viewed == [DM, DM]
+    assert await server._push_intercept(_item("yes fghij"))  # no such prompt: the note is a post too
+    assert viewed == [DM, DM, DM]

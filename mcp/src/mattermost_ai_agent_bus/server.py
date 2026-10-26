@@ -291,7 +291,8 @@ async def _my_id(client: MattermostClient) -> str:
 async def _posted(client: MattermostClient, post: dict[str, Any]) -> None:
     """Mattermost counts the bot's own post as unread for it, which in a DM
     is an unread DM that nothing can collect: the Stop hook and the listener
-    would wake for it forever. Mark the channel read, unless the inbox holds
+    would wake for it forever. Every post of the server's own goes through
+    here, the permission prompts and their verdicts too (RT-6.13). Mark the channel read, unless the inbox holds
     (or, unconnected, may have missed) a message there still to be collected."""
     cid = post.get("channel_id", "")
     if cid and _inbox is not None and _inbox.holds(cid) is False:
@@ -1260,6 +1261,7 @@ async def _permission_request(params: dict[str, Any]) -> None:
         stats.record("post", chars=len(text))
         post = await client.post(text, channel_id=await client.direct_channel_with(to),
                                  props=a2a.props(kind=a2a.PERMISSION))
+        await _posted(client, post)
         # An open ask, so a 👍/👎 on it reaches the inbox (RT-6.11); without a
         # human, so it does not hold up the agent's own asks to them.
         asks.add((await client.get_me()).get("id", ""), post["id"])
@@ -1291,15 +1293,17 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
             if rid not in _relay:  # never sent, answered, or more than 24 h old
                 if item.get("kind") != "dm":
                     return False  # in a channel it may be another agent's prompt
-                await client.post(f"No open permission prompt `{rid}`: answered in the "
-                                  "terminal, or more than 24 h old.", root_id=post.get("id"))
+                await _posted(client, await client.post(
+                    f"No open permission prompt `{rid}`: answered in the terminal, or more "
+                    "than 24 h old.", root_id=post.get("id")))
                 return True
         pending = _relay.take(rid)
         await _pusher.verdict(rid, behavior)
         who = item.get("trusted_human") or post.get("author") or "?"
         word = "✅ allowed" if behavior == "allow" else "⛔ denied"
-        await client.post(f"{word} by {who} · `{rid}` sent to Claude Code; it applies "
-                          "unless the terminal answered first.", root_id=pending.post_id)
+        await _posted(client, await client.post(
+            f"{word} by {who} · `{rid}` sent to Claude Code; it applies unless the terminal "
+            "answered first.", root_id=pending.post_id))
         asks.resolve((await client.get_me()).get("id", ""), pending.post_id)
         _done_typing()
         return True
