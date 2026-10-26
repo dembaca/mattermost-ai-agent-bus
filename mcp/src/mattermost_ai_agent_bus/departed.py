@@ -7,10 +7,11 @@ the oldest reachable agent, which the lease hands the crown to next (RT-6.6).
 The answer says since when the agent is gone and links its BYE (its handoff)
 or its last post; the event wakes the answering agent, which routes the work.
 
-Gone: the agent's own latest post in its newest HELLO thread is a BYE, or its
-status lease ran out (no live custom status), or it is no member of the work
-channel any more while its HELLO is still there. 💤 idle and 👂 listening run
-on a live lease: not gone. Each thread is told once per agent (gate-<uid>.env,
+Gone: its status lease ran out (no live custom status), or it is no member of
+the work channel any more while its HELLO is still there. A BYE alone is not
+(it may mean "task finished"); for a gone agent whose latest post in its newest
+HELLO thread is a BYE, that BYE gives the time and the handoff link. 💤 idle
+and 👂 listening run on a live lease: not gone. Each thread is told once per agent (gate-<uid>.env,
 DEPARTED=<root_id>:<name>).
 """
 
@@ -86,9 +87,11 @@ async def gone(client: MattermostClient, names: list[str]) -> list[Departure]:
             continue  # no agent of this bus that we know of
         own = [p for p in posts if p.get("user_id") == uid]
         last = next((p for p in own if hello and hello["id"] in (p.get("id"), p.get("root_id"))), None)
+        if row is not None and row.get("live"):
+            continue  # a live lease: here, BYE or not ("task finished")
         if last and a2a.word(str(last.get("message") or "")) == "BYE":
             out.append(Departure(name, int(last.get("create_at") or 0), True, str(last["id"])))
-        elif row is None or not row.get("live"):
+        else:
             since = (row or {}).get("until_ms") or (int(own[0].get("create_at") or 0) if own else 0)
             out.append(Departure(name, int(since), False, str(own[0]["id"]) if own else ""))
     return out

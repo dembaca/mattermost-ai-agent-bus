@@ -23,7 +23,8 @@ def _status(emoji, minutes):
 
 
 class Bus:
-    """The inbox of agent-me against a fake Mattermost: agent-old said BYE,
+    """The inbox of agent-me against a fake Mattermost: agent-old said BYE
+    and has no status left,
     agent-idle is 💤 on a live lease, agent-w works."""
 
     def __init__(self, monkeypatch):
@@ -33,7 +34,7 @@ class Bus:
         self.fail = False
         self.users = {
             ME: {"id": ME, "username": "agent-me", "create_at": 3, "props": _status("crown", 10)},
-            OLD: {"id": OLD, "username": "agent-old", "create_at": 1, "props": _status("ear", 10)},
+            OLD: {"id": OLD, "username": "agent-old", "create_at": 1, "props": {}},
             IDLE: {"id": IDLE, "username": "agent-idle", "create_at": 2, "props": _status("zzz", 10)},
             WORKER: {"id": WORKER, "username": "agent-w", "create_at": 4, "props": _status("hammer_and_wrench", 10)},
         }
@@ -139,13 +140,23 @@ async def test_idle_and_listening_agents_are_not_departed(bus, name):
 
 
 @pytest.mark.asyncio
-async def test_a_new_hello_after_bye_is_back(bus):
-    """RT-6.21 step 3: only the newest HELLO thread counts."""
+async def test_a_bye_with_a_live_lease_is_not_departed(bus):
+    """RT-6.21 step 3: BYE may mean "task finished": a live lease keeps it here."""
+    _crown()
+    bus.users[OLD]["props"] = _status("ear", 10)
+    e = await bus.arrive("q" * 26, "@agent-old status?")
+    assert not e.departed and bus.posted == []
+
+
+@pytest.mark.asyncio
+async def test_only_a_bye_in_the_newest_hello_thread_is_the_handoff(bus):
+    """RT-6.21 step 3: gone after a new HELLO: its last post, not the old BYE."""
     _crown()
     bus.posts.insert(0, {"id": "f" * 26, "user_id": OLD, "root_id": "", "message": "HELLO @agent-old",
                          "create_at": int(time.time() * 1000)})
     e = await bus.arrive("q" * 26, "@agent-old status?")
-    assert not e.departed and bus.posted == []
+    assert e.departed == "agent-old"
+    assert f"(its lease ran out), see its last post: {BASE}{'f' * 26}." in bus.posted[0]["message"]
 
 
 @pytest.mark.asyncio

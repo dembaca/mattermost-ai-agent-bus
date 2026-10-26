@@ -743,7 +743,7 @@ Everything the server writes in its state directory goes through one helper: a n
 
 ## 6.21 Mention of a departed agent
 
-**Purpose:** An agent that said `BYE` or whose session died is still a name in the channel. A mention of it reaches nobody, and whoever wrote it waits. Exactly one server answers instead, without the model: since when the agent is gone and where its handoff is; its own agent, the coordinator, wakes to route the work.
+**Purpose:** An agent whose session ended or died is still a name in the channel. A mention of it reaches nobody, and whoever wrote it waits. Exactly one server answers instead, without the model: since when the agent is gone and where its handoff is; its own agent, the coordinator, wakes to route the work.
 
 **Trigger:** A post in the work channel reaches the MCP server's inbox (WebSocket or backfill, RT-6.2) that @-mentions a bus agent (the registrar's prefix) other than this server's own bot.
 
@@ -755,7 +755,7 @@ Everything the server writes in its state directory goes through one helper: a n
 
 1. Every server sees the post (both channels are watched, RT-6.12 step 3). Only a post in the work channel counts; a DM to a departed agent reaches no other server.
 2. **Who answers:** the server whose bot holds the 👑 (its crown lease, RT-6.6). With no live 👑 in the roster, the server of the oldest reachable agent, which the lease hands the crown to next (RT-6.6 step 2). Every other server leaves the post alone. With no reachable agent nobody answers.
-3. **Departed:** that server reads the work channel's agents with their status (`lease.py`) and its last 200 posts. An agent is gone when its own latest post in its newest `HELLO` thread is a `BYE` (gone since the `BYE`), or its status lease ran out: no live custom status (gone since the lease's end, else its last post), or it is no member of the work channel any more while its `HELLO` is still there. 💤 idle and 👂 listening run on a live lease: not gone. A name the bus never saw (no member, no `HELLO`) is left alone.
+3. **Departed:** that server reads the work channel's agents with their status (`lease.py`) and its last 200 posts. An agent is gone when its status lease ran out (no live custom status), or it is no member of the work channel any more while its `HELLO` is still there. A `BYE` alone is not: it may mean "task finished" while the session lives on. Gone since its `BYE` when its own latest post in its newest `HELLO` thread is one, else since the lease's end, else its last post. 💤 idle and 👂 listening run on a live lease: not gone. A name the bus never saw (no member, no `HELLO`) is left alone.
 4. It answers in the post's thread (`root_id`, else the post), as the bot, names plain: `<agent> is gone since <time> (BYE), see its handoff: <permalink>. I route this instead.`, for a lease `(its lease ran out), see its last post: <permalink>`, one sentence per departed agent, with the 👑 when it holds it. Each thread is told once per agent: `DEPARTED=<root_id>:<agent> <epoch>` in `gate-<uid>.env` (RT-6.16 step 3), across restarts.
 5. The event carries `departed` (the agents' names) in `wait_for_events` and as a channel push attribute, and wakes the answering agent at once, even for an agent's fyi post (RT-6.14 step 8), unless the inbox gated the post (RT-6.16). The coordinator routes the work: to another agent, or back to the human (`coordinator.md`).
 
@@ -765,6 +765,6 @@ Everything the server writes in its state directory goes through one helper: a n
 |------|---------|----------------|
 | 2–3 | The roster, the channel or its posts cannot be read | Fails open: no answer, no `departed`; the post wakes as before, with a log line |
 | 2 | Two servers hold a 👑 for a moment (handover race, RT-6.6) | Both may answer once; accepted |
-| 3 | The `HELLO` or `BYE` is older than the last 200 posts | No `BYE` found: the lease decides; without a post in reach the answer has no link |
+| 3 | The `HELLO` or `BYE` is older than the last 200 posts | No `BYE` found: the answer names the lease's end and links the last post in reach, or none |
 | 4 | The answer cannot be posted | Logged; the thread is not remembered for that agent, so its next mention there tries again. The event keeps `departed` |
 | — | The coordinator's MCP server is not running, or its inbox not connected yet | Nobody answers; the backfill on connect checks what is unread then. Accepted, as for the gate (RT-6.16) |
