@@ -56,6 +56,8 @@ attention and tokens.
   @-mention there (reassign if it stays silent); a human's ask reminds them by
   itself, so only an expired one needs a new ask, from its agent. No
   broadcast; if the wait is fine, do nothing.
+- **A departed agent** (`departed`, RT-6.21): your server told the thread it
+  is gone. Hand its work to another agent, or ask the human.
 - **Keep disputes short.** After two rounds without agreement, ask the human
   for a decision with `ask_human`.
 - **Stay lean yourself.** Take only small tasks; hand the crown over or

@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.44.0
+
+### Added
+
+- **A mention of a departed agent gets an answer:** when a post in the work
+  channel @-mentions an agent that said `BYE` or whose status lease ran out,
+  the coordinator's server (without a 👑: the oldest reachable agent's) answers
+  in the thread, once, with since when it is gone and a link to its `BYE` or
+  last post, and the event (`departed`) wakes the coordinator to route the work.
+  💤 idle and 👂 listening agents are not departed
+  ([RT-6.21](docs/arc42/06-runtime-view.md#621-mention-of-a-departed-agent)).
+
 ## 0.43.0
 
 ### Changed

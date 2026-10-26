@@ -12,6 +12,7 @@ never gated. What the gate did lives next to asks-<uid>.env, in gate-<uid>.env:
 
     REPLIED=<root_id> <epoch>   a thread this bot answered "Not woken" in
     GATED=<post_id> <epoch>     a gated post: the listener does not wake for it
+    DEPARTED=<root_id>:<name> <epoch>  a thread told that agent is gone (RT-6.21)
 
 Entries older than MAX_AGE_SEC are dropped.
 """
@@ -116,7 +117,7 @@ def _path(uid: str) -> Path:
 
 
 def _read(uid: str) -> dict[str, dict[str, float]]:
-    state: dict[str, dict[str, float]] = {"REPLIED": {}, "GATED": {}}
+    state: dict[str, dict[str, float]] = {"REPLIED": {}, "GATED": {}, "DEPARTED": {}}
     try:
         lines = _path(uid).read_text().splitlines()
     except OSError:
@@ -155,18 +156,18 @@ def gated(uid: str) -> set[str]:
     return set(_read(uid)["GATED"])
 
 
-def first_reply(uid: str, root_id: str) -> bool:
+def first_reply(uid: str, root_id: str, key: str = "REPLIED") -> bool:
     """Claim the thread for the one answer: False when it had one already."""
     state = _read(uid)
-    if root_id in state["REPLIED"]:
+    if root_id in state[key]:
         return False
-    state["REPLIED"][root_id] = time.time()
+    state[key][root_id] = time.time()
     _write(uid, state)
     return True
 
 
-def forget_reply(uid: str, root_id: str) -> None:
+def forget_reply(uid: str, root_id: str, key: str = "REPLIED") -> None:
     """The answer was not posted: the next gated post there may try again."""
     state = _read(uid)
-    if state["REPLIED"].pop(root_id, None) is not None:
+    if state[key].pop(root_id, None) is not None:
         _write(uid, state)

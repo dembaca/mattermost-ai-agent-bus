@@ -259,20 +259,24 @@ def _custom_status(user: Mapping[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _expired(value: Any, now: datetime) -> bool:
+def _at(value: Any) -> datetime | None:
     try:
         at = datetime.fromisoformat(str(value))
     except ValueError:
-        return True
-    if at.tzinfo is None:
-        at = at.replace(tzinfo=timezone.utc)
-    return at <= now
+        return None
+    return at.replace(tzinfo=timezone.utc) if at.tzinfo is None else at
+
+
+def _expired(value: Any, now: datetime) -> bool:
+    at = _at(value)
+    return at is None or at <= now
 
 
 async def _rows(client: MattermostClient, channel_id: str) -> list[dict[str, Any]]:
     """The bus's bots in a channel (the registrar's prefix), oldest first, with
     what the lease rules need: id, username, create_at, presence, emoji, text,
-    reachable, crown. A custom status counts while its lease has not expired;
+    live, until_ms (the lease's end, 0 unknown), reachable, crown. A custom
+    status counts (live) while its lease has not expired;
     one without an expiry predates the lease (or was set by hand) and proves
     nothing about a live session. Reachable: not offline, a live status, not
     💤. Crown: reachable with a live 👑."""
@@ -291,9 +295,11 @@ async def _rows(client: MattermostClient, channel_id: str) -> list[dict[str, Any
         live = bool(emoji) and bool(custom.get("duration")) and not _expired(custom.get("expires_at"), now)
         presence = status.get(str(u["id"])) or "offline"
         reachable = presence != "offline" and live and emoji != "zzz"
+        until = _at(custom.get("expires_at")) if custom.get("duration") else None
         rows.append({"id": str(u["id"]), "username": str(u.get("username") or ""),
                      "create_at": int(u.get("create_at") or 0), "presence": presence,
-                     "emoji": emoji, "text": str(custom.get("text") or ""),
+                     "emoji": emoji, "text": str(custom.get("text") or ""), "live": live,
+                     "until_ms": int(until.timestamp() * 1000) if until else 0,
                      "reachable": reachable, "crown": reachable and emoji == "crown"})
     return rows
 

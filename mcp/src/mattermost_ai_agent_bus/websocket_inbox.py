@@ -14,7 +14,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import asks, gate, lease, links
+from . import asks, departed, gate, lease, links
 from .client import MattermostClient, ws_url_from_http
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,8 @@ class ClassifiedEvent:
     raw: dict[str, Any] | None = None
     # RT-6.16: why the post wakes nobody here; "" when it is not gated.
     gated: str = ""
+    # RT-6.21: the departed agents it mentions, for the agent that answers.
+    departed: str = ""
 
 
 def classify_post(
@@ -194,6 +196,7 @@ class WebSocketInbox:
                 self._seen_ids.add(post["id"])
                 event = ClassifiedEvent(kind=kind, post=post)
                 await self._gate(event, entry.channel_type)
+                await self._departed(event)
                 await self._queue.put(event)
         # Reactions to open asks given while nothing was listening.
         for pid in asks.open_asks(self._bot_user_id):
@@ -304,6 +307,7 @@ class WebSocketInbox:
                     self._seen_ids.add(pid)
                 event = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=msg)
                 await self._gate(event, channel_type)
+                await self._departed(event)
                 await self._queue.put(event)
         except asyncio.CancelledError:
             # close() cancels us and owns the socket from here on.
@@ -407,6 +411,24 @@ class WebSocketInbox:
                 await self.client.view_channel(cid)
             except Exception as exc:  # noqa: BLE001 — bookkeeping
                 log.info("could not mark %s read: %s", cid, exc)
+
+    async def _departed(self, event: ClassifiedEvent) -> None:
+        """RT-6.21: a mention of an agent that is gone. The one server that
+        answers (the coordinator's) marks the event, which wakes its agent,
+        and answers in the thread. Any error leaves the post as it was."""
+        me, post = self._bot_user_id, event.post
+        try:
+            found, tell = await departed.check(self.client, post, me, self._bot_username)
+        except Exception as exc:  # noqa: BLE001 — fail open
+            log.info("departed agents in post %s not checked: %s", post.get("id"), exc)
+            return
+        if not found:
+            return
+        event.departed = ", ".join(d.username for d in found)
+        if tell:
+            task = asyncio.create_task(departed.tell(self.client, post, me, tell))
+            self._gate_tasks.add(task)
+            task.add_done_callback(self._gate_tasks.discard)
 
     def notify(self, kind: str, message: str) -> None:
         """Queue an event the server raises itself, with no post behind it
