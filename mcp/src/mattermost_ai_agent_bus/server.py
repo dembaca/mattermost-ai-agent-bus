@@ -299,17 +299,15 @@ async def _my_id(client: MattermostClient) -> str:
 
 
 async def _posted(client: MattermostClient, post: Post) -> None:
-    """Mattermost counts the bot's own post as unread for it, which in a DM
-    is an unread DM that nothing can collect: the Stop hook and the listener
-    would wake for it forever. Every post of the server's own goes through
-    here, the permission prompts and their verdicts too (RT-6.13). Mark the channel read, unless the inbox holds
-    (or, unconnected, may have missed) a message there still to be collected."""
-    cid = post.channel_id
-    if cid and _inbox is not None and _inbox.holds(cid) is False:
-        try:
-            await client.view_channel(cid)
-        except Exception as exc:  # noqa: BLE001 — bookkeeping, never fail the post
-            log.info("could not mark %s read: %s", cid, exc)
+    """The bot's own post is handled (RT-6.2): the read watermark passes it,
+    unless the inbox holds (or, unconnected, may have missed) an older message
+    there still to be collected. Mattermost counts it unread for the bot, in a
+    DM as an unread DM; its display is cleaned up as well. Every post of the
+    server's own goes through here, the permission prompts and their verdicts
+    too (RT-6.13)."""
+    if _inbox is not None:
+        _inbox.handled(post)
+        await _inbox.view(post.channel_id)
 
 
 
@@ -334,7 +332,12 @@ async def _tasks(client: MattermostClient, posts: list[Post],
             untrusted = {p.id for p, c in zip(roots, classes, strict=True) if c == gate.OTHER}
     except Exception as exc:  # noqa: BLE001
         log.info("task rows without the trust check: %s", exc)
-    return tasks.build(posts, names, untrusted=untrusted)
+    coordinators: set[str] = set()
+    try:  # who may close any task: the crown holder (RT-6.14 step 3)
+        coordinators = {r.username for r in await lease.roster(client) if r.coordinator}
+    except Exception as exc:  # noqa: BLE001
+        log.info("task rows without the roster: %s", exc)
+    return tasks.build(posts, names, untrusted=untrusted, coordinators=coordinators)
 
 
 async def _note_client(ctx: Any, call_next: Any) -> Any:
@@ -800,7 +803,8 @@ async def post_as_bot(client: MattermostClient | None, message: str, channel_id:
             lease.with_crown(message, uid),
             channel_id=channel_id or None,
             root_id=root_id or None,
-            props=a2a.props(message, a2a.ALL if everyone else ""),
+            props=a2a.props(message, a2a.ALL if everyone else "",
+                            crown=bool(uid) and lease.crown_held(uid)),
         )
     except Refused as exc:
         return _refusal(str(exc))
@@ -844,7 +848,8 @@ async def reply_as_bot(client: MattermostClient | None, root_id: str, message: s
             lease.with_crown(message, uid),
             channel_id=channel_id or None,
             root_id=root_id,
-            props=a2a.props(message, a2a.ALL if everyone else ""),
+            props=a2a.props(message, a2a.ALL if everyone else "",
+                            crown=bool(uid) and lease.crown_held(uid)),
         )
     except Refused as exc:
         return _refusal(str(exc))

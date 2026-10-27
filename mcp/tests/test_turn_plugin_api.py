@@ -10,6 +10,7 @@ import pytest
 
 from mattermost_ai_agent_bus import hookapi, lease, ownpost, session_file, stall, turnend, unread
 from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.model import UnreadChannel
 
 UID = "u" * 26
 OTHER = "o" * 26
@@ -39,8 +40,8 @@ class FakeClient:
     async def channel_posts(self, cid, *, per_page=None, since_ms=None):
         self.calls.append(("posts", per_page, since_ms))
         if since_ms is not None:
-            return [p for p in self.posts if p["create_at"] >= since_ms]
-        return list(self.posts)[:per_page]
+            return [post_of(p) for p in self.posts if p["create_at"] >= since_ms]
+        return [post_of(p) for p in list(self.posts)[:per_page]]
 
     async def agents(self, ids):
         return set(ids) & self._agents
@@ -79,11 +80,11 @@ def unread_rows(monkeypatch):
     rows = []
 
     async def channels(client):
-        return list(rows)
+        return [unread.Pending(UnreadChannel(cid), n, []) for cid, n in rows]
 
     async def detail(client, got):
-        return [{"id": cid, "type": "O", "pending": n, "fyi": 1 if cid == "chan" else 0}
-                for cid, n in got]
+        return [{"id": r.channel.channel_id, "type": "O", "pending": r.waiting,
+                 "fyi": 1 if r.channel.channel_id == "chan" else 0} for r in got]
 
     monkeypatch.setattr(unread, "channels", channels)
     monkeypatch.setattr(unread, "detail", detail)

@@ -19,7 +19,8 @@ ALLOWED = {
 # Keys that are a carrier wherever they appear.
 CARRIERS = {
     "props", "a2a", "agent_card", "attachments", "from_webhook",
-    "last_viewed_at", "msg_count", "mention_count", "total_msg_count", "bot_description",
+    "last_viewed_at", "last_post_at", "msg_count", "mention_count", "total_msg_count",
+    "bot_description",
 }
 # Roster keys, only as a read (x["crown"], x.get("crown")): a bus value may be
 # named the same. A reaction's emoji is a bus value; the status emoji's word
@@ -30,16 +31,14 @@ READ_ONLY = {"crown", "presence", "reachable", "custom_status"}
 # out: users, reactions and channels have them too.
 POST_KEYS = {"message", "root_id", "channel_id", "create_at", "delete_at", "edit_at",
              "reply_count", "metadata"}
-# Who still reads them, and why. Shrink it: issue #82, P3b follow-up.
+# Who reads these keys on JSON that is no post, and what it is.
 POST_KEYS_ALLOWED = {
     "links.py": "rewrites the post JSON's links before client.post_of reads it (RT-6.15)",
     "slim.py": "its own output: the slim posts in wait_for_events items",
     "channel.py": "wait_for_events items, whose posts are slim (slim.py)",
     "overhead.py": "Claude Code transcript entries, no posts",
     "websocket_inbox.py": "the WebSocket envelope and reaction JSON; posts go through client.post_of",
-    "hookapi.py": "follow-up #82 P3b: the turn hooks' posts, raw from client.channel_posts",
-    "turnend.py": "follow-up #82 P3b: hookapi's raw posts",
-    "unread.py": "follow-up #82 P3b (bus-owned read watermark): raw from client.channel_posts",
+    "turnend.py": "the hook API's post items (hookapi._slim, GET /v1/posts), bus output",
 }
 
 

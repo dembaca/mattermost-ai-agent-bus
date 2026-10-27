@@ -45,7 +45,7 @@ class _Client:
     async def get_channel(self, cid):
         return {"name": "proj-vtpm"}
 
-    async def unread_channels(self):
+    async def member_channels(self):
         return []
 
 

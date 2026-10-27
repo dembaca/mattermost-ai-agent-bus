@@ -14,8 +14,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import asks, departed, gate, lease, links
-from .client import MattermostClient, post_of, ws_url_from_http
+from . import asks, departed, gate, lease, links, unread, watermark
+from .client import MattermostClient, post_of, with_links, ws_url_from_http
 from .model import Post
 
 log = logging.getLogger(__name__)
@@ -161,28 +161,20 @@ class WebSocketInbox:
         The WebSocket is connected lazily on the first wait_for_events and only
         streams from that moment, so a message sent earlier in the session was
         never seen by the reader — permanently invisible to the queue, while
-        the REST counters still reported it. That mismatch is what made the Stop
-        hook block on a message nothing could deliver.
+        the pending count still reported it. That mismatch is what made the Stop
+        hook block on a message nothing could deliver. Reads what unread.after
+        finds past the read watermark, the same posts the count comes from.
         """
         try:
-            pending = await self.client.unread_channels()
+            unhandled = await unread.after(self.client)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not look for missed messages: %s", exc)
             return
-        for entry in pending:
-            cid = entry.channel_id
-            # Never before the bot existed (client.unread_channels), not the
-            # channel's last 50 posts of history.
-            try:
-                posts = await self.client.list_recent(
-                    channel_id=cid,
-                    per_page=50,
-                    since_ms=entry.since or None,
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.warning("could not backfill channel %s: %s", cid, exc)
-                continue
-            for post in posts:
+        # Every channel whose newest post is past the read watermark (RT-6.2),
+        # read from the mark: never before the bot existed, at most a day back.
+        for entry, posts in unhandled:
+            for unlinked in posts:
+                post = with_links(unlinked, getattr(self.client, "permalink_base", ""))
                 kind = classify_post(
                     post,
                     bot_user_id=self._bot_user_id,
@@ -198,7 +190,7 @@ class WebSocketInbox:
                 event = ClassifiedEvent(kind=kind, post=post)
                 await self._gate(event, entry.channel_type)
                 await self._departed(event)
-                await self._queue.put(event)
+                await self._put(event)
         # Reactions to open asks given while nothing was listening.
         for pid in asks.open_asks(self._bot_user_id):
             try:
@@ -311,7 +303,7 @@ class WebSocketInbox:
                 event = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=msg)
                 await self._gate(event, channel_type)
                 await self._departed(event)
-                await self._queue.put(event)
+                await self._put(event)
         except asyncio.CancelledError:
             # close() cancels us and owns the socket from here on.
             raise
@@ -416,23 +408,20 @@ class WebSocketInbox:
 
     async def _after_gate(self, event: ClassifiedEvent, who: str, root: str, *, dm: bool) -> None:
         """Answer a gated post in thread `root` ('' for no answer), without the
-        model, then mark its channel read: the counters that wake the Stop hook
-        and the listener stay quiet, unless an event there still waits."""
+        model. The gated post and the answer are handled (RT-6.2): the read
+        watermark passes them, unless a post before them there still waits."""
         cid = event.post.channel_id
         if root:
             try:
                 text = await gate.reply_text(self.client, who, dm=dm)
-                await self.client.post(text, channel_id=cid or None, root_id=root)
+                self.handled(await self.client.post(text, channel_id=cid or None, root_id=root))
             except Exception as exc:  # noqa: BLE001 — the post is gated all the same
                 log.info("no answer to the gated post in thread %s: %s", root, exc)
                 with contextlib.suppress(OSError):
                     gate.forget_reply(self._bot_user_id, root)
-        # After the answer: in a DM the bot's own post counts as unread for it.
-        if cid and self.holds(cid) is False:
-            try:
-                await self.client.view_channel(cid)
-            except Exception as exc:  # noqa: BLE001 — bookkeeping
-                log.info("could not mark %s read: %s", cid, exc)
+        if event.kind != "reaction":  # a reaction is no post: it moves no mark
+            self.handled(event.post)
+        await self.view(cid)
 
     async def _departed(self, event: ClassifiedEvent) -> None:
         """RT-6.21: a mention of an agent that is gone. The one server that
@@ -471,6 +460,51 @@ class WebSocketInbox:
             return None
         return any(e.post.channel_id == channel_id and not e.gated
                    for e in list(self._queue._queue))  # type: ignore[attr-defined]  # see waits()
+
+    def _first_waiting(self, channel_id: str) -> int | None:
+        """create_at of the oldest post of the channel that waits in the queue
+        unhandled (not gated), None for none."""
+        ats = [e.post.create_at for e in list(self._queue._queue)  # type: ignore[attr-defined]
+               if e.post.channel_id == channel_id and not e.gated and e.kind != "reaction"]
+        return min(ats) if ats else None
+
+    def handled(self, post: Post) -> None:
+        """RT-6.2: the post is handled (handed over, gated, or the bot's own):
+        the channel's read watermark passes it, unless an older post there
+        still waits in the queue. Unconnected, nothing moves: the backfill
+        still has to read from the mark."""
+        cid, pid, created = post.channel_id, post.id, post.create_at
+        if self._ws is None or not (self._bot_user_id and cid and pid and created):
+            return
+        first = self._first_waiting(cid)
+        if first is not None and first <= created:
+            return
+        try:
+            watermark.advance(self._bot_user_id, cid, pid, created)
+        except Exception as exc:  # noqa: BLE001 — never fail delivery over bookkeeping
+            log.warning("read watermark of %s not moved: %s", cid, exc)
+
+    async def view(self, channel_id: str) -> None:
+        """Best-effort: clear Mattermost's unread display of the channel for
+        its UI, unless an event there still waits. The bus counts nothing by it."""
+        if not channel_id or self.holds(channel_id) is not False:
+            return
+        try:
+            await self.client.view_channel(channel_id)
+        except Exception as exc:  # noqa: BLE001 — cosmetic
+            log.info("could not mark %s read: %s", channel_id, exc)
+
+    async def _put(self, event: ClassifiedEvent) -> None:
+        """Queue an event. A post queued behind the read watermark (it was on
+        its way while the bot posted there) holds the mark back: it counts as
+        pending until it is handed over (RT-6.2)."""
+        post = event.post
+        if not event.gated and event.kind != "reaction" and post.channel_id:
+            try:
+                watermark.hold(self._bot_user_id, post.channel_id, post.create_at)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("read watermark not held: %s", exc)
+        await self._queue.put(event)
 
     async def wait_for_events(
         self,
@@ -521,12 +555,9 @@ class WebSocketInbox:
         for e in events:
             if e.kind == "reaction":
                 asks.mark_seen(self._bot_user_id, e.post.id)
-        # A channel with events still queued stays unread, so its counters keep
-        # telling the hooks and the listener that something waits.
-        waiting = {e.post.channel_id for e in rest if not e.gated}
-        await self._mark_delivered_read(
-            [e for e in events if e.post.channel_id not in waiting]
-        )
+        # Handed over: the read watermark passes them, up to the oldest post
+        # still queued in that channel, which keeps counting as pending.
+        await self._hand_over(events)
         # Posts from watched channels often need no answer, so only a mention or
         # DM, which does, promises one; a gated one promises nothing (RT-6.16).
         addressed = next((e for e in events if e.kind in ("mention", "dm") and not e.gated), None)
@@ -535,21 +566,13 @@ class WebSocketInbox:
             self.start_typing(post.channel_id, post.thread)
         return events
 
-    async def _mark_delivered_read(self, events: list[ClassifiedEvent]) -> None:
-        """Clear Mattermost's unread counters for channels we just delivered.
-
-        Handing an event to the agent is what "read" means here. Without this
-        the counters keep climbing, and the Stop hook that reads them to decide
-        "is anyone waiting on me?" would block every turn forever.
-        """
-        seen: set[str] = set()
-        for event in events:
-            cid = event.post.channel_id
-            if not cid or cid in seen:
-                continue
-            seen.add(cid)
-            try:
-                await self.client.view_channel(cid)
-            except Exception as exc:  # noqa: BLE001
-                # Never fail delivery over bookkeeping.
-                log.warning("could not mark channel %s read: %s", cid, exc)
+    async def _hand_over(self, events: list[ClassifiedEvent]) -> None:
+        """Handing an event to the agent is what "handled" means (RT-6.2): the
+        read watermark passes its post, which the pending count of the Stop
+        hook and the listener then leaves out. Mattermost's display is cleaned
+        up too, for its UI (view)."""
+        for event in sorted(events, key=lambda e: e.post.create_at):
+            if event.kind not in ("reaction", "stall"):
+                self.handled(event.post)
+        for cid in dict.fromkeys(e.post.channel_id for e in events):
+            await self.view(cid)

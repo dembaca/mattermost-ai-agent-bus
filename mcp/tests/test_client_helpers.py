@@ -139,10 +139,11 @@ async def test_session_start_name_validation():
 
 
 @pytest.mark.asyncio
-async def test_unread_channels_never_read_before_the_bot_existed(monkeypatch):
-    """RT-6.2: a fresh bot's channel reports never viewed (0); backfill reads
-    from the bot's creation, not the channel's history. A DM counts every
-    unread message, a channel only mentions."""
+async def test_member_channels_carry_the_newest_post_and_the_counters(monkeypatch):
+    """RT-6.2: every channel of the bot, with when its newest post came, which
+    the read watermark is held against; the counters only stand in where
+    Mattermost leaves that out. A DM counts every unread message, a channel
+    only mentions."""
     c = MattermostClient(base_url="https://mm.example", token="tok")
 
     async def fake_api(method, path, **kwargs):
@@ -156,11 +157,13 @@ async def test_unread_channels_never_read_before_the_bot_existed(monkeypatch):
                     {"channel_id": "quiet", "msg_count": 4, "mention_count": 0}]
         assert path == "/api/v4/users/me/channels"
         return [{"id": "proj", "type": "O"}, {"id": "dm1", "type": "D", "total_msg_count": 3},
-                {"id": "quiet", "type": "O", "total_msg_count": 9}]
+                {"id": "quiet", "type": "O", "total_msg_count": 9, "last_post_at": 7000}]
 
     monkeypatch.setattr(c, "_api", fake_api)
-    assert await c.unread_channels() == [UnreadChannel("proj", since=5000),
-                                         UnreadChannel("dm1", "D", since=9000)]
+    got = await c.member_channels()
+    assert got == [UnreadChannel("proj"), UnreadChannel("dm1", "D"), UnreadChannel("quiet")]
+    assert [(ch.last_post_at, ch.pending, ch.unread) for ch in got] == [
+        (0, 1, 0), (0, 1, 1), (7000, 0, 5)]
 
 
 @pytest.mark.asyncio

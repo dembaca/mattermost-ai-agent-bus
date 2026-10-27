@@ -77,8 +77,7 @@ def test_inline_code_in_a_label_does_not_hide_the_link():
 
 def test_task_rows_read_linked_prs():
     """RT-6.15 + RT-6.14: a PR the agent links is still the task's PR."""
-    assert set(tasks._PR.findall("RESULT [MR !12](https://gl.example/g/r/-/merge_requests/12)")) \
-        == {"12"}
+    assert tasks.a2a.pr("RESULT [MR !12](https://gl.example/g/r/-/merge_requests/12)") == 12
 
 
 TABLE = "| a | b |\n|---|---|\n| 1 | 2 |"

@@ -10,12 +10,45 @@ before 0.5.0 are described in the git history.
 - **Posts are typed inside the MCP server:** a post is a frozen `Post`
   (`model.py`) that `client.post_of` builds from Mattermost's JSON, with the
   transport fields and what the bus's props say (from a webhook, kind, intent,
-  `to`); the inbox, wake gate, departed agents, stall, tasks, own post, slim
-  results and the tools read its fields instead of the JSON's keys
+  `to`, PR, branch, crown); a thread is a `Thread`. The inbox, read
+  watermark and pending count, hook API, wake gate, departed agents, stall,
+  tasks, own post, slim results and the tools read its fields instead of the
+  JSON's keys
   ([§5](docs/arc42/05-building-block-view.md), #82 P3b). Behaviour and output
   are unchanged: a snapshot test holds the tools' and events' JSON, slim and
   raw, byte for byte, and the adapter-boundary test now fails on a post key
-  read outside the modules still listed (the turn hooks' reads).
+  read outside the adapter.
+## 0.47.0
+
+### Changed
+
+- **The bus keeps its own read watermark:** what waits for an agent is what
+  came after the newest post its MCP server handled in each channel (handed to
+  the agent, gated, or the bot's own), kept in `read-<uid>.env` in the state
+  directory. Mattermost's unread counters no longer decide what is pending: the
+  Stop hook, the listener and the inbox backfill read only channels whose
+  newest post is past the mark, from the mark. A DM that holds only the bot's
+  own post (a permission prompt) is never pending; a post that reaches the
+  inbox while the bot posts in the same channel still counts; and
+  `claude --continue` or the workspace's next server go on from the same mark
+  instead of Mattermost's last view. The drain's fyi detail needs no extra
+  request. Marking channels viewed in Mattermost stays, for its UI only
+  ([RT-6.2](docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen),
+  #82 P3b).
+
+## 0.46.0
+
+### Changed
+
+- **Task rows read the props first:** `post_message` and `reply_in_thread`
+  write the PR and branch a post names into `props.a2a` (`pr`, `branch`), and
+  `crown: true` while the author holds the crown. The task rows take PR and
+  branch from there, else from the text (older posts, people's). A `DONE` or
+  `CANCEL` by someone other than the task's author counts when it comes from
+  the crown holder the roster names now, or from an agent whose post carries
+  `crown`; a 👑 typed in the text no longer closes a task, except on an
+  agent's post from before 2026-10-28T00:00Z, so no closed task comes back
+  (RT-6.14, #82).
 
 ## 0.45.1
 

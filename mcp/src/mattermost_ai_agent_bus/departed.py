@@ -24,7 +24,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from . import a2a, gate, lease, session_file
-from .client import post_of
 from .model import Post
 
 if TYPE_CHECKING:
@@ -75,7 +74,7 @@ async def gone(client: MattermostClient, names: list[str]) -> list[Departure]:
     """Which of the named agents are gone, with since when and the post to link."""
     cid = await client.work_channel_id()
     rows = {str(r["username"]).lower(): r for r in await lease._rows(client, cid)}
-    posts = [p for p in map(post_of, await client.channel_posts(cid, per_page=RECENT))
+    posts = [p for p in await client.channel_posts(cid, per_page=RECENT)
              if not p.type and not p.delete_at]  # newest first
     hellos = [p for p in posts if not p.root_id and a2a.word(p.message) == "HELLO"]
     out = []

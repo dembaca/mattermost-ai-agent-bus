@@ -12,8 +12,9 @@ from mcp.shared.message import SessionMessage
 from mcp_types import JSONRPCNotification, JSONRPCRequest
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
-from mattermost_ai_agent_bus import asks, channel, hookapi, lease, permission, server
 from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus import asks, channel, hookapi, lease, permission, server, watermark
+from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
 BOT = "b" * 26
 HUMAN = "h" * 26
@@ -322,31 +323,29 @@ async def test_pusher_hands_intercepted_events_to_nobody():
 
 
 @pytest.mark.anyio
-async def test_the_dm_holds_nothing_unread_after_prompt_and_verdict(relay, monkeypatch):
-    """RT-6.13, RT-6.2 step 1: the bot's own prompt and verdict posts count as
-    unread DMs for it, and the human's intercepted answer reaches no inbox, so
-    nothing would collect them: the Stop hook drained an empty inbox every turn.
-    Each of these posts marks the DM read."""
+async def test_the_dm_holds_nothing_unread_after_prompt_and_verdict(relay, monkeypatch, tmp_path):
+    """RT-6.13, RT-6.2 step 1: the bot's own prompt and verdict posts, and the
+    human's intercepted answer reaches no inbox, so nothing would collect them:
+    the Stop hook drained an empty inbox every turn. Each of these posts is
+    handled: the read watermark passes it, and Mattermost's display is cleared."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     c, _ = relay
     viewed = []
+    made = []
 
     async def post(message, channel_id=None, root_id=None, props=None):
         c.posted.append({"message": message, "channel_id": channel_id, "root_id": root_id})
-        return post_of({"id": PROMPT, "channel_id": DM})
+        made.append(post_of({"id": PROMPT, "channel_id": DM, "create_at": 1000 + len(made)}))
+        return made[-1]
 
     async def view_channel(cid):
         viewed.append(cid)
 
-    class _Inbox:
-        def holds(self, cid):
-            return False
-
-        def stop_typing(self):
-            pass
-
+    inbox = WebSocketInbox(client=c)
+    inbox._ws, inbox._bot_user_id = object(), "b" * 26
     monkeypatch.setattr(c, "post", post, raising=False)
     c.view_channel = view_channel
-    monkeypatch.setattr(server, "_inbox", _Inbox())
+    monkeypatch.setattr(server, "_inbox", inbox)
     await server._permission_request(REQUEST)
     assert viewed == [DM]
     assert await server._push_intercept(_item("yes abcde"))
@@ -356,6 +355,7 @@ async def test_the_dm_holds_nothing_unread_after_prompt_and_verdict(relay, monke
     await server._permission_request(REQUEST)
     await server.permissions_obsolete(c)  # the turn's end note too (step 5)
     assert viewed == [DM, DM, DM, DM, DM]
+    assert watermark.at("b" * 26, DM) == made[-1].create_at
 
 
 @pytest.mark.anyio

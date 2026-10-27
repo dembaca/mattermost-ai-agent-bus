@@ -246,7 +246,8 @@ async def check(client: MattermostClient, uid: str, now: float | None = None) ->
     if trusted:
         untrusted = {p.id for p, c in zip(posts, classes, strict=True)
                      if c == gate.OTHER and not p.root_id}
-    rows = tasks.build(posts, names, now_ms=now_ms, untrusted=untrusted)
+    rows = tasks.build(posts, names, now_ms=now_ms, untrusted=untrusted,
+                       coordinators={r.username for r in roster if r.coordinator})
     found = items(posts, names, classes, rows, {r.username for r in roster}, now_ms, trusted)
     if not quiet:  # nothing that counts in the window: the saved start, else the oldest open item
         quiet = int(st["QUIET"]) or min((i["at"] for i in found if i["at"]), default=now_ms)

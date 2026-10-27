@@ -7,7 +7,8 @@ reads; slim posts never carry them, so no model reads them unasked.
 
     props.agent_card  on the HELLO post (announce)
     props.a2a         {"v": 1, "kind": <word>?, "state": <TaskState>?,
-                       "intent": "action" | "reply" | "fyi"?, "to": "all"?}
+                       "intent": "action" | "reply" | "fyi"?, "to": "all"?,
+                       "pr": <number>?, "branch": <name>?, "crown": true?}
 
 Ids are Mattermost's: messageId = post id, contextId = thread root,
 taskId = the root of a TASK thread. Posts without props (older versions,
@@ -60,6 +61,11 @@ ALL = "all"
 
 # The first word after an optional 👑, emoji or markdown; upper case only, so
 # "No worries" is no NO. `PR #57` (or a PR link) is a RESULT.
+# What a post names, read at write time into props.a2a and from the text of
+# posts without (RT-6.14 step 3): its PR (PR #n, MR !n, a pull or merge
+# request URL; the last one) and its branch.
+_PR = re.compile(r"(?:\bPR\s*#|\bMR\s*!|/pull/|/merge_requests/)(\d+)", re.I)
+_BRANCH = re.compile(r"\bbranch(?:/PR)?:?\s+([\w.]*[-/][\w./-]*\w)")
 _FIRST = re.compile(r"^[^\w@#]*([A-Z]{2,11})(?![A-Za-z])")
 _PR_FIRST = re.compile(r"^[^\w@#]*PR\s*#\d+", re.I)
 
@@ -108,11 +114,27 @@ def intent(kind: str | None) -> str | None:
     return WORDS.get((kind or "").upper(), _NONE)[2]
 
 
-def annotate(message: str = "", to: str = "", kind: str = "") -> dict[str, Any] | None:
+def pr(message: str) -> int | None:
+    """The PR a text names, the last one (RT-6.14 step 3)."""
+    found = _PR.findall(message or "")
+    return int(found[-1]) if found else None
+
+
+def branch(message: str) -> str | None:
+    """The branch a text names, the last one (RT-6.14 step 3)."""
+    found = _BRANCH.findall(message or "")
+    return str(found[-1]) if found else None
+
+
+def annotate(message: str = "", to: str = "", kind: str = "",
+             crown: bool = False) -> dict[str, Any] | None:
     """props.a2a for a post the server writes, or None for a plain message.
-    kind: one the server sets itself (ask, permission, reminder); else the first word."""
+    kind: one the server sets itself (ask, permission, reminder); else the first word.
+    pr, branch: what the text names. crown: the author held the crown when it
+    posted (RT-6.14 step 3)."""
     w = kind or word(message)
-    if w is None and not to:
+    named = {"pr": pr(message), "branch": branch(message), "crown": crown or None}
+    if w is None and not to and not any(named.values()):
         return None
     out: dict[str, Any] = {"v": V}
     if w is not None:
@@ -122,15 +144,16 @@ def annotate(message: str = "", to: str = "", kind: str = "") -> dict[str, Any] 
                 out[key] = value
     if to:
         out["to"] = to
+    out.update((k, v) for k, v in named.items() if v)
     return out
 
 
 def props(message: str = "", to: str = "", kind: str = "",
-          card: dict[str, Any] | None = None) -> dict[str, Any] | None:
+          card: dict[str, Any] | None = None, crown: bool = False) -> dict[str, Any] | None:
     """The props of a post the server writes: the agent's card on its HELLO,
     props.a2a (annotate); None for a plain message."""
     out: dict[str, Any] = {"agent_card": card} if card else {}
-    note = annotate(message, to, kind)
+    note = annotate(message, to, kind, crown)
     if note:
         out["a2a"] = note
     return out or None
@@ -152,6 +175,33 @@ def to_all(post: Mapping[str, Any]) -> bool:
     props = post.get("props")
     a2a = props.get("a2a") if isinstance(props, Mapping) else None
     return isinstance(a2a, Mapping) and a2a.get("to") == ALL
+
+
+def _note(post: Mapping[str, Any]) -> Mapping[str, Any]:
+    props = post.get("props")
+    a2a = props.get("a2a") if isinstance(props, Mapping) else None
+    return a2a if isinstance(a2a, Mapping) else {}
+
+
+def pr_of(post: Mapping[str, Any]) -> int | None:
+    """A post's PR: from its props, else from its text (old posts, people's)."""
+    value = _note(post).get("pr")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return pr(str(post.get("message", "")))
+
+
+def branch_of(post: Mapping[str, Any]) -> str | None:
+    """A post's branch: from its props, else from its text."""
+    value = _note(post).get("branch")
+    return value if isinstance(value, str) and value else branch(str(post.get("message", "")))
+
+
+def crowned(post: Mapping[str, Any]) -> bool:
+    """The server wrote the post while its author held the crown. Anyone can
+    write props through the API, so callers honour it only for an agent's post
+    (tasks.py); a 👑 in the text counts for nothing."""
+    return _note(post).get("crown") is True
 
 
 def kind_of(post: Mapping[str, Any]) -> str | None:
