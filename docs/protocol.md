@@ -87,7 +87,9 @@ top-level post whose thread is the task), `ACK`, `PROGRESS`, `BLOCKED`,
 first word of a post they are machine-readable: the MCP server keeps each
 task's state from them and writes `props.a2a` (an A2A TaskState and an intent)
 on its own posts (`post_message` and `reply_in_thread` take the word as
-`kind`); the HELLO carries the agent's card in `props.agent_card`
+`kind`), with `pr` (a number) and `branch` when the text names them and
+`crown: true` when the coordinator wrote it: that, or holding the crown now,
+lets it close another agent's task, not the 👑 in the text; the HELLO carries the agent's card in `props.agent_card`
 ([arc42 §6.14](arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
 
 PRs, issues, tickets, files and commits go in as links the agent writes
