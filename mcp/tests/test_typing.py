@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
 
@@ -32,7 +33,7 @@ def _inbox(**kw) -> tuple[WebSocketInbox, _FakeWs]:
 
 
 async def _deliver(inbox, kind, post):
-    await inbox._queue.put(ClassifiedEvent(kind=kind, post=post))
+    await inbox._queue.put(ClassifiedEvent(kind=kind, post=post_of(post)))
     return await inbox.wait_for_events(timeout_sec=1)
 
 
@@ -101,7 +102,7 @@ async def test_post_stops_typing(monkeypatch):
 
     class _Client:
         async def post(self, message, channel_id=None, root_id=None, props=None):
-            return {"id": "new"}
+            return post_of({"id": "new"})
 
     monkeypatch.setattr(server, "_inbox", inbox)
     monkeypatch.setattr(server, "_get_client", lambda: _Client())

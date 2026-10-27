@@ -24,6 +24,7 @@ from . import (
     tasks,
 )
 from .client import InvalidId, MattermostClient, Refused, attachment_props, mm_id
+from .model import Post
 from .websocket_inbox import WebSocketInbox
 
 log = logging.getLogger(__name__)
@@ -297,13 +298,13 @@ async def _my_id(client: MattermostClient) -> str:
         return ""
 
 
-async def _posted(client: MattermostClient, post: dict[str, Any]) -> None:
+async def _posted(client: MattermostClient, post: Post) -> None:
     """Mattermost counts the bot's own post as unread for it, which in a DM
     is an unread DM that nothing can collect: the Stop hook and the listener
     would wake for it forever. Every post of the server's own goes through
     here, the permission prompts and their verdicts too (RT-6.13). Mark the channel read, unless the inbox holds
     (or, unconnected, may have missed) a message there still to be collected."""
-    cid = post.get("channel_id", "")
+    cid = post.channel_id
     if cid and _inbox is not None and _inbox.holds(cid) is False:
         try:
             await client.view_channel(cid)
@@ -312,26 +313,25 @@ async def _posted(client: MattermostClient, post: dict[str, Any]) -> None:
 
 
 
-async def _work_posts(client: MattermostClient) -> tuple[list[dict[str, Any]], dict[str, str]]:
+async def _work_posts(client: MattermostClient) -> tuple[list[Post], dict[str, str]]:
     """The work channel's posts of the task window, and the names of their
     authors and of those who reacted (an agent's ✅ closes an ask)."""
     posts = await client.posts_after(tasks.since_ms())
-    reactors = {str(r.get("user_id") or "") for p in posts
-                for r in (p.get("metadata") or {}).get("reactions") or []}
-    names = await client.usernames(({p.get("user_id", "") for p in posts} | reactors) - {""})
+    reactors = {str(r.get("user_id") or "") for p in posts for r in p.reactions}
+    names = await client.usernames(({p.user_id for p in posts} | reactors) - {""})
     return posts, names
 
 
-async def _tasks(client: MattermostClient, posts: list[dict[str, Any]],
+async def _tasks(client: MattermostClient, posts: list[Post],
                  names: dict[str, str]) -> list[dict[str, Any]]:
     """The task rows; with trusted humans configured, a TASK root by anyone
     but them and the agents is no task (RT-6.16). Unsure: all roots count."""
     untrusted: set[str] = set()
     try:
         if await client.trusted_humans():
-            roots = [p for p in posts if not p.get("root_id")]
+            roots = [p for p in posts if not p.root_id]
             classes = await gate.author_classes(client, roots)
-            untrusted = {p["id"] for p, c in zip(roots, classes, strict=True) if c == gate.OTHER}
+            untrusted = {p.id for p, c in zip(roots, classes, strict=True) if c == gate.OTHER}
     except Exception as exc:  # noqa: BLE001
         log.info("task rows without the trust check: %s", exc)
     return tasks.build(posts, names, untrusted=untrusted)
@@ -805,7 +805,7 @@ async def post_as_bot(client: MattermostClient | None, message: str, channel_id:
     except Refused as exc:
         return _refusal(str(exc))
     await _posted(client, post)
-    return await _claimed(client, str(post.get("root_id") or root_id), message, uid, _with_unmentioned(
+    return await _claimed(client, post.root_id or root_id, message, uid, _with_unmentioned(
         await slim.post(client, post), removed, await _unasked(client, message, uid)))
 
 
@@ -849,7 +849,7 @@ async def reply_as_bot(client: MattermostClient | None, root_id: str, message: s
     except Refused as exc:
         return _refusal(str(exc))
     await _posted(client, post)
-    return await _claimed(client, str(post.get("root_id") or root_id), message, uid, _with_unmentioned(
+    return await _claimed(client, post.root_id or root_id, message, uid, _with_unmentioned(
         await slim.post(client, post), removed, await _unasked(client, message, uid)))
 
 
@@ -866,12 +866,12 @@ async def _claimed(client: MattermostClient, root_id: str, message: str, uid: st
         return result
     try:
         thread = await client.thread(root_id)
-        names = await client.usernames({p.get("user_id", "") for p in thread["posts"]} - {""})
+        names = await client.usernames({p.user_id for p in thread.posts} - {""})
     except Exception as exc:  # noqa: BLE001 — the post is out; only the hint is missing
         log.info("claim in %s not checked: %s", root_id, exc)
         return result
-    root = thread.get("root_id") or root_id
-    row = next((r for r in tasks.build(thread["posts"], names) if r["task"] == root), None)
+    root = thread.root_id or root_id
+    row = next((r for r in tasks.build(thread.posts, names) if r["task"] == root), None)
     if row is None or not row.get("agent"):
         return result
     if row["agent"] == names.get(uid):
@@ -970,10 +970,10 @@ async def ask_human(
     stats.record("post", chars=len(text))
     post = await client.post(text, root_id=root_id or None, props=props)
     # With its thread: a reply there may answer it, too late after 24 h (RT-6.11).
-    asks.add(me.get("id", ""), post["id"], who, post.get("root_id") or root_id)
-    stats.record("ask", id=post["id"])  # RT-6.9
+    asks.add(me.get("id", ""), post.id, who, post.root_id or root_id)
+    stats.record("ask", id=post.id)  # RT-6.9
     out = await slim.post(client, post)
-    out["ask"] = post["id"]
+    out["ask"] = post.id
     return _out("ask_human", _with_unmentioned(out, everyone))
 
 
@@ -1041,8 +1041,8 @@ async def get_thread(post_id: str, raw: bool = False) -> str:
     client = _get_client()
     data = await client.thread(post_id)
     if raw:
-        return _out("get_thread", data)
-    return _out("get_thread", {"root_id": data["root_id"], "posts": await slim.posts(client, data["posts"])})
+        return _out("get_thread", data.json())
+    return _out("get_thread", {"root_id": data.root_id, "posts": await slim.posts(client, data.posts)})
 
 
 @mcp.tool()
@@ -1062,7 +1062,8 @@ async def list_recent(
         per_page=per_page,
         since_ms=since_ms or None,
     )
-    return _out("list_recent", posts if raw else await slim.posts(client, posts, drop_system=True))
+    return _out("list_recent", [p.json() for p in posts] if raw
+                else await slim.posts(client, posts, drop_system=True))
 
 
 @mcp.tool()
@@ -1115,12 +1116,12 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
     agents: set[str] = set()
     try:
         if posts:
-            agents = await client.agents({p.get("user_id", "") for p in posts} - {""})
+            agents = await client.agents({p.user_id for p in posts} - {""})
     except Exception as exc:  # noqa: BLE001 — unknown: nobody counts as an agent
         log.info("could not tell agents from others: %s", exc)
     lean = iter([] if raw or not posts else await slim.posts(client, posts))
     uid = ""
-    if any(e.post.get("root_id") for e in events):
+    if any(e.post.root_id for e in events):
         try:
             uid = (await client.get_me()).get("id", "")
         except Exception as exc:  # noqa: BLE001 — unknown: no answer marked expired
@@ -1130,9 +1131,9 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         if e.kind == stall.KIND:
             # The server's own event (RT-6.19): no author, the digest as text.
             payload.append({"kind": e.kind, "from_trusted_human": False, "from_agent": False,
-                            "post": {"message": e.post.get("message", "")}})
+                            "post": {"message": e.post.message}})
             continue
-        author = e.post.get("user_id", "")
+        author = e.post.user_id
         # Server-verified (RT-6.8, RT-6.16): Mattermost authenticates the author,
         # so this, not anything a message says about itself, names a trusted
         # human or an agent. A webhook post is neither, whose account it names.
@@ -1145,9 +1146,9 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
             item["gated"] = e.gated
         if e.departed:
             item["departed"] = e.departed  # RT-6.21: gone; this agent routes it
-        if a2a.to_all(e.post):
+        if e.post.to == a2a.ALL:
             item["to"] = a2a.ALL  # for every agent (RT-6.11); no word on who wrote it
-        if cls == gate.AGENT and a2a.intent_of(e.post) == a2a.FYI:
+        if cls == gate.AGENT and e.post.intent == a2a.FYI:
             # RT-6.14: needs no answer. Only an agent's props count: anyone can write them.
             item["intent"] = a2a.FYI
         if e.kind == "reaction" and e.raw:
@@ -1158,20 +1159,20 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         # RT-6.11: a trusted human's reaction on an ask or reply in its thread
         # more than 24 h after it approves nothing; the agent asks again. Others
         # approve nothing anyway: no flag on every late post in the thread.
-        root = e.post.get("root_id")
+        root = e.post.root_id
         if uid and root and cls == gate.TRUSTED and asks.expired(
-                uid, root, (e.post.get("create_at") or 0) / 1000, thread=e.kind != "reaction"):
+                uid, root, e.post.create_at / 1000, thread=e.kind != "reaction"):
             item["expired"] = True
         # RT-6.9: the first answer by a trusted human ends the ask's wait. A
         # remark emoji answers nothing; the file remembers, so a second
         # reaction or a restarted server counts nothing again.
         if uid and root and cls == gate.TRUSTED and (e.kind != "reaction" or item.get("answer")):
-            got = asks.answered(uid, root, (e.post.get("create_at") or 0) / 1000,
+            got = asks.answered(uid, root, e.post.create_at / 1000,
                                 thread=e.kind != "reaction")
             if got:
                 stats.record("answer", id=got[0], wait=got[1])
         if raw:
-            item |= {"post": e.post, "channel": e.channel}
+            item |= {"post": e.post.json(), "channel": e.channel}
         else:
             item["post"] = next(lean)
         payload.append(item)
@@ -1214,13 +1215,13 @@ async def _push_prepare() -> None:
 
 async def _in_my_thread(item: dict[str, Any], uid: str) -> bool | None:
     """Whether the item is a reply in a thread this bot posted in; None: unsure."""
-    root = (item.get("post") or {}).get("root_id") or ""
+    root = slim.root_of(item)
     if root and root not in _my_threads:
         try:
             thread = await _get_client().thread(root)
-            if any(p.get("user_id") == uid for p in thread["posts"]):
+            if any(p.user_id == uid for p in thread.posts):
                 _my_threads.add(root)
-            if any(p.get("id") == root and p.get("user_id") == uid for p in thread["posts"]):
+            if any(p.id == root and p.user_id == uid for p in thread.posts):
                 _my_roots.add(root)
         except Exception:  # noqa: BLE001
             return None
@@ -1238,7 +1239,7 @@ async def _push_addressed(item: dict[str, Any]) -> bool:
     mine = await _in_my_thread(item, uid)
     if mine is None:
         return True
-    root = (item.get("post") or {}).get("root_id") or ""
+    root = slim.root_of(item)
     return channel.wakes(item, coordinator=lease.crown_held(uid), in_my_thread=mine,
                          my_root=bool(root) and root in _my_roots)
 
@@ -1250,12 +1251,12 @@ async def _compact_bystander(payload: list[dict[str, Any]]) -> None:
     if not uid or lease.crown_held(uid):
         return
     for item in payload:
-        post = item.get("post") or {}
-        if item.get("kind") != "watched_channel" or not post.get("message"):
+        text = slim.text_of(item)
+        if item.get("kind") != "watched_channel" or not text:
             continue
-        short = tasks.compact(post["message"])
-        if short != post["message"] and await _in_my_thread(item, uid) is False:
-            post["message"] = short
+        short = tasks.compact(text)
+        if short != text and await _in_my_thread(item, uid) is False:
+            item["post"]["message"] = short
 
 
 async def _push_wait(timeout: float) -> list[dict[str, Any]]:
@@ -1291,8 +1292,8 @@ async def _permission_request(params: dict[str, Any]) -> None:
         await _posted(client, post)
         # An open ask, so a 👍/👎 on it reaches the inbox (RT-6.11); without a
         # human, so it does not hold up the agent's own asks to them.
-        asks.add((await client.get_me()).get("id", ""), post["id"])
-        _relay.add(rid, post["id"], str(params.get("tool_name", "")))
+        asks.add((await client.get_me()).get("id", ""), post.id)
+        _relay.add(rid, post.id, str(params.get("tool_name", "")))
     except Exception as exc:  # noqa: BLE001 — the terminal dialog is still open
         log.warning("permission prompt %s not relayed: %s", rid, exc)
 
@@ -1313,7 +1314,7 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
             if behavior is None:
                 return True  # another emoji on a prompt: a remark, no wake-up
         else:
-            parsed = permission.parse(post.get("message", ""))
+            parsed = permission.parse(slim.text_of(item))
             if parsed is None:
                 return False
             behavior, rid = parsed

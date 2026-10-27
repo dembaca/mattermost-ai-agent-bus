@@ -13,6 +13,7 @@ from mcp_types import JSONRPCNotification, JSONRPCRequest
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
 from mattermost_ai_agent_bus import asks, channel, hookapi, lease, permission, server
+from mattermost_ai_agent_bus.client import post_of
 
 BOT = "b" * 26
 HUMAN = "h" * 26
@@ -173,7 +174,7 @@ class _Client:
 
     async def post(self, message, channel_id=None, root_id=None, props=None):
         self.posted.append({"message": message, "channel_id": channel_id, "root_id": root_id})
-        return {"id": PROMPT}
+        return post_of({"id": PROMPT})
 
 
 class _Conn:
@@ -331,7 +332,7 @@ async def test_the_dm_holds_nothing_unread_after_prompt_and_verdict(relay, monke
 
     async def post(message, channel_id=None, root_id=None, props=None):
         c.posted.append({"message": message, "channel_id": channel_id, "root_id": root_id})
-        return {"id": PROMPT, "channel_id": DM}
+        return post_of({"id": PROMPT, "channel_id": DM})
 
     async def view_channel(cid):
         viewed.append(cid)

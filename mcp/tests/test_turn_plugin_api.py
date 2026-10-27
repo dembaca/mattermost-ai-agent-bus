@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import hookapi, lease, ownpost, session_file, stall, turnend, unread
+from mattermost_ai_agent_bus.client import post_of
 
 UID = "u" * 26
 OTHER = "o" * 26
@@ -246,7 +247,7 @@ async def test_wake_reads_the_own_threads_once_until_the_agent_posts(api, unread
     for _ in range(3):
         assert (await h.get(f"/v1/wake?{q}")).json()["wake"] is False
     assert client.calls.count(("posts", hookapi.MAX_POSTS, None)) == 1
-    ownpost.record(UID, "c" * 26, post("n", "IDLE · done: y", user=UID, at=now * 1000))
+    ownpost.record(UID, "c" * 26, post_of(post("n", "IDLE · done: y", user=UID, at=now * 1000)))
     assert (await h.get(f"/v1/wake?{q}")).json()["wake"] is False
     assert client.calls.count(("posts", hookapi.MAX_POSTS, None)) == 2
 

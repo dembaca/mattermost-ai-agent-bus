@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import a2a, asks, gate, lease, remind, session_file, tasks
+from .model import Post
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -79,44 +80,44 @@ def backoff(wakes: int) -> float:
 
 # --- what is open ------------------------------------------------------------------
 
-def _at(p: Mapping[str, Any]) -> int:
-    return int(p.get("create_at") or 0)
+def _at(p: Post) -> int:
+    return p.create_at
 
 
 def _hhmm(ms: int) -> str:
     return time.strftime("%H:%M", time.localtime(ms / 1000)) if ms else "–"
 
 
-def quiet_since(posts: Sequence[Mapping[str, Any]], classes: list[str], uid: str = "") -> tuple[int, int]:
+def quiet_since(posts: Sequence[Post], classes: list[str], uid: str = "") -> tuple[int, int]:
     """Epoch ms of the newest post by an agent or trusted human other than
     `uid` (the crown holder), and of the newest post by `uid`; reminders and
     system posts do not count. 0 without one."""
     counted = [p for p, c in zip(posts, classes, strict=True)
-               if c != gate.OTHER and not p.get("type") and not p.get("delete_at")
-               and a2a.kind_of(p) != a2a.REMINDER]
-    return (max((_at(p) for p in counted if p.get("user_id") != uid), default=0),
-            max((_at(p) for p in counted if uid and p.get("user_id") == uid), default=0))
+               if c != gate.OTHER and not p.type and not p.delete_at
+               and p.kind != a2a.REMINDER]
+    return (max((_at(p) for p in counted if p.user_id != uid), default=0),
+            max((_at(p) for p in counted if uid and p.user_id == uid), default=0))
 
 
-def _last(thread: Sequence[Mapping[str, Any]], names: Mapping[str, str]) -> tuple[int, str]:
+def _last(thread: Sequence[Post], names: Mapping[str, str]) -> tuple[int, str]:
     if not thread:
         return 0, ""
     p = max(thread, key=_at)
-    who = names.get(str(p.get("user_id") or ""), "")
-    return _at(p), f"{who} {a2a.kind_of(p) or 'post'} {_hhmm(_at(p))}".strip()
+    who = names.get(p.user_id, "")
+    return _at(p), f"{who} {p.kind or 'post'} {_hhmm(_at(p))}".strip()
 
 
-def items(posts: Sequence[Mapping[str, Any]], names: Mapping[str, str], classes: list[str],
+def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
           rows: Sequence[Mapping[str, Any]], reachable: set[str], now_ms: int,
           trusted: Collection[str] = ()) -> list[dict[str, Any]]:
     """The open items, longest quiet first: {what, id, title, next, last, at}."""
-    live = [p for p in posts if not p.get("type") and not p.get("delete_at")]
-    by_thread: dict[str, list[Mapping[str, Any]]] = {}
+    live = [p for p in posts if not p.type and not p.delete_at]
+    by_thread: dict[str, list[Post]] = {}
     for p in live:
-        by_thread.setdefault(str(p.get("root_id") or p.get("id")), []).append(p)
+        by_thread.setdefault(p.thread, []).append(p)
 
-    def who(p: Mapping[str, Any]) -> str:
-        return names.get(str(p.get("user_id") or ""), "")
+    def who(p: Post) -> str:
+        return names.get(p.user_id, "")
 
     out: list[dict[str, Any]] = []
     for r in rows:
@@ -125,7 +126,7 @@ def items(posts: Sequence[Mapping[str, Any]], names: Mapping[str, str], classes:
             continue
         thread = by_thread.get(r["task"], [])
         agent = r.get("agent")
-        said = [a2a.kind_of(p) for p in sorted(thread, key=_at) if agent and who(p) == agent]
+        said = [p.kind for p in sorted(thread, key=_at) if agent and who(p) == agent]
         said = [w for w in said if w and a2a.status(w)]
         if said and said[-1] == "WAITING":
             continue  # the assignee waits on purpose
@@ -135,11 +136,11 @@ def items(posts: Sequence[Mapping[str, Any]], names: Mapping[str, str], classes:
         out.append({"what": f"task {status}", "id": r["task"], "title": r.get("title", ""),
                     "next": nxt, "last": last, "at": at})
 
-    by_id = {str(p.get("id")): p for p in live}
+    by_id = {p.id: p for p in live}
     for a in tasks.open_asks(live, names, trusted):
-        post = by_id.get(a["ask"], {})
-        asked = _at(post)
-        at, last = _last(by_thread.get(str(post.get("root_id") or a["ask"]), []), names)
+        post = by_id.get(a["ask"])
+        asked = _at(post) if post else 0
+        at, last = _last(by_thread.get((post.root_id if post else "") or a["ask"], []), names)
         if asked and now_ms - asked >= asks.APPROVAL_SEC * 1000:
             what, nxt = "ask expired", f"{a.get('by', '–')}: resolve it, open a new ask"
         else:
@@ -147,22 +148,22 @@ def items(posts: Sequence[Mapping[str, Any]], names: Mapping[str, str], classes:
         out.append({"what": what, "id": a["ask"], "title": a.get("need", ""),
                     "next": nxt, "last": last, "at": at})
 
-    cls = {str(p.get("id")): c for p, c in zip(posts, classes, strict=True)}
+    cls = {p.id: c for p, c in zip(posts, classes, strict=True)}
     for p in sorted(live, key=_at):
-        pid = str(p.get("id"))
-        kind = a2a.kind_of(p)
+        pid = p.id
+        kind = p.kind
         if (cls.get(pid, gate.OTHER) == gate.OTHER or now_ms - _at(p) > ADDRESSED_KEEP_SEC * 1000
                 or kind in (a2a.ASK, a2a.PERMISSION, a2a.REMINDER)
-                or (kind in ("TASK", "DELEGATE") and not p.get("root_id"))
-                or (cls[pid] == gate.AGENT and a2a.intent_of(p) == a2a.FYI)):
+                or (kind in ("TASK", "DELEGATE") and not p.root_id)
+                or (cls[pid] == gate.AGENT and p.intent == a2a.FYI)):
             continue
-        thread = by_thread.get(str(p.get("root_id") or pid), [])
-        for agent in dict.fromkeys(tasks._mentions(str(p.get("message") or ""))):
+        thread = by_thread.get(p.root_id or pid, [])
+        for agent in dict.fromkeys(tasks._mentions(p.message)):
             if agent == who(p) or agent not in reachable:
                 continue
             if any(who(q) == agent and _at(q) > _at(p) for q in thread):
                 continue
-            out.append({"what": "post", "id": pid, "title": tasks.title(str(p.get("message") or "")),
+            out.append({"what": "post", "id": pid, "title": tasks.title(p.message),
                         "next": agent, "last": f"{who(p)} {_hhmm(_at(p))}", "at": _at(p)})
             break
     return sorted(out, key=lambda i: i["at"])
@@ -231,9 +232,8 @@ async def check(client: MattermostClient, uid: str, now: float | None = None) ->
     now_ms = int(now * 1000)
     st = _read(uid)
     posts = await client.posts_after(tasks.since_ms(now))
-    reactors = {str(r.get("user_id") or "") for p in posts
-                for r in (p.get("metadata") or {}).get("reactions") or []}
-    names = await client.usernames(({str(p.get("user_id") or "") for p in posts} | reactors | {uid}) - {""})
+    reactors = {str(r.get("user_id") or "") for p in posts for r in p.reactions}
+    names = await client.usernames(({p.user_id for p in posts} | reactors | {uid}) - {""})
     classes = await gate.author_classes(client, posts)
     roster = await lease.roster(client)
     # The crown holder's own posts (its nudges) and own `working` (its wake
@@ -244,8 +244,8 @@ async def check(client: MattermostClient, uid: str, now: float | None = None) ->
     trusted = await client.trusted_humans()
     untrusted: set[str] = set()
     if trusted:
-        untrusted = {str(p["id"]) for p, c in zip(posts, classes, strict=True)
-                     if c == gate.OTHER and not p.get("root_id")}
+        untrusted = {p.id for p, c in zip(posts, classes, strict=True)
+                     if c == gate.OTHER and not p.root_id}
     rows = tasks.build(posts, names, now_ms=now_ms, untrusted=untrusted)
     found = items(posts, names, classes, rows, {r.username for r in roster}, now_ms, trusted)
     if not quiet:  # nothing that counts in the window: the saved start, else the oldest open item

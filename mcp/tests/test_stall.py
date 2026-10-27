@@ -10,7 +10,8 @@ import time
 import pytest
 
 from mattermost_ai_agent_bus import a2a, asks, channel, hookapi, lease, remind, server, stall, stats, tasks
-from mattermost_ai_agent_bus.model import RosterEntry
+from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.model import Post, RosterEntry, Thread
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
 ME = "c" * 26          # the coordinator
@@ -25,13 +26,16 @@ def pid(n: int) -> str:
     return f"{n:026d}"
 
 
-def post(n: int, user: str, message: str, ago_min: float, root: int = 0, kind: str = "") -> dict:
+def post(n: int, user: str, message: str, ago_min: float, root: int = 0, kind: str = "",
+         metadata: dict | None = None) -> Post:
     p = {"id": pid(n), "user_id": user, "message": message,
          "create_at": int((NOW - ago_min * 60) * 1000) - 123, "root_id": pid(root) if root else ""}
     props = a2a.props(message, kind=kind)
     if props:
         p["props"] = props
-    return p
+    if metadata:
+        p["metadata"] = metadata
+    return post_of(p)
 
 
 class Client:
@@ -39,7 +43,7 @@ class Client:
     session = None
 
     def __init__(self):
-        self.posts: list[dict] = []
+        self.posts: list[Post] = []
         self.names = {ME: "agent-coord", BOB: "agent-bob", EVE: "agent-eve", HUMAN: "dembaca",
                       UNTRUSTED: "visitor"}
         self.trusted = {HUMAN: "dembaca"}
@@ -47,7 +51,7 @@ class Client:
         self.sent: list[dict] = []
 
     async def posts_after(self, since_ms, channel_id=None):
-        return sorted(self.posts, key=lambda p: p["create_at"])
+        return sorted(self.posts, key=lambda p: p.create_at)
 
     async def usernames(self, ids):
         return {i: self.names[i] for i in ids if i in self.names}
@@ -62,11 +66,11 @@ class Client:
         return self.reacts.get(post_id, [])
 
     async def thread(self, post_id):
-        return {"posts": [p for p in self.posts if post_id in (p["id"], p.get("root_id"))]}
+        return Thread("", posts=tuple(p for p in self.posts if post_id in (p.id, p.root_id)))
 
     async def post(self, message, *, channel_id=None, root_id=None, props=None):
         self.sent.append({"message": message, "root_id": root_id, "props": props})
-        return {"id": pid(900 + len(self.sent)), "message": message}
+        return post_of({"id": pid(900 + len(self.sent)), "message": message})
 
 
 @pytest.fixture
@@ -441,10 +445,10 @@ async def test_the_backoff_holds_with_millisecond_times(bus):
     """RT-6.19 regression: QUIET is kept in whole ms, so a quiet period with
     ms in its start is the same period at the next look (no wake each tick)."""
     _open(bus, "task")
-    assert bus.posts[-1]["create_at"] % 1000                    # not a round second
+    assert bus.posts[-1].create_at % 1000                    # not a round second
     assert await _wakes(bus, range(0, 25)) == [0, 20]
     st = stall._read(ME)
-    assert st["QUIET"] == bus.posts[-1]["create_at"] and st["WAKES"] == 2
+    assert st["QUIET"] == bus.posts[-1].create_at and st["WAKES"] == 2
 
 
 async def test_own_nudges_and_own_working_keep_the_backoff(bus):
@@ -470,10 +474,10 @@ async def test_without_activity_the_oldest_item_starts_the_quiet(bus, monkeypatc
     """RT-6.19: no qualifying post in the window is no quiet since 1970: the
     oldest open item starts it."""
     bus.posts += [post(1, UNTRUSTED, "hello", 60), post(2, ME, "TASK · Fix the parser · @agent-bob", 3)]
-    assert stall.quiet_since(bus.posts, ["other", "agent"], ME) == (0, bus.posts[1]["create_at"])
+    assert stall.quiet_since(bus.posts, ["other", "agent"], ME) == (0, bus.posts[1].create_at)
     monkeypatch.setattr(stall, "quiet_since", lambda posts, classes, uid: (0, 0))
     assert await _wakes(bus, range(0, 9)) == [7]
-    assert stall._read(ME)["QUIET"] == bus.posts[1]["create_at"]
+    assert stall._read(ME)["QUIET"] == bus.posts[1].create_at
 
 
 async def test_a_new_crown_holder_does_not_wake_at_once(bus, monkeypatch):
@@ -503,8 +507,8 @@ def test_a_reply_in_the_task_thread_answers_the_ask():
 def test_only_the_humans_reaction_answers_the_ask_in_the_task_list(by, answers):
     """RT-6.19: a 👍 by another agent or a human not trusted leaves the ask open."""
     names = {BOB: "agent-bob", HUMAN: "dembaca", EVE: "agent-eve", UNTRUSTED: "visitor"}
-    ask = post(1, BOB, "🙋 @someone — **Go?**", 30, kind=a2a.ASK)
-    ask["metadata"] = {"reactions": [{"user_id": by, "emoji_name": "+1"}]}
+    ask = post(1, BOB, "🙋 @someone — **Go?**", 30, kind=a2a.ASK,
+               metadata={"reactions": [{"user_id": by, "emoji_name": "+1"}]})
     assert (tasks.open_asks([ask], names, {HUMAN}) == []) == answers
 
 

@@ -2,6 +2,7 @@
 
 import pytest
 
+from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
@@ -115,14 +116,14 @@ class _BackfillClient(_FakeClient):
         return [UnreadChannel("dm1", "D", since=100)]
 
     async def list_recent(self, channel_id=None, per_page=20, since_ms=None):
-        return [p for p in self.posts if p["channel_id"] == channel_id]
+        return [p for p in self.posts if p.channel_id == channel_id]
 
     async def view_channel(self, channel_id):
         self.viewed.append(channel_id)
 
 
-def _post(pid, msg="hi", user="human1", channel="dm1"):
-    return {"id": pid, "user_id": user, "channel_id": channel, "message": msg}
+def _post(pid, msg="hi", user="human1", channel="dm1", **extra):
+    return post_of({"id": pid, "user_id": user, "channel_id": channel, "message": msg, **extra})
 
 
 @pytest.mark.asyncio
@@ -136,7 +137,7 @@ async def test_messages_sent_before_connect_are_still_delivered():
     inbox._ws = _DeadSocket()  # already "connected": do not dial out
     await inbox._backfill()
     events = await inbox.wait_for_events(timeout_sec=1)
-    assert [e.post["id"] for e in events] == ["p1"]
+    assert [e.post.id for e in events] == ["p1"]
     assert events[0].kind == "dm"
 
 
@@ -178,9 +179,9 @@ async def test_newer_wait_supersedes_pending_one():
     fresh = asyncio.create_task(inbox.wait_for_events(timeout_sec=30))
     await asyncio.sleep(0)
     assert await stale == []
-    await inbox._queue.put(ClassifiedEvent(kind="mention", post={"id": "p1"}))
+    await inbox._queue.put(ClassifiedEvent(kind="mention", post=post_of({"id": "p1"})))
     events = await fresh
-    assert [e.post["id"] for e in events] == ["p1"]
+    assert [e.post.id for e in events] == ["p1"]
 
 
 @pytest.mark.asyncio
@@ -203,16 +204,16 @@ class _FreshBotClient(_BackfillClient):
 
     async def list_recent(self, channel_id=None, per_page=20, since_ms=None):
         self.since.append(since_ms)
-        return [p for p in self.posts if p["channel_id"] == channel_id
-                and p.get("create_at", 0) >= (since_ms or 0)]
+        return [p for p in self.posts if p.channel_id == channel_id
+                and p.create_at >= (since_ms or 0)]
 
 
 @pytest.mark.asyncio
 async def test_backfill_never_reads_before_the_bot_existed():
     """RT-6.2: a fresh bot was handed the project channel's last 50 posts of
     history, oldest first, and the mention that woke it was cut off."""
-    old = [dict(_post(f"old{i}", channel="proj"), create_at=1000 + i) for i in range(20)]
-    new = dict(_post("ask", "@agent-test hast du das gesehen?", channel="proj"), create_at=9000)
+    old = [_post(f"old{i}", channel="proj", create_at=1000 + i) for i in range(20)]
+    new = _post("ask", "@agent-test hast du das gesehen?", channel="proj", create_at=9000)
     client = _FreshBotClient(old + [new])
     inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"})
     inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
@@ -220,7 +221,7 @@ async def test_backfill_never_reads_before_the_bot_existed():
     await inbox._backfill()
     assert client.since == [5000]
     events = await inbox.wait_for_events(timeout_sec=1)
-    assert [e.post["id"] for e in events] == ["ask"] and events[0].kind == "mention"
+    assert [e.post.id for e in events] == ["ask"] and events[0].kind == "mention"
 
 
 @pytest.mark.asyncio
@@ -236,9 +237,9 @@ async def test_mentions_and_dms_come_first_and_the_rest_stays_unread():
             kind="watched_channel", post=_post(f"c{i}", channel="proj")))
     inbox._queue.put_nowait(ClassifiedEvent(kind="dm", post=_post("dm", channel="dm1")))
     events = await inbox.wait_for_events(timeout_sec=1, max_events=10)
-    assert events[0].post["id"] == "dm" and len(events) == 10
+    assert events[0].post.id == "dm" and len(events) == 10
     assert inbox.pending == 3
     assert client.viewed == ["dm1"]  # proj still has queued posts: stays unread
     rest = await inbox.wait_for_events(timeout_sec=1, max_events=10)
-    assert [e.post["id"] for e in rest] == ["c9", "c10", "c11"] and inbox.pending == 0
+    assert [e.post.id for e in rest] == ["c9", "c10", "c11"] and inbox.pending == 0
     assert client.viewed == ["dm1", "proj"]

@@ -5,6 +5,7 @@ import json
 import pytest
 
 from mattermost_ai_agent_bus import server, slim
+from mattermost_ai_agent_bus.client import post_of
 
 POST = {
     "id": "p1", "root_id": "r1", "channel_id": "c1", "user_id": "u1",
@@ -24,12 +25,12 @@ class _Client:
         return {"name": "agents"}
 
     async def list_recent(self, **_):
-        return [SYSTEM, POST]
+        return [post_of(SYSTEM), post_of(POST)]
 
 
 @pytest.mark.asyncio
 async def test_slim_post_keeps_what_an_agent_needs():
-    p = await slim.post(_Client(), POST)
+    p = await slim.post(_Client(), post_of(POST))
     assert p == {"id": "p1", "root_id": "r1", "channel": "agents", "author": "dembaca",
                  "at": p["at"], "message": "Listener-Test 👂"}
     assert len(json.dumps(p)) < len(json.dumps(POST)) / 2
@@ -51,5 +52,5 @@ async def test_names_are_optional(monkeypatch):
         async def usernames(self, ids):
             raise RuntimeError("down")
 
-    p = await slim.post(_Broken(), POST)
+    p = await slim.post(_Broken(), post_of(POST))
     assert p["author"] == "u1" and p["message"] == "Listener-Test 👂"

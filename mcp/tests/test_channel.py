@@ -12,6 +12,8 @@ from mcp_types import INVALID_REQUEST, JSONRPCNotification, JSONRPCRequest
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
 from mattermost_ai_agent_bus import channel, server
+from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.model import Thread
 
 MENTION = {
     "kind": "mention",
@@ -380,7 +382,7 @@ async def test_reply_in_own_thread_wakes(monkeypatch, tmp_path):
 
     class Client:
         async def thread(self, root):
-            return {"posts": [{"user_id": "u" * 26 if root == "mine" else "o" * 26}]}
+            return Thread(root, posts=(post_of({"user_id": "u" * 26 if root == "mine" else "o" * 26}),))
 
     monkeypatch.setattr(server, "_get_client", lambda: Client())
     assert await server._push_addressed(_post("thanks", root="mine"))

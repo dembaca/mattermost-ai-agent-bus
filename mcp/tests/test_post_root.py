@@ -72,5 +72,5 @@ async def test_the_task_window_pages_back_from_the_newest():
         return httpx.Response(200, json={"order": ids, "posts": posts})
 
     got = await _client(handler).posts_after(100, channel_id=CH)
-    assert [p["create_at"] for p in got] == list(range(100, total))
+    assert [p.create_at for p in got] == list(range(100, total))
     assert pages == [0, 1]  # page 1 reaches past the window

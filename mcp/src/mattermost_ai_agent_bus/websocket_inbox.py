@@ -15,7 +15,8 @@ from typing import Any
 from websockets.asyncio.client import connect as ws_connect
 
 from . import asks, departed, gate, lease, links
-from .client import MattermostClient, ws_url_from_http
+from .client import MattermostClient, post_of, ws_url_from_http
+from .model import Post
 
 log = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class ClassifiedEvent:
     kind: str  # mention | dm | watched_channel | reaction (to an open ask) | stall (RT-6.19)
-    post: dict[str, Any]
+    post: Post
     channel: dict[str, Any] | None = None
     raw: dict[str, Any] | None = None
     # RT-6.16: why the post wakes nobody here; "" when it is not gated.
@@ -33,7 +34,7 @@ class ClassifiedEvent:
 
 
 def classify_post(
-    post: dict[str, Any],
+    post: Post | None,
     *,
     bot_user_id: str,
     bot_username: str,
@@ -50,9 +51,9 @@ def classify_post(
     """
     if not post:
         return None
-    if post.get("user_id") == bot_user_id:
+    if post.user_id == bot_user_id:
         return None
-    message = post.get("message") or ""
+    message = post.message
     uid = bot_user_id or ""
     uname = (bot_username or "").lstrip("@")
     if uid and f"<@{uid}>" in message:
@@ -65,7 +66,7 @@ def classify_post(
     if ctype == "D":
         return "dm"
     watched = watched_channel_ids or set()
-    cid = post.get("channel_id")
+    cid = post.channel_id
     if cid and cid in watched:
         return "watched_channel"
     return None
@@ -191,9 +192,9 @@ class WebSocketInbox:
                 )
                 if not kind:
                     continue
-                if post.get("id") in self._seen_ids:
+                if post.id in self._seen_ids:
                     continue
-                self._seen_ids.add(post["id"])
+                self._seen_ids.add(post.id)
                 event = ClassifiedEvent(kind=kind, post=post)
                 await self._gate(event, entry.channel_type)
                 await self._departed(event)
@@ -273,18 +274,20 @@ class WebSocketInbox:
                 post_raw = data.get("post")
                 if isinstance(post_raw, str):
                     try:
-                        post = json.loads(post_raw)
+                        found = json.loads(post_raw)
                     except json.JSONDecodeError:
                         continue
                 elif isinstance(post_raw, dict):
-                    post = post_raw
+                    found = post_raw
                 else:
                     continue
+                if not isinstance(found, dict) or not found:
+                    continue
                 # RT-6.15: the bus's permalinks as bare ids, odd links written out.
-                links.read_post(post, getattr(self.client, "permalink_base", ""))
+                post = post_of(links.read_post(found, getattr(self.client, "permalink_base", "")))
                 channel_type = data.get("channel_type")
                 channel = None
-                cid = post.get("channel_id")
+                cid = post.channel_id
                 if cid and not channel_type:
                     try:
                         channel = await self._channel(cid)
@@ -300,7 +303,7 @@ class WebSocketInbox:
                 )
                 if not kind:
                     continue
-                pid = post.get("id")
+                pid = post.id
                 if pid:
                     if pid in self._seen_ids:
                         continue
@@ -347,8 +350,8 @@ class WebSocketInbox:
         if key in self._seen_ids or asks.was_seen(self._bot_user_id, key):
             return
         self._seen_ids.add(key)
-        post = {"id": key, "root_id": pid, "channel_id": channel_id, "user_id": user,
-                "create_at": reaction.get("create_at") or 0, "message": f":{emoji}:"}
+        post = post_of({"id": key, "root_id": pid, "channel_id": channel_id, "user_id": user,
+                        "create_at": reaction.get("create_at") or 0, "message": f":{emoji}:"})
         event = ClassifiedEvent(kind="reaction", post=post, raw={"emoji": emoji, "ask": pid})
         await self._gate_reaction(event)
         await self._queue.put(event)
@@ -365,9 +368,9 @@ class WebSocketInbox:
             if (await gate.author_classes(self.client, [event.post]))[0] != gate.OTHER:
                 return
             who = await gate.author_name(self.client, event.post)
-            gate.mark_gated(me, event.post["id"])
+            gate.mark_gated(me, event.post.id)
         except Exception as exc:  # noqa: BLE001 — fail open
-            log.info("wake gate open for reaction %s: %s", event.post.get("id"), exc)
+            log.info("wake gate open for reaction %s: %s", event.post.id, exc)
             return
         event.gated = f"from {who}, not trusted by me: approves nothing"
 
@@ -377,7 +380,7 @@ class WebSocketInbox:
         its thread once (_after_gate). The coordinator is never gated. Any
         error leaves the post as it was: it wakes as before."""
         post, me = event.post, self._bot_user_id
-        root = post.get("root_id") or post.get("id", "")
+        root = post.thread
         try:
             if not me or lease.crown_held(me):
                 return
@@ -386,15 +389,15 @@ class WebSocketInbox:
             if (await gate.author_classes(self.client, [post]))[0] != gate.OTHER:
                 return
             mine: bool | None = False
-            if event.kind not in ("mention", "dm") and post.get("root_id") and self.in_my_thread:
-                mine = await self.in_my_thread({"post": post}, me)
+            if event.kind not in ("mention", "dm") and post.root_id and self.in_my_thread:
+                mine = await self.in_my_thread({"post": {"root_id": post.root_id}}, me)
                 if mine is None:
                     return  # unsure: as before
             why = gate.wake_reason(event.kind, post, bool(mine))
             if not why:
                 return
             who = await gate.author_name(self.client, post)
-            gate.mark_gated(me, post.get("id", ""))
+            gate.mark_gated(me, post.id)
             # One @channel would get an answer from every worker: none for that.
             # Nor for a post that already names the coordinator (not in a DM,
             # which it cannot see): it was told.
@@ -403,7 +406,7 @@ class WebSocketInbox:
                 not dm and await gate.names_coordinator(self.client, post)
             ) and gate.first_reply(me, root)
         except Exception as exc:  # noqa: BLE001 — fail open
-            log.info("wake gate open for post %s: %s", post.get("id"), exc)
+            log.info("wake gate open for post %s: %s", post.id or None, exc)
             return
         event.gated = f"from {who}, not trusted by me: the coordinator answers"
         task = asyncio.create_task(self._after_gate(
@@ -415,7 +418,7 @@ class WebSocketInbox:
         """Answer a gated post in thread `root` ('' for no answer), without the
         model, then mark its channel read: the counters that wake the Stop hook
         and the listener stay quiet, unless an event there still waits."""
-        cid = event.post.get("channel_id", "")
+        cid = event.post.channel_id
         if root:
             try:
                 text = await gate.reply_text(self.client, who, dm=dm)
@@ -439,7 +442,7 @@ class WebSocketInbox:
         try:
             found, tell = await departed.check(self.client, post, me, self._bot_username)
         except Exception as exc:  # noqa: BLE001 — fail open
-            log.info("departed agents in post %s not checked: %s", post.get("id"), exc)
+            log.info("departed agents in post %s not checked: %s", post.id or None, exc)
             return
         if not found:
             return
@@ -452,8 +455,8 @@ class WebSocketInbox:
     def notify(self, kind: str, message: str) -> None:
         """Queue an event the server raises itself, with no post behind it
         (RT-6.19: a stall); delivered like any other."""
-        self._queue.put_nowait(ClassifiedEvent(kind=kind, post={
-            "id": "", "message": message, "create_at": int(time.time() * 1000)}))
+        self._queue.put_nowait(ClassifiedEvent(kind=kind, post=post_of({
+            "id": "", "message": message, "create_at": int(time.time() * 1000)})))
 
     def waits(self, kind: str) -> bool:
         """Whether an event of that kind waits in the queue."""
@@ -466,7 +469,7 @@ class WebSocketInbox:
         A gated post (RT-6.16) does not count: it keeps no counter up."""
         if self._ws is None:
             return None
-        return any(e.post.get("channel_id") == channel_id and not e.gated
+        return any(e.post.channel_id == channel_id and not e.gated
                    for e in list(self._queue._queue))  # type: ignore[attr-defined]  # see waits()
 
     async def wait_for_events(
@@ -517,21 +520,19 @@ class WebSocketInbox:
         # Handed over: the listener must not wake the agent for these again.
         for e in events:
             if e.kind == "reaction":
-                asks.mark_seen(self._bot_user_id, e.post["id"])
+                asks.mark_seen(self._bot_user_id, e.post.id)
         # A channel with events still queued stays unread, so its counters keep
         # telling the hooks and the listener that something waits.
-        waiting = {e.post.get("channel_id") for e in rest if not e.gated}
+        waiting = {e.post.channel_id for e in rest if not e.gated}
         await self._mark_delivered_read(
-            [e for e in events if e.post.get("channel_id") not in waiting]
+            [e for e in events if e.post.channel_id not in waiting]
         )
         # Posts from watched channels often need no answer, so only a mention or
         # DM, which does, promises one; a gated one promises nothing (RT-6.16).
         addressed = next((e for e in events if e.kind in ("mention", "dm") and not e.gated), None)
         if addressed is not None:
             post = addressed.post
-            self.start_typing(
-                post.get("channel_id", ""), post.get("root_id") or post.get("id", "")
-            )
+            self.start_typing(post.channel_id, post.thread)
         return events
 
     async def _mark_delivered_read(self, events: list[ClassifiedEvent]) -> None:
@@ -543,7 +544,7 @@ class WebSocketInbox:
         """
         seen: set[str] = set()
         for event in events:
-            cid = event.post.get("channel_id")
+            cid = event.post.channel_id
             if not cid or cid in seen:
                 continue
             seen.add(cid)

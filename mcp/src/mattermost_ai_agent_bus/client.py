@@ -9,13 +9,14 @@ import secrets
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from . import a2a, links, ownpost, profile, session_file
-from .model import UnreadChannel
+from .model import Post, Thread, UnreadChannel
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +24,43 @@ log = logging.getLogger(__name__)
 def from_webhook(post: Mapping[str, Any]) -> bool:
     """Anyone with a hook's URL posts as the account that made the hook."""
     return str((post.get("props") or {}).get("from_webhook", "")) == "true"
+
+
+def _int(value: object) -> int:
+    if isinstance(value, int | float):
+        return int(value)
+    try:
+        return int(str(value or 0))
+    except ValueError:
+        return 0
+
+
+def post_of(raw: Mapping[str, Any]) -> Post:
+    """The bus's Post from Mattermost's post JSON (arc42 §5.1): the adapter
+    reads the keys and props here, nobody else."""
+    props = raw.get("props")
+    props = MappingProxyType(dict(props)) if isinstance(props, Mapping) else MappingProxyType({})
+    meta = raw.get("metadata")
+    reactions = meta.get("reactions") if isinstance(meta, Mapping) else None
+    return Post(
+        id=str(raw.get("id") or ""),
+        channel_id=str(raw.get("channel_id") or ""),
+        root_id=str(raw.get("root_id") or ""),
+        user_id=str(raw.get("user_id") or ""),
+        create_at=_int(raw.get("create_at")),
+        edit_at=_int(raw.get("edit_at")),
+        delete_at=_int(raw.get("delete_at")),
+        message=str(raw.get("message") or ""),
+        type=str(raw.get("type") or ""),
+        reply_count=_int(raw.get("reply_count")),
+        from_webhook=from_webhook(raw),
+        kind=a2a.kind_of(raw),
+        intent=a2a.intent_of(raw),
+        to=a2a.ALL if a2a.to_all(raw) else "",
+        reactions=tuple(r for r in reactions or () if isinstance(r, Mapping)),
+        props=props,
+        raw=MappingProxyType(dict(raw)),
+    )
 
 
 def attachment_props(fields: list[tuple[str, str, bool]], *, fallback: str,
@@ -817,7 +855,7 @@ class MattermostClient:
         channel_id: str | None = None,
         root_id: str | None = None,
         props: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> Post:
         """Post; Refused when Mattermost will not take it (a root it does not
         find, no permission): the MCP SDK would hide the error's text."""
         try:
@@ -826,7 +864,7 @@ class MattermostClient:
             raise _refused(exc) from exc
 
     async def _post(self, message: str, *, channel_id: str | None, root_id: str | None,
-                    props: dict[str, Any] | None) -> dict[str, Any]:
+                    props: dict[str, Any] | None) -> Post:
         if root_id:
             # A reply belongs where its root is: a DM, or another channel. A
             # reply's id names its thread: Mattermost refuses it as root_id.
@@ -841,12 +879,12 @@ class MattermostClient:
             body["root_id"] = root_id
         if props:
             body["props"] = props
-        post = links.read_post(await self._api("POST", "/api/v4/posts", json=body),
-                               self.permalink_base)
+        post = post_of(links.read_post(await self._api("POST", "/api/v4/posts", json=body),
+                                       self.permalink_base))
         await self._remember(cid, post)
         return post
 
-    async def _remember(self, channel_id: str, post: dict[str, Any]) -> None:
+    async def _remember(self, channel_id: str, post: Post) -> None:
         """Keep the bot's latest post in the work channel for the Stop hook and
         the exit handler (ownpost.py). Bookkeeping: never fails the post."""
         try:
@@ -856,7 +894,7 @@ class MattermostClient:
             log.info("own post not remembered: %s", exc)
 
     def post_sync(self, message: str, *, channel_id: str, root_id: str = "",
-                  props: dict[str, Any] | None = None, timeout: float = 5.0) -> dict[str, Any]:
+                  props: dict[str, Any] | None = None, timeout: float = 5.0) -> Post:
         """Post without an event loop, for the exit handler: one bounded request,
         raises when it fails. The raw post: no permalinks, not remembered."""
         body: dict[str, Any] = {"channel_id": channel_id, "message": message}
@@ -868,8 +906,7 @@ class MattermostClient:
             resp = http.post(f"{self.base_url}/api/v4/posts", json=body,
                              headers=self._auth_headers())
             resp.raise_for_status()
-            posted: dict[str, Any] = resp.json()
-            return posted
+            return post_of(resp.json())
 
     def post_by_name_sync(self, channel_name: str, message: str, *, join: str = "") -> bool:
         """Post to the team's channel `channel_name` without an event loop, for
@@ -931,18 +968,19 @@ class MattermostClient:
     async def reactions(self, post_id: str) -> list[dict[str, Any]]:
         return await self._api("GET", f"/api/v4/posts/{mm_id(post_id, 'post')}/reactions") or []
 
-    async def thread(self, post_id: str) -> dict[str, Any]:
+    async def thread(self, post_id: str) -> Thread:
         """Return post + ordered replies for a thread root (or any post id)."""
         data = await self._api("GET", f"/api/v4/posts/{mm_id(post_id, 'post')}/thread")
         posts = data.get("posts") or {}
         order = data.get("order") or sorted(
             posts.keys(), key=lambda pid: posts[pid].get("create_at", 0)
         )
-        return {
-            "root_id": data.get("root_id") or post_id,
-            "order": order,
-            "posts": [links.read_post(posts[pid], self.permalink_base) for pid in order if pid in posts],
-        }
+        return Thread(
+            root_id=str(data.get("root_id") or post_id),
+            order=tuple(order),
+            posts=tuple(post_of(links.read_post(posts[pid], self.permalink_base))
+                        for pid in order if pid in posts),
+        )
 
     async def work_channel_id(self) -> str:
         """The work channel's id, resolved in the shell CLI's order
@@ -978,7 +1016,7 @@ class MattermostClient:
         channel_id: str | None = None,
         per_page: int = 20,
         since_ms: int | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[Post]:
         cid = channel_id or await self.get_channel_id()
         params: dict[str, Any] = {"per_page": per_page}
         if since_ms is not None:
@@ -987,11 +1025,11 @@ class MattermostClient:
             "GET", f"/api/v4/channels/{mm_id(cid, 'channel')}/posts", params=params
         )
         posts = data.get("posts") or {}
-        return sorted((links.read_post(p, self.permalink_base) for p in posts.values()),
-                      key=lambda p: p.get("create_at", 0))
+        return sorted((post_of(links.read_post(p, self.permalink_base)) for p in posts.values()),
+                      key=lambda p: p.create_at)
 
     async def posts_after(self, since_ms: int, *, channel_id: str | None = None,
-                          max_pages: int = 25) -> list[dict[str, Any]]:
+                          max_pages: int = 25) -> list[Post]:
         """A channel's posts created since `since_ms`, oldest first, as
         list_recent gives them. Pages back from the newest: with `since`,
         Mattermost answers at most 1000 posts in no set order, and in a busy
@@ -1008,5 +1046,5 @@ class MattermostClient:
             if len(page_posts) < 200 or any(
                     int(p.get("create_at") or 0) < since_ms for p in page_posts):
                 break
-        return sorted((links.read_post(p, self.permalink_base) for p in found.values()),
-                      key=lambda p: p.get("create_at", 0))
+        return sorted((post_of(links.read_post(p, self.permalink_base)) for p in found.values()),
+                      key=lambda p: p.create_at)

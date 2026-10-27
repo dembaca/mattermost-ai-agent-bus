@@ -22,12 +22,12 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from . import a2a, channel, lease, session_file
-from .client import from_webhook
+from .model import Post
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -40,24 +40,23 @@ COORD_TTL_SEC = 60.0
 _coord: tuple[float, str] | None = None
 
 
-def author_class(post: Mapping[str, Any], trusted: Mapping[str, str],
-                 agents: set[str]) -> str:
-    if from_webhook(post):
+def author_class(post: Post, trusted: Mapping[str, str], agents: set[str]) -> str:
+    if post.from_webhook:
         return OTHER
-    uid = post.get("user_id", "")
+    uid = post.user_id
     if uid in trusted:
         return TRUSTED
     return AGENT if uid in agents else OTHER
 
 
-async def author_classes(client: MattermostClient, posts: list[dict[str, Any]]) -> list[str]:
+async def author_classes(client: MattermostClient, posts: Sequence[Post]) -> list[str]:
     """The class of each post's author; raises when the accounts cannot be read."""
     trusted = await client.trusted_humans()
-    agents = await client.agents({p.get("user_id", "") for p in posts} - {""})
+    agents = await client.agents({p.user_id for p in posts} - {""})
     return [author_class(p, trusted, agents) for p in posts]
 
 
-def wake_reason(kind: str, post: Mapping[str, Any], in_my_thread: bool) -> str:
+def wake_reason(kind: str, post: Post, in_my_thread: bool) -> str:
     """Why the post would wake a worker (RT-6.2 step 4): mention, dm, thread or
     broadcast (@channel in the text, or props to="all"); '' for a post that
     only goes into the digest."""
@@ -65,13 +64,13 @@ def wake_reason(kind: str, post: Mapping[str, Any], in_my_thread: bool) -> str:
         return kind
     if in_my_thread:
         return "thread"
-    return "broadcast" if a2a.to_all(post) or channel.broadcast(str(post.get("message", ""))) else ""
+    return "broadcast" if post.to == a2a.ALL or channel.broadcast(post.message) else ""
 
 
-async def author_name(client: MattermostClient, post: Mapping[str, Any]) -> str:
-    if from_webhook(post):
+async def author_name(client: MattermostClient, post: Post) -> str:
+    if post.from_webhook:
         return "a webhook"
-    uid = post.get("user_id", "")
+    uid = post.user_id
     return (await client.usernames({uid})).get(uid) or uid
 
 
@@ -89,12 +88,12 @@ async def coordinator_name(client: MattermostClient) -> str:
     return _coord[1]
 
 
-async def names_coordinator(client: MattermostClient, post: Mapping[str, Any]) -> bool:
+async def names_coordinator(client: MattermostClient, post: Post) -> bool:
     """RT-6.16 step 3: the post already @-mentions the agent wearing the 👑: it was told, an
     answer saying that it will look would only repeat it."""
     name = await coordinator_name(client)
     return bool(name) and re.search(
-        rf"(?<![\w.-])@{re.escape(name)}(?![\w-]|\.\w)", str(post.get("message", "")), re.I) is not None
+        rf"(?<![\w.-])@{re.escape(name)}(?![\w-]|\.\w)", post.message, re.I) is not None
 
 
 async def reply_text(client: MattermostClient, author: str, *, dm: bool) -> str:
