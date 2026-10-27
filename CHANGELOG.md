@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.46.0
+
+### Changed
+
+- **Task rows read the props first:** `post_message` and `reply_in_thread`
+  write the PR and branch a post names into `props.a2a` (`pr`, `branch`), and
+  `crown: true` while the author holds the crown. The task rows take PR and
+  branch from there, else from the text (older posts, people's). A `DONE` or
+  `CANCEL` by someone other than the task's author counts when it comes from
+  the crown holder the roster names now, or from an agent whose post carries
+  `crown`; a 👑 typed in the text no longer closes a task. A close by a
+  former coordinator written before 0.46.0 shows the task again (RT-6.14, #82).
+
 ## 0.45.1
 
 ### Changed

@@ -334,7 +334,12 @@ async def _tasks(client: MattermostClient, posts: list[dict[str, Any]],
             untrusted = {p["id"] for p, c in zip(roots, classes, strict=True) if c == gate.OTHER}
     except Exception as exc:  # noqa: BLE001
         log.info("task rows without the trust check: %s", exc)
-    return tasks.build(posts, names, untrusted=untrusted)
+    coordinators: set[str] = set()
+    try:  # who may close any task: the crown holder (RT-6.14 step 3)
+        coordinators = {r.username for r in await lease.roster(client) if r.coordinator}
+    except Exception as exc:  # noqa: BLE001
+        log.info("task rows without the roster: %s", exc)
+    return tasks.build(posts, names, untrusted=untrusted, coordinators=coordinators)
 
 
 async def _note_client(ctx: Any, call_next: Any) -> Any:
@@ -800,7 +805,8 @@ async def post_as_bot(client: MattermostClient | None, message: str, channel_id:
             lease.with_crown(message, uid),
             channel_id=channel_id or None,
             root_id=root_id or None,
-            props=a2a.props(message, a2a.ALL if everyone else ""),
+            props=a2a.props(message, a2a.ALL if everyone else "",
+                            crown=bool(uid) and lease.crown_held(uid)),
         )
     except Refused as exc:
         return _refusal(str(exc))
@@ -844,7 +850,8 @@ async def reply_as_bot(client: MattermostClient | None, root_id: str, message: s
             lease.with_crown(message, uid),
             channel_id=channel_id or None,
             root_id=root_id,
-            props=a2a.props(message, a2a.ALL if everyone else ""),
+            props=a2a.props(message, a2a.ALL if everyone else "",
+                            crown=bool(uid) and lease.crown_held(uid)),
         )
     except Refused as exc:
         return _refusal(str(exc))
