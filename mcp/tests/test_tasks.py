@@ -264,6 +264,21 @@ def test_the_crown_to_close_comes_from_roster_or_props_not_text():
     assert [r["status"] for r in rows(by_person)] == ["open"]
 
 
+def test_a_typed_crown_from_before_the_cutover_still_closes():
+    """RT-6.14 step 3: an agent's 👑 CANCEL from before 0.46.0 (no crown props)
+    keeps its task closed; a person's, or one after the cutover, does not."""
+    cut = tasks.LEGACY_CROWN_BEFORE_MS
+    root = {**P("t", LEIT, "TASK · x", at=0), "create_at": cut - 10}
+
+    def rows(uid, message, at):
+        close = {**P("1", uid, message, root="t"), "create_at": at}
+        return tasks.build([root, close], NAMES, now_ms=cut + 1000)
+
+    assert rows(B, "👑 CANCEL – not needed", cut - 1) == []
+    assert [r["status"] for r in rows(B, "👑 CANCEL", cut)] == ["open"]
+    assert [r["status"] for r in rows(HUMAN, "👑 CANCEL", cut - 1)] == ["open"]
+
+
 def test_annotate_names_pr_branch_and_crown():
     """RT-6.14 step 2: the server writes what the text names into props."""
     assert a2a.annotate("RESULT PR #57 on branch feat/a", crown=True) == {

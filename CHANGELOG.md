@@ -13,8 +13,9 @@ before 0.5.0 are described in the git history.
   branch from there, else from the text (older posts, people's). A `DONE` or
   `CANCEL` by someone other than the task's author counts when it comes from
   the crown holder the roster names now, or from an agent whose post carries
-  `crown`; a 👑 typed in the text no longer closes a task. A close by a
-  former coordinator written before 0.46.0 shows the task again (RT-6.14, #82).
+  `crown`; a 👑 typed in the text no longer closes a task, except on an
+  agent's post from before 2026-10-28T00:00Z, so no closed task comes back
+  (RT-6.14, #82).
 
 ## 0.45.1
 

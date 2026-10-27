@@ -28,6 +28,11 @@ _ASSIGNEE = frozenset({"ACK", "PROGRESS", "BLOCKED", "WAITING", "RESULT", "DONE"
 _CLOSERS = frozenset({"DONE", "CANCEL"})
 # The words that claim a task (RT-6.14 step 3).
 TAKES = frozenset({"ACK", "PROGRESS", "RESULT"})
+# Before 0.46.0 the crown was only the 👑 the server put in front of an
+# agent's text; an agent's post from before this cutover (2026-10-28T00:00Z)
+# still closes a task with it (RT-6.14 step 3). Remove this, and its use in
+# _crown, once the date is WINDOW_DAYS (14) behind us: no such post is read then.
+LEGACY_CROWN_BEFORE_MS = 1_793_145_600_000
 
 _ISSUE = re.compile(r"(?<![\w/&])#(\d+)\b")
 _SPEC = re.compile(r"\bRT-\d+\.\d+\b|\b[A-Z][A-Z0-9]+-\d+\b(?!\.\d)")
@@ -139,9 +144,15 @@ _STATE = {"open": "submitted", "active": "working", "blocked": "input-required",
 def _crown(p: Mapping[str, Any], author: str, coordinators: Collection[str]) -> bool:
     """A close by someone other than the task's author counts when the author
     holds the crown now, or is an agent that held it when it posted: the server
-    wrote props.a2a.crown (RT-6.14 step 3). A 👑 in the text is no authority."""
-    return author in coordinators or (
-        a2a.crowned(p) and author.startswith(session_file.agent_prefix()))
+    wrote props.a2a.crown (RT-6.14 step 3). A 👑 in the text is no authority,
+    except on an agent's post from before LEGACY_CROWN_BEFORE_MS."""
+    if author in coordinators:
+        return True
+    if not author.startswith(session_file.agent_prefix()):
+        return False
+    legacy = (int(p.get("create_at") or 0) < LEGACY_CROWN_BEFORE_MS
+              and str(p.get("message", "")).lstrip().startswith("👑"))
+    return a2a.crowned(p) or legacy
 
 
 def _apply(t: dict[str, Any], p: Mapping[str, Any], author: str,
