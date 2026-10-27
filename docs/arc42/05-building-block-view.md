@@ -78,7 +78,8 @@ reminders, stall check, own post, stats and the pending count (`gate.py`,
 `stats.py`, `unread.py`) take a `ChatPort` and never import `client.py`
 (`unread.py` imports only one helper that reads Mattermost's user JSON);
 `test_adapter_boundary` checks both, and that they use no member the port
-lacks. The test fakes satisfy the port as they are, member by member.
+lacks. The tests' fakes stand in for the port with only the members a
+test needs: a Protocol asks for no base class.
 Registration (the registrar, the bot and its token) is no chat operation and
 stays outside the port, in the adapter, driven by `server.py` and
 `hosted.py`. The WebSocket inbox (`websocket_inbox.py`) is the adapter's
