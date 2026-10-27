@@ -362,8 +362,8 @@ def unread_channel(mm, viewed_ms=0, unread=True):
 
 def test_drain_notices_a_post_to_all_agents(mm, run):
     """RT-6.2 step 1, RT-6.11: a post for all agents holds no @channel, so no
-    mention counter moves; the drain finds it in the channel's unread posts. Not
-    a plain post, an own one, one the bot viewed since, or one the server gated."""
+    mention counter moves; the drain finds it after the read watermark. Not a
+    plain post, an own one, one behind the watermark, or one the server gated."""
     unread_channel(mm)
     other_post(mm, "main is red, hold merges", props=TO_ALL)
     r = run(STOP)
@@ -375,9 +375,11 @@ def test_drain_notices_a_post_to_all_agents(mm, run):
     assert run(STOP, MM_LISTEN_SEC="0").passed
     mm.posts = []
     other_post(mm, "main is red", props=TO_ALL)
-    mm.members, mm.channels = [], []
-    unread_channel(mm, viewed_ms=int(time.time() * 1000) + 60_000)
-    assert run(STOP, MM_LISTEN_SEC="0").passed  # read since
+    mark = run.state_dir / f"read-{ME}.env"
+    mark.parent.mkdir(parents=True, exist_ok=True)
+    mark.write_text(f"{PROJECT} {'x' * 26} {int(time.time() * 1000) + 60_000}\n")
+    assert run(STOP, MM_LISTEN_SEC="0").passed  # handled since
+    mark.unlink()
     mm.members, mm.channels = [], []
     unread_channel(mm, unread=False)
     assert run(STOP, MM_LISTEN_SEC="0").passed  # no unread post: not even looked at
@@ -437,14 +439,15 @@ def test_drain_ranks_fyi_posts(mm, run):
     an agent's fyi post needs no answer. A person's props are not counted."""
     fyi_authors(mm)
     mm.unread_dm(3)
-    other_post(mm, "DONE · merged", props=FYI)
-    other_post(mm, "DONE · merged", props=FYI, user_id=PERSON)
-    other_post(mm, "can you review #5?")
+    for post, (message, props, user) in zip(mm.dm_posts, [
+            ("DONE · merged", FYI, OTHER), ("DONE · merged", FYI, PERSON),
+            ("can you review #5?", None, OTHER)]):
+        post.update(message=message, props=props, user_id=user)
     r = run(STOP)
     assert r.blocked and "3 unread message(s) on the Mattermost agent bus, 2 needing action" in r.reason
     assert "fyi=1" in r.reason
-    mm.posts = []
-    other_post(mm, "can you review #5?")
+    for post in mm.dm_posts:
+        post["props"] = None
     r = run(STOP)
     assert "3 unread message(s) on the Mattermost agent bus." in r.reason and "fyi" not in r.reason
 

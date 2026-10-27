@@ -90,10 +90,12 @@ class FakeMattermost:
     def unread_dm(self, n: int) -> None:
         """n posts by the owner in a DM, after the read watermark (RT-6.2)."""
         dm, at = "d" * 26, int(time.time() * 1000)
+        self.members = [m for m in self.members if m["channel_id"] != dm]
+        self.channels = [c for c in self.channels if c["id"] != dm]
         self.members.append({"channel_id": dm, "msg_count": 0, "mention_count": 0})
         self.channels.append({"id": dm, "type": "D", "total_msg_count": n,
                               "last_post_at": at + n})
-        self.dm_posts += [{"id": f"dm{i}", "user_id": OWNER, "channel_id": dm,
+        self.dm_posts = [{"id": f"dm{i}", "user_id": OWNER, "channel_id": dm,
                            "create_at": at + i + 1, "message": f"hi {i}"} for i in range(n)]
 
     def custom_status(self) -> dict | None:
