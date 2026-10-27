@@ -441,7 +441,7 @@ def test_drain_ranks_fyi_posts(mm, run):
     mm.unread_dm(3)
     for post, (message, props, user) in zip(mm.dm_posts, [
             ("DONE · merged", FYI, OTHER), ("DONE · merged", FYI, PERSON),
-            ("can you review #5?", None, OTHER)]):
+            ("can you review #5?", None, OTHER)], strict=True):
         post.update(message=message, props=props, user_id=user)
     r = run(STOP)
     assert r.blocked and "3 unread message(s) on the Mattermost agent bus, 2 needing action" in r.reason
