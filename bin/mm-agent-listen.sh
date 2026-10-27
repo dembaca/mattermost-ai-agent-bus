@@ -14,7 +14,7 @@
 #     for both not an agent's fyi post (props.a2a.intent, RT-6.14: ACK, RESULT,
 #     DONE, IDLE…) unless the agent started the thread: that waits for the digest,
 #   - a reaction to one of its open asks (asks-<uid>.env, RT-6.11) that the
-#     agent has not been handed yet.
+#     agent has not been handed yet and the server did not gate (RT-6.16).
 # A post the MCP server gated (GATED in gate-<uid>.env: by someone the agent
 # does not trust, already answered, RT-6.16) is not for it; the server also
 # marked its channel read, so it raises no counter here.

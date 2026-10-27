@@ -349,8 +349,27 @@ class WebSocketInbox:
         self._seen_ids.add(key)
         post = {"id": key, "root_id": pid, "channel_id": channel_id, "user_id": user,
                 "create_at": reaction.get("create_at") or 0, "message": f":{emoji}:"}
-        await self._queue.put(ClassifiedEvent(
-            kind="reaction", post=post, raw={"emoji": emoji, "ask": pid}))
+        event = ClassifiedEvent(kind="reaction", post=post, raw={"emoji": emoji, "ask": pid})
+        await self._gate_reaction(event)
+        await self._queue.put(event)
+
+    async def _gate_reaction(self, event: ClassifiedEvent) -> None:
+        """RT-6.16 step 7: with trusted humans configured, a reaction by anyone
+        else wakes no worker, as their post would not: it approves nothing
+        (RT-6.11). Queued as data and marked GATED for the listener; no answer,
+        a reaction asks nothing. The coordinator is never gated; errors fail open."""
+        me = self._bot_user_id
+        try:
+            if not me or lease.crown_held(me) or not await self.client.trusted_humans():
+                return
+            if (await gate.author_classes(self.client, [event.post]))[0] != gate.OTHER:
+                return
+            who = await gate.author_name(self.client, event.post)
+            gate.mark_gated(me, event.post["id"])
+        except Exception as exc:  # noqa: BLE001 — fail open
+            log.info("wake gate open for reaction %s: %s", event.post.get("id"), exc)
+            return
+        event.gated = f"from {who}, not trusted by me: approves nothing"
 
     async def _gate(self, event: ClassifiedEvent, channel_type: str | None) -> None:
         """RT-6.16: with trusted humans configured, a post by anyone else that
