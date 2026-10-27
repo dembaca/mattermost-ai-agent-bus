@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import server, stats
-from mattermost_ai_agent_bus.client import MattermostClient
+from mattermost_ai_agent_bus.client import MattermostAdapter
 
 UID = "u" * 26
 
@@ -50,7 +50,7 @@ def _mock_http(monkeypatch, handler):
 
 
 def test_post_goes_to_the_stats_channel(monkeypatch, state):
-    client = MattermostClient(base_url="https://chat.example", token="bot", team_name="ai-agents")
+    client = MattermostAdapter(base_url="https://chat.example", token="bot", team_name="ai-agents")
     stats.record("turn")
     data = stats.summary("0.21.0", 1)
 

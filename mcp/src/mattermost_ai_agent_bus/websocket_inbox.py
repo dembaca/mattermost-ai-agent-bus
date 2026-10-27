@@ -15,7 +15,7 @@ from typing import Any
 from websockets.asyncio.client import connect as ws_connect
 
 from . import asks, departed, gate, lease, links, unread, watermark
-from .client import MattermostClient, post_of, with_links, ws_url_from_http
+from .client import MattermostAdapter, post_of, with_links, ws_url_from_http
 from .model import Post
 
 log = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def classify_post(
 
 @dataclass
 class WebSocketInbox:
-    client: MattermostClient
+    client: MattermostAdapter
     watched_channel_ids: set[str] = field(default_factory=set)
     _ws: Any = field(default=None, repr=False, init=False)
     _seq: int = field(default=1, repr=False, init=False)

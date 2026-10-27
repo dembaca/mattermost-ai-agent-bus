@@ -30,7 +30,7 @@ from . import a2a, channel, lease, session_file
 from .model import Post
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .port import ChatPort
 
 TRUSTED, AGENT, OTHER = "trusted", "agent", "other"
 MAX_AGE_SEC = 7 * 86400
@@ -49,7 +49,7 @@ def author_class(post: Post, trusted: Mapping[str, str], agents: set[str]) -> st
     return AGENT if uid in agents else OTHER
 
 
-async def author_classes(client: MattermostClient, posts: Sequence[Post]) -> list[str]:
+async def author_classes(client: ChatPort, posts: Sequence[Post]) -> list[str]:
     """The class of each post's author; raises when the accounts cannot be read."""
     trusted = await client.trusted_humans()
     agents = await client.agents({p.user_id for p in posts} - {""})
@@ -67,14 +67,14 @@ def wake_reason(kind: str, post: Post, in_my_thread: bool) -> str:
     return "broadcast" if post.to == a2a.ALL or channel.broadcast(post.message) else ""
 
 
-async def author_name(client: MattermostClient, post: Post) -> str:
+async def author_name(client: ChatPort, post: Post) -> str:
     if post.from_webhook:
         return "a webhook"
     uid = post.user_id
     return (await client.usernames({uid})).get(uid) or uid
 
 
-async def coordinator_name(client: MattermostClient) -> str:
+async def coordinator_name(client: ChatPort) -> str:
     """The agent wearing a live 👑, '' when none. Only a crown counts: the
     roster's oldest reachable agent coordinates nothing yet. An unreadable
     roster is not remembered."""
@@ -88,7 +88,7 @@ async def coordinator_name(client: MattermostClient) -> str:
     return _coord[1]
 
 
-async def names_coordinator(client: MattermostClient, post: Post) -> bool:
+async def names_coordinator(client: ChatPort, post: Post) -> bool:
     """RT-6.16 step 3: the post already @-mentions the agent wearing the 👑: it was told, an
     answer saying that it will look would only repeat it."""
     name = await coordinator_name(client)
@@ -96,7 +96,7 @@ async def names_coordinator(client: MattermostClient, post: Post) -> bool:
         rf"(?<![\w.-])@{re.escape(name)}(?![\w-]|\.\w)", post.message, re.I) is not None
 
 
-async def reply_text(client: MattermostClient, author: str, *, dm: bool) -> str:
+async def reply_text(client: ChatPort, author: str, *, dm: bool) -> str:
     """The answer to a gated post. Names stay plain: only ask_human notifies a
     person, and the coordinator wakes for every channel post anyway."""
     coord = await coordinator_name(client)

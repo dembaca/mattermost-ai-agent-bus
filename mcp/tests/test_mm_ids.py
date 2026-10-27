@@ -9,18 +9,18 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import hookapi, server
-from mattermost_ai_agent_bus.client import InvalidId, MattermostClient, mm_id, mm_name
+from mattermost_ai_agent_bus.client import InvalidId, MattermostAdapter, mm_id, mm_name
 
 ME = "m" * 26
 BAD = ["../users/me", "abc", "%2e%2e", "a" * 12 + "/" + "b" * 13, "A" * 26, "a" * 25 + "\n", ""]
 
 
-def _client(seen: list[str]) -> MattermostClient:
+def _client(seen: list[str]) -> MattermostAdapter:
     def handler(req: httpx.Request) -> httpx.Response:
         seen.append(req.url.path)
         return httpx.Response(200, json={})
 
-    c = MattermostClient(base_url="https://mm.example", token="t")
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     c._me = {"id": ME, "username": "agent-me"}
     return c

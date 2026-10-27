@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from mattermost_ai_agent_bus import channel, departed, gate, server, session_file
-from mattermost_ai_agent_bus.client import MattermostClient, post_of
+from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
 
 ME, OLD, IDLE, WORKER, HUMAN = "m" * 26, "o" * 26, "i" * 26, "w" * 26, "h" * 26
@@ -28,7 +28,7 @@ class Bus:
     agent-idle is 💤 on a live lease, agent-w works."""
 
     def __init__(self, monkeypatch):
-        self.client = MattermostClient(base_url="https://chat.example", token="bot", team_name="team",
+        self.client = MattermostAdapter(base_url="https://chat.example", token="bot", team_name="team",
                                        project_channel_name="proj")
         self.posted = []
         self.fail = False

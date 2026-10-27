@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import lease
-from mattermost_ai_agent_bus.client import MattermostClient
+from mattermost_ai_agent_bus.client import MattermostAdapter
 from mattermost_ai_agent_bus.model import RosterEntry
 
 UID = "u" * 26
@@ -78,7 +78,7 @@ def mm(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client(mm):
-    c = MattermostClient(base_url="https://mm.example", token="t")
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(mm.handler))
     return c
 

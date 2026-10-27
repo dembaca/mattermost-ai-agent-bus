@@ -21,7 +21,7 @@ ASK = "k" * 26
 
 
 class FakeClient:
-    """What the routes use of MattermostClient."""
+    """What the routes use of MattermostAdapter."""
 
     def __init__(self, posts=(), reactions=None, agents=(), token="t", fail=False):
         self.token = token

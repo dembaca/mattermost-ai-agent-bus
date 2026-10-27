@@ -19,7 +19,7 @@ PERSON = "q" * 26
 
 
 class FakeClient:
-    """What the routes use of MattermostClient: posts newest first."""
+    """What the routes use of MattermostAdapter: posts newest first."""
 
     def __init__(self, posts=(), agents=(), reactions=None):
         self.token = "t"

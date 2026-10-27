@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import ownpost, session_file
-from mattermost_ai_agent_bus.client import MattermostClient, SessionInfo, post_of, unique_name
+from mattermost_ai_agent_bus.client import MattermostAdapter, SessionInfo, post_of, unique_name
 
 REPO = Path(__file__).resolve().parents[2]
 INFO = SessionInfo(
@@ -28,7 +28,7 @@ def _state(tmp_path, monkeypatch):
 
 
 def _client(handler, project="proj-chan"):
-    c = MattermostClient(base_url="https://mm.example", token="t",
+    c = MattermostAdapter(base_url="https://mm.example", token="t",
                          project_channel_name=project)
     c.session = INFO
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -187,7 +187,7 @@ async def test_session_file_failure_is_reported(monkeypatch, tmp_path):
         return httpx.Response(200, json={
             "username": "agent-x", "user_id": "uid10000000000000000000000", "bot_token": "t"})
 
-    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+    c = MattermostAdapter(base_url="https://mm.example", reg_secret="s",
                          register_url="https://mm.example/register/v1/agents")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     await c.session_start("proj")
@@ -200,7 +200,7 @@ async def test_session_file_success_is_reported():
         return httpx.Response(200, json={
             "username": "agent-x", "user_id": "uid10000000000000000000000", "bot_token": "t"})
 
-    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+    c = MattermostAdapter(base_url="https://mm.example", reg_secret="s",
                          register_url="https://mm.example/register/v1/agents")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     await c.session_start("proj")
@@ -229,7 +229,7 @@ def test_hook_outside_project_finds_nothing(tmp_path):
 
 
 def _shutdown_client(handler, *, own_session, token="bot-tok"):
-    c = MattermostClient(
+    c = MattermostAdapter(
         base_url="https://mm.example", token=token,
         register_url="https://mm.example/register/v1/agents",
     )
@@ -363,7 +363,7 @@ def test_exit_keeps_the_bot_for_claude_continue(monkeypatch):
 
 
 def _adopting_client():
-    return MattermostClient(base_url="https://mm.example", token=None,
+    return MattermostAdapter(base_url="https://mm.example", token=None,
                             register_url="https://mm.example/register/v1/agents")
 
 
@@ -448,7 +448,7 @@ async def test_after_the_grace_period_the_workspace_bot_goes(monkeypatch):
         return httpx.Response(200, json={
             "username": "agent-x", "user_id": "uid90000000000000000000000", "bot_token": "t"})
 
-    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+    c = MattermostAdapter(base_url="https://mm.example", reg_secret="s",
                          register_url="https://mm.example/register/v1/agents")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     await c.session_start("proj")
@@ -511,7 +511,7 @@ async def test_session_start_reaps_bots_of_long_ended_sessions(monkeypatch):
         return httpx.Response(200, json={
             "username": "agent-x", "user_id": "uid90000000000000000000000", "bot_token": "t"})
 
-    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+    c = MattermostAdapter(base_url="https://mm.example", reg_secret="s",
                          register_url="https://mm.example/register/v1/agents")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     await c.session_start("proj")
@@ -560,7 +560,7 @@ def test_agent_prefix_reads_the_environment(monkeypatch):
 
 
 def test_a_registration_hands_its_prefix_to_the_hooks():
-    c = MattermostClient(base_url="https://mm.example", token="t")
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._take(SessionInfo(url=INFO.url, name="mac-1", username="bot-mac-1",
                         user_id="uid10000000000000000000000", bot_token="tok"))
     assert os.environ["MM_AGENT_PREFIX"] == "bot-"
@@ -594,7 +594,7 @@ async def test_session_end_sends_the_bare_name_with_another_prefix(monkeypatch):
         deleted.append(req.url.path)
         return httpx.Response(204)
 
-    c = MattermostClient(base_url="https://mm.example", token="t",
+    c = MattermostAdapter(base_url="https://mm.example", token="t",
                          register_url="https://mm.example/register/v1/agents")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     await c.session_end("bot-mac-1")
@@ -612,7 +612,7 @@ async def test_reaping_strips_the_prefix_the_session_file_names(monkeypatch):
         deleted.append(req.url.path)
         return httpx.Response(204)
 
-    c = MattermostClient(base_url="https://mm.example",
+    c = MattermostAdapter(base_url="https://mm.example",
                          register_url="https://mm.example/register/v1/agents")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     assert await c.reap_stale_sessions() == ["bot-old"]
@@ -625,7 +625,7 @@ async def test_session_end_names_the_bot_it_ended(monkeypatch):
     from mattermost_ai_agent_bus import server
 
     monkeypatch.delenv("MM_REG_BOT_NAME", raising=False)
-    c = MattermostClient(base_url="https://mm.example", token="t",
+    c = MattermostAdapter(base_url="https://mm.example", token="t",
                          register_url="https://mm.example/register/v1/agents")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(204)))
     c.session = SessionInfo(url="https://mm.example", name="agent-codex-1a2b", username="agent-codex-1a2b",

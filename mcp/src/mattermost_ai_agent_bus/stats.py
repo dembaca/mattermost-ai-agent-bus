@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 from . import overhead, session_file
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .port import ChatPort
 
 _uid = ""
 _client_name = ""
@@ -205,7 +205,7 @@ def summary(version: str, static: int,
     }
 
 
-def post_sync(client: MattermostClient, data: dict[str, Any]) -> str:
+def post_sync(client: ChatPort, data: dict[str, Any]) -> str:
     """Post the summary to the stats channel, synchronously (exit handler).
 
     The counter file goes either way: on a server without the channel the

@@ -33,7 +33,7 @@ from . import channel, session_file
 from .model import RosterEntry
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .port import ChatPort
 
 log = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ def with_crown(message: str, user_id: str) -> str:
     return message
 
 
-async def _user_id(client: MattermostClient) -> str:
+async def _user_id(client: ChatPort) -> str:
     if client.session:
         return client.session.user_id
     return os.environ.get("MM_BOT_USER_ID") or (await client.get_me())["id"]
@@ -143,7 +143,7 @@ def _rfc3339(epoch: int) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
 
 
-async def set_status(client: MattermostClient, state: str, label: str = "") -> None:
+async def set_status(client: ChatPort, state: str, label: str = "") -> None:
     """Show what this agent is doing (RT-6.6 step 1): working, listening (label:
     until epoch), idle, bus (no turn hooks), offline, or renew (the state last
     reported again; without one, bus). A label names the project, never the
@@ -159,7 +159,7 @@ async def set_status(client: MattermostClient, state: str, label: str = "") -> N
         await _set_status(client, state, label)
 
 
-async def _set_status(client: MattermostClient, state: str, label: str = "") -> None:
+async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     """set_status under the lock."""
     uid = await _user_id(client)
     pres, coord = _file("presence", uid), _file("coord", uid)
@@ -236,7 +236,7 @@ def _read_lines(path: Path) -> list[str]:
         return []
 
 
-async def _render(client: MattermostClient) -> None:
+async def _render(client: ChatPort) -> None:
     """The own status again, after the crown changed; never raises. Under the
     lock (from _command)."""
     try:
@@ -272,7 +272,7 @@ def _expired(value: Any, now: datetime) -> bool:
     return at is None or at <= now
 
 
-async def _rows(client: MattermostClient, channel_id: str) -> list[dict[str, Any]]:
+async def _rows(client: ChatPort, channel_id: str) -> list[dict[str, Any]]:
     """The bus's bots in a channel (the registrar's prefix), oldest first, with
     what the lease rules need: id, username, create_at, presence, emoji, text,
     live, until_ms (the lease's end, 0 unknown), reachable, crown. A custom
@@ -313,7 +313,7 @@ def _coordinator_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [dict(r, coordinator=r["id"] == coord) for r in ordered if r["reachable"]]
 
 
-async def roster(client: MattermostClient) -> list[RosterEntry]:
+async def roster(client: ChatPort) -> list[RosterEntry]:
     """The reachable agents of the work channel, coordinator first (RT-6.6,
     RT-6.14 step 4); [] when it cannot be read."""
     if not client.token:
@@ -339,7 +339,7 @@ def entry(row: Mapping[str, Any]) -> RosterEntry:
 
 # --- the crown --------------------------------------------------------------------------
 
-async def command(client: MattermostClient, action: str) -> str:
+async def command(client: ChatPort, action: str) -> str:
     """The coordinator crown (RT-6.6): who (the coordinator's username), take
     (now, or as soon as the holder releases or its lease runs out), release
     (after a HANDOVER is ACKed), tick (the heartbeat: renew the own status,
@@ -358,7 +358,7 @@ async def command(client: MattermostClient, action: str) -> str:
         return ""
 
 
-async def _command(client: MattermostClient, action: str) -> str:
+async def _command(client: ChatPort, action: str) -> str:
     uid = await _user_id(client)
     if not _UID.fullmatch(uid):
         return ""
@@ -408,8 +408,8 @@ async def _command(client: MattermostClient, action: str) -> str:
     return ""
 
 
-async def heartbeat(get_client: Callable[[], Awaitable[MattermostClient | None]],
-                    watch: Callable[[MattermostClient], Awaitable[float | None]] | None = None) -> None:
+async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
+                    watch: Callable[[ChatPort], Awaitable[float | None]] | None = None) -> None:
     """Renew the lease until cancelled. Never raises: presence is cosmetic.
     `watch` runs after each tick (the stall check and the ask reminders,
     RT-6.19, stall.watch) and may bring the next tick forward to when it is

@@ -79,7 +79,7 @@ from .client import InvalidId, _pid_alive, mm_name
 from .model import Post
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .client import MattermostAdapter
 
 log = logging.getLogger(__name__)
 
@@ -145,7 +145,7 @@ def file_path() -> Path:
 class HookAPI:
     """The server side of RT-6.17: one per MCP server."""
 
-    def __init__(self, get_client: Callable[[], Awaitable[MattermostClient | None]],
+    def __init__(self, get_client: Callable[[], Awaitable[MattermostAdapter | None]],
                  key: str | None = None) -> None:
         self._get_client = get_client
         self.key = key or secrets.token_urlsafe(32)
@@ -367,7 +367,7 @@ class HookAPI:
             self._note_uid(str(reply[1].get("user_id") or ""))
         return reply
 
-    async def _run(self, route: Route, client: MattermostClient,
+    async def _run(self, route: Route, client: MattermostAdapter,
                    query: Mapping[str, str], payload: Mapping[str, Any]) -> Reply:
         if route not in _HEAVY_ROUTES:
             return await route(client, query, payload)
@@ -392,15 +392,15 @@ async def _read_head(reader: asyncio.StreamReader) -> tuple[str, str, dict[str, 
 
 # --- routes -------------------------------------------------------------------
 
-async def _uid(client: MattermostClient) -> str:
+async def _uid(client: MattermostAdapter) -> str:
     return str((await client.get_me()).get("id") or "")
 
 
-def _project(client: MattermostClient) -> bool:
+def _project(client: MattermostAdapter) -> bool:
     return bool(os.environ.get("MM_PROJECT_CHANNEL_ID") or client.project_channel_name)
 
 
-async def me(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
+async def me(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """Who the bot is, whether it works in a project channel, its crown (RT-6.6)."""
     who = await client.get_me()
     uid = str(who.get("id") or "")
@@ -412,7 +412,7 @@ async def me(client: MattermostClient, query: Mapping[str, str], body: Mapping[s
                  "channel": bool(_UID.fullmatch(uid)) and channel.confirmed_file(uid).exists()}
 
 
-async def pending(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
+async def pending(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """Unread mentions, DMs and posts for all agents (RT-6.2 step 1, unread.py),
     plus a stall event still to collect (RT-6.19); with detail=1 per channel,
     with its fyi posts (RT-6.14)."""
@@ -427,7 +427,7 @@ async def pending(client: MattermostClient, query: Mapping[str, str], body: Mapp
     return 200, result
 
 
-async def last_post(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
+async def last_post(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """The own latest post in the work channel (RT-6.2 step 2): from
     last-<uid>.env (ownpost.py) without a request, else from the channel's last
     100 posts; at 0 when there is none."""
@@ -435,7 +435,7 @@ async def last_post(client: MattermostClient, query: Mapping[str, str], body: Ma
     return 200, {"at": at, "message": message}
 
 
-async def _last(client: MattermostClient, query: Mapping[str, str],
+async def _last(client: MattermostAdapter, query: Mapping[str, str],
                 body: Mapping[str, Any]) -> tuple[int, str]:
     """last_post's (at, message)."""
     uid = await _uid(client)
@@ -465,7 +465,7 @@ def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
     }
 
 
-async def watched(client: MattermostClient) -> set[str]:
+async def watched(client: MattermostAdapter) -> set[str]:
     """The channels the bus watches: the work channel, the project channel and
     the default channel. Never a DM or group channel."""
     ids = {await client.work_channel_id()}
@@ -480,7 +480,7 @@ async def watched(client: MattermostClient) -> set[str]:
     return ids
 
 
-async def _channel(client: MattermostClient, chan: str) -> str:
+async def _channel(client: MattermostAdapter, chan: str) -> str:
     """The work channel, or the one named (an id, or a name in the bot's team)
     when the bus watches it (watched()): the key reads no DM, no group and no
     other channel the bot is in (arc42 §7.3)."""
@@ -501,7 +501,7 @@ async def _channel(client: MattermostClient, chan: str) -> str:
     return cid
 
 
-async def posts(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
+async def posts(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """The work channel's posts (or ?channel=), newest first: the last
     ?limit=N, or those since ?since=MS (created or edited). Each says whether
     it is for all agents, an agent's fyi post (RT-6.14) and gated by the
@@ -527,7 +527,7 @@ async def posts(client: MattermostClient, query: Mapping[str, str], body: Mappin
                  "posts": [_slim(p, agents, gated) for p in raw]}
 
 
-async def ask_reactions(client: MattermostClient, query: Mapping[str, str],
+async def ask_reactions(client: MattermostAdapter, query: Mapping[str, str],
                         body: Mapping[str, Any]) -> Reply:
     """Reactions to the agent's open asks it has not been handed yet (RT-6.11):
     a reaction raises no unread counter. One the server gated wakes nobody (RT-6.16)."""
@@ -547,7 +547,7 @@ async def ask_reactions(client: MattermostClient, query: Mapping[str, str],
     return 200, {"fresh": fresh}
 
 
-async def presence(client: MattermostClient, query: Mapping[str, str],
+async def presence(client: MattermostAdapter, query: Mapping[str, str],
                    body: Mapping[str, Any]) -> Reply:
     """Set the status for a turn (RT-6.2, RT-6.3, RT-6.6, lease.py): working,
     idle or bus with the project label, listening until an epoch."""
@@ -580,7 +580,7 @@ MAX_STAT_VALUE = 4096
 _FIELD = re.compile(r"[a-z][a-z_]{0,15}")
 
 
-async def stat(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
+async def stat(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """One overhead counter for this session (RT-6.9) into the server's own
     stats file. Names and values only, as mm_stat writes them; a transcript
     path is read at session end only where stats.transcript allows."""
@@ -628,7 +628,7 @@ def _tools() -> Any:
     return sys.modules.get(f"{__package__}.server")
 
 
-async def post_route(client: MattermostClient, query: Mapping[str, str],
+async def post_route(client: MattermostAdapter, query: Mapping[str, str],
                      body: Mapping[str, Any]) -> Reply:
     """post_message for the shell (mm-agent-post.sh): the tool's own code,
     its result, refusals included (RT-6.17)."""
@@ -638,7 +638,7 @@ async def post_route(client: MattermostClient, query: Mapping[str, str],
     return 200, await tools.post_as_bot(client, **_fields(body, "message"))
 
 
-async def reply_route(client: MattermostClient, query: Mapping[str, str],
+async def reply_route(client: MattermostAdapter, query: Mapping[str, str],
                       body: Mapping[str, Any]) -> Reply:
     """reply_in_thread for the shell (mm-agent-post.sh --root)."""
     tools = _tools()
@@ -654,7 +654,7 @@ def _flag(query: Mapping[str, str], name: str) -> bool:
     return value == "1"
 
 
-async def turn_end(client: MattermostClient, query: Mapping[str, str],
+async def turn_end(client: MattermostAdapter, query: Mapping[str, str],
                    body: Mapping[str, Any]) -> Reply:
     """The Stop hook's checks for a turn plugin (RT-6.20; RT-6.2 steps 1–2):
     drain while messages wait (at most turnend.MAX_DRAIN rounds a turn, the
@@ -691,7 +691,7 @@ OWN_TTL_SEC = 300
 _own_cache: dict[tuple[int, str], tuple[str, float, list[dict[str, Any]]]] = {}
 
 
-async def _own_posts(client: MattermostClient, uid: str, body: Mapping[str, Any]) -> list[dict[str, Any]]:
+async def _own_posts(client: MattermostAdapter, uid: str, body: Mapping[str, Any]) -> list[dict[str, Any]]:
     key, mark = (id(client), uid), ownpost.read(uid).get("ID", "")
     hit = _own_cache.get(key)
     if hit and hit[0] == mark and time.monotonic() - hit[1] < OWN_TTL_SEC:
@@ -702,7 +702,7 @@ async def _own_posts(client: MattermostClient, uid: str, body: Mapping[str, Any]
     return own
 
 
-async def wake(client: MattermostClient, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
+async def wake(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """The listener's checks for a turn plugin (RT-6.20; RT-6.2 step 4): is
     anything on the bus for the agent since ?since=MS, or a stall event
     (RT-6.19)? Only inside the listen window ending at ?until=S and while its
@@ -735,7 +735,7 @@ async def wake(client: MattermostClient, query: Mapping[str, str], body: Mapping
                              digest_sec=channel.digest_sec())
 
 
-async def handoff(client: MattermostClient, query: Mapping[str, str],
+async def handoff(client: MattermostAdapter, query: Mapping[str, str],
                   body: Mapping[str, Any]) -> Reply:
     """After a compaction (RT-6.7, RT-6.20): the compaction hook's context."""
     uid = await _uid(client)

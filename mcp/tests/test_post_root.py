@@ -10,13 +10,13 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import server
-from mattermost_ai_agent_bus.client import MattermostClient, Refused
+from mattermost_ai_agent_bus.client import MattermostAdapter, Refused
 
 ME, ROOT, REPLY, CH = "m" * 26, "r" * 26, "q" * 26, "c" * 26
 
 
-def _client(handler) -> MattermostClient:
-    c = MattermostClient(base_url="https://mm.example", token="t")
+def _client(handler) -> MattermostAdapter:
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     c._me = {"id": ME, "username": "agent-me"}
     return c

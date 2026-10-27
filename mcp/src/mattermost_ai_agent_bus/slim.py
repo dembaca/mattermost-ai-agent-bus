@@ -13,7 +13,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .port import ChatPort
     from .model import Post
 
 
@@ -23,7 +23,7 @@ def _when(ms: int | None) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ms / 1000))
 
 
-async def _names(client: MattermostClient, posts: Sequence[Post]) -> tuple[dict[str, str], dict[str, str]]:
+async def _names(client: ChatPort, posts: Sequence[Post]) -> tuple[dict[str, str], dict[str, str]]:
     users: dict[str, str] = {}
     channels: dict[str, str] = {}
     try:
@@ -55,7 +55,7 @@ def _one(p: Post, users: dict[str, str], channels: dict[str, str]) -> dict[str, 
     return out
 
 
-async def posts(client: MattermostClient, items: Sequence[Post],
+async def posts(client: ChatPort, items: Sequence[Post],
                 *, drop_system: bool = False) -> list[dict[str, Any]]:
     if drop_system:
         items = [p for p in items if not p.type]
@@ -63,7 +63,7 @@ async def posts(client: MattermostClient, items: Sequence[Post],
     return [_one(p, users, channels) for p in items]
 
 
-async def post(client: MattermostClient, item: Post) -> dict[str, Any]:
+async def post(client: ChatPort, item: Post) -> dict[str, Any]:
     return (await posts(client, [item]))[0]
 
 

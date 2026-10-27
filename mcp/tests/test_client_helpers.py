@@ -2,7 +2,7 @@
 
 import pytest
 
-from mattermost_ai_agent_bus.client import MattermostClient, ws_url_from_http
+from mattermost_ai_agent_bus.client import MattermostAdapter, ws_url_from_http
 from mattermost_ai_agent_bus.model import UnreadChannel
 
 
@@ -33,7 +33,7 @@ def test_from_env_requires_url(monkeypatch):
     monkeypatch.delenv("MM_CHAT_URL", raising=False)
     monkeypatch.delenv("MATTERMOST_URL", raising=False)
     with pytest.raises(RuntimeError, match="MM_CHAT_URL"):
-        MattermostClient.from_env()
+        MattermostAdapter.from_env()
 
 
 def test_from_env_aliases(monkeypatch):
@@ -43,7 +43,7 @@ def test_from_env_aliases(monkeypatch):
     monkeypatch.setenv("MM_CHANNEL", "c1")
     monkeypatch.delenv("MM_CHAT_URL", raising=False)
     monkeypatch.delenv("MM_BOT_TOKEN", raising=False)
-    c = MattermostClient.from_env()
+    c = MattermostAdapter.from_env()
     assert c.base_url == "https://mm.example"
     assert c.token == "tok"
     assert c.team_name == "t1"
@@ -63,7 +63,7 @@ def test_unexpanded_placeholders_are_treated_as_unset(monkeypatch):
     monkeypatch.setenv("MM_REGISTER_URL", "${MM_REGISTER_URL}")
     monkeypatch.setenv("MM_REG_SECRET", "${MM_REG_SECRET}")
     monkeypatch.setenv("MM_BOT_TOKEN", "${MM_BOT_TOKEN}")
-    c = MattermostClient.from_env()
+    c = MattermostAdapter.from_env()
     assert c.project_channel_name == ""
     assert c.work_channel_name == "agents"
     assert c.register_url == "https://mm.example/register/v1/agents"
@@ -75,7 +75,7 @@ def test_placeholder_like_value_that_is_real_is_kept(monkeypatch):
     """Only a bare ${NAME} is ignored — a real name containing $ is not."""
     monkeypatch.setenv("MM_CHAT_URL", "https://mm.example")
     monkeypatch.setenv("MM_PROJECT_CHANNEL", "proj-${weird}-name")
-    c = MattermostClient.from_env()
+    c = MattermostAdapter.from_env()
     assert c.project_channel_name == "proj-${weird}-name"
 
 
@@ -83,7 +83,7 @@ def test_from_env_project_channel_defaults_to_empty(monkeypatch):
     monkeypatch.setenv("MM_CHAT_URL", "https://mm.example")
     monkeypatch.setenv("MM_CHANNEL", "agents")
     monkeypatch.delenv("MM_PROJECT_CHANNEL", raising=False)
-    c = MattermostClient.from_env()
+    c = MattermostAdapter.from_env()
     assert c.project_channel_name == ""
     # Without a project channel the work channel is the default channel.
     assert c.work_channel_name == "agents"
@@ -93,7 +93,7 @@ def test_project_channel_becomes_work_channel(monkeypatch):
     monkeypatch.setenv("MM_CHAT_URL", "https://mm.example")
     monkeypatch.setenv("MM_CHANNEL", "agents")
     monkeypatch.setenv("MM_PROJECT_CHANNEL", "proj-bus")
-    c = MattermostClient.from_env()
+    c = MattermostAdapter.from_env()
     # The default channel is kept: the agent stays addressable there.
     assert c.channel_name == "agents"
     assert c.project_channel_name == "proj-bus"
@@ -103,7 +103,7 @@ def test_project_channel_becomes_work_channel(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_channel_id_caches_per_name(monkeypatch):
     """Both channels resolve independently and each is fetched only once."""
-    c = MattermostClient(
+    c = MattermostAdapter(
         base_url="https://mm.example",
         token="tok",
         channel_name="agents",
@@ -129,7 +129,7 @@ async def test_get_channel_id_caches_per_name(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_session_start_name_validation():
-    c = MattermostClient(
+    c = MattermostAdapter(
         base_url="https://mm.example",
         reg_secret="sec",
         register_url="https://mm.example/register/v1/agents",
@@ -144,7 +144,7 @@ async def test_member_channels_carry_the_newest_post_and_the_counters(monkeypatc
     the read watermark is held against; the counters only stand in where
     Mattermost leaves that out. A DM counts every unread message, a channel
     only mentions."""
-    c = MattermostClient(base_url="https://mm.example", token="tok")
+    c = MattermostAdapter(base_url="https://mm.example", token="tok")
 
     async def fake_api(method, path, **kwargs):
         if path == "/api/v4/users/me":
@@ -175,7 +175,7 @@ async def test_get_me_started_before_a_takeover_keeps_no_old_identity(monkeypatc
 
     from mattermost_ai_agent_bus.client import SessionInfo
 
-    c = MattermostClient(base_url="https://mm.example", token="old", channel_name="agents")
+    c = MattermostAdapter(base_url="https://mm.example", token="old", channel_name="agents")
     started, release = asyncio.Event(), asyncio.Event()
 
     async def fake_api(method, path, **kwargs):

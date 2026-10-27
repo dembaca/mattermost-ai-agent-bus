@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 from . import a2a, asks, lease, session_file, stats, tasks
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .port import ChatPort
 
 log = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def text(human: str, title: str, waited: float) -> str:
             "👍/👎 on the ask, or reply here")
 
 
-async def _answered(client: MattermostClient, uid: str, pid: str, root: str,
+async def _answered(client: ChatPort, uid: str, pid: str, root: str,
                     human: str) -> tuple[bool, str]:
     """Whether the ask is answered on Mattermost (tasks.ask_answered: a yes/no
     reaction by the human or a trusted human, a reply by the human in its
@@ -130,7 +130,7 @@ async def _answered(client: MattermostClient, uid: str, pid: str, root: str,
     return False, " ".join(title[1].split())[:TITLE] if title else ""
 
 
-async def tick(client: MattermostClient, uid: str, now: float | None = None) -> float | None:
+async def tick(client: ChatPort, uid: str, now: float | None = None) -> float | None:
     """Send the reminders that are due (RT-6.19); seconds until the next one,
     None without one to come. Called by the heartbeat; raises on a bus error,
     which the heartbeat swallows (the reminder is sent at the next tick)."""
@@ -163,7 +163,7 @@ def _lock(uid: str) -> int | None:
     return fd
 
 
-async def _tick(client: MattermostClient, uid: str, now: float) -> float | None:
+async def _tick(client: ChatPort, uid: str, now: float) -> float | None:
     open_asks = asks.waiting(uid)
     sent, stop = _read(uid)
     ids = {pid for pid, *_ in open_asks}
