@@ -27,6 +27,7 @@ import os
 import stat
 import sys
 import tempfile
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -331,13 +332,75 @@ def parse(path: Path) -> dict[str, str]:
     return out
 
 
-def read() -> dict[str, str]:
-    """This Claude Code session's own file, for taking its bot over after a
-    restart (RT-6.10). Only a file named after the session id counts: a
-    project-keyed one may belong to another session."""
-    if not session_id():
+# A server without a session id that ends without session_end appends this
+# mark (epoch s) to its workspace's file and keeps the bot: the next server of
+# that workspace takes it over within the grace period (RT-6.10 step 7). Only
+# an ended server writes it, so a server still running there keeps its bot.
+ENDED = "MM_SERVER_ENDED"
+
+
+def keep_sec() -> float:
+    """The grace period of a kept bot: MM_SESSION_KEEP_SEC, default 24 h."""
+    try:
+        return float(os.environ.get("MM_SESSION_KEEP_SEC") or 86400)
+    except ValueError:
+        return 86400.0
+
+
+def keyed_on_workspace() -> bool:
+    """No session id, no keyless session, and a workspace below the home
+    directory: the file is this workspace's (RT-6.17 step 2)."""
+    return not session_id() and not hosted() and not unkeyed()
+
+
+def ended_at(data: Mapping[str, str]) -> float | None:
+    try:
+        return float(data[ENDED])
+    except (KeyError, ValueError):
+        return None
+
+
+def mark_ended(token: str) -> bool:
+    """Keep the bot for the workspace's next server (RT-6.10 step 7): only
+    when the file still holds this server's bot."""
+    path = session_file_path()
+    if not token or parse(path).get("MM_BOT_TOKEN") != token:
+        return False
+    try:
+        append_private(path, f"{ENDED}={int(time.time())}\n")
+    except OSError:
+        return False
+    return True
+
+
+def _claim_ended(path: Path) -> dict[str, str]:
+    """The workspace file a server ended with, within the grace period, moved
+    out of the way first: of two servers starting at once only one gets it."""
+    ended = ended_at(parse(path))
+    if ended is None or time.time() - ended > keep_sec():
         return {}
-    data = parse(session_file_path())
+    claimed = path.with_name(f".{path.name}.taken-{os.getpid()}")
+    try:
+        os.rename(path, claimed)
+    except OSError:
+        return {}
+    try:
+        return parse(claimed)
+    finally:
+        claimed.unlink(missing_ok=True)
+
+
+def read() -> dict[str, str]:
+    """The bot to take over after a restart (RT-6.10): this Claude Code
+    session's file, or without a session id the workspace's file once its
+    server ended without session_end, within the grace period. A workspace
+    file without that mark belongs to a server that still runs."""
+    if session_id():
+        data = parse(session_file_path())
+    elif keyed_on_workspace():
+        data = _claim_ended(session_file_path())
+    else:
+        return {}
     return data if data.get("MM_BOT_TOKEN") and data.get("MM_REG_BOT_NAME") else {}
 
 

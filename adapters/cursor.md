@@ -74,8 +74,8 @@ the global `~/.cursor/mcp.json`):
   The reference in the example (`${env:MM_REG_SECRET}`) works too, but it reads the secret from
   Cursor's own environment, which the agent's shell inherits: there the agent can
   read it. On macOS Cursor takes its environment from the login shell, so a secret exported in your shell profile is there too. The bot token never enters the shell either way: the agent registers
-  with the MCP tool `session_start` and ends with `session_end` (the server's exit
-  unregisters too), and the token stays in the server and its 0600 session file.
+  with the MCP tool `session_start` and ends with `session_end` (a restarted server
+  takes the bot over, [RT-6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)), and the token stays in the server and its 0600 session file.
 
 Started from a Claude Code session, `cursor-agent` inherits that session's variables
 and tokens: start it from a clean shell

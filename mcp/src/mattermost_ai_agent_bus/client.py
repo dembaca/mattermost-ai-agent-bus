@@ -14,7 +14,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import links, ownpost, profile, session_file
+from . import a2a, links, ownpost, profile, session_file
 from .model import UnreadChannel
 
 log = logging.getLogger(__name__)
@@ -203,8 +203,18 @@ class MattermostClient:
 
     @property
     def keeps_bot_on_exit(self) -> bool:
-        """A bot of our own, in a session `claude --continue` can resume (RT-6.10)."""
-        return self.session is not None and bool(session_file.session_id())
+        """A bot of our own, kept for `claude --continue` (same session id) or,
+        without one, for the workspace's next server unless the agent's last
+        post signed off with BYE (RT-6.10)."""
+        if self.session is None:
+            return False
+        if session_file.session_id():
+            return True
+        return (session_file.keyed_on_workspace()
+                and bool(self.token)
+                and session_file.parse(session_file.session_file_path()).get("MM_BOT_TOKEN")
+                == self.token
+                and a2a.word(ownpost.read(self.session.user_id).get("MSG", "")) != "BYE")
 
     @property
     def bot_id(self) -> str:
@@ -384,11 +394,12 @@ class MattermostClient:
         self.session_file_status["project_dir"] = session_file.project_dir()
 
     def adopt_sync(self) -> SessionInfo | None:
-        """Take over this Claude Code session's bot after a restart (RT-6.10).
+        """Take over the bot of the server that ended (RT-6.10): this Claude
+        Code session's after `claude --continue`, else this workspace's after
+        a harness restarted its server (session_file.read).
 
-        `claude --continue` keeps the session id, and the server that ended
-        kept the bot and its session file. Taken over only while its token is
-        still accepted; a rejected one means the bot is gone, so the file goes.
+        Taken over only while its token is still accepted; a rejected one
+        means the bot is gone, so the file goes.
         """
         if self.token:
             return None
@@ -416,24 +427,33 @@ class MattermostClient:
     async def reap_stale_sessions(self) -> list[str]:
         """Unregister bots whose MCP-registered session ended long ago (RT-6.10).
 
-        A server keeps its bot when it ends, for `claude --continue`; nothing
-        tells a resume from a real end. A session file whose Claude process is
-        gone and that was untouched for MM_SESSION_KEEP_SEC (default 24 h) is
-        taken as ended: its bot is deleted with its own token, the file removed.
+        A server keeps its bot when it ends, for `claude --continue` or the
+        workspace's next server; nothing tells a resume from a real end. A
+        session file whose Claude process is gone and that was untouched for
+        MM_SESSION_KEEP_SEC (default 24 h) is taken as ended, and so is one
+        whose server marked its end that long ago (its harness may live on):
+        its bot is deleted with its own token, the file removed. So is the bot
+        this workspace's ended server left, which a new registration here
+        would otherwise orphan.
         """
-        try:
-            keep = float(env("MM_SESSION_KEEP_SEC") or 86400)
-        except ValueError:
-            keep = 86400.0
+        keep = session_file.keep_sec()
         reaped: list[str] = []
         now = time.time()
-        for path in session_file.others():
+        own = session_file.session_file_path()
+        paths = session_file.others()
+        if session_file.keyed_on_workspace() and session_file.ENDED in session_file.parse(own):
+            paths.append(own)
+        for path in paths:
             data = session_file.parse(path)
             name, token = data.get("MM_REG_BOT_NAME"), data.get("MM_BOT_TOKEN")
-            if not name or not token or _pid_alive(data.get("MM_SESSION_PID", "")):
+            ended = session_file.ended_at(data)
+            if not name or not token:
+                continue
+            if path != own and (now - ended < keep if ended is not None
+                                else _pid_alive(data.get("MM_SESSION_PID", ""))):
                 continue
             try:
-                if now - path.stat().st_mtime < keep:
+                if path != own and ended is None and now - path.stat().st_mtime < keep:
                     continue
                 short = mm_name(name.removeprefix(session_file.agent_prefix(data)), "agent")
                 resp = await self._http().delete(
@@ -537,14 +557,17 @@ class MattermostClient:
             return "no session"
         headers = {"Authorization": f"Bearer {self.token}"}
         uid = self.bot_id
-        if self.keeps_bot_on_exit and self.session is not None:
-            # Kept for `claude --continue`, which reuses the session id: the next
-            # server takes the bot over (adopt_sync). The file's mtime starts the
-            # grace period after which another session's start reaps it. Claude
-            # Code kills the server ~0.5 s after asking it to stop, so only the
-            # quick, local part is certain; going offline is best effort.
+        if self.keeps_bot_on_exit and self.session is not None and (
+                session_file.session_id() or session_file.mark_ended(self.token)):
+            # Kept for `claude --continue`, which reuses the session id, or for
+            # the workspace's next server (the mark): it takes the bot over
+            # (adopt_sync). The file's mtime starts the grace period after
+            # which another session's start reaps it. Claude Code kills the
+            # server ~0.5 s after asking it to stop, so only the quick, local
+            # part is certain; going offline is best effort.
             session_file.touch()
             name = self.session.name
+            how = "claude --continue" if session_file.session_id() else "the workspace's next server"
             try:
                 with httpx.Client(timeout=0.3) as http:
                     http.put(f"{self.base_url}/api/v4/users/{mm_id(self.session.user_id, 'user')}/status",
@@ -554,7 +577,7 @@ class MattermostClient:
                 pass
             self.session = None
             self.token = None
-            return f"kept {name} for claude --continue"
+            return f"kept {name} for {how}"
         try:
             with httpx.Client(timeout=5.0) as http:
                 if self.session:

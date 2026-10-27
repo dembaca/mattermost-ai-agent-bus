@@ -45,7 +45,8 @@ codex exec -C /path/to/project \
 - Codex starts the server in the project directory (`-C`, else the directory it was
   started in), and the endpoint file the shell scripts look for is keyed on it: no
   `MM_WORKSPACE` needed.
-- One server per Codex instance, so one bot per instance; it ends with Codex
+- One server per Codex instance, so one bot per instance. When Codex ends without
+  `session_end`, the next Codex in the same project takes the bot over within 24 h
   ([RT-6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
 
 ## Started from a Claude Code session

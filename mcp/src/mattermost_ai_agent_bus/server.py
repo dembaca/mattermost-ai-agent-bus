@@ -209,21 +209,29 @@ _inbox: WebSocketInbox | None = None
 # environment known to be this server's own (RT-6.10, _name_client).
 _client_named = False
 _adopt_tried = False
+# The client was asked for its roots and has not answered: the workspace, and
+# with it the bot to take over, is not known yet (RT-6.10 step 7).
+_roots_pending = False
 
 
 def _get_client() -> MattermostClient:
     global _client, _adopt_tried
     if _client is None:
         _client = MattermostClient.from_env()
-    if _client_named and not _adopt_tried:
+    if _client_named and not _adopt_tried and not _roots_pending:
         _adopt_tried = True
-        # After `claude --continue` (same session id) the bot of the server
-        # that ended is still there: take it over (RT-6.10).
-        info = _client.adopt_sync()
-        if info is not None:
-            stats.set_user(info.user_id)
-            log.info("took over %s from this session's file", info.username)
+        _adopt(_client)
     return _client
+
+
+def _adopt(client: MattermostClient) -> None:
+    """After `claude --continue` (same session id), or a harness restarting
+    this workspace's server, the bot of the server that ended is still there:
+    take it over (RT-6.10)."""
+    info = client.adopt_sync()
+    if info is not None:
+        stats.set_user(info.user_id)
+        log.info("took over %s from %s", info.username, session_file.session_file_path())
 
 
 CLAUDE_CODE = "claude-code"
@@ -359,6 +367,8 @@ def _learn_roots_soon(session: Any) -> None:
     caps = getattr(session, "client_capabilities", None)
     if caps is None or getattr(caps, "roots", None) is None:
         return
+    global _roots_pending
+    _roots_pending = True
     task = asyncio.get_running_loop().create_task(_learn_roots(session))
     _background.add(task)
     task.add_done_callback(_background.discard)
@@ -366,6 +376,14 @@ def _learn_roots_soon(session: Any) -> None:
 
 async def _learn_roots(session: Any) -> None:
     """Key the endpoint and session file on the client's first file:// root."""
+    global _roots_pending
+    try:
+        await _key_on_roots(session)
+    finally:
+        _roots_pending = False
+
+
+async def _key_on_roots(session: Any) -> None:
     try:
         result = await asyncio.wait_for(session.list_roots(), 10)
     except Exception as exc:  # noqa: BLE001 — the working directory stays the key
@@ -436,6 +454,10 @@ async def session_start(
     sessions that ended over MM_SESSION_KEEP_SEC (24 h) ago are unregistered
     first (reaped_stale_bots).
     """
+    for _ in range(110):  # the workspace first: its kept bot (RT-6.10 step 7)
+        if not _roots_pending:
+            break
+        await asyncio.sleep(0.1)
     client = _get_client()
     info = await client.session_start(name, display_name or None, unique=unique)
     if client.reused:

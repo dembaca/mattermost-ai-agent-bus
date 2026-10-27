@@ -103,3 +103,23 @@ def test_a_symlinked_state_dir_is_fine_off_the_host(tmp_path, monkeypatch):
     with pytest.raises(OSError) as exc:
         session_file.write_private(session_file.state_dir() / "b.env", "B=1\n")
     assert exc.value.errno == errno.ELOOP
+
+
+async def test_no_take_over_before_the_roots_name_the_workspace(monkeypatch):
+    """RT-6.10 step 7: keyed on the working directory until the client's roots
+    answer, a server could take over the wrong workspace's bot: it waits."""
+    adopted = []
+    client = SimpleNamespace(adopt_sync=lambda: adopted.append(1))
+    monkeypatch.setattr(server, "_client", client)
+    monkeypatch.setattr(server, "_client_named", True)
+    monkeypatch.setattr(server, "_adopt_tried", False)
+    monkeypatch.setattr(server, "_roots_pending", True)
+    assert server._get_client() is client and adopted == []
+
+    async def list_roots():
+        return SimpleNamespace(roots=[])
+
+    await server._learn_roots(SimpleNamespace(list_roots=list_roots))
+    assert not server._roots_pending
+    server._get_client()
+    assert adopted == [1]

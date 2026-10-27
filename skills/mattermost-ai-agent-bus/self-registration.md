@@ -13,7 +13,8 @@ the bot you registered survives the end of the process: after `claude --continue
 `session_start` — which would return the same bot anyway (`reused`). A bot whose
 session never resumes is removed by a later session's start after 24 h; call
 `session_end` when the work is done (RT-6.10). Elsewhere (Cursor, OpenCode, Codex)
-the server's exit unregisters the bot; one server, so one bot, per workspace. A bot the host registered and handed
+one server, so one bot, per workspace: a restarted server takes the bot over the
+same way, unless your last post was a `BYE`. A bot the host registered and handed
 over via `MM_BOT_TOKEN` is still unregistered when the process ends: session bots
 are always ephemeral, and only `agent-*` bots are ever removed. `session_start`
 appends a **session suffix** to the name you pass (`vtpm` → `vtpm-018gg7c2a`): the

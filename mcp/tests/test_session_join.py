@@ -3,12 +3,13 @@
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import session_file
+from mattermost_ai_agent_bus import ownpost, session_file
 from mattermost_ai_agent_bus.client import MattermostClient, SessionInfo, unique_name
 
 REPO = Path(__file__).resolve().parents[2]
@@ -246,7 +247,9 @@ def _patch_http(monkeypatch, handler):
     )
 
 
-def test_shutdown_unregisters_own_session(monkeypatch):
+def test_shutdown_unregisters_own_session_that_signed_off(monkeypatch):
+    """RT-6.10 step 7: without a session id the bot is kept for the workspace's
+    next server, unless the agent's last post was a BYE."""
     seen = []
 
     def handler(req):
@@ -255,7 +258,8 @@ def test_shutdown_unregisters_own_session(monkeypatch):
 
     _patch_http(monkeypatch, handler)
     session_file.write(INFO, "agents", "agents")
-    c, _ = _shutdown_client(handler, own_session=True)
+    ownpost.record(INFO.user_id, "cid00000000000000000000000", {"id": "p1", "message": "BYE · done"})
+    c, _ = _shutdown_client(handler, own_session=True, token=INFO.bot_token)
     assert c.shutdown_sync() == "unregistered proj-ab12cd34"
     assert seen == [("DELETE", "/register/v1/agents/proj-ab12cd34")]
     assert not session_file.session_file_path().exists()
@@ -387,6 +391,95 @@ def test_no_take_over_without_a_session_id(monkeypatch):
     """A project-keyed file may belong to another session."""
     _patch_http(monkeypatch, lambda req: httpx.Response(200, json={}))
     session_file.write(INFO, "agents", "agents")
+    assert _adopting_client().adopt_sync() is None
+
+
+# --- a harness restarts the server, no session id (RT-6.10 step 7) -----------
+
+def _restart(monkeypatch, *, ended_ago=0.0, workspace=None):
+    """A server of this workspace ended without session_end; returns its file."""
+    seen = []
+
+    def handler(req):
+        seen.append((req.method, req.url.path))
+        return httpx.Response(200, json={"id": INFO.user_id})
+
+    _patch_http(monkeypatch, handler)
+    path = session_file.write(INFO, "agents", "agents")
+    c, _ = _shutdown_client(handler, own_session=True, token=INFO.bot_token)
+    assert c.shutdown_sync() == "kept proj-ab12cd34 for the workspace's next server"
+    assert not any(m == "DELETE" for m, _ in seen)
+    if ended_ago:
+        text = path.read_text().replace(f"{session_file.ENDED}=", "OLD=")
+        path.write_text(text + f"{session_file.ENDED}={int(time.time() - ended_ago)}\n")
+    if workspace is not None:
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(workspace))
+    return path
+
+
+def test_a_restarted_server_takes_the_workspace_bot_over(monkeypatch):
+    """RT-6.10 step 7: OpenCode reloads its plugin, Cursor restarts a server."""
+    path = _restart(monkeypatch)
+    c = _adopting_client()
+    info = c.adopt_sync()
+    assert info is not None and info.username == INFO.username and c.token == INFO.bot_token
+    assert session_file.ENDED not in session_file.parse(path)  # in use again
+    assert _adopting_client().adopt_sync() is None  # a third server gets nothing
+
+
+def test_a_running_server_keeps_its_workspace_bot(monkeypatch):
+    """RT-6.10 step 7: only a server that ended marks its file."""
+    _patch_http(monkeypatch, lambda req: httpx.Response(200, json={}))
+    session_file.write(INFO, "agents", "agents")
+    assert _adopting_client().adopt_sync() is None
+
+
+async def test_after_the_grace_period_the_workspace_bot_goes(monkeypatch):
+    """RT-6.10 step 7: too late to take over; the new registration reaps it
+    instead of orphaning it under the same file name."""
+    path = _restart(monkeypatch, ended_ago=2 * 86400)
+    assert _adopting_client().adopt_sync() is None and path.exists()
+    deleted = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.method == "DELETE":
+            deleted.append(req.url.path.rsplit("/", 1)[1])
+            return httpx.Response(204)
+        return httpx.Response(200, json={
+            "username": "agent-x", "user_id": "uid90000000000000000000000", "bot_token": "t"})
+
+    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+                         register_url="https://mm.example/register/v1/agents")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    await c.session_start("proj")
+    assert deleted == ["proj-ab12cd34"] and c.reaped == ["proj-ab12cd34"]
+
+
+def test_another_workspace_never_takes_the_bot_over(monkeypatch, tmp_path):
+    """RT-6.10 step 7: the key is the workspace."""
+    other = tmp_path / "other"
+    other.mkdir()
+    path = _restart(monkeypatch, workspace=other)
+    assert _adopting_client().adopt_sync() is None
+    assert session_file.ENDED in session_file.parse(path)  # still there for its own
+
+
+async def test_session_end_wins_over_a_restart(monkeypatch):
+    """RT-6.10 step 7: an explicit session_end unregisters at once; the next
+    server finds nothing to take over."""
+    deleted = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        deleted.append(req.method)
+        return httpx.Response(204)
+
+    session_file.write(INFO, "agents", "agents")
+    c = _client(handler)
+    c.token, c.register_url = INFO.bot_token, "https://mm.example/register/v1/agents"
+    await c.session_end()
+    assert deleted == ["DELETE"] and not session_file.session_file_path().exists()
+    assert c.shutdown_sync() == "no session"
+    _patch_http(monkeypatch, lambda req: httpx.Response(200, json={}))
     assert _adopting_client().adopt_sync() is None
 
 
