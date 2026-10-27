@@ -39,7 +39,7 @@ def test_a_turn_ends_at_the_stop_that_lets_go(mm, run):
     mm.unread_dm(1)
     assert all(run(STOP).blocked for _ in range(3))     # three drain rounds: no end
     assert [e["k"] for e in events(run)] == ["turn", "block", "block", "block"]
-    assert run(STOP).passed                              # the counter is stale: let go
+    assert run(STOP).passed                              # the count is stale: let go
     kinds = [e["k"] for e in events(run)]
     assert kinds.count("turn") == 1 and kinds[-1] == "turn_end"
     assert kinds.count("turn_end") == 1

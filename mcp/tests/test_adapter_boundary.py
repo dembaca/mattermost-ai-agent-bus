@@ -19,7 +19,8 @@ ALLOWED = {
 # Keys that are a carrier wherever they appear.
 CARRIERS = {
     "props", "a2a", "agent_card", "attachments", "from_webhook",
-    "last_viewed_at", "msg_count", "mention_count", "total_msg_count", "bot_description",
+    "last_viewed_at", "last_post_at", "msg_count", "mention_count", "total_msg_count",
+    "bot_description",
 }
 # Roster keys, only as a read (x["crown"], x.get("crown")): a bus value may be
 # named the same. A reaction's emoji is a bus value; the status emoji's word

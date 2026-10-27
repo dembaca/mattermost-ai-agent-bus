@@ -13,8 +13,8 @@
 # Only when all three let go does the status flip to 💤 idle.
 # Spec: RT-6.2, RT-6.3, RT-6.4 in docs/arc42/06-runtime-view.md.
 #
-# Asks the MCP server (RT-6.17), which reads Mattermost's unread counters
-# (cheap, non-destructive); delivery stays on exactly one path:
+# Asks the MCP server (RT-6.17), which counts what came after its read
+# watermark (cheap, non-destructive); delivery stays on exactly one path:
 # wait_for_events. The human ends the listen window with their next prompt,
 # which stops the listener; the 👂 status expires on its own.
 #
@@ -35,7 +35,7 @@ TURN_BLOCKED=0
 turn_end() { [[ "$TURN_BLOCKED" -eq 1 ]] || mm_stat turn_end; }
 trap turn_end EXIT
 
-# Drain rounds per turn before a counter that wait_for_events cannot clear is
+# Drain rounds per turn before a count that wait_for_events cannot clear is
 # treated as stale. Bounds the hook against looping forever.
 MAX_DRAIN=3
 # Waiting costs no model calls (bin/mm-agent-listen.sh), so the window is long.
@@ -183,7 +183,7 @@ if [[ "$pending" -gt 0 && "$DRAINS" -lt "$MAX_DRAIN" ]]; then
   if [[ -n "$detail" ]]; then
     reason+=$'\n\nPending per channel:\n'"$detail"
   fi
-  reason+=$'\n\nIf wait_for_events returns nothing, the counter is stale — say so and finish.'
+  reason+=$'\n\nIf wait_for_events returns nothing, the count is stale — say so and finish.'
   block "$reason" "📨 Collecting ${pending} unread Mattermost message(s)" drain
 fi
 

@@ -239,8 +239,8 @@ nothing.
 Mentions and DMs come first. When more were waiting than one call returns, the
 last item is `{kind: more_pending, count}`: call again until it is gone (RT-6.2).
 
-Collecting an event marks its channel read. Under Claude Code a `Stop` hook also
-checks the unread counters and blocks the end of a turn while anything is
+Collecting an event marks it handled (RT-6.2). Under Claude Code a `Stop` hook
+also checks what still waits and blocks the end of a turn while anything is
 pending — so treat the points above as how you avoid being interrupted, not as
 the safety net. Without this MCP server the hooks stay quiet (RT-6.17).
 

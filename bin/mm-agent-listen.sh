@@ -16,13 +16,13 @@
 #   - a reaction to one of its open asks (asks-<uid>.env, RT-6.11) that the
 #     agent has not been handed yet and the server did not gate (RT-6.16).
 # A post the MCP server gated (GATED in gate-<uid>.env: by someone the agent
-# does not trust, already answered, RT-6.16) is not for it; the server also
-# marked its channel read, so it raises no counter here.
+# does not trust, already answered, RT-6.16) is not for it; the server counts
+# it nowhere.
 # Other posts wake it only for a digest, once the oldest of them is
 # MM_LISTEN_DIGEST_SEC (default 1800 s) old: every wake-up is a full model turn,
 # and a busy channel would otherwise wake every member for every post.
 # Its last line tells the woken agent what to do. It only looks; collecting a
-# message (and marking it read) stays with the MCP tool wait_for_events.
+# message (and moving the read watermark) stays with the MCP tool wait_for_events.
 #
 # Window state lives in listen-<uid>.env next to the turn state: UNTIL, SINCE
 # (window opened), ASKED_AT (Stop hook asked), STARTED, PID, ENDED (event |
