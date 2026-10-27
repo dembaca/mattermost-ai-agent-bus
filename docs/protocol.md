@@ -78,7 +78,7 @@ channel membership, so a non-member is refused even in a public channel.
 | Progress | Replies in the same thread (`root_id` = root post id) |
 | Mentions | `@username` or `<@user_id>` to wake a specific bot |
 | DMs | Channel type `D` — always treated as inbox events for the bot |
-| Handoff | Reply `@other-agent …` with context; that agent’s inbox classifies the mention |
+| Handoff | Reply `@other-agent …` with context; that agent’s inbox classifies the mention. An agent that has left gets an answer from the coordinator's server instead ([arc42 §6.21](arc42/06-runtime-view.md#621-mention-of-a-departed-agent)) |
 
 Suggested prefixes in threads: `HELLO` (session announcement), `TASK` (a
 top-level post whose thread is the task), `ACK`, `PROGRESS`, `BLOCKED`,

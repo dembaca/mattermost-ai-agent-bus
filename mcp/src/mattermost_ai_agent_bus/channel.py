@@ -190,13 +190,15 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
     """The listener's rules (RT-6.2): what is for this agent is pushed at once,
     a stall the server noticed, too (RT-6.19).
     A human's plain post wakes only the coordinator, which routes it (RT-6.6);
-    a post the inbox gated wakes nobody here (RT-6.16). An agent's fyi post
+    a post the inbox gated wakes nobody here (RT-6.16), a mention of a
+    departed agent the one that answers it (RT-6.21). An agent's fyi post
     (RT-6.14) wakes only whom it names and the author of its thread's root,
     who waits for it; the coordinator and others in the thread get it in the
     digest."""
     if item.get("gated"):
         return False
     if (item.get("kind") in ("mention", "dm", "reaction", "stall") or item.get("to") == a2a.ALL
+            or item.get("departed")
             or broadcast(str((item.get("post") or {}).get("message", "")))):
         return True
     if coordinator or in_my_thread:
@@ -233,7 +235,7 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
             meta["post_id" if key == "id" else key] = str(post[key])
     meta["from_trusted_human"] = "true" if item.get("from_trusted_human") else "false"
     meta["from_agent"] = "true" if item.get("from_agent") else "false"
-    for key in ("trusted_human", "ask", "emoji", "answer", "to", "intent"):
+    for key in ("trusted_human", "ask", "emoji", "answer", "to", "intent", "departed"):
         if item.get(key):
             meta[key] = str(item[key])
     if item.get("expired"):

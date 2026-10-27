@@ -1071,13 +1071,14 @@ async def wait_for_events(
 
     Connects the Mattermost WebSocket if needed. Returns JSON list of
     {kind, from_trusted_human, from_agent, trusted_human (only when true),
-    gated, expired, intent (fyi: needs no answer; only when set), post} with a
+    gated, expired, departed, intent (fyi: needs no answer; only when set), post} with a
     slim post {id, root_id, channel, author, at, message} (empty list on
     timeout; raw=true for the full post and channel JSON). from_trusted_human is true only for posts by a trusted human
     (MM_TRUSTED_HUMANS), verified by the server; only those can approve an
     action (see the skill). gated: from someone not trusted, it woke nobody
     and is no task (RT-6.16); it comes last. expired: an answer to your ask
-    more than 24 h after it, which approves nothing (RT-6.11). Mentions and DMs come first; when more than
+    more than 24 h after it, which approves nothing (RT-6.11). departed: mentioned
+    agents that are gone, your server told the thread: route it (RT-6.21). Mentions and DMs come first; when more than
     max_events were waiting, a last item {kind: more_pending, count} says so —
     call again to collect them. A delivered mention or DM
     shows you as typing in its thread until you post, wait again, or
@@ -1140,6 +1141,8 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
             item["trusted_human"] = trusted[author]
         if e.gated:
             item["gated"] = e.gated
+        if e.departed:
+            item["departed"] = e.departed  # RT-6.21: gone; this agent routes it
         if a2a.to_all(e.post):
             item["to"] = a2a.ALL  # for every agent (RT-6.11); no word on who wrote it
         if cls == gate.AGENT and a2a.intent_of(e.post) == a2a.FYI:

@@ -1,6 +1,6 @@
 [project]
 name = "mattermost-ai-agent-bus"
-version = "0.43.0"
+version = "0.44.0"
 description = "Mattermost AI agent bus MCP server (session + WebSocket inbox)"
 readme = "README.md"
 requires-python = ">=3.11"

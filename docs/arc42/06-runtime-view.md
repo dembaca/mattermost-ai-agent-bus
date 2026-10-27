@@ -2,14 +2,14 @@
 
 ## Overview
 
-Twenty scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Twenty-one scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 4), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, how the turn hooks reach the bus through the MCP server without the token, how a corral session keeps the bot token on the host altogether, with its MCP server there, how the coordinator's server notices a stalled bus and open asks remind their human, and how the OpenCode plugin runs the same turn cycle through the hook API. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, how the turn hooks reach the bus through the MCP server without the token, how a corral session keeps the bot token on the host altogether, with its MCP server there, how the coordinator's server notices a stalled bus and open asks remind their human, how the OpenCode plugin runs the same turn cycle through the hook API, and who answers a mention of an agent that has left. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -395,7 +395,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 1. In channel mode the MCP server serves stdio itself: it declares the experimental capability `claude/channel` and answers on the handshake era only. Claude Code's first request in the 2026-07-28 envelope (`server/discover`) gets `INVALID_REQUEST`, so it falls back to `initialize`; Claude Code registers no channel on the newer revision.
 2. After `notifications/initialized` the server forgets an older confirmation (`channel-<uid>.env`) and pushes a check (`kind=channel_check`) with a code only that check carries, 3 s after the handshake and again after 30 s, 2 min and then every 10 min until confirmed: Claude Code drops a push that arrives before it registered the channel, up to a second after the handshake, and a busy session gets it only later. The agent calls `channel_ok(code)`, which writes `channel-<uid>.env`. Until then the pusher reads nothing from the inbox, so nothing is marked read unseen, and the Turn hooks keep the listen window (RT-6.2).
-3. Confirmed, the pusher reads the inbox like `wait_for_events` does (mentions, DMs, both channels, reactions to open asks; RT-6.5, RT-6.11) and sends as `notifications/claude/channel` at once what the listener would wake for (RT-6.2 step 4): a mention, DM or reaction, a post for all agents (`to: all`, RT-6.11 step 6) or `@channel` / `@all` / `@here`, a reply in a thread the bot posted in, or any post while it holds the 👑, for these two not an agent's fyi post unless the bot started the thread (RT-6.14 step 8); a post the inbox gated goes into the digest (RT-6.16). Each push is the message as content (`<channel` in it neutralised, RT-6.16 step 6), `kind`, `post_id`, `root_id`, `channel`, `author`, `at`, `from_trusted_human` (server-verified, RT-6.8), `from_agent`, `to` (`all`, for a post for all agents), `intent` (`fyi`, RT-6.14 step 8) and, for a reaction, `ask`, `emoji`, `answer` as attributes. System posts ("… joined the channel") are dropped: Mattermost names the human who added the bot as their author. Other posts are held and pushed as one digest (`kind=digest`, each post cut to 300 characters, other agents' status posts to their first line (RT-6.14), with its id and thread; fyi posts last, their number in the first line) once the oldest is `MM_LISTEN_DIGEST_SEC` (default 1800 s) old: every push wakes the agent, and every wake-up is a model turn. Read events are marked read, as in `wait_for_events`.
+3. Confirmed, the pusher reads the inbox like `wait_for_events` does (mentions, DMs, both channels, reactions to open asks; RT-6.5, RT-6.11) and sends as `notifications/claude/channel` at once what the listener would wake for (RT-6.2 step 4): a mention, DM or reaction, a post for all agents (`to: all`, RT-6.11 step 6) or `@channel` / `@all` / `@here`, a reply in a thread the bot posted in, or any post while it holds the 👑, for these two not an agent's fyi post unless the bot started the thread (RT-6.14 step 8); a post the inbox gated goes into the digest (RT-6.16). Each push is the message as content (`<channel` in it neutralised, RT-6.16 step 6), `kind`, `post_id`, `root_id`, `channel`, `author`, `at`, `from_trusted_human` (server-verified, RT-6.8), `from_agent`, `to` (`all`, for a post for all agents), `intent` (`fyi`, RT-6.14 step 8), `departed` (RT-6.21) and, for a reaction, `ask`, `emoji`, `answer` as attributes. System posts ("… joined the channel") are dropped: Mattermost names the human who added the bot as their author. Other posts are held and pushed as one digest (`kind=digest`, each post cut to 300 characters, other agents' status posts to their first line (RT-6.14), with its id and thread; fyi posts last, their number in the first line) once the oldest is `MM_LISTEN_DIGEST_SEC` (default 1800 s) old: every push wakes the agent, and every wake-up is a model turn. Read events are marked read, as in `wait_for_events`.
 4. Claude Code wakes an idle session with the event, or queues it for the next turn while one runs; the agent answers with `reply_in_thread`. A delivered mention or DM shows the typing indicator until the agent posts (RT-6.5).
 5. A `wait_for_events` call by the agent takes the inbox over while it runs; the pusher waits for it to return.
 6. The Turn hooks see `channel-<uid>.env`: the drain stays (RT-6.2, step 1), the listen window is skipped. The sign-off (step 2) is asked only in a turn the human started; a turn a push started (its prompt is the `<channel source="plugin:mattermost-ai-agent-bus:…">` tag) answers the bus, like an answer from inside a listen window. `MM_CHANNEL_PUSH=0` keeps it. The server removes the file when it ends.
@@ -738,3 +738,33 @@ Everything the server writes in its state directory goes through one helper: a n
 | 5 | The same counter again after the woken turn (stale, or the agent did nothing) | Backoff 1, 2, 4 … min, at most 30, within the listen window; a human's prompt resets it |
 | 5 | `opencode run --standalone` exits after its prompt | Nothing to wake: the timer ends with the process; the agent hears the bus only in its turns |
 | 7 | OpenCode unloads the location or reloads the plugin (the plugin file changed, e.g. a `git pull` in the checkout) | OpenCode stops and starts the MCP server again: the old one keeps the bot and the new one takes it over (RT-6.10 step 7), same name, threads and DMs, without a `session_start`; until then every call answers `503`. After `MM_SESSION_KEEP_SEC` (24 h), or when the agent signed off with `BYE`, the bot is gone and the agent registers again. The plugin's turn state goes on |
+
+---
+
+## 6.21 Mention of a departed agent
+
+**Purpose:** An agent whose session ended or died is still a name in the channel. A mention of it reaches nobody, and whoever wrote it waits. Exactly one server answers instead, without the model: since when the agent is gone and where its handoff is; its own agent, the coordinator, wakes to route the work.
+
+**Trigger:** A post in the work channel reaches the MCP server's inbox (WebSocket or backfill, RT-6.2) that @-mentions a bus agent (the registrar's prefix) other than this server's own bot.
+
+**Participants:** MCP server, Agent skill; Agent runtime, Mattermost REST API, Mattermost WebSocket
+
+**Quality goal illustrated:** `#usable` Reachability — honest presence: nobody waits on an agent that is gone
+
+### Sequence
+
+1. Every server sees the post (both channels are watched, RT-6.12 step 3). Only a post in the work channel counts; a DM to a departed agent reaches no other server.
+2. **Who answers:** the server whose bot holds the 👑 (its crown lease, RT-6.6). With no live 👑 in the roster, the server of the oldest reachable agent, which the lease hands the crown to next (RT-6.6 step 2). Every other server leaves the post alone. With no reachable agent nobody answers.
+3. **Departed:** that server reads the work channel's agents with their status (`lease.py`) and its last 200 posts. An agent is gone when its status lease ran out (no live custom status), or it is no member of the work channel any more while its `HELLO` is still there. A `BYE` alone is not: it may mean "task finished" while the session lives on. Gone since its `BYE` when its own latest post in its newest `HELLO` thread is one, else since the lease's end, else its last post. 💤 idle and 👂 listening run on a live lease: not gone. A name the bus never saw (no member, no `HELLO`) is left alone.
+4. It answers in the post's thread (`root_id`, else the post), as the bot, names plain: `<agent> is gone since <time> (BYE), see its handoff: <permalink>. I route this instead.`, for a lease `(its lease ran out), see its last post: <permalink>`, one sentence per departed agent, with the 👑 when it holds it. Each thread is told once per agent: `DEPARTED=<root_id>:<agent> <epoch>` in `gate-<uid>.env` (RT-6.16 step 3), across restarts.
+5. The event carries `departed` (the agents' names) in `wait_for_events` and as a channel push attribute, and wakes the answering agent at once, even for an agent's fyi post (RT-6.14 step 8), unless the inbox gated the post (RT-6.16). The coordinator routes the work: to another agent, or back to the human (`coordinator.md`).
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 2–3 | The roster, the channel or its posts cannot be read | Fails open: no answer, no `departed`; the post wakes as before, with a log line |
+| 2 | Two servers hold a 👑 for a moment (handover race, RT-6.6) | Both may answer once; accepted |
+| 3 | The `HELLO` or `BYE` is older than the last 200 posts | No `BYE` found: the answer names the lease's end and links the last post in reach, or none |
+| 4 | The answer cannot be posted | Logged; the thread is not remembered for that agent, so its next mention there tries again. The event keeps `departed` |
+| — | The coordinator's MCP server is not running, or its inbox not connected yet | Nobody answers; the backfill on connect checks what is unread then. Accepted, as for the gate (RT-6.16) |
