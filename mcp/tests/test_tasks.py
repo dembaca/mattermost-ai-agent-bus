@@ -93,7 +93,7 @@ def test_mentioned_agent_takes_declines_and_only_it_moves_the_task():
 
 def test_done_is_listed_once_and_cancel_never():
     """RT-6.14 step 3: DONE stays until the next ASSIGNMENTS (at most a day);
-    a CANCEL by the coordinator drops the task."""
+    a CANCEL by the coordinator (the roster's crown holder) drops the task."""
     posts = [
         P("t", LEIT, "TASK · x · @agent-a", at=0),
         P("1", A, "ACK", root="t", at=1),
@@ -101,9 +101,11 @@ def test_done_is_listed_once_and_cancel_never():
         P("u", LEIT, "TASK · y", at=3),
         P("3", B, "👑 CANCEL – not needed", root="u", at=4),
     ]
-    assert [(r["task"], r["status"]) for r in tasks.build(posts, NAMES, now_ms=NOW)] == [("t", "done")]
+    crown = {"agent-b"}
+    assert [(r["task"], r["status"])
+            for r in tasks.build(posts, NAMES, now_ms=NOW, coordinators=crown)] == [("t", "done")]
     posts.append(P("as", LEIT, "ASSIGNMENTS · x done", at=5))
-    assert tasks.build(posts, NAMES, now_ms=NOW) == []
+    assert tasks.build(posts, NAMES, now_ms=NOW, coordinators=crown) == []
     assert tasks.build(posts[:3], NAMES, now_ms=NOW + 2 * 86_400_000) == []
 
 
@@ -222,6 +224,70 @@ class _Client:
         return []
 
 
+def _note(**a2a_props):
+    return {"props": {"a2a": {"v": 1, **a2a_props}}}
+
+
+def test_pr_and_branch_from_props_else_text():
+    """RT-6.14 step 3: PR and branch come from props.a2a; a post without
+    (older, a person's) is read from its text; props win over the text."""
+    root = P("t", LEIT, "TASK · x · @agent-a", at=0)
+    props_only = [root, P("1", A, "ACK · on it", root="t", at=1,
+                          **_note(kind="ack", pr=61, branch="feat/x"))]
+    [row] = tasks.build(props_only, NAMES, now_ms=NOW)
+    assert (row["pr"], row["branch"]) == ("#61", "feat/x")
+    text_only = [root, P("1", A, "RESULT PR #62 on branch feat/y", root="t", at=1)]
+    [row] = tasks.build(text_only, NAMES, now_ms=NOW)
+    assert (row["pr"], row["branch"]) == ("#62", "feat/y")
+    both = [root, P("1", A, "RESULT PR #62 on branch feat/y", root="t", at=1,
+                    **_note(kind="result", pr=63, branch="feat/z"))]
+    [row] = tasks.build(both, NAMES, now_ms=NOW)
+    assert (row["pr"], row["branch"]) == ("#63", "feat/z")
+
+
+def test_the_crown_to_close_comes_from_roster_or_props_not_text():
+    """RT-6.14 step 3: a CANCEL by someone other than the task's author
+    counts from the roster's crown holder, or from an agent's post the server
+    wrote while it held the crown; a 👑 typed in the text counts for nothing."""
+    root = P("t", LEIT, "TASK · x", at=0)
+
+    def rows(close, **kw):
+        return tasks.build([root, close], NAMES, now_ms=NOW, **kw)
+
+    typed = P("1", B, "👑 CANCEL – not needed", root="t", at=1)
+    assert [r["status"] for r in rows(typed)] == ["open"]
+    assert rows(typed, coordinators={"agent-b"}) == []
+    assert rows(typed, coordinators={"agent-a"}) != []
+    crowned = P("1", B, "👑 CANCEL", root="t", at=1, **_note(kind="cancel", crown=True))
+    assert rows(crowned) == []  # crowned when it posted; the crown moved on since
+    by_person = P("1", HUMAN, "CANCEL", root="t", at=1, **_note(kind="cancel", crown=True))
+    assert [r["status"] for r in rows(by_person)] == ["open"]
+
+
+def test_a_typed_crown_from_before_the_cutover_still_closes():
+    """RT-6.14 step 3: an agent's 👑 CANCEL from before 0.46.0 (no crown props)
+    keeps its task closed; a person's, or one after the cutover, does not."""
+    cut = tasks.LEGACY_CROWN_BEFORE_MS
+    root = {**P("t", LEIT, "TASK · x", at=0), "create_at": cut - 10}
+
+    def rows(uid, message, at):
+        close = {**P("1", uid, message, root="t"), "create_at": at}
+        return tasks.build([root, close], NAMES, now_ms=cut + 1000)
+
+    assert rows(B, "👑 CANCEL – not needed", cut - 1) == []
+    assert [r["status"] for r in rows(B, "👑 CANCEL", cut)] == ["open"]
+    assert [r["status"] for r in rows(HUMAN, "👑 CANCEL", cut - 1)] == ["open"]
+
+
+def test_annotate_names_pr_branch_and_crown():
+    """RT-6.14 step 2: the server writes what the text names into props."""
+    assert a2a.annotate("RESULT PR #57 on branch feat/a", crown=True) == {
+        "v": 1, "kind": "result", "state": "input-required", "intent": "fyi",
+        "pr": 57, "branch": "feat/a", "crown": True}
+    assert a2a.annotate("see https://github.com/o/r/pull/9") == {"v": 1, "pr": 9}
+    assert a2a.annotate("thanks", crown=False) is None
+
+
 T26 = "t" * 26  # a valid post id: the server refuses others (#81)
 
 
@@ -250,6 +316,19 @@ async def test_posts_carry_their_kind(bus):
     assert c.posted[0]["props"] == {"a2a": {"v": 1, "kind": "ack", "state": "working",
                                             "intent": "fyi"}}
     assert c.posted[1]["props"] is None
+
+
+@pytest.mark.asyncio
+async def test_posts_carry_pr_branch_and_crown(bus):
+    """RT-6.14 step 2: post_message and reply_in_thread write pr, branch and,
+    while the author holds the crown, crown into props.a2a."""
+    c = bus([], crown=True)
+    await server.reply_in_thread(root_id=T26, message="RESULT PR #57 on branch feat/a")
+    await server.post_message(message="CANCEL · not needed")
+    assert c.posted[0]["props"]["a2a"] == {
+        "v": 1, "kind": "result", "state": "input-required", "intent": "fyi",
+        "pr": 57, "branch": "feat/a", "crown": True}
+    assert c.posted[1]["props"]["a2a"]["crown"] is True
 
 
 @pytest.mark.asyncio

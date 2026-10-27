@@ -28,11 +28,14 @@ _ASSIGNEE = frozenset({"ACK", "PROGRESS", "BLOCKED", "WAITING", "RESULT", "DONE"
 _CLOSERS = frozenset({"DONE", "CANCEL"})
 # The words that claim a task (RT-6.14 step 3).
 TAKES = frozenset({"ACK", "PROGRESS", "RESULT"})
+# Before 0.46.0 the crown was only the 👑 the server put in front of an
+# agent's text; an agent's post from before this cutover (2026-10-28T00:00Z)
+# still closes a task with it (RT-6.14 step 3). Remove this, and its use in
+# _crown, once the date is WINDOW_DAYS (14) behind us: no such post is read then.
+LEGACY_CROWN_BEFORE_MS = 1_793_145_600_000
 
-_PR = re.compile(r"(?:\bPR\s*#|\bMR\s*!|/pull/|/merge_requests/)(\d+)", re.I)
 _ISSUE = re.compile(r"(?<![\w/&])#(\d+)\b")
 _SPEC = re.compile(r"\bRT-\d+\.\d+\b|\b[A-Z][A-Z0-9]+-\d+\b(?!\.\d)")
-_BRANCH = re.compile(r"\bbranch(?:/PR)?:?\s+([\w.]*[-/][\w./-]*\w)")
 _LEAD = re.compile(r"^[^\w@#]*(TASK|DELEGATE)\b[\s·:–-]*")
 
 
@@ -82,12 +85,15 @@ def build(
     *,
     now_ms: int | None = None,
     untrusted: Collection[str] = (),
+    coordinators: Collection[str] = (),
 ) -> list[dict[str, Any]]:
     """The tasks of the work channel: top-level TASK / DELEGATE posts and
     their threads, newest change last. Only the task's own thread moves it:
     an agent's HELLO thread speaks of whatever it does next, too. Rows leave
     out what is unknown. A root in `untrusted` (post ids by someone the
-    agent does not trust, RT-6.16) is no task."""
+    agent does not trust, RT-6.16) is no task. `coordinators`: usernames of
+    the crown holder now (lease.roster), who may close any task; an agent's
+    close written while it held the crown (props.a2a.crown) counts too."""
     now_ms = now_ms or int(time.time() * 1000)
     order = _live(posts)
 
@@ -114,7 +120,7 @@ def build(
             }
     for p in order:
         if p.get("root_id") in tasks:
-            _apply(tasks[p["root_id"]], p, who(p))
+            _apply(tasks[p["root_id"]], p, who(p), coordinators)
 
     out = []
     for t in tasks.values():
@@ -135,10 +141,23 @@ _STATE = {"open": "submitted", "active": "working", "blocked": "input-required",
           "review": "input-required", "done": "completed"}
 
 
-def _apply(t: dict[str, Any], p: Mapping[str, Any], author: str) -> None:
-    msg = str(p.get("message", ""))
+def _crown(p: Mapping[str, Any], author: str, coordinators: Collection[str]) -> bool:
+    """A close by someone other than the task's author counts when the author
+    holds the crown now, or is an agent that held it when it posted: the server
+    wrote props.a2a.crown (RT-6.14 step 3). A 👑 in the text is no authority,
+    except on an agent's post from before LEGACY_CROWN_BEFORE_MS."""
+    if author in coordinators:
+        return True
+    if not author.startswith(session_file.agent_prefix()):
+        return False
+    legacy = (int(p.get("create_at") or 0) < LEGACY_CROWN_BEFORE_MS
+              and str(p.get("message", "")).lstrip().startswith("👑"))
+    return a2a.crowned(p) or legacy
+
+
+def _apply(t: dict[str, Any], p: Mapping[str, Any], author: str,
+           coordinators: Collection[str] = ()) -> None:
     kind = a2a.kind_of(p) or ""
-    crowned = msg.lstrip().startswith("👑")
     if t["agent"] is None and kind in TAKES and author != t["by"]:
         if not t["_candidates"] or author in t["_candidates"]:
             t["agent"] = author
@@ -148,15 +167,15 @@ def _apply(t: dict[str, Any], p: Mapping[str, Any], author: str) -> None:
             t["_candidates"] = [c for c in t["_candidates"] if c != author]
         elif kind in _ASSIGNEE:
             t["status"] = a2a.status(kind)
-        pr = _PR.findall(msg)
-        if pr:
-            t["pr"] = f"#{pr[-1]}"
-        branch = _BRANCH.findall(msg)
+        pr = a2a.pr_of(p)
+        if pr is not None:
+            t["pr"] = f"#{pr}"
+        branch = a2a.branch_of(p)
         if branch:
-            t["branch"] = branch[-1]
+            t["branch"] = branch
     elif kind == "NO" and author in t["_candidates"]:
         t["_candidates"] = [c for c in t["_candidates"] if c != author]
-    elif kind in _CLOSERS and (author == t["by"] or crowned):
+    elif kind in _CLOSERS and (author == t["by"] or _crown(p, author, coordinators)):
         t["status"] = a2a.status(kind)
     else:
         return
