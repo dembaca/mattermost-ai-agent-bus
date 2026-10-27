@@ -19,6 +19,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import hosted, session_file, stats
+from mattermost_ai_agent_bus.client import post_of
 
 KEY = "k" * 64
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -213,7 +214,7 @@ def test_state_files_refuse_a_symlinked_target(tmp_path):
         session_file.append_private(d / f"stats-{uid}.jsonl", "{}\n")
     from mattermost_ai_agent_bus import asks, ownpost
 
-    ownpost.record(uid, "c" * 26, {"id": "p1", "message": "hi", "create_at": 1})
+    ownpost.record(uid, "c" * 26, post_of({"id": "p1", "message": "hi", "create_at": 1}))
     stats.set_user(uid)
     stats.record("turn", by="human")
     with pytest.raises(OSError):

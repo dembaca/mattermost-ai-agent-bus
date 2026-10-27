@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import hookapi, lease, ownpost, session_file, stall, turnend, unread
+from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import UnreadChannel
 
 UID = "u" * 26
@@ -39,8 +40,8 @@ class FakeClient:
     async def channel_posts(self, cid, *, per_page=None, since_ms=None):
         self.calls.append(("posts", per_page, since_ms))
         if since_ms is not None:
-            return [p for p in self.posts if p["create_at"] >= since_ms]
-        return list(self.posts)[:per_page]
+            return [post_of(p) for p in self.posts if p["create_at"] >= since_ms]
+        return [post_of(p) for p in list(self.posts)[:per_page]]
 
     async def agents(self, ids):
         return set(ids) & self._agents
@@ -247,7 +248,7 @@ async def test_wake_reads_the_own_threads_once_until_the_agent_posts(api, unread
     for _ in range(3):
         assert (await h.get(f"/v1/wake?{q}")).json()["wake"] is False
     assert client.calls.count(("posts", hookapi.MAX_POSTS, None)) == 1
-    ownpost.record(UID, "c" * 26, post("n", "IDLE · done: y", user=UID, at=now * 1000))
+    ownpost.record(UID, "c" * 26, post_of(post("n", "IDLE · done: y", user=UID, at=now * 1000)))
     assert (await h.get(f"/v1/wake?{q}")).json()["wake"] is False
     assert client.calls.count(("posts", hookapi.MAX_POSTS, None)) == 2
 

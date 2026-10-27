@@ -76,6 +76,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import a2a, asks, channel, gate, lease, ownpost, session_file, stall, stats, turnend, unread
 from .client import InvalidId, _pid_alive, mm_name
+from .model import Post
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -430,31 +431,37 @@ async def last_post(client: MattermostClient, query: Mapping[str, str], body: Ma
     """The own latest post in the work channel (RT-6.2 step 2): from
     last-<uid>.env (ownpost.py) without a request, else from the channel's last
     100 posts; at 0 when there is none."""
+    at, message = await _last(client, query, body)
+    return 200, {"at": at, "message": message}
+
+
+async def _last(client: MattermostClient, query: Mapping[str, str],
+                body: Mapping[str, Any]) -> tuple[int, str]:
+    """last_post's (at, message)."""
     uid = await _uid(client)
     rec = ownpost.read(uid)
     if rec.get("AT", "").isdigit() and rec.get("MSG"):
-        return 200, {"at": int(rec["AT"]), "message": rec["MSG"]}
+        return int(rec["AT"]), rec["MSG"]
     for post in await client.channel_posts(await client.work_channel_id(), per_page=100):
-        if post.get("user_id") == uid:
-            message = str(post.get("message") or "").removeprefix("👑 ").replace("\n", " ").strip()
-            return 200, {"at": int(post.get("create_at") or 0), "message": message}
-    return 200, {"at": 0, "message": ""}
+        if post.user_id == uid:
+            return post.create_at, post.message.removeprefix("👑 ").replace("\n", " ").strip()
+    return 0, ""
 
 
-def _slim(post: Mapping[str, Any], agents: set[str], gated: set[str]) -> dict[str, Any]:
-    intent = a2a.intent_of(post) or ""
+def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
+    intent = post.intent or ""
     return {
-        "id": str(post.get("id") or ""),
-        "user_id": str(post.get("user_id") or ""),
-        "root_id": str(post.get("root_id") or ""),
-        "create_at": int(post.get("create_at") or 0),
-        "type": str(post.get("type") or ""),
-        "message": str(post.get("message") or ""),
-        "to": a2a.ALL if a2a.to_all(post) else "",
+        "id": post.id,
+        "user_id": post.user_id,
+        "root_id": post.root_id,
+        "create_at": post.create_at,
+        "type": post.type,
+        "message": post.message,
+        "to": post.to,
         "intent": intent,
         # Only an agent's intent counts: anyone can write props (RT-6.14).
-        "fyi": intent == a2a.FYI and post.get("user_id") in agents,
-        "gated": post.get("id") in gated,
+        "fyi": intent == a2a.FYI and post.user_id in agents,
+        "gated": post.id in gated,
     }
 
 
@@ -508,7 +515,7 @@ async def posts(client: MattermostClient, query: Mapping[str, str], body: Mappin
         raw = await client.channel_posts(cid, since_ms=int(since))
     else:
         raw = await client.channel_posts(cid, per_page=max(1, min(int(limit), MAX_POSTS)))
-    authors = {str(p.get("user_id")) for p in raw if p.get("user_id") and a2a.intent_of(p) == a2a.FYI}
+    authors = {p.user_id for p in raw if p.user_id and p.intent == a2a.FYI}
     try:
         agents = await client.agents(authors) if authors else set()
     except Exception as exc:  # noqa: BLE001 — nobody counts as an agent then
@@ -609,7 +616,7 @@ def _fields(body: Mapping[str, Any], required: str) -> dict[str, str]:
         out[name] = value
     if not out[required].strip():
         raise BadRequest(f"{required}: required")
-    if not (out["message"].strip() or out["kind"].strip()):
+    if not {n for n, v in out.items() if v.strip()} & {"message", "kind"}:
         raise BadRequest("message: required (or a kind alone, e.g. IDLE)")
     return out
 
@@ -667,12 +674,11 @@ async def turn_end(client: MattermostClient, query: Mapping[str, str],
         count = sum(r.waiting for r in rows) + (1 if stall.waiting() else 0)  # as /v1/pending
         if count > 0:
             return 200, turnend.drain(count, await unread.detail(client, rows) if rows else [])
-    _, last = await last_post(client, query, body)
-    message = str(last.get("message") or "")
+    at, message = await _last(client, query, body)
     if turnend.needs_signoff(message, asked=asked, by_bus=by_bus, push=push):
         return 200, turnend.signoff(push=push)
     uid = await _uid(client)
-    start, until = turnend.listen_window(message, int(last.get("at") or 0), project=_project(client),
+    start, until = turnend.listen_window(message, at, project=_project(client),
                                          coordinator=lease.crown_until(uid) > time.time(),
                                          since=int(since))
     return 200, {"action": "idle", **({"listen_since": start, "listen_until": until} if until else {})}
@@ -707,9 +713,8 @@ async def wake(client: MattermostClient, query: Mapping[str, str], body: Mapping
         raise BadRequest("since: epoch ms")
     if not until.isdigit():
         raise BadRequest("until: epoch s")
-    _, last = await last_post(client, query, body)
-    if int(until) <= time.time() or not turnend.listens(str(last.get("message") or ""),
-                                                         project=_project(client)):
+    _, message = await _last(client, query, body)
+    if int(until) <= time.time() or not turnend.listens(message, project=_project(client)):
         return 200, turnend.no_wake()
     count = sum(r.waiting for r in await unread.channels(client))
     waits = 1 if stall.waiting() else 0  # a stall event for the coordinator (RT-6.19)

@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.48.0
+
+### Changed
+
+- **Posts are typed inside the MCP server:** a post is a frozen `Post`
+  (`model.py`) that `client.post_of` builds from Mattermost's JSON, with the
+  transport fields and what the bus's props say (from a webhook, kind, intent,
+  `to`, PR, branch, crown); a thread is a `Thread`. The inbox, read
+  watermark and pending count, hook API, wake gate, departed agents, stall,
+  tasks, own post, slim results and the tools read its fields instead of the
+  JSON's keys
+  ([§5](docs/arc42/05-building-block-view.md), #82 P3b). Behaviour and output
+  are unchanged: a snapshot test holds the tools' and events' JSON, slim and
+  raw, byte for byte, and the adapter-boundary test now fails on a post key
+  read outside the adapter.
 ## 0.47.0
 
 ### Changed

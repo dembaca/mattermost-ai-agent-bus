@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .model import Post
 
 V = 1
 
@@ -254,13 +257,13 @@ _HELLO_FIELDS = re.compile(r"^(task|model|capabilities|role):\s*(.*)$")
 _HELLO_PAIR = re.compile(r"^(project|for):\s*(.*?)\s+·\s+(branch/PR|trusts):\s*(.*)$")
 
 
-def card_of(post: Mapping[str, Any], name: str = "") -> dict[str, Any] | None:
+def card_of(post: Post, name: str = "") -> dict[str, Any] | None:
     """A HELLO post's card: props.agent_card, else read from the HELLO text
     (the format announce writes, protocol.md); None for any other post."""
-    stored = (post.get("props") or {}).get("agent_card")
+    stored = post.props.get("agent_card")
     if isinstance(stored, Mapping) and stored.get("name"):
         return dict(stored)
-    message = str(post.get("message", ""))
+    message = post.message
     if word(message) != "HELLO":
         return None
     fields: dict[str, str] = {}

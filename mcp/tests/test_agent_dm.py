@@ -56,7 +56,7 @@ async def test_reply_goes_where_its_root_is():
     not the default channel (where Mattermost would refuse the root)."""
     calls = []
     post = await _client(calls).post("ok", root_id="rootindm000000000000000000")
-    assert post["channel_id"] == DM and post["root_id"] == "rootindm000000000000000000"
+    assert post.channel_id == DM and post.root_id == "rootindm000000000000000000"
     assert ("/api/v4/posts/rootindm000000000000000000", None) in calls
 
 
@@ -67,6 +67,7 @@ async def test_own_post_leaves_no_unread_dm(monkeypatch):
     marked read, unless the inbox holds — or, unconnected, may have missed —
     a message there still to be collected."""
     from mattermost_ai_agent_bus import server
+    from mattermost_ai_agent_bus.client import post_of
     from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
     viewed = []
@@ -77,11 +78,11 @@ async def test_own_post_leaves_no_unread_dm(monkeypatch):
 
     inbox = WebSocketInbox(client=Client())
     monkeypatch.setattr(server, "_inbox", inbox)
-    await server._posted(Client(), {"channel_id": DM})
+    await server._posted(Client(), post_of({"channel_id": DM}))
     assert viewed == []                       # not connected: may have missed one
     inbox._ws = object()
-    await server._posted(Client(), {"channel_id": DM})
+    await server._posted(Client(), post_of({"channel_id": DM}))
     assert viewed == [DM]
-    inbox._queue.put_nowait(ClassifiedEvent(kind="dm", post={"channel_id": DM}))
-    await server._posted(Client(), {"channel_id": DM})
+    inbox._queue.put_nowait(ClassifiedEvent(kind="dm", post=post_of({"channel_id": DM})))
+    await server._posted(Client(), post_of({"channel_id": DM}))
     assert viewed == [DM]                     # a DM still to collect stays unread

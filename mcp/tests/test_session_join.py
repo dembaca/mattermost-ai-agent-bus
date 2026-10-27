@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import ownpost, session_file
-from mattermost_ai_agent_bus.client import MattermostClient, SessionInfo, unique_name
+from mattermost_ai_agent_bus.client import MattermostClient, SessionInfo, post_of, unique_name
 
 REPO = Path(__file__).resolve().parents[2]
 INFO = SessionInfo(
@@ -258,7 +258,7 @@ def test_shutdown_unregisters_own_session_that_signed_off(monkeypatch):
 
     _patch_http(monkeypatch, handler)
     session_file.write(INFO, "agents", "agents")
-    ownpost.record(INFO.user_id, "cid00000000000000000000000", {"id": "p1", "message": "BYE · done"})
+    ownpost.record(INFO.user_id, "cid00000000000000000000000", post_of({"id": "p1", "message": "BYE · done"}))
     c, _ = _shutdown_client(handler, own_session=True, token=INFO.bot_token)
     assert c.shutdown_sync() == "unregistered proj-ab12cd34"
     assert seen == [("DELETE", "/register/v1/agents/proj-ab12cd34")]

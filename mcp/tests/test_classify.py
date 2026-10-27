@@ -1,5 +1,6 @@
 """Tests for classify_post."""
 
+from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.websocket_inbox import classify_post
 
 BOT_ID = "botuserid123"
@@ -7,12 +8,12 @@ BOT_USER = "agent-cursor-1"
 
 
 def _post(message: str, *, user_id: str = "human1", channel_id: str = "ch1"):
-    return {
+    return post_of({
         "id": "p1",
         "user_id": user_id,
         "channel_id": channel_id,
         "message": message,
-    }
+    })
 
 
 def test_ignore_own_posts():

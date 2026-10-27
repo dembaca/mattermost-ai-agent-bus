@@ -118,15 +118,15 @@ async def _answered(client: MattermostClient, uid: str, pid: str, root: str,
     reaction by the human or a trusted human, a reply by the human in its
     thread after it; or the ask gone), and its title."""
     reactions = await client.reactions(pid)
-    posts = (await client.thread(root or pid))["posts"]
-    ask = next((p for p in posts if p.get("id") == pid), None)
-    if ask is None or ask.get("delete_at"):
+    posts = (await client.thread(root or pid)).posts
+    ask = next((p for p in posts if p.id == pid), None)
+    if ask is None or ask.delete_at:
         return True, ""
-    ids = {str(p.get("user_id") or "") for p in posts} | {str(r.get("user_id") or "") for r in reactions}
+    ids = {p.user_id for p in posts} | {str(r.get("user_id") or "") for r in reactions}
     names = await client.usernames(ids - {"", uid})
     if tasks.ask_answered(ask, posts, reactions, names, human, await client.trusted_humans()):
         return True, ""
-    title = _TITLE.search(str(ask.get("message") or ""))
+    title = _TITLE.search(ask.message)
     return False, " ".join(title[1].split())[:TITLE] if title else ""
 
 

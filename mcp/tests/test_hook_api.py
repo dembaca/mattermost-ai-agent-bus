@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import channel, hookapi, lease, session_file, unread
+from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import UnreadChannel
 
 UID = "u" * 26
@@ -42,7 +43,7 @@ class FakeClient:
 
     async def channel_posts(self, cid, *, per_page=None, since_ms=None):
         self.calls.append(("posts", per_page, since_ms))
-        return list(self.posts)
+        return [post_of(p) for p in self.posts]
 
     async def agents(self, ids):
         return set(ids) & self._agents
@@ -484,7 +485,7 @@ async def test_posts_only_of_the_channels_the_bus_watches(api, monkeypatch):
 
     async def channel_posts(cid, *, per_page=None, since_ms=None):
         seen.append(cid)
-        return list(c.posts)
+        return [post_of(p) for p in c.posts]
 
     c.get_channel_id, c.channel_posts = get_channel_id, channel_posts
     _, h = await api(c)

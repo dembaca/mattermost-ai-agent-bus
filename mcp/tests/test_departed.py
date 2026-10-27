@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from mattermost_ai_agent_bus import channel, departed, gate, server, session_file
-from mattermost_ai_agent_bus.client import MattermostClient
+from mattermost_ai_agent_bus.client import MattermostClient, post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
 
 ME, OLD, IDLE, WORKER, HUMAN = "m" * 26, "o" * 26, "i" * 26, "w" * 26, "h" * 26
@@ -67,8 +67,8 @@ class Bus:
         self.inbox._bot_user_id, self.inbox._bot_username = ME, "agent-me"
 
     async def arrive(self, pid, message, *, user=HUMAN, root="", props=None):
-        post = {"id": pid, "user_id": user, "channel_id": PROJ, "root_id": root,
-                "message": message, "props": props or {}}
+        post = post_of({"id": pid, "user_id": user, "channel_id": PROJ, "root_id": root,
+                        "message": message, "props": props or {}})
         kind = classify_post(post, bot_user_id=ME, bot_username="agent-me", channel_type="O",
                              watched_channel_ids={PROJ})
         event = ClassifiedEvent(kind=kind, post=post)

@@ -20,11 +20,11 @@ channel showed it a moment later.
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from . import a2a, session_file
+from .model import Post
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -48,15 +48,15 @@ def read(uid: str) -> dict[str, str]:
     return session_file.parse(path(uid)) if uid else {}
 
 
-def record(uid: str, channel_id: str, post: Mapping[str, Any]) -> None:
+def record(uid: str, channel_id: str, post: Post) -> None:
     """Remember `post`, the bot's latest in the work channel."""
-    if not uid or not post.get("id"):
+    if not uid or not post.id:
         return
-    message = str(post.get("message", "")).removeprefix("👑").strip()
+    message = post.message.removeprefix("👑").strip()
     prev = read(uid)
-    hello = post["id"] if not post.get("root_id") and a2a.word(message) == "HELLO" else (
+    hello = post.id if not post.root_id and a2a.word(message) == "HELLO" else (
         prev.get("HELLO", "") if prev.get("CHANNEL") == channel_id else "")
-    lines = [f"CHANNEL={channel_id}", f"ID={post['id']}", f"AT={post.get('create_at', 0)}",
+    lines = [f"CHANNEL={channel_id}", f"ID={post.id}", f"AT={post.create_at}",
              f"MSG={' '.join(message.split())[:_MSG_CHARS]}", f"HELLO={hello}"]
     p = path(uid)
     try:

@@ -20,11 +20,11 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from . import a2a, gate, lease, session_file
+from .model import Post
 
 if TYPE_CHECKING:
     from .client import MattermostClient
@@ -65,8 +65,8 @@ async def answers(client: MattermostClient, uid: str, name: str) -> bool:
     return bool(rows) and rows[0].username.lower() == name.lower()
 
 
-def _hello_of(post: Mapping[str, Any], name: str) -> bool:
-    first = str(post.get("message") or "").split("\n", 1)[0]
+def _hello_of(post: Post, name: str) -> bool:
+    first = post.message.split("\n", 1)[0]
     return re.search(rf"(?<![\w.-])@{re.escape(name)}(?![\w-])", first, re.I) is not None
 
 
@@ -75,25 +75,25 @@ async def gone(client: MattermostClient, names: list[str]) -> list[Departure]:
     cid = await client.work_channel_id()
     rows = {str(r["username"]).lower(): r for r in await lease._rows(client, cid)}
     posts = [p for p in await client.channel_posts(cid, per_page=RECENT)
-             if not p.get("type") and not p.get("delete_at")]  # newest first
-    hellos = [p for p in posts if not p.get("root_id") and a2a.word(str(p.get("message") or "")) == "HELLO"]
+             if not p.type and not p.delete_at]  # newest first
+    hellos = [p for p in posts if not p.root_id and a2a.word(p.message) == "HELLO"]
     out = []
     for name in names:
         row = rows.get(name)
         uid = str(row["id"]) if row else ""
-        hello = next((p for p in hellos if (p.get("user_id") == uid if uid else _hello_of(p, name))), None)
-        uid = uid or str((hello or {}).get("user_id") or "")
+        hello = next((p for p in hellos if (p.user_id == uid if uid else _hello_of(p, name))), None)
+        uid = uid or (hello.user_id if hello else "")
         if not uid:
             continue  # no agent of this bus that we know of
-        own = [p for p in posts if p.get("user_id") == uid]
-        last = next((p for p in own if hello and hello["id"] in (p.get("id"), p.get("root_id"))), None)
+        own = [p for p in posts if p.user_id == uid]
+        last = next((p for p in own if hello and hello.id in (p.id, p.root_id)), None)
         if row is not None and row.get("live"):
             continue  # a live lease: here, BYE or not ("task finished")
-        if last and a2a.word(str(last.get("message") or "")) == "BYE":
-            out.append(Departure(name, int(last.get("create_at") or 0), True, str(last["id"])))
+        if last and a2a.word(last.message) == "BYE":
+            out.append(Departure(name, last.create_at, True, last.id))
         else:
-            since = (row or {}).get("until_ms") or (int(own[0].get("create_at") or 0) if own else 0)
-            out.append(Departure(name, int(since), False, str(own[0]["id"]) if own else ""))
+            since = (row or {}).get("until_ms") or (own[0].create_at if own else 0)
+            out.append(Departure(name, int(since), False, own[0].id if own else ""))
     return out
 
 
@@ -114,28 +114,28 @@ def reply_text(found: list[Departure], permalink_base: str) -> str:
     return " ".join(lines) + " I route this instead."
 
 
-async def check(client: MattermostClient, post: Mapping[str, Any], uid: str,
+async def check(client: MattermostClient, post: Post, uid: str,
                 name: str) -> tuple[list[Departure], list[Departure]]:
     """The departed agents a work-channel post mentions, and of those the ones
     this server has to tell its thread about (claimed in gate-<uid>.env).
     Both empty when another server answers."""
-    names = mentioned(str(post.get("message") or ""), name)
-    if not names or post.get("type") or not await answers(client, uid, name):
+    names = mentioned(post.message, name)
+    if not names or post.type or not await answers(client, uid, name):
         return [], []
-    if post.get("channel_id") != await client.work_channel_id():
+    if post.channel_id != await client.work_channel_id():
         return [], []
     found = await gone(client, names)
-    root = str(post.get("root_id") or post.get("id") or "")
+    root = post.thread
     return found, [d for d in found if gate.first_reply(uid, f"{root}:{d.username}", "DEPARTED")]
 
 
-async def tell(client: MattermostClient, post: Mapping[str, Any], uid: str,
+async def tell(client: MattermostClient, post: Post, uid: str,
                found: list[Departure]) -> None:
     """Answer in the post's thread; when that fails, the next mention may try again."""
-    root = str(post.get("root_id") or post.get("id") or "")
+    root = post.thread
     try:
         text = lease.with_crown(reply_text(found, client.permalink_base), uid)
-        await client.post(text, channel_id=str(post.get("channel_id") or "") or None, root_id=root)
+        await client.post(text, channel_id=post.channel_id or None, root_id=root)
     except Exception as exc:  # noqa: BLE001 — the wake-up stands all the same
         log.info("no answer on departed agents in thread %s: %s", root, exc)
         for d in found:

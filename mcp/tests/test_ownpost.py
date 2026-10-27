@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import a2a, ownpost, server
-from mattermost_ai_agent_bus.client import MattermostClient
+from mattermost_ai_agent_bus.client import MattermostClient, post_of
 
 UID, WORK, DM = "u" * 26, "w" * 26, "d" * 26
 
@@ -72,7 +72,7 @@ def _bye_client(monkeypatch, seen, status=200):
 
 
 def _file(msg, hello="p1000000000000000000000000"):
-    ownpost.record(UID, WORK, {"id": "p9", "create_at": 1, "message": msg})
+    ownpost.record(UID, WORK, post_of({"id": "p9", "create_at": 1, "message": msg}))
     if hello:
         ownpost.path(UID).write_text(ownpost.path(UID).read_text().replace("HELLO=", f"HELLO={hello}"))
 

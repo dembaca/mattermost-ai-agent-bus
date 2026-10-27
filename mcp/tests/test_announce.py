@@ -5,6 +5,7 @@ import json
 import pytest
 
 from mattermost_ai_agent_bus import server
+from mattermost_ai_agent_bus.client import post_of
 
 
 class _Client:
@@ -21,7 +22,7 @@ class _Client:
     async def post(self, message, channel_id=None, root_id=None, props=None):
         self.posted.append((message, root_id))
         self.props = props
-        return {"id": "p1", "message": message, "user_id": "b" * 26, "channel_id": "c1"}
+        return post_of({"id": "p1", "message": message, "user_id": "b" * 26, "channel_id": "c1"})
 
     async def usernames(self, ids):
         return {}
@@ -87,7 +88,7 @@ async def test_announce_stores_the_card_in_props(monkeypatch):
                             "role": "member", "kind": "session", "for": "dembaca",
                             "trusts": ["dembaca"]}
     assert "agent_card" not in out and "props" not in out
-    from_text = a2a.card_of({"message": c.posted[0][0]})
+    from_text = a2a.card_of(post_of({"message": c.posted[0][0]}))
     assert {k: from_text[k] for k in ("name", "description", "skills", "meta")} == {
         k: card[k] for k in ("name", "description", "skills", "meta")}
 

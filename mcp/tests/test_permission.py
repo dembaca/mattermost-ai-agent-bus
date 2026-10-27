@@ -12,6 +12,7 @@ from mcp.shared.message import SessionMessage
 from mcp_types import JSONRPCNotification, JSONRPCRequest
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
+from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus import asks, channel, hookapi, lease, permission, server, watermark
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
@@ -174,7 +175,7 @@ class _Client:
 
     async def post(self, message, channel_id=None, root_id=None, props=None):
         self.posted.append({"message": message, "channel_id": channel_id, "root_id": root_id})
-        return {"id": PROMPT}
+        return post_of({"id": PROMPT})
 
 
 class _Conn:
@@ -334,7 +335,7 @@ async def test_the_dm_holds_nothing_unread_after_prompt_and_verdict(relay, monke
 
     async def post(message, channel_id=None, root_id=None, props=None):
         c.posted.append({"message": message, "channel_id": channel_id, "root_id": root_id})
-        made.append({"id": PROMPT, "channel_id": DM, "create_at": 1000 + len(made)})
+        made.append(post_of({"id": PROMPT, "channel_id": DM, "create_at": 1000 + len(made)}))
         return made[-1]
 
     async def view_channel(cid):
@@ -354,7 +355,7 @@ async def test_the_dm_holds_nothing_unread_after_prompt_and_verdict(relay, monke
     await server._permission_request(REQUEST)
     await server.permissions_obsolete(c)  # the turn's end note too (step 5)
     assert viewed == [DM, DM, DM, DM, DM]
-    assert watermark.at("b" * 26, DM) == made[-1]["create_at"]
+    assert watermark.at("b" * 26, DM) == made[-1].create_at
 
 
 @pytest.mark.anyio

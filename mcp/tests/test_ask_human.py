@@ -7,6 +7,7 @@ import time
 import pytest
 
 from mattermost_ai_agent_bus import asks, channel, server
+from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
 BOT = "b" * 26
@@ -30,7 +31,7 @@ class _Client:
 
     async def post(self, message, channel_id=None, root_id=None, props=None):
         self.posted.append({"message": message, "root_id": root_id, "props": props})
-        return {"id": ASK, "message": message, "user_id": BOT, "channel_id": "c1"}
+        return post_of({"id": ASK, "message": message, "user_id": BOT, "channel_id": "c1"})
 
     async def add_reaction(self, post_id, emoji):
         self.reacted.append((post_id, emoji))
@@ -375,13 +376,13 @@ async def test_an_answer_more_than_24_hours_after_the_ask_comes_expired(monkeypa
     ms = int(now * 1000)
     await inbox._on_reaction_event(_reaction_event("+1", at=ms))
     await inbox._on_reaction_event(_reaction_event("+1", post_id=fresh, at=ms))
-    await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post={
+    await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post=post_of({
         "id": "r" * 26, "root_id": ASK, "user_id": HUMAN, "channel_id": "c1",
-        "create_at": ms, "message": "yes"}))
+        "create_at": ms, "message": "yes"})))
     # Someone not trusted approves nothing anyway: no flag on that late post.
-    await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post={
+    await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post=post_of({
         "id": "s" * 26, "root_id": ASK, "user_id": "o" * 26, "channel_id": "c1",
-        "create_at": ms, "message": "looks good"}))
+        "create_at": ms, "message": "looks good"})))
     items = json.loads(await server.wait_for_events(timeout_sec=1))
     got = {(i["kind"], i["post"]["id"]): i.get("expired", False) for i in items}
     assert got == {("reaction", asks.seen_key(ASK, HUMAN, "+1")): True,
@@ -470,9 +471,9 @@ async def test_the_wait_for_an_ask_ends_at_the_first_trusted_answer(monkeypatch,
     await inbox._on_reaction_event(_reaction_event("+1", user="o" * 26, at=later))  # not trusted
     await inbox._on_reaction_event(_reaction_event("+1", at=later))
     await inbox._on_reaction_event(_reaction_event("-1", at=later + 60_000))   # second answer
-    await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post={
+    await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post=post_of({
         "id": "r" * 26, "root_id": ASK, "user_id": HUMAN, "channel_id": "c1",
-        "create_at": later + 120_000, "message": "yes, as said"}))
+        "create_at": later + 120_000, "message": "yes, as said"})))
     assert len(json.loads(await server.wait_for_events(timeout_sec=1))) == 5
     assert [(a["id"], a["wait"]) for a in _answers()] == [(ASK, 90)]
     # The file remembers: a server that starts afresh counts the ask no more.

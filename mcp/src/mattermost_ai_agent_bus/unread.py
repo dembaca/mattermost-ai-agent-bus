@@ -20,14 +20,14 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from . import a2a, gate, watermark
+from .client import account_created
 
 if TYPE_CHECKING:
     from .client import MattermostClient
-    from .model import UnreadChannel
+    from .model import Post, UnreadChannel
 
 log = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class After(NamedTuple):
     """A channel's posts after its watermark, oldest first."""
 
     channel: UnreadChannel
-    posts: list[dict[str, Any]]
+    posts: list[Post]
 
 
 class Pending(NamedTuple):
@@ -49,17 +49,16 @@ class Pending(NamedTuple):
 
     channel: UnreadChannel
     waiting: int
-    posts: list[dict[str, Any]]
+    posts: list[Post]
 
 
-def _at(post: Mapping[str, Any]) -> int:
-    return int(post.get("create_at") or 0)
+def _at(post: Post) -> int:
+    return post.create_at
 
 
-def _passed(post: Mapping[str, Any], uid: str, gated: set[str]) -> bool:
+def _passed(post: Post, uid: str, gated: set[str]) -> bool:
     """Nothing in it for the agent: its own, a system post, deleted, gated."""
-    return bool(post.get("user_id") == uid or post.get("type") or post.get("delete_at")
-                or post.get("id") in gated)
+    return bool(post.user_id == uid or post.type or post.delete_at or post.id in gated)
 
 
 def _direct(channel: UnreadChannel) -> bool:
@@ -71,7 +70,7 @@ async def after(client: MattermostClient) -> list[After]:
     channels, then one per channel whose newest post is past its mark."""
     me = await client.get_me()
     uid = str(me.get("id") or "")
-    floor = max(int(me.get("create_at") or 0), int(time.time() * 1000) - DAY_MS)
+    floor = max(account_created(me), int(time.time() * 1000) - DAY_MS)
     marks = watermark.read(uid)
     gated = gate.gated(uid)
     out: list[After] = []
@@ -94,18 +93,18 @@ async def after(client: MattermostClient) -> list[After]:
             skip += 1
         if skip:
             last = posts[skip - 1]
-            watermark.advance(uid, ch.channel_id, str(last.get("id") or ""), _at(last))
+            watermark.advance(uid, ch.channel_id, last.id, _at(last))
         if posts[skip:]:
             out.append(After(ch, posts[skip:]))
     return out
 
 
-def _for_me(post: Mapping[str, Any], channel: UnreadChannel, name: str) -> bool:
+def _for_me(post: Post, channel: UnreadChannel, name: str) -> bool:
     """Addressed to this agent: in a DM or group, for all agents, or naming it
     (or @channel, @all, @here)."""
-    if _direct(channel) or a2a.to_all(post):
+    if _direct(channel) or post.to == a2a.ALL:
         return True
-    names = {m.removesuffix(".") for m in _MENTION.findall(str(post.get("message") or "").lower())}
+    names = {m.removesuffix(".") for m in _MENTION.findall(post.message.lower())}
     return f"@{name.lower()}" in names or any(e in names for e in _EVERYONE)
 
 
@@ -127,8 +126,8 @@ async def detail(client: MattermostClient, rows: list[Pending]) -> list[dict[str
     """The first DETAIL_CHANNELS of channels(): {id, type, pending, fyi}, fyi
     how many of the posts for this agent are an agent's fyi posts (props anyone
     can write count only from an agent). One user lookup, no more."""
-    fyi = [(row.channel.channel_id, str(p.get("user_id"))) for row in rows[:DETAIL_CHANNELS]
-           for p in row.posts if a2a.intent_of(p) == a2a.FYI]
+    fyi = [(row.channel.channel_id, p.user_id) for row in rows[:DETAIL_CHANNELS]
+           for p in row.posts if p.intent == a2a.FYI]
     agents: set[str] = set()
     if fyi:
         try:

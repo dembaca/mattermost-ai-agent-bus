@@ -7,7 +7,8 @@ import time
 import pytest
 
 from mattermost_ai_agent_bus import a2a, channel, server, tasks
-from mattermost_ai_agent_bus.model import RosterEntry
+from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.model import RosterEntry, Thread
 
 ME, LEIT, A, B, HUMAN = "m" * 26, "l" * 26, "a" * 26, "b" * 26, "h" * 26
 NAMES = {ME: "agent-me", LEIT: "agent-leit", A: "agent-a", B: "agent-b", HUMAN: "dembaca"}
@@ -15,8 +16,8 @@ NOW = 1_800_000_000_000
 
 
 def P(pid, uid, message, *, root="", at=0, **extra):
-    return {"id": pid, "user_id": uid, "message": message, "root_id": root,
-            "create_at": NOW - 3_600_000 + at, "type": "", "delete_at": 0, **extra}
+    return post_of({"id": pid, "user_id": uid, "message": message, "root_id": root,
+                    "create_at": NOW - 3_600_000 + at, "type": "", "delete_at": 0, **extra})
 
 
 @pytest.mark.parametrize("message,kind", [
@@ -214,11 +215,11 @@ class _Client:
         return {"name": "agents"}
 
     async def thread(self, root):
-        return {"posts": [p for p in self.posts if root in (p["id"], p.get("root_id"))]}
+        return Thread("", posts=tuple(p for p in self.posts if root in (p.id, p.root_id)))
 
     async def post(self, message, channel_id=None, root_id=None, props=None):
         self.posted.append({"message": message, "root_id": root_id, "props": props})
-        return {"id": "new", "message": message, "user_id": ME, "channel_id": "c"}
+        return post_of({"id": "new", "message": message, "user_id": ME, "channel_id": "c"})
 
     async def member_channels(self):
         return []
@@ -268,10 +269,10 @@ def test_a_typed_crown_from_before_the_cutover_still_closes():
     """RT-6.14 step 3: an agent's 👑 CANCEL from before 0.46.0 (no crown props)
     keeps its task closed; a person's, or one after the cutover, does not."""
     cut = tasks.LEGACY_CROWN_BEFORE_MS
-    root = {**P("t", LEIT, "TASK · x", at=0), "create_at": cut - 10}
+    root = P("t", LEIT, "TASK · x", create_at=cut - 10)
 
     def rows(uid, message, at):
-        close = {**P("1", uid, message, root="t"), "create_at": at}
+        close = P("1", uid, message, root="t", create_at=at)
         return tasks.build([root, close], NAMES, now_ms=cut + 1000)
 
     assert rows(B, "👑 CANCEL – not needed", cut - 1) == []
@@ -337,7 +338,7 @@ async def test_coordinator_reads_tasks_and_asks_not_history(bus):
     bus(_leitstand_thread() + [P("q", A, "🙋 @dembaca — **Merge #57?**", at=40)])
     out = json.loads(await server.coordinator("tasks"))
     assert [r["task"] for r in out["tasks"]] == ["t1"] and out["asks"][0]["ask"] == "q"
-    assert len(json.dumps(out)) < len(json.dumps(_leitstand_thread())) / 2
+    assert len(json.dumps(out)) < len(json.dumps([p.json() for p in _leitstand_thread()])) / 2
 
 
 @pytest.mark.asyncio

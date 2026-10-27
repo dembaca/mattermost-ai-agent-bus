@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus import watermark
 from mattermost_ai_agent_bus.model import UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
@@ -117,10 +118,10 @@ class _BackfillClient(_FakeClient):
 
     async def member_channels(self):
         return [UnreadChannel("dm1", "D", last_post_at=max(
-            (p["create_at"] for p in self.posts if p["channel_id"] == "dm1"), default=0))]
+            (p.create_at for p in self.posts if p.channel_id == "dm1"), default=0))]
 
     async def channel_posts(self, channel_id, since_ms=None):
-        return [p for p in self.posts if p["channel_id"] == channel_id]
+        return [p for p in self.posts if p.channel_id == channel_id]
 
     async def view_channel(self, channel_id):
         self.viewed.append(channel_id)
@@ -130,8 +131,8 @@ _clock = itertools.count(int(time.time() * 1000) - 60_000)
 
 
 def _post(pid, msg="hi", user="human1", channel="dm1", at=None):
-    return {"id": pid, "user_id": user, "channel_id": channel, "message": msg,
-            "create_at": at if at is not None else next(_clock)}
+    return post_of({"id": pid, "user_id": user, "channel_id": channel, "message": msg,
+                    "create_at": at if at is not None else next(_clock)})
 
 
 @pytest.mark.asyncio
@@ -145,7 +146,7 @@ async def test_messages_sent_before_connect_are_still_delivered():
     inbox._ws = _DeadSocket()  # already "connected": do not dial out
     await inbox._backfill()
     events = await inbox.wait_for_events(timeout_sec=1)
-    assert [e.post["id"] for e in events] == ["p1"]
+    assert [e.post.id for e in events] == ["p1"]
     assert events[0].kind == "dm"
 
 
@@ -187,9 +188,9 @@ async def test_newer_wait_supersedes_pending_one():
     fresh = asyncio.create_task(inbox.wait_for_events(timeout_sec=30))
     await asyncio.sleep(0)
     assert await stale == []
-    await inbox._queue.put(ClassifiedEvent(kind="mention", post={"id": "p1"}))
+    await inbox._queue.put(ClassifiedEvent(kind="mention", post=post_of({"id": "p1"})))
     events = await fresh
-    assert [e.post["id"] for e in events] == ["p1"]
+    assert [e.post.id for e in events] == ["p1"]
 
 
 @pytest.mark.asyncio
@@ -214,12 +215,12 @@ class _FreshBotClient(_BackfillClient):
         return {"id": "bot1", "username": "agent-test", "create_at": BORN}
 
     async def member_channels(self):
-        return [UnreadChannel("proj", last_post_at=max(p["create_at"] for p in self.posts))]
+        return [UnreadChannel("proj", last_post_at=max(p.create_at for p in self.posts))]
 
     async def channel_posts(self, channel_id, since_ms=None):
         self.since.append(since_ms)
-        return [p for p in self.posts if p["channel_id"] == channel_id
-                and p.get("create_at", 0) >= (since_ms or 0)]
+        return [p for p in self.posts if p.channel_id == channel_id
+                and p.create_at >= (since_ms or 0)]
 
 
 @pytest.mark.asyncio
@@ -235,7 +236,7 @@ async def test_backfill_never_reads_before_the_bot_existed():
     await inbox._backfill()
     assert client.since == [BORN]
     events = await inbox.wait_for_events(timeout_sec=1)
-    assert [e.post["id"] for e in events] == ["ask"] and events[0].kind == "mention"
+    assert [e.post.id for e in events] == ["ask"] and events[0].kind == "mention"
 
 
 @pytest.mark.asyncio
@@ -252,7 +253,7 @@ async def test_backfill_reads_from_the_watermark_and_hands_over_once():
     inbox._ws = _DeadSocket()
     await inbox._backfill()
     assert client.since == [BORN + 1000]
-    assert [e.post["id"] for e in await inbox.wait_for_events(timeout_sec=1)] == ["new"]
+    assert [e.post.id for e in await inbox.wait_for_events(timeout_sec=1)] == ["new"]
     assert watermark.read("bot1")["proj"] == ("new", BORN + 2000)
     again = WebSocketInbox(client=client, watched_channel_ids={"proj"})  # the next server
     again._bot_user_id, again._bot_username = "bot1", "agent-test"
@@ -271,12 +272,12 @@ async def test_a_post_queued_behind_the_watermark_holds_it_back():
     client = _BackfillClient([])
     inbox = WebSocketInbox(client=client)
     inbox._bot_user_id, inbox._ws = "bot1", _DeadSocket()
-    inbox.handled({"id": "own", "channel_id": "dm1", "create_at": 2000})
+    inbox.handled(post_of({"id": "own", "channel_id": "dm1", "create_at": 2000}))
     assert watermark.at("bot1", "dm1") == 2000
     late = _post("late", channel="dm1", at=1500)
     await inbox._put(ClassifiedEvent(kind="dm", post=late))
     assert watermark.at("bot1", "dm1") == 1499
-    inbox.handled({"id": "own2", "channel_id": "dm1", "create_at": 3000})
+    inbox.handled(post_of({"id": "own2", "channel_id": "dm1", "create_at": 3000}))
     assert watermark.at("bot1", "dm1") == 1499  # an older post still waits
     await inbox.wait_for_events(timeout_sec=1)
     assert watermark.read("bot1")["dm1"] == ("late", 1500)
@@ -295,12 +296,12 @@ async def test_mentions_and_dms_come_first_and_the_rest_stays_unread():
             kind="watched_channel", post=_post(f"c{i}", channel="proj")))
     inbox._queue.put_nowait(ClassifiedEvent(kind="dm", post=_post("dm", channel="dm1")))
     events = await inbox.wait_for_events(timeout_sec=1, max_events=10)
-    assert events[0].post["id"] == "dm" and len(events) == 10
+    assert events[0].post.id == "dm" and len(events) == 10
     assert inbox.pending == 3
     assert client.viewed == ["dm1"]  # proj still has queued posts: stays unread
     # The mark stops before the oldest post still queued.
     assert watermark.read("bot1")["proj"].post_id == "c8"
     rest = await inbox.wait_for_events(timeout_sec=1, max_events=10)
-    assert [e.post["id"] for e in rest] == ["c9", "c10", "c11"] and inbox.pending == 0
+    assert [e.post.id for e in rest] == ["c9", "c10", "c11"] and inbox.pending == 0
     assert client.viewed == ["dm1", "proj"]
     assert watermark.read("bot1")["proj"].post_id == "c11"
