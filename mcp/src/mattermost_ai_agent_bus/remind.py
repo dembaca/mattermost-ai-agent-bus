@@ -63,7 +63,7 @@ def due(asked: float, sent: int, last: float) -> float:
     first, cap = ask_remind_sec(), remind_max_sec()
     if sent <= 0:
         return asked + min(first, cap)
-    return last + min(first / 2 * 2 ** min(sent - 1, 32), cap)
+    return last + min(first / 2 * 2.0 ** min(sent - 1, 32), cap)
 
 
 def _path(uid: str) -> Path:

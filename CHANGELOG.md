@@ -3,6 +3,15 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.45.1
+
+### Changed
+
+- **The MCP server is type-checked:** mypy (strict, pinned in the `dev` group of
+  `mcp/pyproject.toml`) checks `mcp/src/` in CI and before a push. The fixes are
+  annotations only, with one guard: a permission prompt that expires between
+  its lookup and its answer is now dropped instead of raising (#68).
+
 ## 0.45.0
 
 ### Changed

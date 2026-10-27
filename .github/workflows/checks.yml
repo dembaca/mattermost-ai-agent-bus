@@ -65,3 +65,5 @@ jobs:
         run: git ls-files -z '*.sh' '*.sh.example' | xargs -0 shellcheck -S warning
       - name: Python (ruff, ruff.toml)
         run: uvx ruff@0.17.2 check
+      - name: MCP server types (mypy, mcp/pyproject.toml)
+        run: uv run --directory mcp mypy

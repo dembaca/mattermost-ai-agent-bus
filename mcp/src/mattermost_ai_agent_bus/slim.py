@@ -21,7 +21,7 @@ def _when(ms: int | None) -> str:
     return time.strftime("%Y-%m-%d %H:%M", time.localtime(ms / 1000))
 
 
-async def _names(client: MattermostClient, posts: list[dict[str, Any]]) -> tuple[dict, dict]:
+async def _names(client: MattermostClient, posts: list[dict[str, Any]]) -> tuple[dict[str, str], dict[str, str]]:
     users: dict[str, str] = {}
     channels: dict[str, str] = {}
     try:
@@ -36,7 +36,7 @@ async def _names(client: MattermostClient, posts: list[dict[str, Any]]) -> tuple
     return users, channels
 
 
-def _one(p: dict[str, Any], users: dict, channels: dict) -> dict[str, Any]:
+def _one(p: dict[str, Any], users: dict[str, str], channels: dict[str, str]) -> dict[str, Any]:
     out: dict[str, Any] = {"id": p.get("id")}
     if p.get("root_id"):
         out["root_id"] = p["root_id"]

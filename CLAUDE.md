@@ -30,6 +30,7 @@ uv run --directory mcp pytest -q
 uv run --directory mcp pytest -q ../tests/hooks
 git ls-files -z '*.sh' '*.sh.example' | xargs -0 shellcheck -S warning
 uvx ruff@0.17.2 check
+uv run --directory mcp mypy
 ```
 
 `scripts/arc42-lint/` is vendored from MSiccDev/arc42-toolkit — do not edit it;

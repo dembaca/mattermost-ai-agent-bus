@@ -1,6 +1,6 @@
 [project]
 name = "mattermost-ai-agent-bus"
-version = "0.45.0"
+version = "0.45.1"
 description = "Mattermost AI agent bus MCP server (session + WebSocket inbox)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,6 +30,14 @@ pythonpath = ["src"]
 
 [dependency-groups]
 dev = [
+  "mypy==2.4.0",
   "pytest>=8.0",
   "pytest-asyncio>=0.24",
 ]
+
+# The server only (src); tests are not type-checked. strict covers
+# disallow_untyped_defs, warn_return_any and warn_unused_ignores, among others.
+[tool.mypy]
+files = ["src"]
+python_version = "3.11"
+strict = true

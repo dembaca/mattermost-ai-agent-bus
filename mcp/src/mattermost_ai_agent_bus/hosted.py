@@ -457,7 +457,7 @@ async def services(key: str, client: Any) -> AsyncIterator[str]:
 
 async def run_host(host: Host, *, ready_file: Path, key: str = "", with_services: bool = True,
                    watch: Callable[[], bool] | None = None, interval: float = WATCH_SEC,
-                   signals: tuple[int, ...] = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)) -> str:
+                   signals: tuple[signal.Signals, ...] = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)) -> str:
     """Serve relay connections and the hook API until a signal or the watchdog
     ends the session. Returns why it ended."""
     stop = anyio.Event()
@@ -513,7 +513,7 @@ def exit_work(client: Any) -> None:
 
 def serve_host(host: Host, *, ready_file: Path, key: str = "", with_services: bool = True,
                watch: Callable[[], bool] | None = None, interval: float = WATCH_SEC,
-               signals: tuple[int, ...] = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)) -> str:
+               signals: tuple[signal.Signals, ...] = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)) -> str:
     """run_host, then the exit work; the readiness file and the session's
     state directory go with the process."""
     why = "failed"
