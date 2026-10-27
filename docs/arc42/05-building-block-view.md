@@ -51,6 +51,13 @@ Inside the MCP server, Mattermost's state carriers (post props, custom status
 and crown, unread counters, the profile the registrar wrote) are read and
 written only in `client.py`, the one module that talks HTTP, `a2a.py` (the
 bus's props) and `lease.py` (status, crown and roster). The
-rest of the server works with bus types (`model.py`) and posts, so a change of
+rest of the server works with bus types (`model.py`), so a change of
 carrier stays in those three modules; `mcp/tests/test_adapter_boundary.py`
-checks it.
+checks it. A post is a `Post`: `client.post_of` builds it from Mattermost's
+JSON where a post enters the server (the client's post and read calls, the
+WebSocket inbox), with the transport fields typed (ids, thread, author, times,
+text, system type) and what the props say read once (from a webhook, and the
+bus's kind, intent and `to`). Its read-only `raw` is the JSON a tool returns
+with `raw=true`. The same test checks that no other module reads a post's JSON
+keys; the turn hooks' post reads (`hookapi.py`, `turnend.py`, `unread.py`) still
+do and are listed there until they move.
