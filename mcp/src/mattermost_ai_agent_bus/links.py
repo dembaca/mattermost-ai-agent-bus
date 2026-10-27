@@ -19,6 +19,7 @@ the bus's own off again: the bare id says the same.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlsplit
 
@@ -98,7 +99,7 @@ def _written_out(label: str, url: str) -> str:
     return f"{label} ({full})" if label and label != full else full
 
 
-def _each(message: str, one) -> str:
+def _each(message: str, one: Callable[[re.Match[str]], str]) -> str:
     return _TOKEN.sub(lambda m: m["code"] or one(m), message)
 
 
@@ -114,7 +115,8 @@ _RULE = re.compile(r"\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)*\|?\s*")
 
 def _tables(message: str) -> str:
     """Mattermost renders a table only after a blank line: give it one."""
-    lines, out, fence = message.split("\n"), [], ""
+    lines, fence = message.split("\n"), ""
+    out: list[str] = []
     for i, line in enumerate(lines):
         if m := _FENCE.match(line):
             mark = m[1]

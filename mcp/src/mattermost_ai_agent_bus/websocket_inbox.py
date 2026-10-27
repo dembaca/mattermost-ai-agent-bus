@@ -457,7 +457,8 @@ class WebSocketInbox:
 
     def waits(self, kind: str) -> bool:
         """Whether an event of that kind waits in the queue."""
-        return any(e.kind == kind for e in list(self._queue._queue))
+        # asyncio.Queue keeps its items in a private deque that typeshed omits.
+        return any(e.kind == kind for e in list(self._queue._queue))  # type: ignore[attr-defined]
 
     def holds(self, channel_id: str) -> bool | None:
         """Whether events of this channel wait in the queue; None while the
@@ -466,7 +467,7 @@ class WebSocketInbox:
         if self._ws is None:
             return None
         return any(e.post.get("channel_id") == channel_id and not e.gated
-                   for e in list(self._queue._queue))
+                   for e in list(self._queue._queue))  # type: ignore[attr-defined]  # see waits()
 
     async def wait_for_events(
         self,

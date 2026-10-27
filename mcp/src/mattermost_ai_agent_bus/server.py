@@ -12,7 +12,7 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -33,7 +33,8 @@ def _plugin_version() -> str:
     """The plugin's version: the MCP server ships inside the plugin, so they match."""
     root = Path(__file__).resolve().parents[3]
     try:
-        return json.loads((root / ".claude-plugin" / "plugin.json").read_text())["version"]
+        version: str = json.loads((root / ".claude-plugin" / "plugin.json").read_text())["version"]
+        return version
     except (OSError, ValueError, KeyError):
         return "unknown"
 
@@ -529,7 +530,8 @@ async def bus_info() -> str:
             **_hook_warning(),
         })
     trusted = await client.trusted_humans()
-    humans = []
+    humans: list[dict[str, str | None]] = []
+    name: str | None
     for uid, name in trusted.items():
         if not name:
             try:
@@ -1323,6 +1325,8 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
                     "than 24 h old.", root_id=post.get("id")))
                 return True
         pending = _relay.take(rid)
+        if pending is None:  # expired since the check above
+            return True
         await _pusher.verdict(rid, behavior)
         who = item.get("trusted_human") or post.get("author") or "?"
         word = "✅ allowed" if behavior == "allow" else "⛔ denied"
@@ -1424,7 +1428,7 @@ _exit_handled = False
 def _fixed() -> overhead.Fixed:
     """Instructions, tool docs and skill, each in characters (RT-6.9)."""
     skill = Path(__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
-    tools = (bus_info, announce, get_me, post_message, reply_in_thread, ask_human,
+    tools: tuple[Callable[..., Any], ...] = (bus_info, announce, get_me, post_message, reply_in_thread, ask_human,
              resolve_ask, coordinator, get_thread, list_recent, wait_for_events)
     if not (HOST_MANAGED or UNAVAILABLE):
         tools += (session_start, session_end)

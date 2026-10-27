@@ -36,7 +36,7 @@ import os
 import re
 import secrets
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -206,7 +206,7 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
     return False
 
 
-def digest(items: list[Mapping[str, Any]], since: float) -> dict[str, Any]:
+def digest(items: Sequence[Mapping[str, Any]], since: float) -> dict[str, Any]:
     """Held posts as one push: each cut short, with what an answer needs.
     A gated post (RT-6.16) is marked as not trusted; fyi posts (RT-6.14) come last."""
     fyi = [i for i in items if i.get("intent") == a2a.FYI]
@@ -355,8 +355,8 @@ async def serve_handshake_only(
     lifespan_state: Any,
     init_options: Any,
     pusher: Pusher,
-    on_connected: Callable[[], Awaitable[None]],
-    on_permission: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    on_connected: Callable[[], Coroutine[Any, Any, None]],
+    on_permission: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None,
     on_initialize: Callable[[Any], Any] | None = None,
 ) -> None:
     """The SDK's handshake-era loop, keeping the connection for the pusher.

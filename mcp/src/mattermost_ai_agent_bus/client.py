@@ -267,7 +267,7 @@ class MattermostClient:
         path: str,
         *,
         bearer: str | None = None,
-        json: dict[str, Any] | None = None,
+        json: dict[str, Any] | list[str] | None = None,
         params: dict[str, Any] | None = None,
     ) -> Any:
         url = f"{self.base_url}{path}"
@@ -661,7 +661,7 @@ class MattermostClient:
     async def get_me(self) -> dict[str, Any]:
         while self._me is None:
             gen = self._me_gen
-            me = await self._api("GET", "/api/v4/users/me")
+            me: dict[str, Any] = await self._api("GET", "/api/v4/users/me")
             if gen == self._me_gen:  # else the bot changed meanwhile: ask again as the new one
                 self._me = me
                 return me
@@ -672,7 +672,7 @@ class MattermostClient:
         if self._team_id and name == self.team_name:
             return self._team_id
         data = await self._api("GET", f"/api/v4/teams/name/{mm_name(name, 'team')}")
-        tid = data["id"]
+        tid: str = data["id"]
         if name == self.team_name:
             self._team_id = tid
         return tid
@@ -694,7 +694,7 @@ class MattermostClient:
         data = await self._api(
             "GET", f"/api/v4/teams/{mm_id(tid, 'team')}/channels/name/{cname}"
         )
-        cid = data["id"]
+        cid: str = data["id"]
         self._channel_ids[key] = cid
         return cid
 
@@ -718,7 +718,8 @@ class MattermostClient:
 
     async def username(self, user_id: str) -> str:
         """One account's username, uncached; raises when it cannot be read."""
-        return (await self._api("GET", f"/api/v4/users/{mm_id(user_id, 'user')}"))["username"]
+        name: str = (await self._api("GET", f"/api/v4/users/{mm_id(user_id, 'user')}"))["username"]
+        return name
 
     async def agents(self, user_ids: set[str]) -> set[str]:
         """The ids among ``user_ids`` of bus agents: bot accounts with the
@@ -744,7 +745,8 @@ class MattermostClient:
         me = await self.get_me()
         ch = await self._api("POST", "/api/v4/channels/direct",
                              json=[mm_id(me["id"], "user"), mm_id(user_id, "user")])
-        return ch["id"]
+        cid: str = ch["id"]
+        return cid
 
     async def humans_among(self, names: set[str]) -> set[str]:
         """The usernames among ``names`` that belong to people, not bots; cached.
@@ -866,7 +868,8 @@ class MattermostClient:
             resp = http.post(f"{self.base_url}/api/v4/posts", json=body,
                              headers=self._auth_headers())
             resp.raise_for_status()
-            return resp.json()
+            posted: dict[str, Any] = resp.json()
+            return posted
 
     def post_by_name_sync(self, channel_name: str, message: str, *, join: str = "") -> bool:
         """Post to the team's channel `channel_name` without an event loop, for

@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -74,7 +74,7 @@ def stall_sec() -> int:
 
 def backoff(wakes: int) -> float:
     """The gap after the wakes so far in one quiet period: 10, 20, 40 … min, capped."""
-    return min(stall_sec() * 2 ** min(wakes, 32), remind.remind_max_sec())
+    return min(stall_sec() * 2.0 ** min(wakes, 32), remind.remind_max_sec())
 
 
 # --- what is open ------------------------------------------------------------------
@@ -87,7 +87,7 @@ def _hhmm(ms: int) -> str:
     return time.strftime("%H:%M", time.localtime(ms / 1000)) if ms else "–"
 
 
-def quiet_since(posts: list[Mapping[str, Any]], classes: list[str], uid: str = "") -> tuple[int, int]:
+def quiet_since(posts: Sequence[Mapping[str, Any]], classes: list[str], uid: str = "") -> tuple[int, int]:
     """Epoch ms of the newest post by an agent or trusted human other than
     `uid` (the crown holder), and of the newest post by `uid`; reminders and
     system posts do not count. 0 without one."""
@@ -98,7 +98,7 @@ def quiet_since(posts: list[Mapping[str, Any]], classes: list[str], uid: str = "
             max((_at(p) for p in counted if uid and p.get("user_id") == uid), default=0))
 
 
-def _last(thread: list[Mapping[str, Any]], names: Mapping[str, str]) -> tuple[int, str]:
+def _last(thread: Sequence[Mapping[str, Any]], names: Mapping[str, str]) -> tuple[int, str]:
     if not thread:
         return 0, ""
     p = max(thread, key=_at)
@@ -106,8 +106,8 @@ def _last(thread: list[Mapping[str, Any]], names: Mapping[str, str]) -> tuple[in
     return _at(p), f"{who} {a2a.kind_of(p) or 'post'} {_hhmm(_at(p))}".strip()
 
 
-def items(posts: list[Mapping[str, Any]], names: Mapping[str, str], classes: list[str],
-          rows: list[Mapping[str, Any]], reachable: set[str], now_ms: int,
+def items(posts: Sequence[Mapping[str, Any]], names: Mapping[str, str], classes: list[str],
+          rows: Sequence[Mapping[str, Any]], reachable: set[str], now_ms: int,
           trusted: Collection[str] = ()) -> list[dict[str, Any]]:
     """The open items, longest quiet first: {what, id, title, next, last, at}."""
     live = [p for p in posts if not p.get("type") and not p.get("delete_at")]
@@ -168,7 +168,7 @@ def items(posts: list[Mapping[str, Any]], names: Mapping[str, str], classes: lis
     return sorted(out, key=lambda i: i["at"])
 
 
-def digest(found: list[Mapping[str, Any]], quiet_ms: int, now: float) -> str:
+def digest(found: Sequence[Mapping[str, Any]], quiet_ms: int, now: float) -> str:
     """The stall event's text: one line per item, capped."""
     since = f" since {_hhmm(quiet_ms)}" if quiet_ms else ""
     quiet = round((now - quiet_ms / 1000) / 60) if quiet_ms else 0

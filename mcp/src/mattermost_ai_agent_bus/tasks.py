@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from . import a2a, asks, session_file
@@ -70,14 +70,14 @@ def title(message: str) -> str:
     return _first_line(_LEAD.sub("", first), TITLE)
 
 
-def _live(posts: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+def _live(posts: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """Ordinary posts, oldest first: no deleted or system posts."""
     return sorted((p for p in posts if not p.get("delete_at") and not p.get("type")),
                   key=lambda p: p.get("create_at", 0))
 
 
 def build(
-    posts: list[Mapping[str, Any]],
+    posts: Sequence[Mapping[str, Any]],
     names: Mapping[str, str],
     *,
     now_ms: int | None = None,
@@ -194,7 +194,7 @@ def resolved(reactions: Collection[Mapping[str, Any]], names: Mapping[str, str])
                and names.get(str(r.get("user_id") or ""), "").startswith(prefix) for r in reactions)
 
 
-def open_asks(posts: list[Mapping[str, Any]], names: Mapping[str, str],
+def open_asks(posts: Sequence[Mapping[str, Any]], names: Mapping[str, str],
               trusted: Collection[str] = ()) -> list[dict[str, Any]]:
     """Asks to humans still waiting: not answered by the human asked or a
     trusted human (ask_answered), and not closed by an agent (resolved)."""
@@ -218,7 +218,7 @@ def open_asks(posts: list[Mapping[str, Any]], names: Mapping[str, str],
     return out
 
 
-def roster(rows: list[RosterEntry], posts: list[Mapping[str, Any]],
+def roster(rows: list[RosterEntry], posts: Sequence[Mapping[str, Any]],
            names: Mapping[str, str]) -> list[dict[str, Any]]:
     """One row per reachable agent: its lease status (lease.roster, RT-6.6) and
     its newest card (HELLO props, else the HELLO text)."""
@@ -244,7 +244,7 @@ def roster(rows: list[RosterEntry], posts: list[Mapping[str, Any]],
     return out
 
 
-def table(rows: list[Mapping[str, Any]]) -> str:
+def table(rows: Sequence[Mapping[str, Any]]) -> str:
     """The ASSIGNMENTS table (coordinator.md). Names without @: a table is no
     request, and a mention would wake every agent in it."""
     lines = ["| Agent | Task | Status | Spec / issue | Branch / PR |", "|---|---|---|---|---|"]
