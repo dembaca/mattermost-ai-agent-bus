@@ -14,7 +14,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import a2a, links, ownpost, profile, session_file
+from . import a2a, links, ownpost, profile, session_file, watermark
 from .model import UnreadChannel
 
 log = logging.getLogger(__name__)
@@ -501,11 +501,12 @@ class MattermostClient:
                     "the bot) or joining is denied on this instance",
                 }.get(code, f"HTTP {code}")
                 result["project_channel"] = {"name": name, "joined": False, "error": reason}
-        # A fresh bot is born with a welcome DM from itself that nothing can
-        # drain; mark everything read so the Stop hook starts from empty.
+        # A fresh bot is born with a welcome DM from itself, which Mattermost's
+        # UI shows unread. The bus never counts it: an own post (RT-6.2).
         try:
-            for ch in await self.unread_channels():
-                await self.view_channel(ch.channel_id)
+            for ch in await self.member_channels():
+                if ch.pending or ch.unread:
+                    await self.view_channel(ch.channel_id)
         except (httpx.HTTPError, KeyError, InvalidId):
             pass
         return result
@@ -534,6 +535,7 @@ class MattermostClient:
         self._me_gen += 1
         session_file.remove()
         ownpost.remove(uid)
+        watermark.remove(uid)
         for key in (
             "MM_REG_BOT_NAME",
             "MM_BOT_USERNAME",
@@ -611,6 +613,7 @@ class MattermostClient:
         if ok:
             session_file.remove()
             ownpost.remove(uid)
+            watermark.remove(uid)
             return f"unregistered {short}"
         return f"unregister failed: HTTP {resp.status_code}"
 
@@ -760,18 +763,14 @@ class MattermostClient:
                 self._is_human[(u.get("username") or "").lower()] = not u.get("is_bot", False)
         return {n for n in names if self._is_human.get(n.lower())}
 
-    async def unread_channels(self, *, unread_posts: bool = False) -> list[UnreadChannel]:
-        """Channels with something pending, each with the time to read from.
+    async def member_channels(self) -> list[UnreadChannel]:
+        """This bot's channels in its team, DMs and groups included, each with
+        when its newest post came and Mattermost's counters. What is pending
+        there is the read watermark's to say (unread.py, RT-6.2): the counters
+        only tell about a channel whose time Mattermost does not report.
 
-        A DM counts unread messages (total minus the watermark); elsewhere only
-        an explicit mention means someone wants this agent. Read from the last
-        view, never before the bot was created: nothing older can be for this
-        session, and a fresh bot's channels can report never viewed (0).
-        With unread_posts also the other channels with unread posts but no
-        mention, where a post for all agents may wait (unread.py, RT-6.11).
-
-        Note `member.msg_count` is the watermark, not a pending count — unread
-        is channel.total_msg_count - member.msg_count.
+        A DM counts unread messages (total minus `member.msg_count`, the
+        counter's own watermark, no count itself); elsewhere mentions.
         """
         tid = await self.get_team_id()
         members = await self._api(
@@ -779,31 +778,24 @@ class MattermostClient:
         )
         channels = await self._api("GET", "/api/v4/users/me/channels")
         by_id = {c["id"]: c for c in (channels or [])}
-        floor = int((await self.get_me()).get("create_at") or 0)
         out: list[UnreadChannel] = []
         for member in members or []:
             cid = member.get("channel_id")
+            if not cid:
+                continue
             channel = by_id.get(cid) or {}
             ctype = channel.get("type") or "O"
             unread = (channel.get("total_msg_count") or 0) - (member.get("msg_count") or 0)
-            if ctype in ("D", "G"):
-                pending = unread
-            else:
-                pending = member.get("mention_count") or 0
-            if pending > 0 or (unread_posts and ctype not in ("D", "G") and unread > 0):
-                out.append(UnreadChannel(
-                    channel_id=cid, channel_type=ctype,
-                    since=max(member.get("last_viewed_at") or 0, floor),
-                    pending=max(pending, 0), unread=max(unread, 0)))
+            pending = unread if ctype in ("D", "G") else member.get("mention_count") or 0
+            out.append(UnreadChannel(
+                channel_id=cid, channel_type=ctype,
+                last_post_at=int(channel.get("last_post_at") or 0),
+                pending=max(pending, 0), unread=max(unread, 0)))
         return out
 
     async def view_channel(self, channel_id: str) -> None:
-        """Mark a channel read for this bot.
-
-        WebSocket delivery does not clear Mattermost's unread counters, so
-        without this the counts only ever grow — and anything that asks "am I
-        being addressed?" by reading them would answer yes forever.
-        """
+        """Mark a channel read in Mattermost, for its UI: best-effort cleanup.
+        The bus counts what waits by its own watermark (watermark.py, RT-6.2)."""
         await self._api(
             "POST",
             "/api/v4/channels/members/me/view",

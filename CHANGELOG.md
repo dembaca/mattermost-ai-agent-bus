@@ -3,6 +3,24 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.47.0
+
+### Changed
+
+- **The bus keeps its own read watermark:** what waits for an agent is what
+  came after the newest post its MCP server handled in each channel (handed to
+  the agent, gated, or the bot's own), kept in `read-<uid>.env` in the state
+  directory. Mattermost's unread counters no longer decide what is pending: the
+  Stop hook, the listener and the inbox backfill read only channels whose
+  newest post is past the mark, from the mark. A DM that holds only the bot's
+  own post (a permission prompt) is never pending; a post that reaches the
+  inbox while the bot posts in the same channel still counts; and
+  `claude --continue` or the workspace's next server go on from the same mark
+  instead of Mattermost's last view. The drain's fyi detail needs no extra
+  request. Marking channels viewed in Mattermost stays, for its UI only
+  ([RT-6.2](docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen),
+  #82 P3b).
+
 ## 0.45.1
 
 ### Changed

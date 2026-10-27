@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import channel, hookapi, lease, session_file, unread
+from mattermost_ai_agent_bus.model import UnreadChannel
 
 UID = "u" * 26
 OTHER = "o" * 26
@@ -127,7 +128,8 @@ async def test_pending_counts_and_details_when_asked(api, monkeypatch):
     """RT-6.17, RT-6.2 step 1: the count over all channels (unread.py, with
     the server's token); per channel with fyi counts only when asked."""
     calls = []
-    rows = [("dm", 3), ("chan", 1)]
+    rows = [unread.Pending(UnreadChannel("dm", "D"), 3, []),
+            unread.Pending(UnreadChannel("chan"), 1, [])]
 
     async def channels(client):
         calls.append("channels")

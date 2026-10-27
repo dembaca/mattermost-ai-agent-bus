@@ -218,7 +218,7 @@ class _Client:
         self.posted.append({"message": message, "root_id": root_id, "props": props})
         return {"id": "new", "message": message, "user_id": ME, "channel_id": "c"}
 
-    async def unread_channels(self):
+    async def member_channels(self):
         return []
 
 

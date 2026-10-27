@@ -54,6 +54,7 @@ PAT = "pat-for-tests"
 @dataclass
 class FakeMattermost:
     posts: list[dict] = field(default_factory=list)  # newest first
+    dm_posts: list[dict] = field(default_factory=list)  # unread_dm's
     members: list[dict] = field(default_factory=list)
     channels: list[dict] = field(default_factory=list)
     writes: list[tuple[str, str, dict]] = field(default_factory=list)
@@ -87,8 +88,13 @@ class FakeMattermost:
                               "create_at": at, "message": message})
 
     def unread_dm(self, n: int) -> None:
-        self.members.append({"channel_id": "d" * 26, "msg_count": 0, "mention_count": 0})
-        self.channels.append({"id": "d" * 26, "type": "D", "total_msg_count": n})
+        """n posts by the owner in a DM, after the read watermark (RT-6.2)."""
+        dm, at = "d" * 26, int(time.time() * 1000)
+        self.members.append({"channel_id": dm, "msg_count": 0, "mention_count": 0})
+        self.channels.append({"id": dm, "type": "D", "total_msg_count": n,
+                              "last_post_at": at + n})
+        self.dm_posts += [{"id": f"dm{i}", "user_id": OWNER, "channel_id": dm,
+                           "create_at": at + i + 1, "message": f"hi {i}"} for i in range(n)]
 
     def custom_status(self) -> dict | None:
         for method, path, body in reversed(self.writes):
@@ -134,8 +140,9 @@ def _handler(fake: FakeMattermost):
             if re.fullmatch(r"/api/v4/posts/[a-z0-9]{26}", p):  # a reply's root
                 return self._send({"id": p.rsplit("/", 1)[1], "channel_id": CHANNEL})
             if p.endswith("/posts"):
-                return self._send({"order": [x["id"] for x in fake.posts],
-                                   "posts": {x["id"]: x for x in fake.posts}})
+                posts = fake.dm_posts if p == f"/api/v4/channels/{'d' * 26}/posts" else fake.posts
+                return self._send({"order": [x["id"] for x in posts],
+                                   "posts": {x["id"]: x for x in posts}})
             if p.endswith("/channels/members"):
                 return self._send(fake.members)
             if p == "/api/v4/users/me/channels":

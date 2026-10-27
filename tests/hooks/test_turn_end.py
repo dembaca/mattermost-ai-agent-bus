@@ -616,3 +616,12 @@ def test_a_newer_installed_plugin_is_named_once_when_the_turn_ends(mm, run, tmp_
 def test_no_update_note_when_the_session_runs_the_newest(mm, run, tmp_path):
     newer_plugin(tmp_path, version="0.0.1")  # older than this tree
     assert run(STOP).banner == ""
+
+
+def test_a_dm_holding_only_the_bots_own_post_is_not_drained(mm, run):
+    """RT-6.2 step 1, RT-6.13 (0.42.3): Mattermost counts the bot's own post as
+    an unread DM for it; the read watermark never does, so no drain."""
+    mm.unread_dm(1)
+    mm.dm_posts[0]["user_id"] = ME
+    r = run(STOP)
+    assert not (r.blocked and "unread message" in r.reason)

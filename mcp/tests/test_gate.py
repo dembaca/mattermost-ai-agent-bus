@@ -348,17 +348,19 @@ async def test_gated_post_is_pushed_only_in_the_digest(bus):
 @pytest.mark.asyncio
 async def test_backfill_and_the_live_stream_are_gated(bus, monkeypatch):
     """RT-6.16 trigger: what arrived before the socket and what it streams."""
+    at = int(time.time() * 1000)
     old = {"id": "p1000000000000000000000000", "user_id": STRANGER, "channel_id": PROJ, "root_id": "",
-           "message": "@agent-me while you were away"}
+           "message": "@agent-me while you were away", "create_at": at}
 
-    async def unread():
-        return [UnreadChannel(PROJ, since=1)]
+    async def channels():
+        return [UnreadChannel(PROJ, last_post_at=at)]
 
-    async def recent(**_):
+    async def posts(*_, **__):
         return [old]
 
-    monkeypatch.setattr(bus.client, "unread_channels", unread)
-    monkeypatch.setattr(bus.client, "list_recent", recent)
+    bus.client._me = {"id": ME, "username": "agent-me"}
+    monkeypatch.setattr(bus.client, "member_channels", channels)
+    monkeypatch.setattr(bus.client, "channel_posts", posts)
     await bus.inbox._backfill()
     await asyncio.gather(*list(bus.inbox._gate_tasks))
     assert bus.viewed == [PROJ]

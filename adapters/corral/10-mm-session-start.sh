@@ -252,10 +252,10 @@ eval "$chan_exports"
 # so without this a sweep unregisters the bot of the session it runs alongside.
 printf 'MM_SESSION_PID=%s\n' "$PPID" >>"$MM_AGENT_SESSION_FILE"
 
-# Start from an empty inbox. A fresh bot is not born with one: Mattermost posts
-# a welcome DM *as the bot* to whoever created it, and the bot's own post counts
-# as unread for the bot. Nothing can ever deliver that (classify_post ignores
-# own posts), so the Stop hook would block on an undrainable message.
+# Start from an empty inbox in Mattermost's UI. A fresh bot is not born with
+# one: Mattermost posts a welcome DM *as the bot* to whoever created it, and the
+# bot's own post counts as unread for the bot. The bus never counts it (its
+# read watermark leaves own posts out, RT-6.2); this clears the display.
 mm_with_token "$BIN/mm-agent-unread.sh" baseline || true
 
 # Show up as present from the first moment. Without this a fresh bot sits at

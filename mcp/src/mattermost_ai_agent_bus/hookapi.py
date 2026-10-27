@@ -418,7 +418,7 @@ async def pending(client: MattermostClient, query: Mapping[str, str], body: Mapp
     rows = await unread.channels(client)
     # A stall the server noticed waits in the inbox like a message (RT-6.19).
     waits = 1 if stall.waiting() else 0
-    result: dict[str, Any] = {"count": sum(n for _, n in rows) + waits}
+    result: dict[str, Any] = {"count": sum(r.waiting for r in rows) + waits}
     if waits:
         result["stall"] = waits
     if rows and query.get("detail") == "1":
@@ -664,7 +664,7 @@ async def turn_end(client: MattermostClient, query: Mapping[str, str],
     asked, by_bus, push = (_flag(query, n) for n in ("signoff_asked", "by_bus", "push"))
     if int(drains) < turnend.MAX_DRAIN:
         rows = await unread.channels(client)
-        count = sum(n for _, n in rows) + (1 if stall.waiting() else 0)  # as /v1/pending
+        count = sum(r.waiting for r in rows) + (1 if stall.waiting() else 0)  # as /v1/pending
         if count > 0:
             return 200, turnend.drain(count, await unread.detail(client, rows) if rows else [])
     _, last = await last_post(client, query, body)
@@ -711,7 +711,7 @@ async def wake(client: MattermostClient, query: Mapping[str, str], body: Mapping
     if int(until) <= time.time() or not turnend.listens(str(last.get("message") or ""),
                                                          project=_project(client)):
         return 200, turnend.no_wake()
-    count = sum(n for _, n in await unread.channels(client))
+    count = sum(r.waiting for r in await unread.channels(client))
     waits = 1 if stall.waiting() else 0  # a stall event for the coordinator (RT-6.19)
     if count > 0:
         return 200, turnend.wake_pending(count + waits)
