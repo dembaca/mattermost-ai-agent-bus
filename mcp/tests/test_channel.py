@@ -11,7 +11,7 @@ from mcp.shared.message import SessionMessage
 from mcp_types import INVALID_REQUEST, JSONRPCNotification, JSONRPCRequest
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
-from mattermost_ai_agent_bus import channel, server
+from mattermost_ai_agent_bus import channel, server, slim
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import Thread
 
@@ -87,6 +87,35 @@ def test_notification_carries_message_and_routing():
                     "trusted_human": "dembaca"}
     # Claude Code drops attributes whose key is not an identifier, and wants strings.
     assert all(k.isidentifier() and isinstance(v, str) for k, v in meta.items())
+
+
+def test_a_long_push_is_cut_with_a_pointer_to_get_thread():
+    """RT-6.12 step 3: a body over slim.BODY_MAX is cut at a line end and says
+    where the rest is; a short one is pushed as it is."""
+    para = "word " * 99 + "end\n"  # 499 chars a line
+    long = MENTION | {"post": MENTION["post"] | {"message": para * 10}}
+    content = channel.notification(long)["content"]
+    body, pointer = content.rsplit("\n", 1)
+    assert pointer == f"… (cut, {len(para) * 10} chars in all; get_thread p1)"
+    assert len(body) <= slim.BODY_MAX and body.endswith("end")
+    # One long line: cut at a word end, not inside a word.
+    one = MENTION | {"post": MENTION["post"] | {"message": "abcdefghi " * 300}}
+    assert channel.notification(one)["content"].split("\n")[0].endswith("abcdefghi")
+    assert channel.notification(MENTION)["content"] == "@agent please look at #46"
+
+
+def test_a_long_digest_ends_with_where_the_rest_is():
+    """RT-6.12 step 3: a digest lists DIGEST_LINES posts, then one line with
+    how many more and the list_recent call per channel that shows them."""
+    items = [_post(f"note {n}") | {channel.CHANNEL_ID: "c" * 26, channel.CREATE_AT: 1000 + n}
+             for n in range(channel.DIGEST_LINES + 3)]
+    items[-1] |= {"intent": "fyi"}
+    lines = channel.digest(items, time.time())["content"].splitlines()
+    assert lines[0].startswith(f"Digest: {len(items)} post(s)")
+    assert len(lines) == 1 + channel.DIGEST_LINES + 1
+    cid, first = "c" * 26, 1000 + channel.DIGEST_LINES  # the oldest left out: note 20
+    assert lines[-1] == f"+3 more (1 fyi): list_recent(channel_id={cid}, since_ms={first})"
+    assert not channel.digest(items[:channel.DIGEST_LINES], time.time())["content"].endswith(")")
 
 
 def test_reaction_keeps_its_answer():

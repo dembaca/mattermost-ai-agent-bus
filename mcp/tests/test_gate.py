@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from mattermost_ai_agent_bus import asks, channel, gate, server, session_file
+from mattermost_ai_agent_bus import asks, channel, gate, server, session_file, slim
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
 from mattermost_ai_agent_bus.model import Me, RosterEntry, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
@@ -332,6 +332,19 @@ async def test_wait_for_events_says_why_and_puts_it_last(bus):
     assert items[0]["from_agent"] is True and "gated" not in items[0]
     assert items[1]["gated"] == GATED and items[1]["from_agent"] is False
     assert bus.inbox._typing is None
+
+
+@pytest.mark.asyncio
+async def test_wait_for_events_cuts_a_long_post_like_the_push(bus):
+    """RT-6.12 step 3: what the bus brings unasked is cut at slim.BODY_MAX with
+    a pointer to get_thread; raw=true and get_thread keep it whole."""
+    pid, text = "p1000000000000000000000000", "@agent-me " + "please read " * 400
+    await bus.arrive(pid, HUMAN, text)
+    msg = json.loads(await server.wait_for_events(timeout_sec=1))[0]["post"]["message"]
+    assert msg.endswith(f"… (cut, {len(text)} chars in all; get_thread {pid})")
+    assert len(msg) < slim.BODY_MAX + 80 and msg.split("\n")[0].endswith(("please", "read"))
+    await bus.arrive(pid, HUMAN, text)
+    assert json.loads(await server.wait_for_events(timeout_sec=1, raw=True))[0]["post"]["message"] == text
 
 
 @pytest.mark.asyncio
