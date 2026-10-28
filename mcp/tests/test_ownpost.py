@@ -9,6 +9,7 @@ import pytest
 
 from mattermost_ai_agent_bus import a2a, ownpost, server
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
+from mattermost_ai_agent_bus.model import Me
 
 UID, WORK, DM = "u" * 26, "w" * 26, "d" * 26
 
@@ -145,7 +146,7 @@ def test_unregistering_removes_the_file(monkeypatch):
             200, json={"id": UID, "username": "agent-x"})), **kw))
     c = MattermostAdapter(base_url="https://mm.example", token="tok",
                          register_url="https://mm.example/register/v1/agents")
-    monkeypatch.setattr(c, "_me", {"id": UID, "username": "agent-x"})
+    monkeypatch.setattr(c, "_me", Me(id=UID, username="agent-x"))
     monkeypatch.setattr(c, "session", None)
     monkeypatch.setenv("MM_BOT_USER_ID", UID)
     c.shutdown_sync()

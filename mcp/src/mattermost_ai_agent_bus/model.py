@@ -3,7 +3,9 @@
 Post props, custom status, channel activity (unread counters, last post) and the profile description are
 read and written in client.py, a2a.py and lease.py only; the rest of the
 server gets these values instead. A post is a Post, built by client.post_of
-from Mattermost's JSON: the fields the bus reads, typed.
+from Mattermost's JSON: the fields the bus reads, typed. The bot account, a
+channel, a channel's accounts and reactions come through the port the same
+way (Me, Channel, ChannelUser, Reaction), built in client.py.
 """
 
 from __future__ import annotations
@@ -14,6 +16,57 @@ from types import MappingProxyType
 from typing import Any
 
 _EMPTY: Mapping[str, Any] = MappingProxyType({})
+
+
+@dataclass(frozen=True)
+class Reaction:
+    """A reaction on a post, from the post's metadata, port.reactions or the
+    WebSocket (client.reaction_of)."""
+
+    user_id: str = ""
+    post_id: str = ""
+    emoji_name: str = ""
+    create_at: int = 0
+
+
+@dataclass(frozen=True)
+class Me:
+    """The bot account (users/me), as port.get_me gives it. raw is the JSON,
+    for the get_me tool asked for raw=true."""
+
+    id: str = ""
+    username: str = ""
+    raw: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)
+
+    def json(self) -> dict[str, Any]:
+        return dict(self.raw)
+
+
+@dataclass(frozen=True)
+class Channel:
+    """A channel as port.get_channel gives it: its name and Mattermost's type
+    (D, G, O or P). raw is the JSON, for wait_for_events asked for raw=true."""
+
+    id: str = ""
+    name: str = ""
+    type: str = ""
+    raw: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)
+
+    def json(self) -> dict[str, Any]:
+        return dict(self.raw)
+
+
+@dataclass(frozen=True)
+class ChannelUser:
+    """An account in a channel (port.channel_users), for the roster (lease.py):
+    deleted is Mattermost's delete_at set; custom_status the status the
+    account set, as Mattermost keeps it ({} without one)."""
+
+    id: str = ""
+    username: str = ""
+    create_at: int = 0
+    deleted: bool = False
+    custom_status: Mapping[str, Any] = field(default=_EMPTY, compare=False)
 
 
 @dataclass(frozen=True)
@@ -45,7 +98,7 @@ class Post:
     pr: int | None = None  # the PR it names: props, else its text (RT-6.14)
     branch: str | None = None
     crowned: bool = False  # the server wrote it while its author held the crown
-    reactions: tuple[Mapping[str, Any], ...] = field(default=(), compare=False)
+    reactions: tuple[Reaction, ...] = field(default=(), compare=False)
     props: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)
     raw: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)
 

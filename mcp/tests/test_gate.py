@@ -9,7 +9,7 @@ import pytest
 
 from mattermost_ai_agent_bus import asks, channel, gate, server, session_file
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
-from mattermost_ai_agent_bus.model import RosterEntry, UnreadChannel
+from mattermost_ai_agent_bus.model import Me, RosterEntry, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
 
 ME, HUMAN, STRANGER = "m" * 26, "h" * 26, "s" * 26
@@ -358,7 +358,7 @@ async def test_backfill_and_the_live_stream_are_gated(bus, monkeypatch):
     async def posts(*_, **__):
         return [post_of(old)]
 
-    bus.client._me = {"id": ME, "username": "agent-me"}
+    bus.client._me = Me(id=ME, username="agent-me")
     monkeypatch.setattr(bus.client, "member_channels", channels)
     monkeypatch.setattr(bus.client, "channel_posts", posts)
     await bus.inbox._backfill()

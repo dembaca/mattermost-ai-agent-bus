@@ -13,6 +13,7 @@ from mcp_types import JSONRPCNotification, JSONRPCRequest
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
 from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.model import Me
 from mattermost_ai_agent_bus import asks, channel, hookapi, lease, permission, server, watermark
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
@@ -165,7 +166,7 @@ class _Client:
         self.trusted = {HUMAN: "dembaca"} if trusted is None else trusted
 
     async def get_me(self):
-        return {"id": BOT, "username": "agent-x"}
+        return Me(id=BOT, username="agent-x")
 
     async def trusted_humans(self):
         return self.trusted

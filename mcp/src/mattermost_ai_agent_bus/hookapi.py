@@ -393,7 +393,7 @@ async def _read_head(reader: asyncio.StreamReader) -> tuple[str, str, dict[str, 
 # --- routes -------------------------------------------------------------------
 
 async def _uid(client: MattermostAdapter) -> str:
-    return str((await client.get_me()).get("id") or "")
+    return (await client.get_me()).id
 
 
 def _project(client: MattermostAdapter) -> bool:
@@ -403,11 +403,11 @@ def _project(client: MattermostAdapter) -> bool:
 async def me(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """Who the bot is, whether it works in a project channel, its crown (RT-6.6)."""
     who = await client.get_me()
-    uid = str(who.get("id") or "")
+    uid = who.id
     project = _project(client)
     # channel: the agent confirmed the channel check (RT-6.12); the hooks of a
     # keyless session cannot see the file that says so (RT-6.18).
-    return 200, {"user_id": uid, "username": str(who.get("username") or ""),
+    return 200, {"user_id": uid, "username": who.username,
                  "project": project, "crown_until": lease.crown_until(uid),
                  "channel": bool(_UID.fullmatch(uid)) and channel.confirmed_file(uid).exists()}
 
@@ -416,7 +416,7 @@ async def pending(client: MattermostAdapter, query: Mapping[str, str], body: Map
     """Unread mentions, DMs and posts for all agents (RT-6.2 step 1, unread.py),
     plus a stall event still to collect (RT-6.19); with detail=1 per channel,
     with its fyi posts (RT-6.14)."""
-    rows = await unread.channels(client)
+    rows = await unread.channels(client, await watched(client))
     # A stall the server noticed waits in the inbox like a message (RT-6.19).
     waits = 1 if stall.waiting() else 0
     result: dict[str, Any] = {"count": sum(r.waiting for r in rows) + waits}
@@ -540,7 +540,7 @@ async def ask_reactions(client: MattermostAdapter, query: Mapping[str, str],
         except Exception:  # noqa: BLE001 — look again next time
             continue
         for r in reactions:
-            who, emoji = str(r.get("user_id") or ""), str(r.get("emoji_name") or "")
+            who, emoji = r.user_id, r.emoji_name
             key = asks.seen_key(pid, who, emoji)
             if who != uid and key not in gated and not asks.was_seen(uid, key):
                 fresh += 1
@@ -670,7 +670,7 @@ async def turn_end(client: MattermostAdapter, query: Mapping[str, str],
         raise BadRequest("listen_since: epoch s")
     asked, by_bus, push = (_flag(query, n) for n in ("signoff_asked", "by_bus", "push"))
     if int(drains) < turnend.MAX_DRAIN:
-        rows = await unread.channels(client)
+        rows = await unread.channels(client, await watched(client))
         count = sum(r.waiting for r in rows) + (1 if stall.waiting() else 0)  # as /v1/pending
         if count > 0:
             return 200, turnend.drain(count, await unread.detail(client, rows) if rows else [])
@@ -716,7 +716,7 @@ async def wake(client: MattermostAdapter, query: Mapping[str, str], body: Mappin
     _, message = await _last(client, query, body)
     if int(until) <= time.time() or not turnend.listens(message, project=_project(client)):
         return 200, turnend.no_wake()
-    count = sum(r.waiting for r in await unread.channels(client))
+    count = sum(r.waiting for r in await unread.channels(client, await watched(client)))
     waits = 1 if stall.waiting() else 0  # a stall event for the coordinator (RT-6.19)
     if count > 0:
         return 200, turnend.wake_pending(count + waits)
@@ -726,11 +726,11 @@ async def wake(client: MattermostAdapter, query: Mapping[str, str], body: Mappin
     if fresh["fresh"] > 0:
         return 200, turnend.wake_reactions(fresh["fresh"])
     who = await client.get_me()
-    uid = str(who.get("id") or "")
+    uid = who.id
     own = await _own_posts(client, uid, body)
     _, new = await posts(client, {"since": since}, body)
     return 200, turnend.wake(new["posts"], own, me=uid,
-                             username=str(who.get("username") or ""), since_ms=int(since),
+                             username=who.username, since_ms=int(since),
                              coordinator=lease.crown_until(uid) > time.time(),
                              digest_sec=channel.digest_sec())
 

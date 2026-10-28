@@ -65,21 +65,29 @@ results, the hook API's post items, WebSocket envelopes, transcripts).
 Between the bus logic and Mattermost sits a port (`port.py`): `ChatPort`, a
 `typing.Protocol` with the chat operations the bus logic calls and nothing
 more. Who and where (the bot's token and session, the work channel, permalink
-base, `get_me`, `get_channel`); people (`usernames`, `agents`,
+base, `get_me`, `account_created`, `get_channel`); people (`usernames`, `agents`,
 `trusted_humans`); channel membership, status and presence (`member_channels`,
 `channel_users`, `presences`, `set_presence`, `set_custom_status`,
 `clear_custom_status`); posting and replying (`post`, `post_sync`,
 `post_by_name_sync`); reading (`thread`, `channel_posts`, `posts_after`,
-`reactions`). Posts and threads cross it as `Post` and `Thread`.
-`client.MattermostAdapter` implements it; mypy checks that structurally.
+`reactions`). Nothing crosses it as Mattermost's JSON: posts and threads come
+back as `Post` and `Thread`, the bot account as `Me`, a channel as `Channel`, a
+channel's accounts as `ChannelUser` and reactions as `Reaction` (`model.py`),
+each with only the fields the bus reads, built in the adapter; `Me` and
+`Channel` keep the JSON as read-only `raw` for the tools asked for
+`raw=true`. `client.MattermostAdapter` implements it; mypy checks that
+structurally.
 The wake gate, lease and roster, slim results, departed agents, ask
 reminders, stall check, own post, stats and the pending count (`gate.py`,
 `lease.py`, `slim.py`, `departed.py`, `remind.py`, `stall.py`, `ownpost.py`,
-`stats.py`, `unread.py`) take a `ChatPort` and never import `client.py`
-(`unread.py` imports only one helper that reads Mattermost's user JSON);
-`test_adapter_boundary` checks both, and that they use no member the port
-lacks. The tests' fakes stand in for the port with only the members a
-test needs: a Protocol asks for no base class.
+`stats.py`, `unread.py`) take a `ChatPort` and never import `client.py`;
+`test_adapter_boundary` checks both, that they use no member the port
+lacks, and that no port member returns JSON. The tests share one fake of the
+port, `FakeChat` in `mcp/tests/fakes.py`: canned answers and a record of what
+was posted, no Mattermost emulator. It is a typed subset of the port, with
+only the members the tests call, each with the port's signature
+(`test_adapter_boundary` compares them, mypy checks the file); what a test
+needs of the adapter beyond the port goes into a subclass.
 Registration (the registrar, the bot and its token) is no chat operation and
 stays outside the port, in the adapter, driven by `server.py` and
 `hosted.py`. The WebSocket inbox (`websocket_inbox.py`) is the adapter's

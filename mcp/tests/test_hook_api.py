@@ -14,42 +14,26 @@ from mattermost_ai_agent_bus import channel, hookapi, lease, session_file, unrea
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import UnreadChannel
 
+from fakes import HookClient
+
 UID = "u" * 26
 OTHER = "o" * 26
 PERSON = "q" * 26
 ASK = "k" * 26
 
 
-class FakeClient:
-    """What the routes use of MattermostAdapter."""
+class FakeClient(HookClient):
+    """HookClient whose bot lookup can fail."""
 
     def __init__(self, posts=(), reactions=None, agents=(), token="t", fail=False):
+        super().__init__(uid=UID, posts=posts, reactions=reactions, agents=agents)
         self.token = token
-        self.project_channel_name = ""
-        self.work_channel_name = "agents"
-        self.posts = list(posts)
-        self._reactions = reactions or {}
-        self._agents = set(agents)
         self.fail = fail
-        self.calls = []
 
     async def get_me(self):
         if self.fail:
             raise httpx.ConnectError("down")
-        return {"id": UID, "username": "agent-me"}
-
-    async def work_channel_id(self):
-        return "c" * 26
-
-    async def channel_posts(self, cid, *, per_page=None, since_ms=None):
-        self.calls.append(("posts", per_page, since_ms))
-        return [post_of(p) for p in self.posts]
-
-    async def agents(self, ids):
-        return set(ids) & self._agents
-
-    async def reactions(self, pid):
-        return self._reactions.get(pid, [])
+        return await super().get_me()
 
 
 @pytest.fixture
@@ -132,7 +116,7 @@ async def test_pending_counts_and_details_when_asked(api, monkeypatch):
     rows = [unread.Pending(UnreadChannel("dm", "D"), 3, []),
             unread.Pending(UnreadChannel("chan"), 1, [])]
 
-    async def channels(client):
+    async def channels(client, watched):
         calls.append("channels")
         return list(rows)
 
@@ -214,7 +198,7 @@ async def test_ask_reactions_counts_only_what_was_not_handed_over(api):
                                          {"user_id": UID, "emoji_name": "white_check_mark"}]})
     _, h = await api(client)
     assert (await h.get("/v1/ask-reactions")).json() == {"fresh": 0}
-    client._reactions[ASK].append({"user_id": PERSON, "emoji_name": "+1"})
+    client.reacts[ASK].append({"user_id": PERSON, "emoji_name": "+1"})
     assert (await h.get("/v1/ask-reactions")).json() == {"fresh": 1}
     # RT-6.16 step 7: a reaction the server gated wakes nobody.
     (d / f"gate-{UID}.env").write_text(f"GATED={ASK}:{PERSON}:+1 {int(time.time())}\n")
@@ -394,7 +378,7 @@ async def test_heavy_routes_are_limited(api, monkeypatch):
         await gate_.wait()
         running -= 1
 
-    async def channels(client):
+    async def channels(client, watched):
         await hold()
         return []
 

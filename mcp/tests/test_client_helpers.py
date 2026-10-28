@@ -191,5 +191,5 @@ async def test_get_me_started_before_a_takeover_keeps_no_old_identity(monkeypatc
     c._take(SessionInfo(url="https://mm.example", name="n", username="agent-n",
                         user_id="u" * 26, bot_token="new"))
     release.set()
-    assert (await pending)["id"] == "new"
-    assert (await c.get_me())["id"] == "new"
+    assert (await pending).id == "new"
+    assert (await c.get_me()).id == "new"

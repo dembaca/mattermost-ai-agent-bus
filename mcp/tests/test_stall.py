@@ -10,7 +10,7 @@ import time
 import pytest
 
 from mattermost_ai_agent_bus import a2a, asks, channel, hookapi, lease, remind, server, stall, stats, tasks
-from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.client import post_of, reaction_of
 from mattermost_ai_agent_bus.model import Post, RosterEntry, Thread
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
@@ -63,7 +63,10 @@ class Client:
         return {i for i in ids if i in (ME, BOB, EVE)}
 
     async def reactions(self, post_id):
-        return self.reacts.get(post_id, [])
+        return [reaction_of(r) for r in self.reacts.get(post_id, [])]
+
+    async def work_channel_id(self):
+        return "c" * 26
 
     async def thread(self, post_id):
         return Thread("", posts=tuple(p for p in self.posts if post_id in (p.id, p.root_id)))
@@ -281,7 +284,7 @@ async def test_the_event_reaches_wait_for_events_push_and_hooks(monkeypatch):
     assert server._stall_event("Stall: 1 open") is True
     assert server._stall_waits() is True
 
-    async def no_unread(client):
+    async def no_unread(client, watched):
         return []
 
     monkeypatch.setattr(hookapi.unread, "channels", no_unread)

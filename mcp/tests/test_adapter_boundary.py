@@ -7,10 +7,14 @@ them, and only client.py talks HTTP; the rest of the server gets bus types
 
 The modules in PORT_MODULES talk to the chat through port.ChatPort only: they
 never import client.py, and every member they use on it is the port's.
-client.MattermostAdapter implements the port.
+client.MattermostAdapter implements the port, and what the port gives back is
+a bus type, never Mattermost's JSON. The tests' FakeChat (fakes.py) is a typed
+subset of the port: only port members, each with the port's signature.
 """
 
 import ast
+import inspect
+import typing
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "mattermost_ai_agent_bus"
@@ -47,11 +51,7 @@ POST_KEYS_ALLOWED = {
 
 # Modules that reach the chat through port.ChatPort only, never client.py.
 PORT_MODULES = {"gate.py", "lease.py", "slim.py", "departed.py", "remind.py", "stall.py",
-                "ownpost.py", "stats.py"}
-# Through the port as well, but importing a plain helper of client.py, and which one.
-PORT_MODULES_HELPERS = {
-    "unread.py": {"account_created"},
-}
+                "ownpost.py", "stats.py", "unread.py"}
 
 
 def _key(node: ast.AST) -> str | None:
@@ -123,7 +123,7 @@ def test_the_guard_sees_a_leak():
 
 def test_every_allowed_module_exists():
     assert all((SRC / name).is_file()
-               for name in set(ALLOWED) | set(POST_KEYS_ALLOWED) | PORT_MODULES | set(PORT_MODULES_HELPERS))
+               for name in set(ALLOWED) | set(POST_KEYS_ALLOWED) | PORT_MODULES)
 
 
 def client_imports(source: str) -> list[str]:
@@ -152,16 +152,14 @@ def _port_members() -> set[str]:
 
 
 def test_port_modules_do_not_import_the_adapter():
-    found = {name: client_imports((SRC / name).read_text())
-             for name in sorted(PORT_MODULES | set(PORT_MODULES_HELPERS))}
-    allowed = {name: sorted(PORT_MODULES_HELPERS.get(name, ())) for name in found}
-    assert {n: sorted(v) for n, v in found.items()} == allowed
+    found = {name: client_imports((SRC / name).read_text()) for name in sorted(PORT_MODULES)}
+    assert {name: names for name, names in found.items() if names} == {}
 
 
 def test_port_modules_use_only_the_port():
     port = _port_members()
     found = {name: sorted(client_members((SRC / name).read_text()) - port)
-             for name in sorted(PORT_MODULES | set(PORT_MODULES_HELPERS))}
+             for name in sorted(PORT_MODULES)}
     assert {name: extra for name, extra in found.items() if extra} == {}
 
 
@@ -179,3 +177,42 @@ def test_the_port_guard_sees_an_import():
               "x = client.post_sync\n")
     assert sorted(client_imports(source)) == ["MattermostAdapter", "client"]
     assert client_members(source) == {"post_sync"}
+
+
+def test_the_port_gives_back_no_json():
+    """What a ChatPort member returns is a bus type (model.py) or a plain
+    value: no dict[str, Any], no Any."""
+    tree = ast.parse((SRC / "port.py").read_text())
+    port = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ChatPort")
+    raw = {n.name: ast.unparse(n.returns) for n in port.body
+           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.returns
+           and "Any" in ast.unparse(n.returns)}
+    assert raw == {}
+
+
+def _signature(cls: type, name: str) -> inspect.Signature:
+    """The member's signature with its annotations resolved, a property's as
+    its getter's."""
+    from mattermost_ai_agent_bus import model, port
+
+    member = inspect.getattr_static(cls, name)
+    func = member.fget if isinstance(member, property) else member
+    hints = typing.get_type_hints(func, localns={**vars(model), **vars(port)})
+    sig = inspect.signature(func)
+    params = [p.replace(annotation=hints.get(p.name, p.annotation)) for p in sig.parameters.values()]
+    return sig.replace(parameters=params, return_annotation=hints.get("return"))
+
+
+def test_the_fake_is_a_typed_subset_of_the_port():
+    """fakes.FakeChat stands in for the port in the tests: every member it has
+    is the port's, with the port's signature; plain values (token, session,
+    work_channel_name) stand for the port's properties."""
+    from fakes import FakeChat
+    from mattermost_ai_agent_bus.port import ChatPort
+
+    port = _port_members()
+    members = {n for n in vars(FakeChat) if not n.startswith("_")}
+    assert members - port == set()
+    for name in sorted(members):
+        if callable(inspect.getattr_static(FakeChat, name)):
+            assert _signature(FakeChat, name) == _signature(ChatPort, name), name

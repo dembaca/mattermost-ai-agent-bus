@@ -8,45 +8,26 @@ import pytest
 
 from mattermost_ai_agent_bus import asks, channel, server
 from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.model import Reaction
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
+
+from fakes import FakeChat
 
 BOT = "b" * 26
 HUMAN = "h" * 26
 ASK = "a" * 26
 
 
-class _Client:
-    session = None
+class _Client(FakeChat):
+    """FakeChat, plus the adapter's add_reaction the tools call."""
 
     def __init__(self):
-        self.posted = []
+        super().__init__(uid=BOT, username="agent-vtpm-hogan-1", trusted={HUMAN: "dembaca"},
+                         names={HUMAN: "dembaca"}, channel="proj-vtpm", post_id=ASK)
         self.reacted = []
-        self.found_reactions = []
-
-    async def get_me(self):
-        return {"id": BOT, "username": "agent-vtpm-hogan-1"}
-
-    async def trusted_humans(self):
-        return {HUMAN: "dembaca"}
-
-    async def post(self, message, channel_id=None, root_id=None, props=None):
-        self.posted.append({"message": message, "root_id": root_id, "props": props})
-        return post_of({"id": ASK, "message": message, "user_id": BOT, "channel_id": "c1"})
 
     async def add_reaction(self, post_id, emoji):
         self.reacted.append((post_id, emoji))
-
-    async def reactions(self, post_id):
-        return self.found_reactions
-
-    async def usernames(self, ids):
-        return {HUMAN: "dembaca"}
-
-    async def get_channel(self, cid):
-        return {"name": "proj-vtpm"}
-
-    async def member_channels(self):
-        return []
 
 
 @pytest.fixture(autouse=True)
@@ -126,7 +107,7 @@ async def test_a_thumbs_up_on_an_open_ask_reaches_the_agent_once(monkeypatch):
 @pytest.mark.asyncio
 async def test_reactions_given_while_nobody_listened_are_backfilled():
     c = _Client()
-    c.found_reactions = [{"user_id": HUMAN, "post_id": ASK, "emoji_name": "-1"}]
+    c.reacts = {ASK: [Reaction(user_id=HUMAN, post_id=ASK, emoji_name="-1")]}
     inbox = _inbox(c)
     asks.add(BOT, ASK)
     await inbox._backfill()

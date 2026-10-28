@@ -362,33 +362,37 @@ def unread_channel(mm, viewed_ms=0, unread=True):
 
 def test_drain_notices_a_post_to_all_agents(mm, run):
     """RT-6.2 step 1, RT-6.11: a post for all agents holds no @channel, so no
-    mention counter moves; the drain finds it after the read watermark. Not a
+    mention counter moves; the drain finds it after the read watermark in a
+    watched channel (outside one it is no event, RT-6.2 step 1). Not a
     plain post, an own one, one behind the watermark, or one the server gated."""
     unread_channel(mm)
     other_post(mm, "main is red, hold merges", props=TO_ALL)
-    r = run(STOP)
+    # Not the project channel here (the bot was only added to it): wait_for_events
+    # cannot collect the post, so the drain does not wait for it (0.50.0).
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+    r = run(STOP, **IN_PROJECT)  # the project channel: watched
     assert r.blocked and "1 unread message(s)" in r.reason
     mm.posts = []
     other_post(mm, "main is red")
     other_post(mm, "IDLE · done", props=TO_ALL, user_id=ME)
     other_post(mm, "odd", props={"a2a": "all"})
-    assert run(STOP, MM_LISTEN_SEC="0").passed
+    assert run(STOP, MM_LISTEN_SEC="0", **IN_PROJECT).passed
     mm.posts = []
     other_post(mm, "main is red", props=TO_ALL)
     mark = run.state_dir / f"read-{ME}.env"
     mark.parent.mkdir(parents=True, exist_ok=True)
     mark.write_text(f"{PROJECT} {'x' * 26} {int(time.time() * 1000) + 60_000}\n")
-    assert run(STOP, MM_LISTEN_SEC="0").passed  # handled since
+    assert run(STOP, MM_LISTEN_SEC="0", **IN_PROJECT).passed  # handled since
     mark.unlink()
     mm.members, mm.channels = [], []
     unread_channel(mm, unread=False)
-    assert run(STOP, MM_LISTEN_SEC="0").passed  # no unread post: not even looked at
+    assert run(STOP, MM_LISTEN_SEC="0", **IN_PROJECT).passed  # no unread post: not even looked at
     mm.members, mm.channels = [], []
     unread_channel(mm)
     gate_file = run.state_dir / f"gate-{ME}.env"
     gate_file.parent.mkdir(parents=True, exist_ok=True)
     gate_file.write_text(f"GATED={mm.posts[0]['id']} {int(time.time())}\n")
-    assert run(STOP, MM_LISTEN_SEC="0").passed
+    assert run(STOP, MM_LISTEN_SEC="0", **IN_PROJECT).passed
 
 
 FYI = {"a2a": {"v": 1, "kind": "done", "intent": "fyi"}}

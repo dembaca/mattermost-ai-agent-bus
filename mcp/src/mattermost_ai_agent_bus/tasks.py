@@ -14,7 +14,7 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from . import a2a, asks, session_file
-from .model import Post, RosterEntry
+from .model import Post, Reaction, RosterEntry
 
 WINDOW_DAYS = 14
 DONE_KEEP_MS = 24 * 3600 * 1000
@@ -179,7 +179,7 @@ def _apply(t: dict[str, Any], p: Post, author: str,
 
 
 def ask_answered(ask: Post, thread: Collection[Post],
-                 reactions: Collection[Mapping[str, Any]], names: Mapping[str, str],
+                 reactions: Collection[Reaction], names: Mapping[str, str],
                  human: str, trusted: Collection[str] = ()) -> bool:
     """Whether an ask to `human` is answered on Mattermost (RT-6.11, RT-6.19): a
     yes/no reaction by that human or a trusted human (ids in `trusted`), or a
@@ -192,21 +192,21 @@ def ask_answered(ask: Post, thread: Collection[Post],
         return bool(human) and names.get(uid, "").lower() == human
 
     for r in reactions:
-        u = str(r.get("user_id") or "")
-        if asks.answer_of(str(r.get("emoji_name") or "")) and (by_human(u) or u in trusted):
+        u = r.user_id
+        if asks.answer_of(r.emoji_name) and (by_human(u) or u in trusted):
             return True
     root, at = ask.thread, ask.create_at
     return any(p.thread == root and p.create_at > at
                and not p.delete_at and by_human(p.user_id) for p in thread)
 
 
-def resolved(reactions: Collection[Mapping[str, Any]], names: Mapping[str, str]) -> bool:
+def resolved(reactions: Collection[Reaction], names: Mapping[str, str]) -> bool:
     """An agent closed the ask with resolve_ask: its ✅ (RT-6.11). Any bus agent
     may, also one that did not ask: a successor session closes its
     predecessor's asks. It answers nothing: no approval comes of it."""
     prefix = session_file.agent_prefix()
-    return any(r.get("emoji_name") == "white_check_mark"
-               and names.get(str(r.get("user_id") or ""), "").startswith(prefix) for r in reactions)
+    return any(r.emoji_name == "white_check_mark"
+               and names.get(r.user_id, "").startswith(prefix) for r in reactions)
 
 
 def open_asks(posts: Sequence[Post], names: Mapping[str, str],

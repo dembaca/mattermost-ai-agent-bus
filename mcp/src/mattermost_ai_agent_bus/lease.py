@@ -18,7 +18,6 @@ session.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -134,7 +133,7 @@ def with_crown(message: str, user_id: str) -> str:
 async def _user_id(client: ChatPort) -> str:
     if client.session:
         return client.session.user_id
-    return os.environ.get("MM_BOT_USER_ID") or (await client.get_me())["id"]
+    return os.environ.get("MM_BOT_USER_ID") or (await client.get_me()).id
 
 
 # --- the status -------------------------------------------------------------------
@@ -247,18 +246,6 @@ async def _render(client: ChatPort) -> None:
 
 # --- the roster ---------------------------------------------------------------------
 
-def _custom_status(user: Mapping[str, Any]) -> dict[str, Any]:
-    props = user.get("props")
-    raw = props.get("customStatus") if isinstance(props, Mapping) else None
-    if not isinstance(raw, str) or not raw:
-        return {}
-    try:
-        value = json.loads(raw)
-    except ValueError:
-        return {}
-    return value if isinstance(value, dict) else {}
-
-
 def _at(value: Any) -> datetime | None:
     try:
         at = datetime.fromisoformat(str(value))
@@ -282,22 +269,22 @@ async def _rows(client: ChatPort, channel_id: str) -> list[dict[str, Any]]:
     💤. Crown: reachable with a live 👑."""
     prefix = session_file.agent_prefix()
     users = sorted((u for u in await client.channel_users(channel_id)
-                    if str(u.get("username") or "").startswith(prefix) and u.get("delete_at") == 0),
-                   key=lambda u: int(u.get("create_at") or 0))
+                    if u.username.startswith(prefix) and not u.deleted),
+                   key=lambda u: u.create_at)
     if not users:
         return []
-    status = await client.presences([str(u["id"]) for u in users])
+    status = await client.presences([u.id for u in users])
     now = datetime.now(timezone.utc)
     rows = []
     for u in users:
-        custom = _custom_status(u)
+        custom = u.custom_status
         emoji = str(custom.get("emoji") or "")
         live = bool(emoji) and bool(custom.get("duration")) and not _expired(custom.get("expires_at"), now)
-        presence = status.get(str(u["id"])) or "offline"
+        presence = status.get(u.id) or "offline"
         reachable = presence != "offline" and live and emoji != "zzz"
         until = _at(custom.get("expires_at")) if custom.get("duration") else None
-        rows.append({"id": str(u["id"]), "username": str(u.get("username") or ""),
-                     "create_at": int(u.get("create_at") or 0), "presence": presence,
+        rows.append({"id": u.id, "username": u.username,
+                     "create_at": u.create_at, "presence": presence,
                      "emoji": emoji, "text": str(custom.get("text") or ""), "live": live,
                      "until_ms": int(until.timestamp() * 1000) if until else 0,
                      "reachable": reachable, "crown": reachable and emoji == "crown"})

@@ -8,8 +8,11 @@ its newest post is newer than that; Mattermost's counters decide nothing, and
 only stand in for a channel whose newest post's time Mattermost leaves out.
 Of those posts, a DM or group counts someone else's; any other channel the
 posts that mention this agent (or @channel, @all, @here) and the posts for all
-agents (``to: all``, RT-6.11). Posts the wake gate held back (RT-6.16) count
-nowhere. Per channel, the detail says how many of them are an agent's fyi
+agents (``to: all``, RT-6.11). Only what wait_for_events can hand over counts
+(RT-6.2 step 1): outside a DM and the channels the server watches, only a post
+naming this agent; a group post, an @channel or a post for all agents in a
+channel the bot is merely in counts nowhere. Posts the wake gate held back
+(RT-6.16) count nowhere. Per channel, the detail says how many of them are an agent's fyi
 posts (RT-6.14), which need no answer. Reading marks nothing handled, except a
 run of the bot's own, system and gated posts right after the mark: nothing
 there is for the agent, and passing it saves the next read.
@@ -20,10 +23,10 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from . import a2a, gate, watermark
-from .client import account_created
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -68,9 +71,8 @@ def _direct(channel: UnreadChannel) -> bool:
 async def after(client: ChatPort) -> list[After]:
     """Every channel with posts after its watermark. One request for the
     channels, then one per channel whose newest post is past its mark."""
-    me = await client.get_me()
-    uid = str(me.get("id") or "")
-    floor = max(account_created(me), int(time.time() * 1000) - DAY_MS)
+    uid = (await client.get_me()).id
+    floor = max(await client.account_created(), int(time.time() * 1000) - DAY_MS)
     marks = watermark.read(uid)
     gated = gate.gated(uid)
     out: list[After] = []
@@ -108,15 +110,34 @@ def _for_me(post: Post, channel: UnreadChannel, name: str) -> bool:
     return f"@{name.lower()}" in names or any(e in names for e in _EVERYONE)
 
 
-async def channels(client: ChatPort) -> list[Pending]:
+def names_me(message: str, uid: str, username: str) -> bool:
+    """The text names this agent: <@uid> or @username, the way the inbox
+    reads a mention (websocket_inbox.classify_post) and the count."""
+    if uid and f"<@{uid}>" in message:
+        return True
+    name = username.lstrip("@")
+    return bool(name) and re.search(rf"(?<![\w-])@{re.escape(name)}(?![\w-])", message, re.I) is not None
+
+
+def _deliverable(post: Post, channel: UnreadChannel, uid: str, name: str,
+                 watched: Collection[str]) -> bool:
+    """wait_for_events can hand it over: a DM, a watched channel, or a post
+    naming this agent (websocket_inbox.classify_post, RT-6.2 step 1)."""
+    return (channel.channel_type == "D" or channel.channel_id in watched
+            or names_me(post.message, uid, name))
+
+
+async def channels(client: ChatPort, watched: Collection[str]) -> list[Pending]:
     """The channels with something for this agent, each with how much is
-    pending there and the posts it was counted from."""
+    pending there and the posts it was counted from. `watched`: the channels
+    the server watches; elsewhere only what names the agent counts."""
     me = await client.get_me()
-    uid, name = str(me.get("id") or ""), str(me.get("username") or "")
+    uid, name = me.id, me.username
     gated = gate.gated(uid)
     out: list[Pending] = []
     for ch, posts in await after(client):
-        mine = [p for p in posts if not _passed(p, uid, gated) and _for_me(p, ch, name)]
+        mine = [p for p in posts if not _passed(p, uid, gated) and _for_me(p, ch, name)
+                and _deliverable(p, ch, uid, name, watched)]
         if mine:
             out.append(Pending(ch, len(mine), mine))
     return out
