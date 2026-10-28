@@ -14,7 +14,9 @@ trusted human (the ask reminders of remind.py are none) and no agent with the
 status `working`; the crown holder's own posts and status are none either (its
 nudges would start a new quiet period), they only push the next wake to
 MM_STALL_SEC after them. Without any activity in the window the quiet period
-starts with the oldest open item. Then the server wakes its agent with an event
+starts with the oldest open item. The crown holder's own asks within their
+24 h are listed but are no reason to wake it: remind.py nudges their human, so
+a stall whose only items they are wakes nobody. Then the server wakes its agent with an event
 `{kind: "stall"}` whose text lists the items: what, who is next, the last
 activity. The event goes into the inbox queue, so it reaches the agent like
 any event: pushed as a channel tag (RT-6.12), from wait_for_events, and the
@@ -109,8 +111,10 @@ def _last(thread: Sequence[Post], names: Mapping[str, str]) -> tuple[int, str]:
 
 def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
           rows: Sequence[Mapping[str, Any]], reachable: set[str], now_ms: int,
-          trusted: Collection[str] = ()) -> list[dict[str, Any]]:
-    """The open items, longest quiet first: {what, id, title, next, last, at}."""
+          trusted: Collection[str] = (), me: str = "") -> list[dict[str, Any]]:
+    """The open items, longest quiet first: {what, id, title, next, last, at}.
+    An ask of `me` (the crown holder) still within its 24 h is marked own: its
+    reminders nudge the human, so it is listed but wakes nobody."""
     live = [p for p in posts if not p.type and not p.delete_at]
     by_thread: dict[str, list[Post]] = {}
     for p in live:
@@ -145,8 +149,11 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
             what, nxt = "ask expired", f"{a.get('by', '–')}: resolve it, open a new ask"
         else:
             what, nxt = "ask", f"{a.get('human', '–')} (human; reminded automatically)"
-        out.append({"what": what, "id": a["ask"], "title": a.get("need", ""),
-                    "next": nxt, "last": last, "at": at})
+        item = {"what": what, "id": a["ask"], "title": a.get("need", ""),
+                "next": nxt, "last": last, "at": at}
+        if what == "ask" and me and a.get("by") == me:
+            item["own"] = True
+        out.append(item)
 
     cls = {p.id: c for p, c in zip(posts, classes, strict=True)}
     for p in sorted(live, key=_at):
@@ -251,7 +258,8 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
                      if c == gate.OTHER and not p.root_id}
     rows = tasks.build(posts, names, now_ms=now_ms, untrusted=untrusted,
                        coordinators={r.username for r in roster if r.coordinator})
-    found = items(posts, names, classes, rows, {r.username for r in roster}, now_ms, trusted)
+    found = items(posts, names, classes, rows, {r.username for r in roster}, now_ms, trusted,
+                  me=names.get(uid, ""))
     if not quiet:  # nothing that counts in the window: the saved start, else the oldest open item
         quiet = int(st["QUIET"]) or min((i["at"] for i in found if i["at"]), default=now_ms)
     wakes, nxt = int(st["WAKES"]), st["NEXT"]
@@ -261,7 +269,9 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
         quiet = int(st["QUIET"])
     # Own posts and a fresh crown only push the next wake out; the backoff goes on.
     nxt = max(nxt, own / 1000 + stall_sec() if own else 0.0, st["FROM"])
-    if not found:
+    if all(i.get("own") for i in found):
+        # Nothing open, or only the crown holder's own asks: their reminders
+        # already nudge the human, a wake would find nothing to do.
         _save(uid, quiet, wakes, nxt, st["FROM"])
         return None
     if nxt > now:

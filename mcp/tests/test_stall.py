@@ -568,3 +568,22 @@ async def test_two_servers_of_one_bot_send_one_reminder(bus):
         os.close(fd)
     await remind.tick(bus, ME, NOW)
     assert len(bus.sent) == 1
+
+
+async def test_the_crown_holders_own_ask_alone_wakes_nobody(bus):
+    """RT-6.19 (reported 0.51.0): the coordinator's own open ask is nudged by
+    its reminders; a stall with only that open does not wake it. Next to
+    another open item it is listed for context."""
+    bus.posts += [post(1, ME, "🙋 @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK)]
+    await look(bus)
+    assert bus.woken == []
+    bus.posts += [post(2, BOB, "🙋 @dembaca — **Deploy?**", 45, kind=a2a.ASK)]
+    await look(bus)
+    assert len(bus.woken) == 1 and pid(1) in bus.woken[0] and pid(2) in bus.woken[0]
+
+
+async def test_an_own_expired_ask_still_wakes(bus):
+    """RT-6.19: after 24 h the ask approves nothing: the coordinator opens a new one."""
+    bus.posts += [post(1, ME, "🙋 @dembaca — **Merge PR #4?**", 25 * 60, kind=a2a.ASK)]
+    await look(bus)
+    assert "ask expired" in bus.woken[0]

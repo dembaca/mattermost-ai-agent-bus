@@ -320,10 +320,9 @@ once.
 
 <!-- RT-6.5 in docs/arc42/06-runtime-view.md -->
 
-When `wait_for_events` hands you a mention or DM, the sender sees you as
-*typing* in that thread until you post, wait again, or 60 s pass. So answer
-addressed posts promptly, even with a one-line `ACK`; if you will not answer
-one, the indicator ends on its own.
+A mention or DM (as 👑 a human's plain post) shows you as *typing* in its
+thread until you post, wait again, or 60 s pass. So answer it promptly, even
+with a one-line `ACK`; if you will not, the indicator ends on its own.
 
 Under Claude Code your Mattermost status is kept current for you: 🛠 `working`
 while a turn runs, 👂 `listening · until HH:MM, then idle` during the listen

@@ -1090,9 +1090,9 @@ async def wait_for_events(
     more than 24 h after it, which approves nothing (RT-6.11). departed: mentioned
     agents that are gone, your server told the thread: route it (RT-6.21). Mentions and DMs come first; when more than
     max_events were waiting, a last item {kind: more_pending, count} says so —
-    call again to collect them. A delivered mention or DM
-    shows you as typing in its thread until you post, wait again, or
-    MM_TYPING_SEC (default 60) runs out. Holding the crown you may get
+    call again to collect them. A delivered mention or DM, and holding
+    the crown a human's plain post, shows you as typing in its thread until
+    you post, wait again, or MM_TYPING_SEC (default 60) runs out. Holding the crown you may get
     {kind: stall}: the bus is stuck, its text lists what is open (RT-6.19,
     coordinator.md). Keep timeout_sec below the
     runtime's background limit (Claude Code: ~120 s) and call it in the
@@ -1107,6 +1107,7 @@ async def wait_for_events(
     finally:
         _tool_idle.set()
     payload = await _event_items(events, raw)
+    await _typing_for_task(events, payload)
     if not raw:
         await _compact_bystander(payload)
     more = getattr(inbox, "pending", 0)
@@ -1114,6 +1115,31 @@ async def wait_for_events(
         # More than max_events were queued; mentions and DMs came first.
         payload.append({"kind": "more_pending", "count": more})
     return _out("wait_for_events", payload)
+
+
+def _human_task(event: Any, item: dict[str, Any]) -> bool:
+    """A human's plain post: no agent's, not gated (RT-6.16), no fyi (RT-6.14),
+    no system or webhook post, mentioning no agent and not everyone."""
+    post = event.post
+    return bool(event.kind == "watched_channel" and not item.get("gated") and not item.get("from_agent")
+                and item.get("intent") != a2a.FYI and not post.type and not post.from_webhook
+                and not tasks._mentions(post.message) and not channel.broadcast(post.message))
+
+
+async def _typing_for_task(events: list[Any], items: list[dict[str, Any]]) -> None:
+    """RT-6.5: a human's plain post wakes only the 👑, as its task (RT-6.16),
+    so it shows typing in that post's thread like a mention, from
+    wait_for_events and the channel push alike. A delivered mention or DM
+    started it in the inbox already; a gated, digest-only or fyi post promises
+    nothing."""
+    if any(e.kind in ("mention", "dm") and not e.gated for e in events):
+        return
+    task = next((e for e, i in zip(events, items, strict=False) if _human_task(e, i)), None)
+    if task is None:
+        return
+    uid = await _my_id(_get_client())
+    if uid and lease.crown_held(uid):
+        _get_inbox().start_typing(task.post.channel_id, task.post.thread)
 
 
 async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, Any]]:
@@ -1271,6 +1297,7 @@ async def _push_wait(timeout: float) -> list[dict[str, Any]]:
     await _tool_idle.wait()
     events = await _get_inbox().wait_for_events(timeout_sec=timeout, max_events=10, agent=False)
     items = await _event_items(events)
+    await _typing_for_task(events, items)
     for item in items:
         stats.record("push", name=item["kind"], chars=len(json.dumps(item, ensure_ascii=False)))
     return items
