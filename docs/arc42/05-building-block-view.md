@@ -67,7 +67,8 @@ The MCP server's inside is cut once more, at the chat: see 5.2.
 | Bus state | `watermark.py`, the state files of `session_file.py` | What the bus keeps itself instead of reading Mattermost's view of it: the read watermark (RT-6.2), the latest own post, asks, reminders, stall |
 
 **Port.** `ChatPort` covers who and where (the bot's token and session, the
-work channel, permalink base, `get_me`, `account_created`, `get_channel`);
+work channel, permalink base, `get_me`, `account_created`, `get_channel`,
+`channel_header`, `set_channel_header`);
 people (`usernames`, `agents`, `trusted_humans`); membership, status and
 presence (`member_channels`, `channel_users`, `presences`, `set_presence`,
 `set_custom_status`, `clear_custom_status`); posting (`post`, `post_sync`,

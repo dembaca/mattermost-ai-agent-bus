@@ -13,9 +13,9 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import asks, departed, gate, lease, links, unread, watermark
-from .client import (MattermostAdapter, post_of, reaction_of, watched_channel_ids, with_links,
-                     ws_url_from_http)
+from . import asks, departed, gate, lease, unread, watermark
+from .client import (MattermostAdapter, post_of, reaction_of, read_links, watched_channel_ids,
+                     with_links, ws_url_from_http)
 from .model import Channel, Post, Reaction
 
 log = logging.getLogger(__name__)
@@ -261,7 +261,7 @@ class WebSocketInbox:
                 if not isinstance(found, dict) or not found:
                     continue
                 # RT-6.15: the bus's permalinks as bare ids, odd links written out.
-                post = post_of(links.read_post(found, getattr(self.client, "permalink_base", "")))
+                post = post_of(read_links(found, getattr(self.client, "permalink_base", "")))
                 channel_type = data.get("channel_type")
                 channel = None
                 cid = post.channel_id

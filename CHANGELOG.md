@@ -3,6 +3,36 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.55.0
+
+### Added
+
+- **The 👑 keeps the work channel's header:** when the crown passes to an
+  agent, its server writes who holds it since when and how to address the
+  agents (`plain post → 👑 routes it · @agent → that agent · 🙋 = a question
+  for you`) into the header, after a `🚌 agent bus` mark. Only that part is
+  replaced; what people wrote stays. Written only when the crown changes
+  hands and the header says something else, since Mattermost posts a system
+  message for every change; without permission it is logged once and the
+  crown works as before
+  ([RT-6.6](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
+
+### Fixed
+
+- **Post ids in an ask's card are links:** the permalinks and written-out
+  odd links of a post now cover the text of its message attachments too
+  (pretext, text, field values), in the adapter for every caller, so a post
+  id in an ask's context opens with one click; agents read it back bare.
+  SKILL.md and the `ask_human` doc say to write PRs and issues in an ask as
+  markdown links too
+  ([RT-6.15](docs/arc42/06-runtime-view.md#615-references-as-links)).
+- **An ask always has its own thread:** `ask_human` with `root_id` posted the
+  ask inside a shared thread, where any later post by the human counted as
+  the answer and stopped the reminders. The ask is now always a top-level
+  post, recorded with its own thread; the given thread gets a one-line link
+  to it (`🙋 asked <permalink>`) without the mention
+  ([RT-6.11](docs/arc42/06-runtime-view.md#611-asking-a-human)).
+
 ## 0.52.0
 
 ### Fixed

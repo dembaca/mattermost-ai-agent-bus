@@ -377,13 +377,29 @@ async def test_an_answer_more_than_24_hours_after_the_ask_comes_expired(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_a_reply_in_the_thread_of_an_ask_in_a_thread(monkeypatch):
-    """RT-6.11 step 2: an ask posted in a thread is recorded with it, so a reply
-    there counts as late only when every ask of this bot in it is."""
+async def test_an_ask_from_a_thread_stands_on_its_own_and_is_linked_there(monkeypatch):
+    """RT-6.11 step 1/2: with root_id the ask is still a top-level post, its
+    thread its own; the given thread gets a link to it without the mention, so
+    the human is notified once. A later post in that thread answers nothing."""
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)
+    task, day = "t" * 26, asks.APPROVAL_SEC
+    out = json.loads(await server.ask_human(need="Merge #61?", root_id=task))
+    ask, link = c.posted
+    assert ask["root_id"] is None and ask["message"] == "🙋 @dembaca — **Merge #61?**"
+    assert link == {"message": f"🙋 asked {ASK}", "channel_id": None, "root_id": task, "props": None}
+    assert out["ask"] == ASK and out["linked_in"] == task
+    assert asks.expired(BOT, ASK, time.time() + day, thread=True)
+    assert not asks.expired(BOT, task, time.time() + day, thread=True)  # no ask lives there
+    assert asks.open_to(BOT, "dembaca") == [ASK]
+
+
+@pytest.mark.asyncio
+async def test_a_reply_in_a_thread_with_several_asks(monkeypatch):
+    """RT-6.11 step 5: in a thread that holds several asks (recorded before
+    0.55.0), a reply counts as late only when every ask of this bot in it is."""
     task, fresh, day = "t" * 26, "f" * 26, asks.APPROVAL_SEC
-    await server.ask_human(need="Merge #61?", root_id=task)
+    asks.add(BOT, ASK, "dembaca", task)
     assert not asks.expired(BOT, task, thread=True)
     assert asks.expired(BOT, task, time.time() + day, thread=True)
     assert not asks.expired(BOT, task, time.time() + day)  # no ask by that id

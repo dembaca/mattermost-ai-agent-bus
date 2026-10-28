@@ -10,7 +10,7 @@ import os
 import re
 import secrets
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -114,7 +114,39 @@ def channel_user_of(raw: Mapping[str, Any]) -> ChannelUser:
 def with_links(post: Post, post_url: str) -> Post:
     """The post with the bus's permalinks as bare ids and odd links written
     out (RT-6.15), as the client's read calls give it."""
-    return post_of(links.read_post(dict(post.raw), post_url))
+    return post_of(read_links(dict(post.raw), post_url))
+
+
+def read_links(post: dict[str, Any], post_url: str) -> dict[str, Any]:
+    """links.read_post on a post's JSON, its attachments' text included (RT-6.15)."""
+    post = links.read_post(post, post_url)
+    if isinstance(post.get("props"), Mapping):
+        post["props"] = attachment_texts(post["props"], lambda s: links.read(s, post_url=post_url))
+    return post
+
+
+def attachment_texts(props: Mapping[str, Any], edit: Callable[[str], str]) -> dict[str, Any]:
+    """props with `edit` applied to what a human reads in its message
+    attachments: pretext, text and the fields' values (RT-6.15). Titles and
+    the fallback are the server's own plain text."""
+    out = dict(props)
+    cards = out.get("attachments")
+    if not isinstance(cards, list):
+        return out
+    edited: list[Any] = []
+    for card in cards:
+        if isinstance(card, Mapping):
+            card = dict(card)
+            for key in ("pretext", "text"):
+                if isinstance(card.get(key), str):
+                    card[key] = edit(card[key])
+            if isinstance(card.get("fields"), list):
+                card["fields"] = [{**f, "value": edit(f["value"])}
+                                  if isinstance(f, Mapping) and isinstance(f.get("value"), str) else f
+                                  for f in card["fields"]]
+        edited.append(card)
+    out["attachments"] = edited
+    return out
 
 
 def attachment_props(fields: list[tuple[str, str, bool]], *, fallback: str,
@@ -804,6 +836,20 @@ class MattermostAdapter:
                 "GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}"))
         return self._channels[channel_id]
 
+    async def channel_header(self, channel_id: str) -> str:
+        """The channel's header as it is now: read fresh, a human may have
+        changed it (RT-6.6 step 7)."""
+        raw = await self._api("GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}")
+        self._channels[channel_id] = channel_of(raw)
+        return str(raw.get("header") or "")
+
+    async def set_channel_header(self, channel_id: str, header: str) -> None:
+        """Set the channel's header; Mattermost posts a system message for it."""
+        raw = await self._api("PUT", f"/api/v4/channels/{mm_id(channel_id, 'channel')}/patch",
+                              json={"header": header})
+        if isinstance(raw, Mapping) and raw.get("id"):
+            self._channels[channel_id] = channel_of(raw)
+
     async def usernames(self, user_ids: set[str]) -> dict[str, str]:
         """{user_id: username}, cached; one request for all unknown ids."""
         missing = sorted(set(user_ids) - set(self._usernames))
@@ -924,14 +970,16 @@ class MattermostAdapter:
             channel_id = channel_id or root.get("channel_id") or None
         cid = mm_id(channel_id or await self.get_channel_id(), "channel")
         # RT-6.15: post ids as permalinks, odd links written out for the human.
+        # The same for an attachment's text (an ask's card), so no caller forgets it.
         message = links.send(message, post_url=self.permalink_base)
         body: dict[str, Any] = {"channel_id": cid, "message": message}
         if root_id:
             body["root_id"] = root_id
         if props:
-            body["props"] = props
-        post = post_of(links.read_post(await self._api("POST", "/api/v4/posts", json=body),
-                                       self.permalink_base))
+            body["props"] = attachment_texts(
+                props, lambda s: links.send(s, post_url=self.permalink_base))
+        post = post_of(read_links(await self._api("POST", "/api/v4/posts", json=body),
+                                  self.permalink_base))
         await self._remember(cid, post)
         return post
 
@@ -1031,7 +1079,7 @@ class MattermostAdapter:
         return Thread(
             root_id=str(data.get("root_id") or post_id),
             order=tuple(order),
-            posts=tuple(post_of(links.read_post(posts[pid], self.permalink_base))
+            posts=tuple(post_of(read_links(posts[pid], self.permalink_base))
                         for pid in order if pid in posts),
         )
 
@@ -1079,7 +1127,7 @@ class MattermostAdapter:
             "GET", f"/api/v4/channels/{mm_id(cid, 'channel')}/posts", params=params
         )
         posts = data.get("posts") or {}
-        return sorted((post_of(links.read_post(p, self.permalink_base)) for p in posts.values()),
+        return sorted((post_of(read_links(p, self.permalink_base)) for p in posts.values()),
                       key=lambda p: p.create_at)
 
     async def posts_after(self, since_ms: int, *, channel_id: str | None = None,
@@ -1100,7 +1148,7 @@ class MattermostAdapter:
             if len(page_posts) < 200 or any(
                     int(p.get("create_at") or 0) < since_ms for p in page_posts):
                 break
-        return sorted((post_of(links.read_post(p, self.permalink_base)) for p in found.values()),
+        return sorted((post_of(read_links(p, self.permalink_base)) for p in found.values()),
                       key=lambda p: p.create_at)
 
 

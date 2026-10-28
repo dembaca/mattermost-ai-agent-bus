@@ -909,10 +909,11 @@ async def ask_human(
     answer in a word: context — the situation in 1–3 sentences; recommendation
     — what you would do and why; decision — the decision written out ("Install
     02dadca on hogan now, VM 399 stays up"), which a 👍 then approves as it
-    stands. where: PR, thread or host. blocking: true if you cannot go on
-    without it. answers: other choices, if any ("go / not now"). human defaults
-    to your responsible human. root_id puts it in a thread; the default is a
-    top-level post, so it stands out.
+    stands. where: PR, thread or host; PRs and issues as markdown links, as in
+    posts. blocking: true if you cannot go on without it. answers: other
+    choices, if any ("go / not now"). human defaults to your responsible
+    human. The ask is always a top-level post, its thread its own; root_id
+    links it from that thread.
 
     One question per ask, one ask at a time: several questions in need and
     context are refused (the human would scroll between them, and an answer
@@ -975,12 +976,22 @@ async def ask_human(
     props = (attachment_props(fields, fallback=f"{who}: {_one_line(need)}", urgent=blocking)
              | (a2a.props(kind=a2a.ASK) or {}))
     stats.record("post", chars=len(text))
-    post = await client.post(text, root_id=root_id or None, props=props)
-    # With its thread: a reply there may answer it, too late after 24 h (RT-6.11).
-    asks.add(me.id, post.id, who, post.root_id or root_id)
+    # Always top-level, its thread its own: only a reply there answers it, not
+    # a later post in a shared thread; too late after 24 h (RT-6.11).
+    post = await client.post(text, props=props)
+    asks.add(me.id, post.id, who, post.id)
     stats.record("ask", id=post.id)  # RT-6.9
     out = await slim.post(client, post)
     out["ask"] = post.id
+    if root_id:
+        # Linked from the thread it came from, without the mention: one notification.
+        link = lease.with_crown(f"🙋 asked {post.id}", me.id)
+        stats.record("post", chars=len(link))
+        try:
+            await client.post(link, root_id=root_id)
+            out["linked_in"] = root_id
+        except Refused as exc:
+            out["link_refused"] = str(exc)
     return _out("ask_human", _with_unmentioned(out, everyone))
 
 

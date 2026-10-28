@@ -553,6 +553,20 @@ async def test_a_reply_in_the_task_thread_stops_reminders(bus):
     assert bus.sent == []
 
 
+@pytest.mark.parametrize("reply_in,stops", [(7, False), (1, True)])
+async def test_an_ask_from_a_task_thread_is_answered_in_its_own_thread(bus, reply_in, stops):
+    """RT-6.11 step 1, RT-6.19: an ask from a task thread stands on its own,
+    its thread its own; the human's later post in the task thread is no answer
+    and the reminders go on, a reply in the ask's own thread stops them."""
+    ask_id = _ask(25, root=1)
+    bus.posts += [post(7, BOB, "TASK · Deploy", 60),
+                  post(1, ME, "🙋 @dembaca — **Go?**", 25, kind=a2a.ASK),
+                  post(3, ME, f"🙋 asked {pid(1)}", 25, root=7),
+                  post(2, HUMAN, "the logs look odd", 5, root=reply_in)]
+    await remind.tick(bus, ME, NOW)
+    assert [s["root_id"] for s in bus.sent] == ([] if stops else [ask_id])
+
+
 async def test_two_servers_of_one_bot_send_one_reminder(bus):
     """RT-6.19: remind-<uid>.lock: while one server sends, the other sends nothing."""
     _ask(25)
