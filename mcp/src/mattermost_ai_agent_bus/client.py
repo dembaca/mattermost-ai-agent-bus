@@ -4,6 +4,7 @@ session helpers, which stay outside the port."""
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -18,7 +19,7 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from . import a2a, links, ownpost, profile, session_file, watermark
-from .model import Post, Thread, UnreadChannel
+from .model import Channel, ChannelUser, Me, Post, Reaction, Thread, UnreadChannel
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -65,15 +66,49 @@ def post_of(raw: Mapping[str, Any]) -> Post:
         pr=a2a.pr_of(raw),
         branch=a2a.branch_of(raw),
         crowned=a2a.crowned(raw),
-        reactions=tuple(r for r in reactions or () if isinstance(r, Mapping)),
+        reactions=tuple(reaction_of(r) for r in reactions or () if isinstance(r, Mapping)),
         props=props,
         raw=MappingProxyType(dict(raw)),
     )
 
 
-def account_created(user: Mapping[str, Any]) -> int:
-    """When Mattermost created the account (users/me), epoch ms; 0 unknown."""
-    return _int(user.get("create_at"))
+def reaction_of(raw: Mapping[str, Any]) -> Reaction:
+    """The bus's Reaction from Mattermost's reaction JSON."""
+    return Reaction(user_id=str(raw.get("user_id") or ""), post_id=str(raw.get("post_id") or ""),
+                    emoji_name=str(raw.get("emoji_name") or ""), create_at=_int(raw.get("create_at")))
+
+
+def me_of(raw: Mapping[str, Any]) -> Me:
+    """The bus's Me from users/me."""
+    return Me(id=str(raw.get("id") or ""), username=str(raw.get("username") or ""),
+              raw=MappingProxyType(dict(raw)))
+
+
+def channel_of(raw: Mapping[str, Any]) -> Channel:
+    """The bus's Channel from Mattermost's channel JSON."""
+    return Channel(id=str(raw.get("id") or ""), name=str(raw.get("name") or ""),
+                   type=str(raw.get("type") or ""), raw=MappingProxyType(dict(raw)))
+
+
+def _custom_status(user: Mapping[str, Any]) -> dict[str, Any]:
+    """The custom status a user JSON carries in its props, {} without one."""
+    props = user.get("props")
+    raw = props.get("customStatus") if isinstance(props, Mapping) else None
+    if not isinstance(raw, str) or not raw:
+        return {}
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def channel_user_of(raw: Mapping[str, Any]) -> ChannelUser:
+    """The bus's ChannelUser from Mattermost's user JSON. Deleted unless
+    delete_at is 0, as the roster has always read it."""
+    return ChannelUser(id=str(raw.get("id") or ""), username=str(raw.get("username") or ""),
+                       create_at=_int(raw.get("create_at")), deleted=raw.get("delete_at") != 0,
+                       custom_status=MappingProxyType(_custom_status(raw)))
 
 
 def with_links(post: Post, post_url: str) -> Post:
@@ -231,7 +266,7 @@ class MattermostAdapter:
     channel_name: str = "agents"
     project_channel_name: str = ""
     _client: httpx.AsyncClient | None = field(default=None, repr=False, init=False)
-    _me: dict[str, Any] | None = field(default=None, repr=False, init=False)
+    _me: Me | None = field(default=None, repr=False, init=False)
     # Bumped whenever the identity changes (_take, session_end): a get_me that
     # started before must not cache the old bot's answer.
     _me_gen: int = field(default=0, repr=False, init=False)
@@ -239,7 +274,7 @@ class MattermostAdapter:
     _channel_ids: dict[str, str] = field(
         default_factory=dict, repr=False, init=False
     )
-    _channels: dict[str, dict[str, Any]] = field(
+    _channels: dict[str, Channel] = field(
         default_factory=dict, repr=False, init=False
     )
     _usernames: dict[str, str] = field(default_factory=dict, repr=False, init=False)
@@ -279,7 +314,7 @@ class MattermostAdapter:
         """The bot's user id as far as it is known without a request."""
         if self.session:
             return self.session.user_id
-        return str((self._me or {}).get("id") or env("MM_BOT_USER_ID"))
+        return (self._me.id if self._me else "") or env("MM_BOT_USER_ID")
 
     @property
     def work_channel_name(self) -> str:
@@ -719,10 +754,10 @@ class MattermostAdapter:
         """A post's permalink is this plus its id (RT-6.15)."""
         return f"{self.base_url}/{self.team_name}/pl/"
 
-    async def get_me(self) -> dict[str, Any]:
+    async def get_me(self) -> Me:
         while self._me is None:
             gen = self._me_gen
-            me: dict[str, Any] = await self._api("GET", "/api/v4/users/me")
+            me = me_of(await self._api("GET", "/api/v4/users/me"))
             if gen == self._me_gen:  # else the bot changed meanwhile: ask again as the new one
                 self._me = me
                 return me
@@ -759,10 +794,14 @@ class MattermostAdapter:
         self._channel_ids[key] = cid
         return cid
 
-    async def get_channel(self, channel_id: str) -> dict[str, Any]:
+    async def account_created(self) -> int:
+        """When Mattermost created the bot's account, epoch ms; 0 unknown."""
+        return _int((await self.get_me()).raw.get("create_at"))
+
+    async def get_channel(self, channel_id: str) -> Channel:
         if channel_id not in self._channels:
-            self._channels[channel_id] = await self._api(
-                "GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}")
+            self._channels[channel_id] = channel_of(await self._api(
+                "GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}"))
         return self._channels[channel_id]
 
     async def usernames(self, user_ids: set[str]) -> dict[str, str]:
@@ -805,7 +844,7 @@ class MattermostAdapter:
         """The DM channel id between this bot and a user id; no checks."""
         me = await self.get_me()
         ch = await self._api("POST", "/api/v4/channels/direct",
-                             json=[mm_id(me["id"], "user"), mm_id(user_id, "user")])
+                             json=[mm_id(me.id, "user"), mm_id(user_id, "user")])
         cid: str = ch["id"]
         return cid
 
@@ -947,11 +986,12 @@ class MattermostAdapter:
 
     # --- presence: status, custom status, a channel's accounts (lease.py, RT-6.6)
 
-    async def channel_users(self, channel_id: str) -> list[dict[str, Any]]:
-        """The accounts in a channel, at most 200, as Mattermost returns them."""
-        return await self._api("GET", "/api/v4/users",
+    async def channel_users(self, channel_id: str) -> list[ChannelUser]:
+        """The accounts in a channel, at most 200, in Mattermost's order."""
+        rows = await self._api("GET", "/api/v4/users",
                                params={"in_channel": mm_id(channel_id, "channel"),
                                        "per_page": 200}) or []
+        return [channel_user_of(u) for u in rows if isinstance(u, Mapping)]
 
     async def presences(self, user_ids: list[str]) -> dict[str, str]:
         """{user_id: online | away | dnd | offline}, in one request."""
@@ -975,10 +1015,11 @@ class MattermostAdapter:
     async def add_reaction(self, post_id: str, emoji: str) -> None:
         me = await self.get_me()
         await self._api("POST", "/api/v4/reactions", json={
-            "user_id": me["id"], "post_id": mm_id(post_id, "post"), "emoji_name": emoji})
+            "user_id": me.id, "post_id": mm_id(post_id, "post"), "emoji_name": emoji})
 
-    async def reactions(self, post_id: str) -> list[dict[str, Any]]:
-        return await self._api("GET", f"/api/v4/posts/{mm_id(post_id, 'post')}/reactions") or []
+    async def reactions(self, post_id: str) -> list[Reaction]:
+        rows = await self._api("GET", f"/api/v4/posts/{mm_id(post_id, 'post')}/reactions") or []
+        return [reaction_of(r) for r in rows if isinstance(r, Mapping)]
 
     async def thread(self, post_id: str) -> Thread:
         """Return post + ordered replies for a thread root (or any post id)."""

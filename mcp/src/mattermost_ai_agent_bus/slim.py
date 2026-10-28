@@ -32,7 +32,7 @@ async def _names(client: ChatPort, posts: Sequence[Post]) -> tuple[dict[str, str
         pass
     for cid in {p.channel_id for p in posts} - {""}:
         try:
-            channels[cid] = (await client.get_channel(cid)).get("name") or cid
+            channels[cid] = (await client.get_channel(cid)).name or cid
         except Exception:  # noqa: BLE001
             channels[cid] = cid
     return users, channels

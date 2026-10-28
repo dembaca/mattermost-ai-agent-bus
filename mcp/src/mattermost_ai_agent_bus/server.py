@@ -315,7 +315,7 @@ async def _work_posts(client: MattermostAdapter) -> tuple[list[Post], dict[str, 
     """The work channel's posts of the task window, and the names of their
     authors and of those who reacted (an agent's ✅ closes an ask)."""
     posts = await client.posts_after(tasks.since_ms())
-    reactors = {str(r.get("user_id") or "") for p in posts for r in p.reactions}
+    reactors = {r.user_id for p in posts for r in p.reactions}
     names = await client.usernames(({p.user_id for p in posts} | reactors) - {""})
     return posts, names
 
@@ -545,13 +545,13 @@ async def bus_info() -> str:
     return _out("bus_info", {
         "version": VERSION,
         "on_bus": True,
-        "bot": {"username": me.get("username"), "id": me.get("id")},
+        "bot": {"username": me.username, "id": me.id},
         "responsible": (os.environ.get("MM_RESPONSIBLE_HUMAN", "").strip().lstrip("@")
                         or next((h["username"] for h in humans if h["username"]), None)),
         "kind": "autonomous" if os.environ.get("MM_AGENT_KIND") == "autonomous" else "session",
         "trusted_humans": {"humans": humans, "source": client.trusted_source},
         "work_channel": client.work_channel_name,
-        "crown": lease.crown_held(me.get("id", "")),
+        "crown": lease.crown_held(me.id),
         "permission_relay": RELAY,
         **({"update": {"installed": newer, "how": "quit, then claude --continue"}}
            if (newer := _newer_installed()) else {}),
@@ -720,7 +720,7 @@ async def announce(
     if autonomous:
         who += " (autonomous)"
     lines = [
-        f"HELLO @{me.get('username')}",
+        f"HELLO @{me.username}",
         f"project: {_one_line(project)} · branch/PR: {_one_line(branch) or '–'}",
         f"task: {_one_line(task)}",
         f"model: {_one_line(model)}",
@@ -730,16 +730,16 @@ async def announce(
     ]
     # The same as a card in the post's props, for the server's roster (RT-6.14).
     card = a2a.card(
-        name=me.get("username", ""), task=_one_line(task), version=VERSION,
+        name=me.username, task=_one_line(task), version=VERSION,
         capabilities=_one_line(capabilities), project=_one_line(project),
         branch=_one_line(branch), model=_one_line(model), role=role,
         kind="autonomous" if autonomous else "session", responsible=responsible,
         trusted=trusted, push=PUSH, relay=RELAY,
     )
     _done_typing()
-    stats.set_user(me.get("id", ""))
+    stats.set_user(me.id)
     stats.record("post", chars=sum(len(x) + 1 for x in lines))
-    post = await client.post(lease.with_crown(_unbroadcast("\n".join(lines))[0], me.get("id", "")),
+    post = await client.post(lease.with_crown(_unbroadcast("\n".join(lines))[0], me.id),
                              props=a2a.props("HELLO", card=card))
     return _out("announce", await slim.post(client, post))
 
@@ -748,7 +748,7 @@ async def announce(
 async def get_me(raw: bool = False) -> str:
     """Return the current bot user: id and username (raw=true: users/me as is)."""
     me = await _get_client().get_me()
-    return _out("get_me", me if raw else {"id": me.get("id"), "username": me.get("username")})
+    return _out("get_me", me.json() if raw else {"id": me.id, "username": me.username})
 
 
 @mcp.tool()
@@ -939,12 +939,12 @@ async def ask_human(
     who = human.strip().lstrip("@") or responsible
     if not who:
         return _refused("ask_human", "no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
-    pending = asks.open_to(me.get("id", ""), who)
+    pending = asks.open_to(me.id, who)
     if pending:
         # The human answers one question at a time, each in a word (RT-6.11).
         hint = (f"{who} still has your ask {pending[0]} open: wait for the answer, "
                 "or resolve_ask it if it is obsolete, then ask the next one")
-        if asks.expired(me.get("id", ""), pending[0]):
+        if asks.expired(me.id, pending[0]):
             hint = (f"your ask {pending[0]} to {who} is more than 24 h old, a yes to it "
                     "approves nothing: resolve_ask it, then ask again")
         return _out("ask_human", {"posted": False, "open_ask": pending[0], "hint": hint})
@@ -957,9 +957,9 @@ async def ask_human(
     head, rest = _headline(need)
     if rest:
         context = f"{rest} {context}"
-    text = lease.with_crown(f"🙋 @{who} — **{head}**", me.get("id", ""))
+    text = lease.with_crown(f"🙋 @{who} — **{head}**", me.id)
     fields = [
-        ("from", f"@{me.get('username')}", True),
+        ("from", f"@{me.username}", True),
         ("blocking", "yes" if blocking else "no", True),
         ("where", _one_line(where) or "–", False),
     ]
@@ -975,7 +975,7 @@ async def ask_human(
     stats.record("post", chars=len(text))
     post = await client.post(text, root_id=root_id or None, props=props)
     # With its thread: a reply there may answer it, too late after 24 h (RT-6.11).
-    asks.add(me.get("id", ""), post.id, who, post.root_id or root_id)
+    asks.add(me.id, post.id, who, post.root_id or root_id)
     stats.record("ask", id=post.id)  # RT-6.9
     out = await slim.post(client, post)
     out["ask"] = post.id
@@ -995,11 +995,11 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
     client = _get_client()
     me = await client.get_me()
     await client.add_reaction(post_id, "white_check_mark")
-    was_open = asks.resolve(me.get("id", ""), post_id)
+    was_open = asks.resolve(me.id, post_id)
     if note:
         note, _ = await _unmention(client, note)
         stats.record("post", chars=len(note))
-        await client.post(lease.with_crown(note, me.get("id", "")), root_id=post_id,
+        await client.post(lease.with_crown(note, me.id), root_id=post_id,
                           props=a2a.props(note))
     return _out("resolve_ask", {"ask": post_id, "was_open": was_open})
 
@@ -1128,7 +1128,7 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
     uid = ""
     if any(e.post.root_id for e in events):
         try:
-            uid = (await client.get_me()).get("id", "")
+            uid = (await client.get_me()).id
         except Exception as exc:  # noqa: BLE001 — unknown: no answer marked expired
             log.info("could not read the bot's id: %s", exc)
     payload = []
@@ -1177,7 +1177,7 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
             if got:
                 stats.record("answer", id=got[0], wait=got[1])
         if raw:
-            item |= {"post": e.post.json(), "channel": e.channel}
+            item |= {"post": e.post.json(), "channel": e.channel.json() if e.channel else None}
         else:
             item["post"] = next(lean)
         payload.append(item)
@@ -1297,7 +1297,7 @@ async def _permission_request(params: dict[str, Any]) -> None:
         await _posted(client, post)
         # An open ask, so a 👍/👎 on it reaches the inbox (RT-6.11); without a
         # human, so it does not hold up the agent's own asks to them.
-        asks.add((await client.get_me()).get("id", ""), post.id)
+        asks.add((await client.get_me()).id, post.id)
         _relay.add(rid, post.id, str(params.get("tool_name", "")))
     except Exception as exc:  # noqa: BLE001 — the terminal dialog is still open
         log.warning("permission prompt %s not relayed: %s", rid, exc)
@@ -1339,7 +1339,7 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
         await _posted(client, await client.post(
             f"{word} by {who} · `{rid}` sent to Claude Code; it applies unless the terminal "
             "answered first.", root_id=pending.post_id))
-        asks.resolve((await client.get_me()).get("id", ""), pending.post_id)
+        asks.resolve((await client.get_me()).id, pending.post_id)
         _done_typing()
         return True
     except Exception as exc:  # noqa: BLE001 — undecided: hand it to the agent
@@ -1354,7 +1354,7 @@ async def permissions_obsolete(client: MattermostAdapter) -> None:
     uid = ""
     for rid, pending in _relay.take_all().items():
         try:
-            uid = uid or (await client.get_me()).get("id", "")
+            uid = uid or (await client.get_me()).id
             await _posted(client, await client.post(
                 f"🖥️ Answered in the terminal · `{rid}`: this prompt is closed.",
                 root_id=pending.post_id))

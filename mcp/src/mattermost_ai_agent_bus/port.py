@@ -6,9 +6,9 @@ only module that talks HTTP. Registration (the registrar, bot and token) is no
 chat operation and stays outside the port: the adapter does it, server.py and
 hosted.py drive it.
 
-The members are the ones the port's modules call, nothing more. Posts and
-threads come back as bus types (model.py); users, channels and reactions are
-still Mattermost's JSON, read only in the modules arc42 §5.1 allows.
+The members are the ones the port's modules call, nothing more. What comes
+back is a bus type (model.py), never Mattermost's JSON: posts and threads, the
+bot account, a channel, a channel's accounts and reactions.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from .model import Post, Thread, UnreadChannel
+    from .model import Channel, ChannelUser, Me, Post, Reaction, Thread, UnreadChannel
 
 
 class BotSession(Protocol):
@@ -48,11 +48,15 @@ class ChatPort(Protocol):
         """A post's permalink is this plus its id (RT-6.15)."""
         ...
 
-    async def get_me(self) -> dict[str, Any]: ...
+    async def get_me(self) -> Me: ...
+
+    async def account_created(self) -> int:
+        """When the bot's account was created, epoch ms; 0 unknown."""
+        ...
 
     async def work_channel_id(self) -> str: ...
 
-    async def get_channel(self, channel_id: str) -> dict[str, Any]: ...
+    async def get_channel(self, channel_id: str) -> Channel: ...
 
     # --- people --------------------------------------------------------------
     async def usernames(self, user_ids: set[str]) -> dict[str, str]: ...
@@ -64,7 +68,7 @@ class ChatPort(Protocol):
     # --- channel membership, status and presence -----------------------------
     async def member_channels(self) -> list[UnreadChannel]: ...
 
-    async def channel_users(self, channel_id: str) -> list[dict[str, Any]]: ...
+    async def channel_users(self, channel_id: str) -> list[ChannelUser]: ...
 
     async def presences(self, user_ids: list[str]) -> dict[str, str]: ...
 
@@ -96,4 +100,4 @@ class ChatPort(Protocol):
     async def posts_after(self, since_ms: int, *, channel_id: str | None = None,
                           max_pages: int = 25) -> list[Post]: ...
 
-    async def reactions(self, post_id: str) -> list[dict[str, Any]]: ...
+    async def reactions(self, post_id: str) -> list[Reaction]: ...

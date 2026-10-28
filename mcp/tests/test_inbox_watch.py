@@ -7,7 +7,7 @@ import pytest
 
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus import watermark
-from mattermost_ai_agent_bus.model import UnreadChannel
+from mattermost_ai_agent_bus.model import Me, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
 
@@ -21,7 +21,10 @@ class _FakeClient:
         self.resolved: list[str] = []
 
     async def get_me(self):
-        return {"id": "bot1", "username": "agent-test"}
+        return Me(id="bot1", username="agent-test")
+
+    async def account_created(self):
+        return 0
 
     async def get_channel_id(self, name=None):
         name = name or (self.project_channel_name or self.channel_name)
@@ -211,8 +214,8 @@ class _FreshBotClient(_BackfillClient):
         super().__init__(posts, **kw)
         self.since: list = []
 
-    async def get_me(self):
-        return {"id": "bot1", "username": "agent-test", "create_at": BORN}
+    async def account_created(self):
+        return BORN
 
     async def member_channels(self):
         return [UnreadChannel("proj", last_post_at=max(p.create_at for p in self.posts))]

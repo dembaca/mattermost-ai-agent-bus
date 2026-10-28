@@ -122,7 +122,7 @@ async def _answered(client: ChatPort, uid: str, pid: str, root: str,
     ask = next((p for p in posts if p.id == pid), None)
     if ask is None or ask.delete_at:
         return True, ""
-    ids = {p.user_id for p in posts} | {str(r.get("user_id") or "") for r in reactions}
+    ids = {p.user_id for p in posts} | {r.user_id for r in reactions}
     names = await client.usernames(ids - {"", uid})
     if tasks.ask_answered(ask, posts, reactions, names, human, await client.trusted_humans()):
         return True, ""

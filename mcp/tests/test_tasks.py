@@ -8,7 +8,9 @@ import pytest
 
 from mattermost_ai_agent_bus import a2a, channel, server, tasks
 from mattermost_ai_agent_bus.client import post_of
-from mattermost_ai_agent_bus.model import RosterEntry, Thread
+from mattermost_ai_agent_bus.model import RosterEntry
+
+from fakes import FakeChat
 
 ME, LEIT, A, B, HUMAN = "m" * 26, "l" * 26, "a" * 26, "b" * 26, "h" * 26
 NAMES = {ME: "agent-me", LEIT: "agent-leit", A: "agent-a", B: "agent-b", HUMAN: "dembaca"}
@@ -196,33 +198,8 @@ def test_digest_lines_use_the_compact_view():
     assert line.endswith("IDLE · done: x…")
 
 
-class _Client:
-    def __init__(self, posts):
-        self.posts = posts
-        self.posted = []
-
-    async def get_me(self):
-        return {"id": ME, "username": "agent-me"}
-
-    async def posts_after(self, since_ms, channel_id=None):
-        assert since_ms
-        return self.posts
-
-    async def usernames(self, ids):
-        return {i: NAMES[i] for i in ids if i in NAMES}
-
-    async def get_channel(self, cid):
-        return {"name": "agents"}
-
-    async def thread(self, root):
-        return Thread("", posts=tuple(p for p in self.posts if root in (p.id, p.root_id)))
-
-    async def post(self, message, channel_id=None, root_id=None, props=None):
-        self.posted.append({"message": message, "root_id": root_id, "props": props})
-        return post_of({"id": "new", "message": message, "user_id": ME, "channel_id": "c"})
-
-    async def member_channels(self):
-        return []
+def _Client(posts):  # noqa: N802
+    return FakeChat(uid=ME, posts=posts, names=NAMES)
 
 
 def _note(**a2a_props):

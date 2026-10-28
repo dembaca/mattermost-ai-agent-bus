@@ -20,6 +20,7 @@ import pytest
 
 from mattermost_ai_agent_bus import hosted, session_file, stats
 from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.model import Me
 
 KEY = "k" * 64
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -357,7 +358,7 @@ async def test_hook_api_with_the_session_key_and_no_file(tmp_path):
         project_channel_name = ""
 
         async def get_me(self):
-            return {"id": "a" * 26, "username": "agent-x"}
+            return Me(id="a" * 26, username="agent-x")
 
     host = hosted.Host(KEY, client=Client(), serve=_echo)
 

@@ -7,6 +7,8 @@ import pytest
 from mattermost_ai_agent_bus import server, slim
 from mattermost_ai_agent_bus.client import post_of
 
+from fakes import FakeChat
+
 POST = {
     "id": "p1", "root_id": "r1", "channel_id": "c1", "user_id": "u1",
     "create_at": 1792229058954, "message": "Listener-Test 👂", "type": "",
@@ -17,12 +19,11 @@ SYSTEM = {"id": "s1", "channel_id": "c1", "user_id": "u2", "create_at": 1,
           "message": "agent-x added to the channel", "type": "system_add_to_channel"}
 
 
-class _Client:
-    async def usernames(self, ids):
-        return {"u1": "dembaca"}
+class _Client(FakeChat):
+    """FakeChat, plus the adapter's list_recent the tool calls."""
 
-    async def get_channel(self, cid):
-        return {"name": "agents"}
+    def __init__(self):
+        super().__init__(names={"u1": "dembaca"})
 
     async def list_recent(self, **_):
         return [post_of(SYSTEM), post_of(POST)]

@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -15,8 +14,8 @@ from typing import Any
 from websockets.asyncio.client import connect as ws_connect
 
 from . import asks, departed, gate, lease, links, unread, watermark
-from .client import MattermostAdapter, post_of, with_links, ws_url_from_http
-from .model import Post
+from .client import MattermostAdapter, post_of, reaction_of, with_links, ws_url_from_http
+from .model import Channel, Post, Reaction
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ log = logging.getLogger(__name__)
 class ClassifiedEvent:
     kind: str  # mention | dm | watched_channel | reaction (to an open ask) | stall (RT-6.19)
     post: Post
-    channel: dict[str, Any] | None = None
+    channel: Channel | None = None
     raw: dict[str, Any] | None = None
     # RT-6.16: why the post wakes nobody here; "" when it is not gated.
     gated: str = ""
@@ -53,15 +52,8 @@ def classify_post(
         return None
     if post.user_id == bot_user_id:
         return None
-    message = post.message
-    uid = bot_user_id or ""
-    uname = (bot_username or "").lstrip("@")
-    if uid and f"<@{uid}>" in message:
+    if unread.names_me(post.message, bot_user_id or "", bot_username or ""):
         return "mention"
-    if uname:
-        pattern = rf"(?<![\w-])@{re.escape(uname)}(?![\w-])"
-        if re.search(pattern, message, re.I):
-            return "mention"
     ctype = (channel_type or "").upper()
     if ctype == "D":
         return "dm"
@@ -82,7 +74,7 @@ class WebSocketInbox:
         default_factory=asyncio.Queue, repr=False, init=False
     )
     _reader: asyncio.Task[None] | None = field(default=None, repr=False, init=False)
-    _channel_cache: dict[str, dict[str, Any]] = field(
+    _channel_cache: dict[str, Channel] = field(
         default_factory=dict, repr=False, init=False
     )
     _bot_user_id: str = field(default="", repr=False, init=False)
@@ -112,8 +104,8 @@ class WebSocketInbox:
 
     async def ensure_identity(self) -> None:
         me = await self.client.get_me()
-        self._bot_user_id = me["id"]
-        self._bot_username = me.get("username") or ""
+        self._bot_user_id = me.id
+        self._bot_username = me.username
         if not self.watched_channel_ids:
             # Watch the default channel (where the agent stays addressable) and the
             # project channel (where it works) — either may be where it is called.
@@ -127,7 +119,7 @@ class WebSocketInbox:
                 except Exception as exc:  # noqa: BLE001
                     log.warning("could not resolve watched channel %r: %s", name, exc)
 
-    async def _channel(self, channel_id: str) -> dict[str, Any]:
+    async def _channel(self, channel_id: str) -> Channel:
         if channel_id not in self._channel_cache:
             self._channel_cache[channel_id] = await self.client.get_channel(channel_id)
         return self._channel_cache[channel_id]
@@ -283,7 +275,7 @@ class WebSocketInbox:
                 if cid and not channel_type:
                     try:
                         channel = await self._channel(cid)
-                        channel_type = channel.get("type")
+                        channel_type = channel.type or None
                     except Exception:  # noqa: BLE001
                         channel = None
                 kind = classify_post(
@@ -323,17 +315,16 @@ class WebSocketInbox:
         except json.JSONDecodeError:
             return
         cid = (msg.get("broadcast") or {}).get("channel_id", "")
-        await self._queue_reaction(reaction, cid)
+        if isinstance(reaction, dict):
+            await self._queue_reaction(reaction_of(reaction), cid)
 
-    async def _queue_reaction(self, reaction: dict[str, Any], channel_id: str) -> None:
+    async def _queue_reaction(self, reaction: Reaction, channel_id: str) -> None:
         """Queue a reaction to one of this bot's open asks (RT-6.11).
 
         Mattermost raises no unread counter for a reaction, and nothing but an
         ask makes one meaningful: a 👍 on any other post stays a remark.
         """
-        pid = reaction.get("post_id") or ""
-        user = reaction.get("user_id") or ""
-        emoji = reaction.get("emoji_name") or ""
+        pid, user, emoji = reaction.post_id, reaction.user_id, reaction.emoji_name
         if not pid or not emoji or user == self._bot_user_id:
             return
         if not asks.is_open(self._bot_user_id, pid):
@@ -343,7 +334,7 @@ class WebSocketInbox:
             return
         self._seen_ids.add(key)
         post = post_of({"id": key, "root_id": pid, "channel_id": channel_id, "user_id": user,
-                        "create_at": reaction.get("create_at") or 0, "message": f":{emoji}:"})
+                        "create_at": reaction.create_at, "message": f":{emoji}:"})
         event = ClassifiedEvent(kind="reaction", post=post, raw={"emoji": emoji, "ask": pid})
         await self._gate_reaction(event)
         await self._queue.put(event)

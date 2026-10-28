@@ -50,7 +50,7 @@ class _Client:
         return {k: v for k, v in {HUMAN: "dembaca", AGENT: "agent-y", ME: "agent-x"}.items() if k in ids}
 
     async def get_channel(self, cid):
-        return {"name": "agents"}
+        return model.Channel(name="agents")
 
     async def trusted_humans(self):
         return {HUMAN: "dembaca"}
@@ -59,7 +59,7 @@ class _Client:
         return {AGENT} & set(ids)
 
     async def get_me(self):
-        return {"id": ME, "username": "agent-x"}
+        return model.Me(id=ME, username="agent-x")
 
     async def list_recent(self, **_):
         return [_wrap(p) for p in POSTS]
@@ -80,7 +80,7 @@ def _events():
     return [ClassifiedEvent(kind="mention", post=_wrap(POSTS[0])),
             ClassifiedEvent(kind="watched_channel", post=_wrap(POSTS[1]), gated="from x"),
             ClassifiedEvent(kind="watched_channel", post=_wrap(POSTS[2]), departed="agent-z"),
-            ClassifiedEvent(kind="dm", post=_wrap(POSTS[3]), channel={"id": CH, "type": "D"}),
+            ClassifiedEvent(kind="dm", post=_wrap(POSTS[3]), channel=client_mod.channel_of({"id": CH, "type": "D"})),
             ClassifiedEvent(kind="reaction", post=_wrap(reaction),
                             raw={"emoji": "+1", "ask": POSTS[0]["id"]}),
             ClassifiedEvent(kind="stall", post=_wrap(stall))]

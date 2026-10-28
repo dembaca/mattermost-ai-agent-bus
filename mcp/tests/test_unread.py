@@ -2,6 +2,7 @@
 server from the bus's read watermark (unread.py, watermark.py;
 docs/arc42/06-runtime-view.md)."""
 
+import dataclasses
 import json
 import os
 import stat
@@ -10,7 +11,8 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import session_file, unread, watermark
+from mattermost_ai_agent_bus import hookapi, session_file, unread, watermark
+from mattermost_ai_agent_bus.websocket_inbox import classify_post
 from mattermost_ai_agent_bus.client import MattermostAdapter
 
 UID = "u" * 26
@@ -18,6 +20,9 @@ TEAM = "t" * 26
 DM = "d" * 26
 CHAN = "c" * 26
 QUIET = "q" * 26
+NEW = "n" * 26  # a channel the bot is in, but the server does not watch
+GROUP = "g" * 26
+WATCHED = {CHAN}  # the work channel
 AGENT = "a" * 26
 PERSON = "h" * 26
 FYI = {"a2a": {"v": 1, "kind": "done", "intent": "fyi"}}
@@ -48,6 +53,8 @@ class FakeMattermost:
                                              "create_at": self.born})
         if p == "/api/v4/teams/name/agents":
             return httpx.Response(200, json={"id": TEAM})
+        if p == f"/api/v4/teams/{TEAM}/channels/name/agents":
+            return httpx.Response(200, json={"id": CHAN})
         if p == f"/api/v4/users/me/teams/{TEAM}/channels/members":
             return httpx.Response(200, json=self.members)
         if p == "/api/v4/users/me/channels":
@@ -94,7 +101,7 @@ def post(pid, message="", user=AGENT, at=None, props=None, type_=""):
 
 
 async def pending(client):
-    return [(row.channel.channel_id, row.waiting) for row in await unread.channels(client)]
+    return [(row.channel.channel_id, row.waiting) for row in await unread.channels(client, WATCHED)]
 
 
 async def test_a_dm_counts_others_posts_a_channel_those_for_me(mm, client):
@@ -194,7 +201,7 @@ async def test_detail_counts_an_agents_fyi_posts_for_me(mm, client):
     ])
     for i in range(5):
         mm.channel(f"{i}" * 26, "D", total=1, posts=[post(f"x{i}", "hi")])
-    rows = await unread.channels(client)
+    rows = await unread.channels(client, WATCHED)
     assert sum(r.waiting for r in rows) == 3 + 4 + 5
     reads = len(mm.read)
     got = await unread.detail(client, rows)
@@ -221,3 +228,36 @@ def test_the_watermark_file_is_private_and_moves_forward_only(mm):
     assert set(watermark.read(UID)) == {CHAN, DM}
     watermark.remove(UID)
     assert not path.exists() and watermark.read(UID) == {}
+
+
+async def test_only_what_wait_for_events_can_hand_over_counts(mm, client):
+    """RT-6.2 step 1 (0.50.0): in a channel the server does not watch (the bot
+    was added to it, or MM_PROJECT_CHANNEL changed without a restart) only a
+    post naming the agent counts; an @channel, a post for all agents and a
+    group post that names nobody become no event in wait_for_events, so they
+    no longer keep the Stop hook draining an inbox that stays empty. Every
+    counted post is one the inbox classifies."""
+    mm.channel(NEW, posts=[post("n1", "@channel please read"), post("n2", props=ALL),
+                           post("n3", "@agent-me over here")])
+    mm.channel(GROUP, "G", posts=[post("g1", "hi all"), post("g2", "@agent-me you too")])
+    mm.channel(CHAN, posts=[post("c1", "@channel standup"), post("c2", props=ALL)])
+    mm.channel(DM, "D", posts=[post("d1", "hi")])
+    rows = await unread.channels(client, WATCHED)
+    assert [(r.channel.channel_id, r.waiting) for r in rows] == [(NEW, 1), (GROUP, 1), (CHAN, 2), (DM, 1)]
+    for row in rows:
+        for p in row.posts:
+            p = dataclasses.replace(p, channel_id=row.channel.channel_id)
+            assert classify_post(p, bot_user_id=UID, bot_username="agent-me",
+                                 channel_type=row.channel.channel_type, watched_channel_ids=WATCHED)
+
+
+async def test_the_stop_hook_count_leaves_out_an_unwatched_channel(mm, client):
+    """RT-6.2 step 1, RT-6.17: GET /v1/pending counts with the channels the
+    server watches (the work channel here); an @channel in another channel
+    the bot is in counts nothing, a mention there still does."""
+    mm.channel(NEW, posts=[post("n1", "@channel please read")])
+    assert await hookapi.pending(client, {}, {}) == (200, {"count": 0})
+    mm.channel(CHAN, posts=[post("c1", "@channel standup")])
+    mm.posts[NEW].append(post("n2", "@agent-me over here"))
+    mm.channels[0]["last_post_at"] = mm.posts[NEW][-1]["create_at"]
+    assert await hookapi.pending(client, {}, {}) == (200, {"count": 2})

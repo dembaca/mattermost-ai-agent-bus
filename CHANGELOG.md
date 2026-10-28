@@ -3,6 +3,36 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.50.0
+
+### Fixed
+
+- **The Stop hook no longer drains for a post nothing can collect:** the
+  pending count behind `/v1/pending` (and the listener's and turn plugin's)
+  counted an `@channel`, a post for all agents or a group post that names
+  nobody in any channel the bot is in, also one the server does not watch
+  (the bot was added to it, or `MM_PROJECT_CHANNEL` changed without a
+  restart). `wait_for_events` delivers none of these, so every turn end
+  reported "1 unread" with nothing to collect. Outside a DM and the watched
+  channels only a post naming the agent counts now
+  ([RT-6.2](docs/arc42/06-runtime-view.md) step 1).
+
+### Changed
+
+- **Users, channels and reactions are typed through the port:** `get_me`,
+  `get_channel`, `channel_users` and `reactions` return `Me`, `Channel`,
+  `ChannelUser` and `Reaction` (`model.py`) instead of Mattermost's JSON, built
+  in the adapter with only the fields the callers read; a post's reactions are
+  `Reaction`s too. The new port member `account_created` gives the bot
+  account's creation time, so `unread.py` no longer imports `client.py` and is
+  a port module like the others. The adapter-boundary test also fails when a
+  port member returns JSON ([§5](docs/arc42/05-building-block-view.md), #82
+  P3b). Tool output is unchanged.
+- **One shared test fake:** `mcp/tests/fakes.py` holds `FakeChat`, a typed
+  subset of the port with only the members the tests call (checked against
+  the port's signatures, and by mypy), in place of the near-identical fakes
+  in the hook API, turn plugin, announce, ask, slim and task tests.
+
 ## 0.49.0
 
 ### Changed

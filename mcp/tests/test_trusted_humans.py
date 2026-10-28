@@ -7,6 +7,7 @@ import pytest
 
 from mattermost_ai_agent_bus import server
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
+from mattermost_ai_agent_bus.model import Channel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
 
 ME_HUMAN = "h" * 26
@@ -98,7 +99,7 @@ async def test_flag_marks_only_trusted_authors_and_names_them(monkeypatch):
             return {}
 
         async def get_channel(self, cid):
-            return {}
+            return Channel()
 
     monkeypatch.setattr(server, "_get_inbox", lambda: _Inbox())
     monkeypatch.setattr(server, "_get_client", lambda: _C())

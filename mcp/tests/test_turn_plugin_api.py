@@ -12,42 +12,17 @@ from mattermost_ai_agent_bus import hookapi, lease, ownpost, session_file, stall
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import UnreadChannel
 
+from fakes import HookClient
+
 UID = "u" * 26
 OTHER = "o" * 26
 ASK = "k" * 26
 PERSON = "q" * 26
 
 
-class FakeClient:
-    """What the routes use of MattermostAdapter: posts newest first."""
-
-    def __init__(self, posts=(), agents=(), reactions=None):
-        self.token = "t"
-        self.project_channel_name = ""
-        self.work_channel_name = "agents"
-        self.channel_name = ""
-        self.posts = list(posts)
-        self._agents = set(agents)
-        self._reactions = reactions or {}
-        self.calls = []
-
-    async def get_me(self):
-        return {"id": UID, "username": "agent-me"}
-
-    async def work_channel_id(self):
-        return "c" * 26
-
-    async def channel_posts(self, cid, *, per_page=None, since_ms=None):
-        self.calls.append(("posts", per_page, since_ms))
-        if since_ms is not None:
-            return [post_of(p) for p in self.posts if p["create_at"] >= since_ms]
-        return [post_of(p) for p in list(self.posts)[:per_page]]
-
-    async def agents(self, ids):
-        return set(ids) & self._agents
-
-    async def reactions(self, pid):
-        return self._reactions.get(pid, [])
+def FakeClient(posts=(), agents=(), reactions=None):  # noqa: N802 — the class it was
+    """The hook API's client: posts newest first."""
+    return HookClient(uid=UID, posts=posts, agents=agents, reactions=reactions)
 
 
 def post(pid, message, user=OTHER, at=1000, root="", props=None, type_=""):
@@ -79,7 +54,7 @@ async def api():
 def unread_rows(monkeypatch):
     rows = []
 
-    async def channels(client):
+    async def channels(client, watched):
         return [unread.Pending(UnreadChannel(cid), n, []) for cid, n in rows]
 
     async def detail(client, got):
@@ -146,9 +121,9 @@ async def test_wake_says_what_the_listener_would(api, unread_rows, monkeypatch):
     d = session_file.state_dir()
     d.mkdir(parents=True, exist_ok=True)
     (d / f"asks-{UID}.env").write_text(f"ASK={ASK} {int(time.time())}\n")
-    client._reactions = {ASK: [{"user_id": PERSON, "emoji_name": "+1"}]}
+    client.reacts = {ASK: [{"user_id": PERSON, "emoji_name": "+1"}]}
     assert (await h.get(f"/v1/wake?since={since}&until={until}")).json()["reason"] == "reaction"
-    client._reactions = {}
+    client.reacts = {}
     # An agent's fyi reply in my thread wakes me: I started it.
     client.posts = [post("r1", "DONE · merged", root="h", at=now - 1000, props=fyi), mine]
     assert (await h.get(f"/v1/wake?since={since}&until={until}")).json()["reason"] == "addressed"
