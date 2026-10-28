@@ -397,7 +397,7 @@ async def test_an_ask_from_a_thread_stands_on_its_own_and_is_linked_there(monkey
 @pytest.mark.asyncio
 async def test_a_reply_in_a_thread_with_several_asks(monkeypatch):
     """RT-6.11 step 5: in a thread that holds several asks (recorded before
-    0.55.0), a reply counts as late only when every ask of this bot in it is."""
+    0.56.0), a reply counts as late only when every ask of this bot in it is."""
     task, fresh, day = "t" * 26, "f" * 26, asks.APPROVAL_SEC
     asks.add(BOT, ASK, "dembaca", task)
     assert not asks.expired(BOT, task, thread=True)
