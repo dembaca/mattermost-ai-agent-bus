@@ -3,8 +3,10 @@
 What the bus adds to a session, not what the work costs: turns the plugin
 caused (listener wake-ups, rounds the Stop hook forced), bus data put into the
 context (tool results, the handoff after compaction), the agent's own posts,
-the fixed text every turn carries (skill, instructions, tool docs), how long
-turns last, and how long humans take to answer the agent's asks.
+the fixed text every turn carries (instructions, tool docs) and the skill's
+size, in the context only once loaded, how long turns last, and how long
+humans take to answer the agent's asks. report() sums the STATS lines up per
+version, as bin/mm-agent-stats.sh does.
 
 Hooks, listener and MCP server append one JSON line per event to
 stats-<uid>.jsonl; at session end the MCP server posts one summary line to
@@ -16,9 +18,11 @@ the summary.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from collections import Counter, defaultdict
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -99,15 +103,6 @@ def transcript(path: str) -> str | None:
     return real if real.startswith(root + os.sep) else None
 
 
-def static_chars(skill: Path, instructions: str, tool_docs: list[str]) -> int:
-    """Text in the context of every turn, bus or no bus."""
-    try:
-        n = len(skill.read_text())
-    except OSError:
-        n = 0
-    return n + len(instructions or "") + sum(len(d or "") for d in tool_docs)
-
-
 def _turns(events: list[dict[str, Any]]) -> list[tuple[bool, int]]:
     """(started by the bus, seconds) per turn that ran from its start to the
     Stop hook that ended it. A start no end follows (interrupted, hook missing)
@@ -145,8 +140,7 @@ def _asks(events: list[dict[str, Any]], now: float) -> dict[str, int]:
     }
 
 
-def summary(version: str, static: int,
-            fixed: overhead.Fixed | None = None) -> dict[str, Any] | None:
+def summary(version: str, fixed: overhead.Fixed | None = None) -> dict[str, Any] | None:
     f = _path()
     if f is None or not f.exists():
         return None
@@ -199,7 +193,9 @@ def summary(version: str, static: int,
         "tools": dict(tools),
         "posts": [len(posts), sum(int(p.get("chars", 0)) for p in posts)],
         "compact": [len(compacts), sum(int(c.get("chars", 0)) for c in compacts)],
-        "static": static,
+        # Per turn: instructions and tool docs. Per load: the skill, in the
+        # context only when the agent loaded it; tok.skill says whether (RT-6.9).
+        **({"static": fixed.instructions + fixed.tools, "skill": fixed.skill} if fixed else {}),
         **_asks(events, time.time()),
         **({"tok": tok} if tok else {}),
     }
@@ -225,3 +221,175 @@ def post_sync(client: ChatPort, data: dict[str, Any]) -> str:
         f = _path()
         if f is not None:
             f.unlink(missing_ok=True)
+
+
+# --- the report: what bin/mm-agent-stats.sh report --json computes in jq -----
+# The same fields and arithmetic (jq's round is half away from zero, an absent
+# value adds 0), so the shell report and the stats_report tool agree
+# (tests/hooks/test_stats.py compares them).
+
+def _round(x: float) -> int:
+    return int(math.floor(abs(x) + 0.5)) * (1 if x >= 0 else -1)
+
+
+def _sum(rows: list[dict[str, Any]], f: Callable[[dict[str, Any]], Any]) -> Any:
+    return sum((f(r) or 0) for r in rows)
+
+
+def _max(values: Iterable[Any]) -> Any:
+    found = [v for v in values if v is not None]
+    return max(found) if found else None
+
+
+def _pct(a: float, b: float) -> int | None:
+    return _round(a * 100 / b) if b > 0 else None
+
+
+def _tenth(a: float, b: float) -> float | None:
+    return _round(a / b * 10) / 10 if b > 0 else None
+
+
+def _per(a: float, b: float) -> int | None:
+    return _round(a / b) if b > 0 else None
+
+
+def _eq(t: dict[str, Any]) -> float:
+    """Input-token equivalents: what a token type costs against an uncached input token."""
+    return ((t.get("in") or 0) + (t.get("read") or 0) * 0.1 + (t.get("w5m") or 0) * 1.25
+            + (t.get("w1h") or 0) * 2 + (t.get("out") or 0) * 5)
+
+
+def _vals(d: Any) -> int:
+    return sum(d.values()) if isinstance(d, dict) and d else 0
+
+
+def _turns_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    rows = [r for r in rows if r.get("turns_timed") is not None]
+    if not rows:
+        return None
+    t: dict[str, Any] = {
+        "sessions": len(rows),
+        "turns": _sum(rows, lambda r: r.get("turns")),
+        "human_prompts": _sum(rows, lambda r: (r.get("turns") or 0) - (r.get("bus_turns") or 0)),
+        "timed": _sum(rows, lambda r: r.get("turns_timed")),
+        "sec": _sum(rows, lambda r: r.get("turn_sec")),
+        "max_sec": max(r.get("turn_max_sec") or 0 for r in rows),
+        "bus_turns": _sum(rows, lambda r: r.get("bus_turns")),
+        "bus_timed": _sum(rows, lambda r: r.get("bus_turns_timed")),
+        "bus_sec": _sum(rows, lambda r: r.get("bus_turn_sec")),
+        "bus_max_sec": max(r.get("bus_turn_max_sec") or 0 for r in rows),
+        "answered": _sum(rows, lambda r: r.get("asks_answered")),
+    }
+    return t | {
+        "turns_per_prompt": _tenth(t["turns"], t["human_prompts"]),
+        "mean_sec": _per(t["sec"], t["timed"]),
+        "bus_mean_sec": _per(t["bus_sec"], t["bus_timed"]),
+        "bus_share_pct": _pct(t["bus_sec"], t["sec"]),
+        "sec_per_input": _per(t["sec"], t["human_prompts"] + t["answered"]),
+    }
+
+
+def _asks_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    rows = [r for r in rows if r.get("asks") is not None]
+    if not rows:
+        return None
+    a: dict[str, Any] = {
+        "sessions": len(rows),
+        "hours": _sum(rows, lambda r: r.get("min")) / 60,
+        "asks": _sum(rows, lambda r: r.get("asks")),
+        "answered": _sum(rows, lambda r: r.get("asks_answered")),
+        "wait_sec": _sum(rows, lambda r: r.get("ask_wait_sec")),
+        "max_wait_sec": max(r.get("ask_wait_max_sec") or 0 for r in rows),
+        "open": _sum(rows, lambda r: r.get("asks_open")),
+        "open_sec": _sum(rows, lambda r: r.get("ask_open_sec")),
+        "open_max_sec": max(r.get("ask_open_max_sec") or 0 for r in rows),
+    }
+    h = a["hours"]
+    return a | {
+        "asks_per_h": _tenth(a["asks"], h),
+        "answered_pct": _pct(a["answered"], a["asks"]),
+        "mean_wait_sec": _per(a["wait_sec"], a["answered"]),
+        "waiting_pct": _pct(a["wait_sec"] + a["open_sec"], h * 3600),
+        "hours": _round(h * 10) / 10,
+    }
+
+
+def _tok_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    rows = [r for r in rows if r.get("tok")]
+    if not rows:
+        return None
+    t: dict[str, Any] = {
+        "sessions": len(rows),
+        "hours": _sum(rows, lambda r: r.get("min")) / 60,
+        "req": _sum(rows, lambda r: r["tok"].get("req")),
+        "bus_req": _sum(rows, lambda r: r["tok"].get("bus_req")),
+        "fixed": _round(_sum(rows, lambda r: r["tok"].get("fixed")) / len(rows)),
+        "skill_loaded": _sum(rows, lambda r: r["tok"].get("skill")),
+        "all": _sum(rows, lambda r: _eq(r["tok"].get("all") or {})),
+        "bus": _sum(rows, lambda r: _eq(r["tok"].get("bus") or {})),
+    }
+    return t | {
+        "req_per_h": _per(t["req"], t["hours"]),
+        "bus_req_per_h": _tenth(t["bus_req"], t["hours"]),
+        "bus_per_h": _per(t["bus"], t["hours"]),
+        "all_per_h": _per(t["all"], t["hours"]),
+        "bus_share_pct": _round(t["bus"] * 1000 / t["all"]) / 10 if t["all"] > 0 else None,
+    }
+
+
+def _version_key(v: str) -> list[int]:
+    return [int(p) if p.isdigit() else 0 for p in v.split(".")]
+
+
+def report(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The STATS lines summed up per version, oldest first (RT-6.9 step 3)."""
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for line in lines:
+        groups[str(line.get("v"))].append(line)
+    out = []
+    for v in sorted(sorted(groups), key=_version_key):
+        rows = groups[v]
+        by_rt: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for r in rows:
+            by_rt[str(r["rt"]) if r.get("rt") is not None else "other"].append(r)
+        hours = _round(_sum(rows, lambda r: r.get("min")) / 60 * 10) / 10
+        turns = _sum(rows, lambda r: r.get("turns"))
+        forced = _sum(rows, lambda r: _vals(r.get("blocks")))
+        # Before 0.36.0 (no bus_turns) the listener's wake-ups stand in.
+        plugin = _sum(rows, lambda r: (r["bus_turns"] if r.get("bus_turns") is not None
+                                       else _vals(r.get("wakes"))) + _vals(r.get("blocks")))
+        bus_chars = _sum(rows, lambda r: sum(t[1] for t in (r.get("tools") or {}).values())
+                         + (r.get("compact") or [0, 0])[1])
+        post_chars = _sum(rows, lambda r: (r.get("posts") or [0, 0])[1])
+        everything = turns + forced
+        out.append({
+            "version": v, "sessions": len(rows), "hours": hours, "turns": turns, "forced": forced,
+            "plugin_turns": plugin, "bus_chars": bus_chars, "post_chars": post_chars,
+            "static": _max(r.get("static") for r in rows),
+            "skill": _max(r.get("skill") for r in rows),
+            "tok": _tok_of(rows),
+            "harness": [{"harness": rt, "sessions": len(rs), "turns": _turns_of(rs), "asks": _asks_of(rs)}
+                        for rt, rs in sorted(by_rt.items())],
+            "plugin_turns_per_h": _tenth(plugin, hours),
+            "all_turns": everything,
+            "plugin_share_pct": _pct(plugin, everything),
+            "bus_chars_per_turn": _per(bus_chars, everything),
+            "post_chars_per_session": _round(post_chars / len(rows)),
+        })
+    return out
+
+
+async def read_report(client: ChatPort, name: str, max_pages: int = 10) -> list[dict[str, Any]]:
+    """report() of the STATS lines among the last 2000 posts of the channel
+    `name`, read with the bot's own session (RT-6.9 step 3)."""
+    cid = await client.join_channel(name)
+    lines = []
+    for p in await client.posts_after(0, channel_id=cid, max_pages=max_pages):
+        if p.message.startswith("STATS "):
+            try:
+                data = json.loads(p.message[len("STATS "):])
+            except ValueError:
+                continue
+            if isinstance(data, dict):
+                lines.append(data)
+    return report(lines)

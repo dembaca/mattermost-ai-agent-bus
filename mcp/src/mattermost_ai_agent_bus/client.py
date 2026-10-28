@@ -1045,6 +1045,16 @@ class MattermostAdapter:
             return env("MM_CHANNEL_ID")
         return await self.get_channel_id()
 
+    async def join_channel(self, channel_name: str) -> str:
+        cid = mm_id(await self.get_channel_id(channel_name), "channel")
+        me = await self.get_me()
+        try:
+            await self._api("POST", f"/api/v4/channels/{cid}/members",
+                            json={"user_id": mm_id(me.id, "user")})
+        except httpx.HTTPStatusError as exc:  # a private channel it is in reads anyway
+            log.info("join ~%s: HTTP %s", channel_name, exc.response.status_code)
+        return cid
+
     async def channel_posts(self, channel_id: str, *, per_page: int | None = None,
                             since_ms: int | None = None) -> list[Post]:
         """A channel's posts with their text as Mattermost returns it (no

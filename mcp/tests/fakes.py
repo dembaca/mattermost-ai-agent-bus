@@ -67,6 +67,12 @@ class FakeChat:
     async def work_channel_id(self) -> str:
         return WORK
 
+    async def join_channel(self, channel_name: str) -> str:
+        """Any channel is the work channel; a name not in `channel` is missing."""
+        if channel_name != self.channel:
+            raise LookupError(f"no channel {channel_name}")
+        return WORK
+
     async def get_channel(self, channel_id: str) -> Channel:
         return Channel(id=channel_id, name=self.channel)
 

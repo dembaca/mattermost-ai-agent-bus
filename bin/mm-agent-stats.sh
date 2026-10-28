@@ -9,11 +9,14 @@
 # (prompts the bus started — pushes, listener wake-ups — + rounds the Stop hook
 # forced), their share of all turns (every prompt plus the forced rounds), bus
 # data put into the context per turn (tool results + compaction handoff),
-# characters posted per session, and the fixed text in every turn (skill,
-# instructions, tool docs). Characters, not tokens: roughly 4 per token.
+# characters posted per session, the fixed text in every turn (instructions,
+# tool docs; before 0.53.0 the skill too) and the skill, read per load.
+# Characters, not tokens: roughly 4 per token.
 # Claude Code sessions since 0.32.0 add a token table from their transcripts:
-# requests per hour, those the bus caused, the fixed text per request, the bus's
-# tokens per hour and its share of all, in input-token equivalents.
+# requests per hour, those the bus caused, the fixed text per request, sessions
+# that loaded the skill (since 0.53.0), the bus's tokens per hour and its share
+# of all, in input-token equivalents.
+# A session reads the same as JSON with the MCP tool stats_report, no token.
 # Since 0.36.0, per version and coding harness (the MCP client: claude-code,
 # cursor, opencode, codex, …), a Turns table (turns per human prompt, mean and
 # longest turn, the share of turn time the bus started on its own, turn time per
@@ -28,7 +31,7 @@ LIB="$(cd "$(dirname "$0")" && pwd)/mm-agent-lib.sh"
 source "$LIB"
 
 CMD="${1:-}" CHANNEL="" JSON=0
-[[ "$CMD" == report ]] || { sed -n '2,22p' "$0"; exit 2; }
+[[ "$CMD" == report ]] || { sed -n '2,25p' "$0"; exit 2; }
 shift
 for a in "$@"; do
   case "$a" in
@@ -106,6 +109,7 @@ report="$(jq -c '
       req: sum(.tok.req),
       bus_req: sum(.tok.bus_req),
       fixed: (sum(.tok.fixed) / length | round),
+      skill_loaded: sum(.tok.skill // 0),
       all: sum(eq(.tok.all)),
       bus: sum(eq(.tok.bus))
     } | . + {
@@ -128,7 +132,9 @@ report="$(jq -c '
     plugin_turns: sum((.bus_turns // ((.wakes // {}) | add // 0)) + ((.blocks // {}) | add // 0)),
     bus_chars: sum(((.tools // {}) | map(.[1]) | add // 0) + ((.compact // [0, 0])[1])),
     post_chars: sum((.posts // [0, 0])[1]),
+    # Since 0.53.0 static is the per-turn text only, the skill a field of its own.
     static: (map(.static) | max),
+    skill: (map(.skill) | max),
     tok: $tok,
     harness: (group_by(.rt // "other") | map({
       harness: (.[0].rt // "other"), sessions: length, turns: turns_of, asks: asks_of
@@ -148,19 +154,20 @@ if [[ "$JSON" -eq 1 ]]; then
 fi
 [[ "$(jq length <<<"$report")" -gt 0 ]] || { echo "no STATS posts in ~${CHANNEL} yet"; exit 0; }
 {
-  printf 'version\tsessions\thours\tplugin turns/h\tshare of turns\tbus chars/turn\tposted chars/session\tfixed chars/turn\n'
+  printf 'version\tsessions\thours\tplugin turns/h\tshare of turns\tbus chars/turn\tposted chars/session\tfixed chars/turn\tskill chars/load\n'
   jq -r '.[] | [.version, .sessions, .hours, (.plugin_turns_per_h // "-"),
                 ((.plugin_share_pct // "-") | tostring + "%"), (.bus_chars_per_turn // "-"),
-                .post_chars_per_session, .static] | @tsv' <<<"$report"
+                .post_chars_per_session, (.static // "-"), (.skill // "-")] | @tsv' <<<"$report"
 } | column -t -s $'\t'
 # Tokens from the transcript (Claude Code sessions since 0.32.0), in input-token
 # equivalents: cache read 0.1, cache write 1.25 (5 min) / 2 (1 h), output 5.
 if [[ "$(jq '[.[] | select(.tok)] | length' <<<"$report")" -gt 0 ]]; then
   echo
   {
-    printf 'version\tsessions\thours\trequests/h\tbus requests/h\tfixed tok/request\tbus tok/h\tall tok/h\tbus share\n'
+    printf 'version\tsessions\thours\trequests/h\tbus requests/h\tfixed tok/request\tskill loaded\tbus tok/h\tall tok/h\tbus share\n'
     jq -r '.[] | select(.tok) | .version as $v | .tok | [$v, .sessions, (.hours * 10 | round / 10),
-                  (.req_per_h // "-"), (.bus_req_per_h // "-"), .fixed, (.bus_per_h // "-"),
+                  (.req_per_h // "-"), (.bus_req_per_h // "-"), .fixed,
+                  "\(.skill_loaded)/\(.sessions)", (.bus_per_h // "-"),
                   (.all_per_h // "-"), ((.bus_share_pct // "-") | tostring + "%")] | @tsv' <<<"$report"
   } | column -t -s $'\t'
 fi

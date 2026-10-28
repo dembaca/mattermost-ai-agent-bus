@@ -3,6 +3,31 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.53.0
+
+### Changed
+
+- **`static` in STATS is the per-turn text only:** it counted `SKILL.md`
+  (~22k characters) as if every turn carried it, though most sessions never
+  load the skill. `static` is now the MCP instructions and tool docs; the
+  skill's size is a field of its own, `skill`, and `tok.skill` says whether
+  the session loaded it. `mm-agent-stats.sh report` shows skill characters
+  per load and how many sessions loaded it; `static` of versions before
+  0.53.0 still holds the skill
+  ([RT-6.9](docs/arc42/06-runtime-view.md#69-measuring-the-coordination-overhead)).
+- **A budget for the MCP instructions:** every variant (host-managed,
+  hosted, self-registering, unavailable; with and without push and
+  permission relay) has a limit about 10 % over its size today, 1.7k–2.4k
+  characters, which a test holds. `SKILL.md`'s budget is per load now.
+
+### Added
+
+- **`stats_report` tool:** a session reads the overhead report from the
+  stats channel through its own bot, without the host's token: the newest
+  versions, as `mm-agent-stats.sh report --json` gives them; a test keeps
+  the two the same
+  ([RT-6.9](docs/arc42/06-runtime-view.md#69-measuring-the-coordination-overhead)).
+
 ## 0.52.0
 
 ### Fixed

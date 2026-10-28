@@ -56,6 +56,12 @@ class ChatPort(Protocol):
 
     async def work_channel_id(self) -> str: ...
 
+    async def join_channel(self, channel_name: str) -> str:
+        """The team's channel `channel_name`, joined as the bot (a non-member
+        cannot read it; joining twice is harmless): its id. Never creates one:
+        a missing channel raises."""
+        ...
+
     async def get_channel(self, channel_id: str) -> Channel: ...
 
     # --- people --------------------------------------------------------------

@@ -381,9 +381,11 @@ async def test_bystander_gets_status_posts_cut(bus):
 
 
 def test_static_budget():
-    """RT-6.14 acceptance: what every turn carries does not grow. SKILL.md
-    (every turn) and coordinator.md (the crown holder) stay within their 0.30.0
-    size; the coordinator tool doc grows by its two new actions only."""
+    """RT-6.14 acceptance, RT-6.9: the per-load text does not grow. SKILL.md
+    (in the context once the agent loads the skill, not every turn) and
+    coordinator.md (the crown holder, per load) stay within their 0.30.0
+    size; the coordinator tool doc grows by its two new actions only. The
+    per-turn text, the MCP instructions, has its own budget below."""
     from pathlib import Path
 
     skill = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus"
@@ -391,6 +393,31 @@ def test_static_budget():
     assert len((skill / "coordinator.md").read_text()) <= 5_350  # + RT-6.16: posts not trusted; + RT-6.19: stall; + RT-6.21: departed
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
     assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90
+
+
+# The MCP instructions per variant: (host-managed, hosted, unavailable) ×
+# (no push, push, push + permission relay), each limit about 10 % over its
+# 0.53.0 size (in brackets). The unavailable reason is at its longest, 300.
+_INSTRUCTION_BUDGET = {
+    "self-registering": (2050, 2350, 2500),   # (1860, 2128, 2267)
+    "host-managed": (1850, 2150, 2300),       # (1680, 1948, 2087)
+    "hosted": (2000, 2300, 2450),             # (1806, 2074, 2213)
+    "unavailable": (2200, 2500, 2650),        # (1987, 2255, 2394)
+}
+
+
+@pytest.mark.parametrize("variant", sorted(_INSTRUCTION_BUDGET))
+@pytest.mark.parametrize("mode", [0, 1, 2], ids=["no-push", "push", "push+relay"])
+def test_instructions_budget(monkeypatch, variant, mode):
+    """RT-6.9: the MCP instructions are the per-turn text, in the context of
+    every request whether the skill is loaded or not: no variant grows past
+    its budget without the budget changing here, with a reason."""
+    monkeypatch.setattr(server, "HOST_MANAGED", variant in ("host-managed", "hosted"))
+    monkeypatch.setattr(server, "HOSTED", variant == "hosted")
+    monkeypatch.setattr(server, "UNAVAILABLE", "x" * 300 if variant == "unavailable" else "")
+    monkeypatch.setattr(server, "PUSH", mode >= 1)
+    monkeypatch.setattr(server, "RELAY", mode == 2)
+    assert len(server._instructions()) <= _INSTRUCTION_BUDGET[variant][mode]
 
 
 @pytest.mark.parametrize("message,kind,out", [

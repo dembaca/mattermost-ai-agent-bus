@@ -1,12 +1,13 @@
 """RT-6.9 overhead counters in the MCP server: counting, summary, the STATS post."""
 
+import asyncio
 import json
 import time
 
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import server, stats
+from mattermost_ai_agent_bus import overhead, server, stats
 from mattermost_ai_agent_bus.client import MattermostAdapter
 
 UID = "u" * 26
@@ -24,21 +25,52 @@ def test_default_channel_and_off(monkeypatch, state):
     assert stats.channel() == "agents-stats"
     monkeypatch.setenv("MM_STATS_CHANNEL", "off")
     stats.record("turn")
-    assert stats.channel() == "" and stats.summary("0.21.0", 1) is None
+    assert stats.channel() == "" and stats.summary("0.21.0") is None
 
 
 def test_tool_results_and_posts_are_counted():
     text = server._out("list_recent", [{"id": "p1", "message": "hi"}])
     stats.record("post", chars=42)
     stats.record("wake", reason="digest")
-    s = stats.summary("0.21.0", 29500)
+    s = stats.summary("0.21.0", overhead.Fixed(2000, 3000, 22000))
     assert s["tools"] == {"list_recent": [1, len(text)]}
-    assert s["posts"] == [1, 42] and s["wakes"] == {"digest": 1} and s["static"] == 29500
+    assert s["posts"] == [1, 42] and s["wakes"] == {"digest": 1}
     assert "message" not in json.dumps(s)  # counts only, no content
 
 
-def test_static_text_is_measured():
-    assert server._static_chars() > 10000
+def test_stats_report_reads_the_channel_with_the_bots_session(monkeypatch):
+    """RT-6.9 step 3: a session reads the report without the host's token,
+    through the bot it already has: the newest versions, STATS lines only."""
+    from fakes import FakeChat
+
+    def line(v, minutes):
+        return {"id": f"p{v}", "channel_id": "c" * 26, "user_id": "x" * 26, "create_at": 1,
+                "message": "STATS " + json.dumps({"v": v, "min": minutes, "turns": 3,
+                                                  "static": 4800, "skill": 22078})}
+    chat = FakeChat(channel="agents-stats", posts=[
+        line("0.52.0", 60), line("0.53.0", 30), line("0.9.0", 60),
+        {"id": "x", "user_id": "x" * 26, "message": "STATS {broken"},
+        {"id": "y", "user_id": "x" * 26, "message": "hello"}])
+    monkeypatch.setattr(server, "_get_client", lambda: chat)
+    out = json.loads(asyncio.run(server.stats_report(versions=2)))
+    assert out["channel"] == "agents-stats"
+    assert [(r["version"], r["hours"], r["static"], r["skill"]) for r in out["versions"]] == [
+        ("0.52.0", 1.0, 4800, 22078), ("0.53.0", 0.5, 4800, 22078)]
+    monkeypatch.setenv("MM_STATS_CHANNEL", "elsewhere")
+    assert "cannot read ~elsewhere" in asyncio.run(server.stats_report())
+    monkeypatch.setenv("MM_STATS_CHANNEL", "off")
+    assert "stats are off" in asyncio.run(server.stats_report())
+
+
+def test_static_is_per_turn_text_and_the_skill_its_own_field():
+    """RT-6.9 step 2: `static` is what every turn carries, the instructions
+    and the tool docs; the skill is in the context only once loaded, so it
+    is a field of its own (`skill`), and `tok.skill` says whether it was."""
+    stats.record("turn")
+    f = server._fixed()
+    s = stats.summary("0.53.0", f)
+    assert s["static"] == f.instructions + f.tools == len(server._instructions()) + f.tools
+    assert s["skill"] == f.skill > 10000 > s["static"]
 
 
 _REAL_CLIENT = httpx.Client
@@ -52,7 +84,7 @@ def _mock_http(monkeypatch, handler):
 def test_post_goes_to_the_stats_channel(monkeypatch, state):
     client = MattermostAdapter(base_url="https://chat.example", token="bot", team_name="ai-agents")
     stats.record("turn")
-    data = stats.summary("0.21.0", 1)
+    data = stats.summary("0.21.0")
 
     def missing(request):
         if request.url.path.endswith("/teams/name/ai-agents"):
@@ -101,7 +133,7 @@ def test_turns_run_from_the_prompt_to_the_stop_that_lets_go():
         {"k": "turn", "t": 4000, "by": "human"}, {"k": "turn_end", "t": 4010},
         {"k": "turn_end", "t": 5000},                       # an end without a start
     )
-    s = stats.summary("0.36.0", 1)
+    s = stats.summary("0.36.0")
     assert s["turns"] == 4 and s["turns_timed"] == 3
     assert (s["turn_sec"], s["turn_max_sec"]) == (370, 300)
     assert (s["bus_turns"], s["bus_turns_timed"], s["bus_turn_sec"], s["bus_turn_max_sec"]) == (1, 1, 60, 60)
@@ -110,7 +142,7 @@ def test_turns_run_from_the_prompt_to_the_stop_that_lets_go():
 def test_a_runtime_without_turn_hooks_sends_no_turn_data():
     """RT-6.9: absent, never zero, so a harness cannot look idle by lacking hooks."""
     stats.record("post", chars=3)
-    s = stats.summary("0.36.0", 1)
+    s = stats.summary("0.36.0")
     assert "turn_sec" not in s and "turns_timed" not in s
     assert s["asks"] == 0 and s["asks_open"] == 0 and s["ask_wait_sec"] == 0
 
@@ -126,7 +158,7 @@ def test_asks_are_counted_with_their_waits_and_what_stays_open():
         {"k": "answer", "t": now - 4400, "id": "a1", "wait": 600},   # a second one: not counted
         {"k": "answer", "t": now - 3000, "id": "a2", "wait": 1000},
     )
-    s = stats.summary("0.36.0", 1)
+    s = stats.summary("0.36.0")
     assert (s["asks"], s["asks_answered"], s["ask_wait_sec"], s["ask_wait_max_sec"]) == (3, 2, 1500, 1000)
     assert s["asks_open"] == 1 and s["ask_open_sec"] == s["ask_open_max_sec"]
     assert 895 <= s["ask_open_max_sec"] <= 905
@@ -167,5 +199,5 @@ async def test_the_initialize_handshake_names_the_harness(monkeypatch):
         method="initialize", params={"clientInfo": {"name": "cursor-vscode", "version": "1"}}), next_)
     assert seen == ["tools/list", "initialize"]
     stats.record("turn")
-    assert stats.summary("0.36.0", 1)["rt"] == "cursor"
+    assert stats.summary("0.36.0")["rt"] == "cursor"
     assert server._note_client in server.mcp._lowlevel_server.middleware
