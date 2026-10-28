@@ -47,49 +47,75 @@ token, and the lease rules exist once. In a corral session that process runs on
 the host (RT-6.18): the sandbox holds no credential at all, only the endpoints and
 a per-session key, and its MCP entry point is a relay that copies bytes.
 
-Inside the MCP server, Mattermost's state carriers (post props, custom status
-and crown, unread counters and last post times, the profile the registrar wrote) are read and
-written only in `client.py`, the one module that talks HTTP, `a2a.py` (the
-bus's props) and `lease.py` (status, crown and roster). The
-rest of the server works with bus types (`model.py`), so a change of
-carrier stays in those three modules; `mcp/tests/test_adapter_boundary.py`
-checks it. A post is a `Post`: `client.post_of` builds it from Mattermost's
-JSON where a post enters the server (the client's post and read calls, the
-WebSocket inbox), with the transport fields typed (ids, thread, author, times,
-text, system type) and what the props say read once (from a webhook, and the
-bus's kind, intent and `to`). Its read-only `raw` is the JSON a tool returns
-with `raw=true`. The same test checks that no other module reads a post's JSON
-keys; it lists the few that read such keys on JSON that is no post (slim
-results, the hook API's post items, WebSocket envelopes, transcripts).
+The MCP server's inside is cut once more, at the chat: see 5.2.
 
-Between the bus logic and Mattermost sits a port (`port.py`): `ChatPort`, a
-`typing.Protocol` with the chat operations the bus logic calls and nothing
-more. Who and where (the bot's token and session, the work channel, permalink
-base, `get_me`, `account_created`, `get_channel`); people (`usernames`, `agents`,
-`trusted_humans`); channel membership, status and presence (`member_channels`,
-`channel_users`, `presences`, `set_presence`, `set_custom_status`,
-`clear_custom_status`); posting and replying (`post`, `post_sync`,
+---
+
+## 5.2 Whitebox MCP server
+
+<!-- LEAN: layers as a table, no diagram. -->
+
+### Contained Building Blocks
+
+| Layer | Modules | Responsibility |
+|-------|---------|----------------|
+| Entry points | `server.py` (MCP tools, instructions), `hookapi.py` (hook API, RT-6.17), `hosted.py` (host process, RT-6.18), `websocket_inbox.py` (inbox) | Take requests and events and drive the bus logic; the only modules besides the adapter that import `client.py` |
+| Bus logic | `gate.py`, `lease.py`, `slim.py`, `departed.py`, `remind.py`, `stall.py`, `ownpost.py`, `stats.py`, `unread.py` | Wake gate, lease and roster, slim results, departed agents, ask reminders, stall check, own post, stats, pending count. Take a `ChatPort`, never import `client.py` |
+| Port | `port.py` | `ChatPort`, a `typing.Protocol` with the chat operations the bus logic calls and nothing more |
+| Bus types | `model.py` | `Post`, `Thread`, `Me`, `Channel`, `ChannelUser`, `Reaction` and the bus's own rows: only the fields the bus reads |
+| Adapter | `client.py` (`MattermostAdapter`), with `a2a.py` (the bus's props) and `lease.py` (status, crown, roster) | The only code that reads or writes Mattermost's carriers: REST, post props, custom status, unread counters, the registrar's profile |
+| Bus state | `watermark.py`, the state files of `session_file.py` | What the bus keeps itself instead of reading Mattermost's view of it: the read watermark (RT-6.2), the latest own post, asks, reminders, stall |
+
+**Port.** `ChatPort` covers who and where (the bot's token and session, the
+work channel, permalink base, `get_me`, `account_created`, `get_channel`);
+people (`usernames`, `agents`, `trusted_humans`); membership, status and
+presence (`member_channels`, `channel_users`, `presences`, `set_presence`,
+`set_custom_status`, `clear_custom_status`); posting (`post`, `post_sync`,
 `post_by_name_sync`); reading (`thread`, `channel_posts`, `posts_after`,
-`reactions`). Nothing crosses it as Mattermost's JSON: posts and threads come
-back as `Post` and `Thread`, the bot account as `Me`, a channel as `Channel`, a
-channel's accounts as `ChannelUser` and reactions as `Reaction` (`model.py`),
-each with only the fields the bus reads, built in the adapter; `Me` and
-`Channel` keep the JSON as read-only `raw` for the tools asked for
-`raw=true`. `client.MattermostAdapter` implements it; mypy checks that
-structurally.
-The wake gate, lease and roster, slim results, departed agents, ask
-reminders, stall check, own post, stats and the pending count (`gate.py`,
-`lease.py`, `slim.py`, `departed.py`, `remind.py`, `stall.py`, `ownpost.py`,
-`stats.py`, `unread.py`) take a `ChatPort` and never import `client.py`;
-`test_adapter_boundary` checks both, that they use no member the port
-lacks, and that no port member returns JSON. The tests share one fake of the
-port, `FakeChat` in `mcp/tests/fakes.py`: canned answers and a record of what
-was posted, no Mattermost emulator. It is a typed subset of the port, with
-only the members the tests call, each with the port's signature
-(`test_adapter_boundary` compares them, mypy checks the file); what a test
-needs of the adapter beyond the port goes into a subclass.
-Registration (the registrar, the bot and its token) is no chat operation and
-stays outside the port, in the adapter, driven by `server.py` and
-`hosted.py`. The WebSocket inbox (`websocket_inbox.py`) is the adapter's
-carrier and the hook API (`hookapi.py`) uses its id and pid helpers; with the
-server and the host process they still import `client.py`.
+`reactions`). Nothing crosses it as Mattermost's JSON. `MattermostAdapter`
+implements it; mypy checks that structurally.
+
+**Bus types.** A post is built once where it enters the server
+(`client.post_of`: the client's post and read calls, the WebSocket inbox),
+with the transport fields typed and what the props say (webhook, the bus's
+kind, intent, `to`) read once. `Post`, `Me` and `Channel` keep the JSON as
+read-only `raw`, only for the tools asked for `raw=true`.
+
+**Read watermark.** What waits for an agent is counted from the bus's own mark
+per channel (`watermark.py`, RT-6.2 step 1), not from Mattermost's unread
+counters: the mark moves only for a post the server handled (handed over,
+gated, or its own), belongs to the bot rather than the session, and is a
+state file, not a carrier.
+
+**Watched channels.** `client.watched_channel_ids` is the one list of the
+channels the server watches (work, project and default channel, by id and by
+name): the inbox delivers their posts and the hook API counts and reads only
+them, so the `Stop` hook counts what `wait_for_events` can hand over (RT-6.2).
+
+**Checks.** `mcp/tests/test_adapter_boundary.py` checks that only the adapter
+modules read carriers or a post's JSON keys (listing the few that read such
+keys on JSON that is no post), that the bus-logic modules import no
+`client.py`, use no member the port lacks, and that no port member returns
+JSON. The tests share one fake of the port, `FakeChat` in
+`mcp/tests/fakes.py`: canned answers and a record of what was posted, no
+Mattermost emulator, with only the members the tests call, each with the
+port's signature (the same test compares them, mypy checks the file).
+
+### Decision: port and adapter (0.49.0)
+
+- **Context.** Mattermost's JSON, props, statuses and unread counters were
+  read all over the server; a change of carrier (props shape 0.46.0, own read
+  watermark 0.47.0) touched many modules, and tests mocked HTTP.
+- **Decision.** The bus logic talks to a `ChatPort` and bus types only; one
+  adapter speaks Mattermost. Entry points wire them and may use the adapter.
+- **Consequences.** A carrier change stays in the adapter; the logic is tested
+  against one typed fake. The port grows only with an operation the logic
+  needs. A second chat would need a second adapter, not changes in the logic.
+
+**Why registration stays outside the port.** Registering a bot is no chat
+operation: it goes to the registrar (a separate service with its own
+configuration, such as the bot name prefix) with `MM_REG_SECRET`, not with the
+bot's token, and happens before a chat session exists and after it ended. On
+the port, every bus-logic module could create or remove bots, against the
+trust cut of 5.1. So registration, the bot and its token stay in the adapter,
+driven only by `server.py` and `hosted.py` (RT-6.1, RT-6.10, RT-6.18).

@@ -41,6 +41,7 @@ def post(n: int, user: str, message: str, ago_min: float, root: int = 0, kind: s
 class Client:
     token = "t"
     session = None
+    channel_name = project_channel_name = ""
 
     def __init__(self):
         self.posts: list[Post] = []
@@ -256,7 +257,8 @@ def test_digest_says_what_who_is_next_and_last_activity_and_is_capped():
               "last": "agent-bob ACK 10:00", "at": i} for i in range(12)]
     text = stall.digest(found, int((NOW - 1500) * 1000), NOW)
     lines = text.splitlines()
-    assert lines[0].startswith("Stall: no post by an agent or trusted human for 25 min")
+    assert lines[0].startswith("Stall: no post by another agent or a trusted human since ")
+    assert "(25 min; your own posts do not count)" in lines[0]
     assert all(len(line) <= stall.LINE for line in lines[1:-1])
     assert lines[1].endswith(f' "{"T" * 59}…" · next: agent-bob · last: agent-bob ACK 10:00')
     assert lines[-2] == '- … and 4 more (coordinator("tasks"))'
@@ -470,7 +472,23 @@ async def test_an_own_post_pushes_the_first_wake_out(bus):
     without other activity the quiet period starts with the oldest open item."""
     bus.posts.append(post(1, ME, "TASK · Fix the parser · @agent-bob", 3))
     assert await _wakes(bus, range(0, 9)) == [7]
-    assert "Stall: no post by an agent or trusted human for 10 min" in bus.woken[0]
+    assert "(10 min; your own posts do not count)" in bus.woken[0]
+
+
+async def test_the_crown_holders_idle_and_ask_are_no_activity_and_the_text_says_so(bus):
+    """RT-6.19 (reported 0.50.0): the coordinator's own IDLE in its HELLO
+    thread and its own ask_human post start no quiet period; they only push the
+    next wake out. The event says that it counts other agents' and trusted
+    humans' posts, not "no post since"."""
+    _open(bus, "task")                                     # bob's ACK, 50 min ago
+    bus.posts += [post(5, ME, "HELLO · coordinating", 55),
+                  post(6, ME, "IDLE · waiting for dembaca", 23, root=5),
+                  post(7, ME, "🙋 @dembaca — **Merge PR #4?**", 23, kind=a2a.ASK)]
+    assert await _wakes(bus, range(0, 25)) == [0, 20]
+    quiet = stall._hhmm(bus.posts[1].create_at)
+    assert bus.woken[0].startswith(f"Stall: no post by another agent or a trusted human since {quiet} (50 min;"
+                                   " your own posts do not count)")
+    assert stall._read(ME)["QUIET"] == bus.posts[1].create_at
 
 
 async def test_without_activity_the_oldest_item_starts_the_quiet(bus, monkeypatch):

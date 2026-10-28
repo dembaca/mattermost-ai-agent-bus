@@ -33,6 +33,18 @@ class _FakeClient:
             raise RuntimeError(f"channel {name!r} does not exist")
         return f"cid-{name}"
 
+    async def work_channel_id(self):
+        name = self.project_channel_name or self.channel_name
+        if name in self.missing:
+            raise RuntimeError(f"channel {name!r} does not exist")
+        return f"cid-{name}"
+
+
+@pytest.fixture(autouse=True)
+def _no_channel_ids(monkeypatch):
+    monkeypatch.delenv("MM_PROJECT_CHANNEL_ID", raising=False)
+    monkeypatch.delenv("MM_CHANNEL_ID", raising=False)
+
 
 @pytest.mark.asyncio
 async def test_watches_default_channel_only():
@@ -59,6 +71,27 @@ async def test_missing_project_channel_does_not_lose_the_default():
     inbox = WebSocketInbox(client=client)
     await inbox.ensure_identity()
     assert inbox.watched_channel_ids == {"cid-agents"}
+
+
+@pytest.mark.asyncio
+async def test_a_channel_given_only_by_id_is_watched_and_counted(monkeypatch):
+    """RT-6.2 step 1: with only MM_PROJECT_CHANNEL_ID set (no project channel
+    name), the inbox watches that channel, and the hook API counts from the
+    same list: what the Stop hook counts is what wait_for_events delivers."""
+    from mattermost_ai_agent_bus import hookapi
+
+    proj = "p" * 26
+    monkeypatch.setenv("MM_PROJECT_CHANNEL_ID", proj)
+    client = _FakeClient()
+    client.work_channel_id = lambda: _const(proj)
+    inbox = WebSocketInbox(client=client)
+    await inbox.ensure_identity()
+    assert inbox.watched_channel_ids == {"cid-agents", proj}
+    assert await hookapi.watched(client) == inbox.watched_channel_ids
+
+
+async def _const(value):
+    return value
 
 
 @pytest.mark.asyncio

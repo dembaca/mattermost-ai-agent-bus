@@ -14,7 +14,8 @@ from typing import Any
 from websockets.asyncio.client import connect as ws_connect
 
 from . import asks, departed, gate, lease, links, unread, watermark
-from .client import MattermostAdapter, post_of, reaction_of, with_links, ws_url_from_http
+from .client import (MattermostAdapter, post_of, reaction_of, watched_channel_ids, with_links,
+                     ws_url_from_http)
 from .model import Channel, Post, Reaction
 
 log = logging.getLogger(__name__)
@@ -107,17 +108,9 @@ class WebSocketInbox:
         self._bot_user_id = me.id
         self._bot_username = me.username
         if not self.watched_channel_ids:
-            # Watch the default channel (where the agent stays addressable) and the
-            # project channel (where it works) — either may be where it is called.
-            names = [self.client.channel_name]
-            if self.client.project_channel_name:
-                names.append(self.client.project_channel_name)
-            for name in names:
-                try:
-                    cid = await self.client.get_channel_id(name)
-                    self.watched_channel_ids.add(cid)
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("could not resolve watched channel %r: %s", name, exc)
+            # The work, project and default channel (where the agent works and
+            # stays addressable): the same list the hook API counts from.
+            self.watched_channel_ids = await watched_channel_ids(self.client)
 
     async def _channel(self, channel_id: str) -> Channel:
         if channel_id not in self._channel_cache:

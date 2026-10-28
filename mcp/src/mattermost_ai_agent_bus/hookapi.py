@@ -75,7 +75,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import a2a, asks, channel, gate, lease, ownpost, session_file, stall, stats, turnend, unread
-from .client import InvalidId, _pid_alive, mm_name
+from .client import InvalidId, _pid_alive, mm_name, watched_channel_ids
 from .model import Post
 
 if TYPE_CHECKING:
@@ -466,18 +466,9 @@ def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
 
 
 async def watched(client: MattermostAdapter) -> set[str]:
-    """The channels the bus watches: the work channel, the project channel and
-    the default channel. Never a DM or group channel."""
-    ids = {await client.work_channel_id()}
-    ids |= {v for v in (os.environ.get("MM_PROJECT_CHANNEL_ID", ""),
-                        os.environ.get("MM_CHANNEL_ID", "")) if _UID.fullmatch(v)}
-    for name in {getattr(client, "project_channel_name", ""), getattr(client, "channel_name", "")}:
-        if name:
-            try:
-                ids.add(await client.get_channel_id(name))
-            except Exception as exc:  # noqa: BLE001 — a channel that is not there
-                log.info("hook API: channel %s not resolved: %s", name, type(exc).__name__)
-    return ids
+    """The channels the bus watches, the inbox's list (client.watched_channel_ids):
+    the work, project and default channel. Never a DM or group channel."""
+    return await watched_channel_ids(client)
 
 
 async def _channel(client: MattermostAdapter, chan: str) -> str:
