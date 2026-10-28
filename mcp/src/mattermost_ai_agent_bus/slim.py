@@ -4,6 +4,10 @@ Mattermost's post JSON carries metadata, props, hashtags, file ids and more;
 an agent reads every token of it in every turn the result stays in context.
 A slim post keeps id, thread, channel name, author name, time and text — about
 a fifth of the size. Tools take raw=true for the full JSON.
+
+What the bus brings unasked (a channel push, a wait_for_events item) has its
+text cut at BODY_MAX characters with a pointer to get_thread (RT-6.12 step 3);
+what the agent fetches by id or channel (get_thread, list_recent) stays whole.
 """
 
 from __future__ import annotations
@@ -15,6 +19,27 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .port import ChatPort
     from .model import Post
+
+
+# Pushed and delivered posts are cut here (RT-6.12 step 3): about 7% of the
+# measured pushes are longer, Mattermost allows 16,383 (#68).
+BODY_MAX = 2000
+
+
+def cut(text: str, post_id: str) -> str:
+    """`text` at most about BODY_MAX characters, cut at a line or word end and
+    ending with where the rest is: get_thread with the post's id, which works
+    for a root and a reply alike. Unchanged when short or without an id."""
+    if len(text) <= BODY_MAX or not post_id:
+        return text
+    head = text[:BODY_MAX]
+    floor = BODY_MAX * 4 // 5  # a boundary further back drops too much
+    end = head.rfind("\n", floor)
+    if end < 0:
+        end = max(head.rfind(" ", floor), head.rfind("\t", floor))
+    if end > 0:
+        head = head[:end]
+    return f"{head.rstrip()}\n… (cut, {len(text)} chars in all; get_thread {post_id})"
 
 
 def _when(ms: int | None) -> str:
@@ -70,6 +95,13 @@ async def post(client: ChatPort, item: Post) -> dict[str, Any]:
 def text_of(item: Mapping[str, Any]) -> str:
     """The message of a wait_for_events item's slim post; '' without one."""
     return str((item.get("post") or {}).get("message") or "")
+
+
+def cut_item(item: dict[str, Any]) -> None:
+    """A wait_for_events item's post text cut in place (see `cut`)."""
+    post = item.get("post")
+    if isinstance(post, dict) and isinstance(post.get("message"), str):
+        post["message"] = cut(post["message"], str(post.get("id") or ""))
 
 
 def root_of(item: Mapping[str, Any]) -> str:

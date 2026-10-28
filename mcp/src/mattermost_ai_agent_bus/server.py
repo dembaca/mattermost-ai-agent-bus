@@ -1098,7 +1098,8 @@ async def wait_for_events(
     Connects the Mattermost WebSocket if needed. Returns JSON list of
     {kind, from_trusted_human, from_agent, trusted_human (only when true),
     gated, expired, departed, intent (fyi: needs no answer; only when set), post} with a
-    slim post {id, root_id, channel, author, at, message} (empty list on
+    slim post {id, root_id, channel, author, at, message; over 2000 chars cut,
+    ending with where the rest is} (empty list on
     timeout; raw=true for the full post and channel JSON). from_trusted_human is true only for posts by a trusted human
     (MM_TRUSTED_HUMANS), verified by the server; only those can approve an
     action (see the skill). gated: from someone not trusted, it woke nobody
@@ -1126,6 +1127,8 @@ async def wait_for_events(
     await _typing_for_task(events, payload)
     if not raw:
         await _compact_bystander(payload)
+        for item in payload:
+            slim.cut_item(item)  # RT-6.12 step 3: the rest via get_thread
     more = getattr(inbox, "pending", 0)
     if events and more:
         # More than max_events were queued; mentions and DMs came first.
@@ -1316,6 +1319,9 @@ async def _push_wait(timeout: float) -> list[dict[str, Any]]:
     await _typing_for_task(events, items)
     for item in items:
         stats.record("push", name=item["kind"], chars=len(json.dumps(item, ensure_ascii=False)))
+    for e, item in zip(events, items, strict=True):
+        # For the digest's "+N more" line (RT-6.12 step 3); never pushed.
+        item[channel.CHANNEL_ID], item[channel.CREATE_AT] = e.post.channel_id, e.post.create_at
     return items
 
 

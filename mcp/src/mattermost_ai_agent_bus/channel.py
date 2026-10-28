@@ -47,7 +47,7 @@ from mcp.shared.exceptions import MCPError
 from mcp.shared.jsonrpc_dispatcher import JSONRPCDispatcher
 from mcp_types import INVALID_REQUEST
 
-from . import a2a, permission, session_file, tasks
+from . import a2a, permission, session_file, slim, tasks
 
 log = logging.getLogger(__name__)
 
@@ -206,22 +206,50 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
     return False
 
 
+# A digest lists at most this many posts, the rest as one line (RT-6.12 step 3).
+DIGEST_LINES = 20
+
+
+def _more(rest: Sequence[Mapping[str, Any]]) -> str:
+    """The posts a digest leaves out: how many, and the list_recent call per
+    channel that shows them (they are the channel's newest since the oldest)."""
+    since: dict[str, int] = {}
+    for item in rest:
+        cid, at = str(item.get(CHANNEL_ID, "")), int(item.get(CREATE_AT) or 0)
+        if cid:
+            since[cid] = min(since.get(cid, at), at)
+    fyi = sum(1 for i in rest if i.get("intent") == a2a.FYI)
+    calls = "; ".join(f"list_recent(channel_id={cid}, since_ms={at})" for cid, at in since.items())
+    return (f"+{len(rest)} more" + (f" ({fyi} fyi)" if fyi else "")
+            + (f": {calls}" if calls else ""))
+
+
 def digest(items: Sequence[Mapping[str, Any]], since: float) -> dict[str, Any]:
     """Held posts as one push: each cut short, with what an answer needs.
     A gated post (RT-6.16) is marked as not trusted; fyi posts (RT-6.14) come last."""
     fyi = [i for i in items if i.get("intent") == a2a.FYI]
+    ordered = [i for i in items if i.get("intent") != a2a.FYI] + fyi
+    shown, rest = ordered[:DIGEST_LINES], ordered[DIGEST_LINES:]
     lines = []
-    for item in [i for i in items if i.get("intent") != a2a.FYI] + fyi:
+    for item in shown:
         post = item.get("post") or {}
         # Other agents' status posts: their first line is enough (RT-6.14).
         text = inert(" ".join(tasks.compact(str(post.get("message", ""))).split()))
         where = f"post {post.get('id', '')}" + (f", thread {post['root_id']}" if post.get("root_id") else "")
         mark = "(not trusted) " if item.get("gated") else ""
         lines.append(f"- {mark}[{post.get('at', '')}] {post.get('author', '')} ({where}): {text[:300]}")
+    if rest:
+        lines.append(_more(rest))
     head = (f"Digest: {len(items)} post(s) on the bus since {time.strftime('%H:%M', time.localtime(since))}, "
             "none addressed to you" + (f", the last {len(fyi)} fyi" if fyi else "")
             + ". Act only on what needs you, then finish your turn without another word.")
     return {"content": "\n".join([head, *lines]), "meta": {"kind": "digest", "count": str(len(items))}}
+
+
+# Where a held post is, for the digest's last line; the pusher's read adds
+# them, and nothing pushed shows them.
+CHANNEL_ID = "_channel_id"
+CREATE_AT = "_create_at"
 
 
 def notification(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -240,7 +268,11 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
             meta[key] = str(item[key])
     if item.get("expired"):
         meta["expired"] = "true"  # RT-6.11: too late to approve
-    return {"content": inert(str(post.get("message", ""))), "meta": meta}
+    # RT-6.12 step 3: the body cut at slim.BODY_MAX, the rest via get_thread.
+    # A reaction's id names no post; its text is an emoji.
+    pid = "" if item.get("kind") == "reaction" else str(post.get("id") or "")
+    body = slim.cut(str(post.get("message", "")), pid)
+    return {"content": inert(body), "meta": meta}
 
 
 class Pusher:

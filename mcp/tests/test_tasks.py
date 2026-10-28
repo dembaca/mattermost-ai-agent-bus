@@ -397,7 +397,7 @@ def test_static_budget():
 
 # The MCP instructions per variant: (host-managed, hosted, unavailable) ×
 # (no push, push, push + permission relay), each limit about 10 % over its
-# 0.53.0 size (in brackets). The unavailable reason is at its longest, 300.
+# 0.55.0 size (in brackets). The unavailable reason is at its longest, 300.
 _INSTRUCTION_BUDGET = {
     "self-registering": (2050, 2350, 2500),   # (1860, 2128, 2267)
     "host-managed": (1850, 2150, 2300),       # (1680, 1948, 2087)

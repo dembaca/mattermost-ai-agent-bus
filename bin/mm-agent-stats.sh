@@ -10,11 +10,11 @@
 # forced), their share of all turns (every prompt plus the forced rounds), bus
 # data put into the context per turn (tool results + compaction handoff),
 # characters posted per session, the fixed text in every turn (instructions,
-# tool docs; before 0.53.0 the skill too) and the skill, read per load.
+# tool docs; before 0.55.0 the skill too) and the skill, read per load.
 # Characters, not tokens: roughly 4 per token.
 # Claude Code sessions since 0.32.0 add a token table from their transcripts:
 # requests per hour, those the bus caused, the fixed text per request, sessions
-# that loaded the skill (since 0.53.0), the bus's tokens per hour and its share
+# that loaded the skill (since 0.55.0), the bus's tokens per hour and its share
 # of all, in input-token equivalents.
 # A session reads the same as JSON with the MCP tool stats_report, no token.
 # Since 0.36.0, per version and coding harness (the MCP client: claude-code,
@@ -132,7 +132,7 @@ report="$(jq -c '
     plugin_turns: sum((.bus_turns // ((.wakes // {}) | add // 0)) + ((.blocks // {}) | add // 0)),
     bus_chars: sum(((.tools // {}) | map(.[1]) | add // 0) + ((.compact // [0, 0])[1])),
     post_chars: sum((.posts // [0, 0])[1]),
-    # Since 0.53.0 static is the per-turn text only, the skill a field of its own.
+    # Since 0.55.0 static is the per-turn text only, the skill a field of its own.
     static: (map(.static) | max),
     skill: (map(.skill) | max),
     tok: $tok,

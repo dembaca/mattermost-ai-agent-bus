@@ -204,7 +204,9 @@ human's `@channel`); the rest reaches them as a digest
 
 Tool results carry slim posts (`id`, `root_id`, channel, author, time, message) in
 compact JSON; `list_recent` leaves system messages out. `raw=true` returns
-Mattermost's full JSON.
+Mattermost's full JSON. A pushed or `wait_for_events` post over 2,000 characters
+is cut with a pointer to `get_thread`
+([arc42 §6.12](arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)).
 
 Every session posts one `STATS {…}` line to `agents-stats` (`MM_STATS_CHANNEL`; `off`
 disables it, a missing channel is skipped) at its end: counts, sizes and seconds of what the bus added to the session, never content

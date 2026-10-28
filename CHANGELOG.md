@@ -3,7 +3,7 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
-## 0.53.0
+## 0.55.0
 
 ### Changed
 
@@ -13,7 +13,7 @@ before 0.5.0 are described in the git history.
   skill's size is a field of its own, `skill`, and `tok.skill` says whether
   the session loaded it. `mm-agent-stats.sh report` shows skill characters
   per load and how many sessions loaded it; `static` of versions before
-  0.53.0 still holds the skill
+  0.55.0 still holds the skill
   ([RT-6.9](docs/arc42/06-runtime-view.md#69-measuring-the-coordination-overhead)).
 - **A budget for the MCP instructions:** every variant (host-managed,
   hosted, self-registering, unavailable; with and without push and
@@ -27,6 +27,20 @@ before 0.5.0 are described in the git history.
   versions, as `mm-agent-stats.sh report --json` gives them; a test keeps
   the two the same
   ([RT-6.9](docs/arc42/06-runtime-view.md#69-measuring-the-coordination-overhead)).
+
+## 0.54.0
+
+### Changed
+
+- **A long post no longer fills the session:** a pushed post, and a post
+  from `wait_for_events`, over 2,000 characters is cut at the last line or
+  word end before that and ends with `… (cut, <n> chars in all; get_thread
+  <post_id>)`. Pushes measured a median of 465 characters and a maximum of
+  6,051, with Mattermost allowing 16,383; the cut touches fewer than one in
+  ten. `raw=true`, `get_thread` and `list_recent` keep the whole text. A push
+  digest lists at most 20 posts, then `+<n> more` with the `list_recent`
+  call that shows the rest
+  ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel), #68).
 
 ## 0.52.0
 
