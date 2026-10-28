@@ -33,6 +33,20 @@ before 0.5.0 are described in the git history.
   to it (`🙋 asked <permalink>`) without the mention
   ([RT-6.11](docs/arc42/06-runtime-view.md#611-asking-a-human)).
 
+## 0.54.0
+
+### Changed
+
+- **A long post no longer fills the session:** a pushed post, and a post
+  from `wait_for_events`, over 2,000 characters is cut at the last line or
+  word end before that and ends with `… (cut, <n> chars in all; get_thread
+  <post_id>)`. Pushes measured a median of 465 characters and a maximum of
+  6,051, with Mattermost allowing 16,383; the cut touches fewer than one in
+  ten. `raw=true`, `get_thread` and `list_recent` keep the whole text. A push
+  digest lists at most 20 posts, then `+<n> more` with the `list_recent`
+  call that shows the rest
+  ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel), #68).
+
 ## 0.52.0
 
 ### Fixed
