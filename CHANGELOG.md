@@ -3,6 +3,23 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.52.0
+
+### Fixed
+
+- **The 👑 shows typing for a human's plain post:** a human's post without
+  a mention wakes only the coordinator as its task, but unlike a mention or
+  DM it showed no "is typing…", so the human could not tell a stalled
+  coordinator from a working one. Delivered by `wait_for_events` or the
+  channel push, such a post now starts the indicator in its thread; a gated,
+  digest-only or fyi post does not. Pushed mentions and DMs already showed it
+  ([RT-6.5](docs/arc42/06-runtime-view.md#65-typing-indicator-while-a-mention-is-answered)).
+- **A stall no longer wakes the coordinator for its own ask alone:** its
+  reminders already nudge the human, so a stall whose only open items are the
+  crown holder's own asks (within 24 h) wakes nobody. With other items open
+  they are still listed
+  ([RT-6.19](docs/arc42/06-runtime-view.md#619-stall-noticed-asks-reminded)).
+
 ## 0.51.0
 
 ### Changed
