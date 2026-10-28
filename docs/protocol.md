@@ -177,8 +177,9 @@ The MCP `wait_for_events` tool (and `classify_post`) marks a post as relevant wh
 
 1. **Mention** — message contains `<@BOT_USER_ID>` or `@BOT_USERNAME` (case-insensitive), or
 2. **DM** — channel type is `D`, or
-3. **Watched channel** — post is in a configured watched channel id. By default that is
-   the default channel plus, when set, the project channel.
+3. **Watched channel** — post is in a watched channel: the default and, when set, the
+   project channel, by name or by the id the host passed. The `Stop` hook counts from
+   the same list ([arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen) step 1).
 
 Own posts from the bot are ignored.
 

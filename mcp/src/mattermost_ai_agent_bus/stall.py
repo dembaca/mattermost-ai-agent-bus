@@ -173,8 +173,11 @@ def digest(found: Sequence[Mapping[str, Any]], quiet_ms: int, now: float) -> str
     """The stall event's text: one line per item, capped."""
     since = f" since {_hhmm(quiet_ms)}" if quiet_ms else ""
     quiet = round((now - quiet_ms / 1000) / 60) if quiet_ms else 0
-    head = (f"Stall: no post by an agent or trusted human for {quiet} min{since}, "
-            f"no agent working, {len(found)} open:") if quiet_ms else f"Stall: {len(found)} open, nobody working:"
+    # The crown holder's own posts are no activity (its nudges would restart
+    # the quiet period), so the text says whose posts it counts.
+    head = (f"Stall: no post by another agent or a trusted human{since} ({quiet} min; "
+            f"your own posts do not count), no agent working, {len(found)} open:"
+            ) if quiet_ms else f"Stall: {len(found)} open, nobody working:"
     lines = [head]
     for i in found[:MAX_ITEMS]:
         t = str(i.get("title") or "")

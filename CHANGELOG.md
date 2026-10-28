@@ -3,6 +3,37 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.51.0
+
+### Changed
+
+- **Asks always go on the bus:** a question or decision for a human goes out
+  as `ask_human` also when the agent asked in its own terminal or UI, which
+  the human may not watch; the bus is the one place where they see what waits
+  on them. SKILL.md and the MCP instructions say so
+  ([RT-6.11](docs/arc42/06-runtime-view.md#611-asking-a-human)).
+- **The stall event says what it measures:** it read "no post by an agent or
+  trusted human for 37 min since 09:49" although the coordinator had posted
+  since. Its own posts (an `IDLE`, an ask) are deliberately no activity, they
+  only push the next wake out; the text now reads "no post by another agent or
+  a trusted human since 09:49 (37 min; your own posts do not count)"
+  ([RT-6.19](docs/arc42/06-runtime-view.md#619-stall-noticed-asks-reminded)).
+- **§5 describes the MCP server's final structure** after P3b: entry points,
+  bus logic, port, bus types, adapter and bus state, the decision for the port
+  and adapter split, and why registration stays outside the port
+  ([§5.2](docs/arc42/05-building-block-view.md), #82 P3b).
+
+### Fixed
+
+- **One list of watched channels:** the inbox watched the channels named by
+  `MM_CHANNEL` and `MM_PROJECT_CHANNEL`, while the hook API's count also took
+  the work channel and the ids `MM_PROJECT_CHANNEL_ID` and `MM_CHANNEL_ID`.
+  With only an id set, the Stop hook counted posts the inbox never delivered.
+  Both now use `client.watched_channel_ids`, so the inbox watches a channel
+  given by id too
+  ([RT-6.2](docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)
+  step 1).
+
 ## 0.50.0
 
 ### Fixed

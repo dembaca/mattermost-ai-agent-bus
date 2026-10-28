@@ -1104,6 +1104,28 @@ class MattermostAdapter:
                       key=lambda p: p.create_at)
 
 
+async def watched_channel_ids(client: MattermostAdapter) -> set[str]:
+    """The channels the bus watches (RT-6.2 step 1): the work channel, the
+    project channel and the default channel, by the ids the host passed
+    (MM_PROJECT_CHANNEL_ID, MM_CHANNEL_ID) and by name. Never a DM or group
+    channel. The one list for both sides: the inbox delivers their posts
+    (websocket_inbox), the hook API counts and reads them (hookapi), so what
+    the Stop hook counts is what wait_for_events can hand over. A channel that
+    does not resolve is left out, the others still count."""
+    ids = {v for v in (env("MM_PROJECT_CHANNEL_ID"), env("MM_CHANNEL_ID")) if _ID.fullmatch(v)}
+    names = dict.fromkeys(n for n in (client.channel_name, client.project_channel_name) if n)
+    for name in names:
+        try:
+            ids.add(await client.get_channel_id(name))
+        except Exception as exc:  # noqa: BLE001 — a channel that is not there
+            log.warning("could not resolve watched channel %r: %s", name, exc)
+    try:
+        ids.add(await client.work_channel_id())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not resolve the work channel: %s", exc)
+    return ids
+
+
 if TYPE_CHECKING:
     def _implements_the_port(adapter: MattermostAdapter) -> ChatPort:
         """mypy checks that the adapter satisfies the port, structurally."""

@@ -195,7 +195,9 @@ def _instructions() -> str:
         "@channel/@here/@all are written plain. "
         "Need something from a human? ask_human — the only place to @-mention "
         "one; the agent that carries out an action asks for it, the others link "
-        "its ask. A line that waits on a human without an ask reaches nobody. "
+        "its ask, even when you also asked in your terminal or UI: your human may "
+        "not watch it, the bus shows them what waits (RT-6.11). A line that waits on "
+        "a human without an ask reaches nobody. "
         "Never create channels or teams."
     )
 

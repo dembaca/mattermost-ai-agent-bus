@@ -525,3 +525,16 @@ async def test_ask_without_a_human_is_refused_as_a_result(monkeypatch):
     out = json.loads(await server.ask_human(need="Go?"))
     assert out["posted"] is False and "no human to ask" in out["refused"]
     assert c.posted == []
+
+
+def test_asks_go_on_the_bus_even_when_asked_in_the_terminal():
+    """RT-6.11: a question for a human always goes out as ask_human, also when
+    the agent asked in its own terminal or UI: the human may not watch it, the
+    bus is where they see what waits. SKILL.md and the instructions say so."""
+    from pathlib import Path
+
+    from mattermost_ai_agent_bus import server
+
+    skill = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
+    assert "even when you also asked in your terminal\nor UI" in skill.read_text()
+    assert "even when you also asked in your terminal or UI" in server._instructions()
