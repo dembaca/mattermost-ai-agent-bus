@@ -27,7 +27,7 @@ from . import a2a, session_file
 from .model import Post
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .port import ChatPort
 
 log = logging.getLogger("mattermost_ai_agent_bus.ownpost")
 
@@ -70,7 +70,7 @@ def remove(uid: str) -> None:
         path(uid).unlink(missing_ok=True)
 
 
-def bye_sync(client: MattermostClient, uid: str) -> str:
+def bye_sync(client: ChatPort, uid: str) -> str:
     """Post BYE in the agent's HELLO thread when its last post in the work
     channel is no sign-off (RT-6.2). Synchronous, for the exit handler: one
     request, bounded, fail-open; returns a short outcome for the log."""

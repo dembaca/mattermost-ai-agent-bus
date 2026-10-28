@@ -8,7 +8,7 @@ import time
 import pytest
 
 from mattermost_ai_agent_bus import asks, channel, gate, server, session_file
-from mattermost_ai_agent_bus.client import MattermostClient, post_of
+from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
 from mattermost_ai_agent_bus.model import RosterEntry, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
 
@@ -49,7 +49,7 @@ class Bus:
     crown holder is `coordinator` ('' for none)."""
 
     def __init__(self, monkeypatch, coordinator="agent-coord"):
-        self.client = MattermostClient(base_url="https://chat.example", token="bot",
+        self.client = MattermostAdapter(base_url="https://chat.example", token="bot",
                                        project_channel_name="proj")
         self.posted, self.viewed = [], []
         self.coordinator = coordinator

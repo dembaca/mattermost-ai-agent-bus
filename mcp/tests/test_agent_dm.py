@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus.client import MattermostClient
+from mattermost_ai_agent_bus.client import MattermostAdapter
 
 ME, PEER, PERSON, DM = "m" * 26, "p" * 26, "h" * 26, "d" * 26
 USERS = {"agent-peer": {"id": PEER, "username": "agent-peer", "is_bot": True},
@@ -27,7 +27,7 @@ def _client(calls):
         if req.url.path == "/api/v4/posts":
             return httpx.Response(201, json={"id": "new", **body})
         return httpx.Response(404, json={})
-    c = MattermostClient(base_url="https://mm.example", token="t")
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return c
 

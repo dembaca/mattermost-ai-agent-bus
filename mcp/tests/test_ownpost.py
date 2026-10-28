@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import a2a, ownpost, server
-from mattermost_ai_agent_bus.client import MattermostClient, post_of
+from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
 
 UID, WORK, DM = "u" * 26, "w" * 26, "d" * 26
 
@@ -16,7 +16,7 @@ UID, WORK, DM = "u" * 26, "w" * 26, "d" * 26
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("MM_BOT_USER_ID", UID)
-    c = MattermostClient(base_url="https://mm.example", token="tok", project_channel_name="proj")
+    c = MattermostAdapter(base_url="https://mm.example", token="tok", project_channel_name="proj")
     posts = iter(range(1, 99))
 
     async def api(method, path, json=None, **_):
@@ -68,7 +68,7 @@ def _bye_client(monkeypatch, seen, status=200):
     real = httpx.Client
     monkeypatch.setattr("mattermost_ai_agent_bus.client.httpx.Client",
                         lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
-    return MattermostClient(base_url="https://mm.example", token="tok")
+    return MattermostAdapter(base_url="https://mm.example", token="tok")
 
 
 def _file(msg, hello="p1000000000000000000000000"):
@@ -126,7 +126,7 @@ def test_a_failing_bye_never_raises(monkeypatch):
 def test_the_exit_handler_says_bye_before_it_unregisters(monkeypatch):
     """Step 2: the BYE goes out first; the unregistering follows."""
     order = []
-    c = MattermostClient(base_url="https://mm.example", token="tok", reg_secret="s",
+    c = MattermostAdapter(base_url="https://mm.example", token="tok", reg_secret="s",
                          register_url="https://mm.example/register/v1/agents")
     monkeypatch.setattr(ownpost, "bye_sync", lambda *_: order.append("bye") or "BYE posted")
     monkeypatch.setattr(c, "shutdown_sync", lambda: order.append("unregister") or "unregistered x")
@@ -143,7 +143,7 @@ def test_unregistering_removes_the_file(monkeypatch):
     monkeypatch.setattr("mattermost_ai_agent_bus.client.httpx.Client", lambda **kw: real(
         transport=httpx.MockTransport(lambda req: httpx.Response(
             200, json={"id": UID, "username": "agent-x"})), **kw))
-    c = MattermostClient(base_url="https://mm.example", token="tok",
+    c = MattermostAdapter(base_url="https://mm.example", token="tok",
                          register_url="https://mm.example/register/v1/agents")
     monkeypatch.setattr(c, "_me", {"id": UID, "username": "agent-x"})
     monkeypatch.setattr(c, "session", None)

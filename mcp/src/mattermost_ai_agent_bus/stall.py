@@ -45,7 +45,7 @@ from . import a2a, asks, gate, lease, remind, session_file, tasks
 from .model import Post
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .port import ChatPort
 
 log = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ def crowned(uid: str, now: float | None = None) -> None:
 
 # --- the check -----------------------------------------------------------------------
 
-async def check(client: MattermostClient, uid: str, now: float | None = None) -> float | None:
+async def check(client: ChatPort, uid: str, now: float | None = None) -> float | None:
     """One look while holding the crown: wake the agent when the bus stalls.
     Seconds until the next wake could be due; None to look at the next tick.
     Times in the state are whole: QUIET in ms as Mattermost gives them."""
@@ -271,7 +271,7 @@ async def check(client: MattermostClient, uid: str, now: float | None = None) ->
     return backoff(wakes)
 
 
-async def watch(client: MattermostClient) -> float | None:
+async def watch(client: ChatPort) -> float | None:
     """The heartbeat's watch (lease.heartbeat): the own asks' reminders, and
     with the crown the stall check. Seconds until one of them is due next;
     never raises."""

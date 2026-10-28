@@ -23,7 +23,7 @@ from . import (
     a2a, asks, channel, gate, hookapi, lease, overhead, ownpost, permission, session_file, slim, stall, stats,
     tasks,
 )
-from .client import InvalidId, MattermostClient, Refused, attachment_props, mm_id
+from .client import InvalidId, MattermostAdapter, Refused, attachment_props, mm_id
 from .model import Post
 from .websocket_inbox import WebSocketInbox
 
@@ -86,7 +86,7 @@ def _newer_installed() -> str | None:
     return None
 
 
-async def _bus_client() -> MattermostClient | None:
+async def _bus_client() -> MattermostAdapter | None:
     try:
         return _get_client()
     except RuntimeError:  # no bus configured
@@ -203,7 +203,7 @@ def _instructions() -> str:
 mcp = MCPServer("mattermost-ai-agent-bus", instructions=_instructions(), lifespan=_lifespan,
                 version=VERSION)
 
-_client: MattermostClient | None = None
+_client: MattermostAdapter | None = None
 _inbox: WebSocketInbox | None = None
 
 
@@ -216,17 +216,17 @@ _adopt_tried = False
 _roots_pending = False
 
 
-def _get_client() -> MattermostClient:
+def _get_client() -> MattermostAdapter:
     global _client, _adopt_tried
     if _client is None:
-        _client = MattermostClient.from_env()
+        _client = MattermostAdapter.from_env()
     if _client_named and not _adopt_tried and not _roots_pending:
         _adopt_tried = True
         _adopt(_client)
     return _client
 
 
-def _adopt(client: MattermostClient) -> None:
+def _adopt(client: MattermostAdapter) -> None:
     """After `claude --continue` (same session id), or a harness restarting
     this workspace's server, the bot of the server that ended is still there:
     take it over (RT-6.10)."""
@@ -289,7 +289,7 @@ def _stall_waits() -> bool:
 stall.sink, stall.waiting = _stall_event, _stall_waits
 
 
-async def _my_id(client: MattermostClient) -> str:
+async def _my_id(client: MattermostAdapter) -> str:
     try:
         uid = await lease._user_id(client)
         stats.set_user(uid)
@@ -298,7 +298,7 @@ async def _my_id(client: MattermostClient) -> str:
         return ""
 
 
-async def _posted(client: MattermostClient, post: Post) -> None:
+async def _posted(client: MattermostAdapter, post: Post) -> None:
     """The bot's own post is handled (RT-6.2): the read watermark passes it,
     unless the inbox holds (or, unconnected, may have missed) an older message
     there still to be collected. Mattermost counts it unread for the bot, in a
@@ -311,7 +311,7 @@ async def _posted(client: MattermostClient, post: Post) -> None:
 
 
 
-async def _work_posts(client: MattermostClient) -> tuple[list[Post], dict[str, str]]:
+async def _work_posts(client: MattermostAdapter) -> tuple[list[Post], dict[str, str]]:
     """The work channel's posts of the task window, and the names of their
     authors and of those who reacted (an agent's ✅ closes an ask)."""
     posts = await client.posts_after(tasks.since_ms())
@@ -320,7 +320,7 @@ async def _work_posts(client: MattermostClient) -> tuple[list[Post], dict[str, s
     return posts, names
 
 
-async def _tasks(client: MattermostClient, posts: list[Post],
+async def _tasks(client: MattermostAdapter, posts: list[Post],
                  names: dict[str, str]) -> list[dict[str, Any]]:
     """The task rows; with trusted humans configured, a TASK root by anyone
     but them and the agents is no task (RT-6.16). Unsure: all roots count."""
@@ -593,7 +593,7 @@ def _unbroadcast(text: str) -> tuple[str, list[str]]:
     return _EVERYONE_RE.sub(lambda m: m.group(1), text), found
 
 
-async def _unmention(client: MattermostClient, text: str) -> tuple[str, list[str]]:
+async def _unmention(client: MattermostAdapter, text: str) -> tuple[str, list[str]]:
     """Turn @-mentions of people into plain names, and @channel/@here/@all into
     plain words (RT-6.11).
 
@@ -620,7 +620,7 @@ async def _unmention(client: MattermostClient, text: str) -> tuple[str, list[str
     return out, sorted(humans) + everyone
 
 
-async def _unasked(client: MattermostClient, text: str, uid: str) -> list[str]:
+async def _unasked(client: MattermostAdapter, text: str, uid: str) -> list[str]:
     """Trusted humans a post names while this bot has no open ask to them (RT-6.11).
 
     "Merge waits on dembaca" reaches nobody: only an ask notifies the person.
@@ -659,7 +659,7 @@ def _with_unmentioned(result: dict[str, Any], removed: list[str],
     return result
 
 
-async def _responsible_and_trusted(client: MattermostClient) -> tuple[str | None, list[str]]:
+async def _responsible_and_trusted(client: MattermostAdapter) -> tuple[str | None, list[str]]:
     trusted = await client.trusted_humans()
     names = [n for n in trusted.values() if n]
     responsible = os.environ.get("MM_RESPONSIBLE_HUMAN", "").strip().lstrip("@") or (
@@ -768,7 +768,7 @@ async def post_message(
     return _out("post_message", await post_as_bot(None, message, channel_id, root_id, to, kind))
 
 
-async def post_as_bot(client: MattermostClient | None, message: str, channel_id: str = "",
+async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id: str = "",
                       root_id: str = "", to: str = "", kind: str = "") -> dict[str, Any]:
     """post_message's work, for the tool and for the shell's POST /v1/post
     (RT-6.17): one implementation. client None: this server's own."""
@@ -826,7 +826,7 @@ async def reply_in_thread(
     return _out("reply_in_thread", await reply_as_bot(None, root_id, message, channel_id, to, kind))
 
 
-async def reply_as_bot(client: MattermostClient | None, root_id: str, message: str,
+async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: str,
                        channel_id: str = "", to: str = "", kind: str = "") -> dict[str, Any]:
     """reply_in_thread's work, for the tool and for POST /v1/reply (RT-6.17)."""
     _done_typing()
@@ -862,7 +862,7 @@ async def reply_as_bot(client: MattermostClient | None, root_id: str, message: s
 _my_tasks: set[str] = set()
 
 
-async def _claimed(client: MattermostClient, root_id: str, message: str, uid: str,
+async def _claimed(client: MattermostAdapter, root_id: str, message: str, uid: str,
                    result: dict[str, Any]) -> dict[str, Any]:
     """RT-6.14 step 3: a task goes to the first claim in its thread, so a later
     ACK, PROGRESS or RESULT gets taken_by back. One thread read per task and
@@ -1347,7 +1347,7 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
         return False
 
 
-async def permissions_obsolete(client: MattermostClient) -> None:
+async def permissions_obsolete(client: MattermostAdapter) -> None:
     """The turn ended (RT-6.13 step 5; hookapi.presence, idle or listening):
     no prompt can still be open, the terminal answered each one left. Say so
     under it and close it, so a late `yes <id>` gets the unknown-id reply."""

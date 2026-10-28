@@ -4,6 +4,10 @@ Post props, custom status and crown, unread counters and the profile the
 registrar wrote are Mattermost's. Only the modules in ALLOWED read or write
 them, and only client.py talks HTTP; the rest of the server gets bus types
 (model.py), a post as a Post that client.post_of built.
+
+The modules in PORT_MODULES talk to the chat through port.ChatPort only: they
+never import client.py, and every member they use on it is the port's.
+client.MattermostAdapter implements the port.
 """
 
 import ast
@@ -39,6 +43,14 @@ POST_KEYS_ALLOWED = {
     "overhead.py": "Claude Code transcript entries, no posts",
     "websocket_inbox.py": "the WebSocket envelope and reaction JSON; posts go through client.post_of",
     "turnend.py": "the hook API's post items (hookapi._slim, GET /v1/posts), bus output",
+}
+
+# Modules that reach the chat through port.ChatPort only, never client.py.
+PORT_MODULES = {"gate.py", "lease.py", "slim.py", "departed.py", "remind.py", "stall.py",
+                "ownpost.py", "stats.py"}
+# Through the port as well, but importing a plain helper of client.py, and which one.
+PORT_MODULES_HELPERS = {
+    "unread.py": {"account_created"},
 }
 
 
@@ -110,4 +122,60 @@ def test_the_guard_sees_a_leak():
 
 
 def test_every_allowed_module_exists():
-    assert all((SRC / name).is_file() for name in ALLOWED | POST_KEYS_ALLOWED)
+    assert all((SRC / name).is_file()
+               for name in set(ALLOWED) | set(POST_KEYS_ALLOWED) | PORT_MODULES | set(PORT_MODULES_HELPERS))
+
+
+def client_imports(source: str) -> list[str]:
+    """The names `source` imports from client.py (the module itself as "client")."""
+    out = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom) and node.level == 1:
+            if node.module == "client":
+                out += [a.name for a in node.names]
+            elif node.module is None:
+                out += [a.name for a in node.names if a.name == "client"]
+    return out
+
+
+def client_members(source: str) -> set[str]:
+    """The members `source` reads on a parameter or name called client."""
+    return {node.attr for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+            and node.value.id == "client"}
+
+
+def _port_members() -> set[str]:
+    tree = ast.parse((SRC / "port.py").read_text())
+    port = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ChatPort")
+    return {n.name for n in port.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+
+def test_port_modules_do_not_import_the_adapter():
+    found = {name: client_imports((SRC / name).read_text())
+             for name in sorted(PORT_MODULES | set(PORT_MODULES_HELPERS))}
+    allowed = {name: sorted(PORT_MODULES_HELPERS.get(name, ())) for name in found}
+    assert {n: sorted(v) for n, v in found.items()} == allowed
+
+
+def test_port_modules_use_only_the_port():
+    port = _port_members()
+    found = {name: sorted(client_members((SRC / name).read_text()) - port)
+             for name in sorted(PORT_MODULES | set(PORT_MODULES_HELPERS))}
+    assert {name: extra for name, extra in found.items() if extra} == {}
+
+
+def test_the_adapter_has_every_port_member():
+    from mattermost_ai_agent_bus.client import MattermostAdapter
+    missing = {m for m in _port_members()
+               if not hasattr(MattermostAdapter, m) and m not in MattermostAdapter.__dataclass_fields__}
+    assert missing == set()
+
+
+def test_the_port_guard_sees_an_import():
+    source = ("from .client import MattermostAdapter\n"
+              "from . import a2a, client\n"
+              "if TYPE_CHECKING:\n    from .port import ChatPort\n"
+              "x = client.post_sync\n")
+    assert sorted(client_imports(source)) == ["MattermostAdapter", "client"]
+    assert client_members(source) == {"post_sync"}

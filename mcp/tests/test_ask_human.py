@@ -286,7 +286,7 @@ async def test_ask_human_still_mentions(monkeypatch):
 async def test_humans_among_asks_once_and_skips_bots():
     import httpx
 
-    from mattermost_ai_agent_bus.client import MattermostClient
+    from mattermost_ai_agent_bus.client import MattermostAdapter
     calls = []
 
     def handler(req):
@@ -294,7 +294,7 @@ async def test_humans_among_asks_once_and_skips_bots():
         return httpx.Response(200, json=[{"username": "dembaca", "is_bot": False},
                                          {"username": "helper-bot", "is_bot": True}])
 
-    c = MattermostClient(base_url="https://mm.example", token="t")
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     assert await c.humans_among({"dembaca", "helper-bot", "nobody"}) == {"dembaca"}
     assert await c.humans_among({"Dembaca"}) == {"Dembaca"}

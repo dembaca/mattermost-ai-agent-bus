@@ -61,3 +61,27 @@ bus's kind, intent and `to`). Its read-only `raw` is the JSON a tool returns
 with `raw=true`. The same test checks that no other module reads a post's JSON
 keys; it lists the few that read such keys on JSON that is no post (slim
 results, the hook API's post items, WebSocket envelopes, transcripts).
+
+Between the bus logic and Mattermost sits a port (`port.py`): `ChatPort`, a
+`typing.Protocol` with the chat operations the bus logic calls and nothing
+more. Who and where (the bot's token and session, the work channel, permalink
+base, `get_me`, `get_channel`); people (`usernames`, `agents`,
+`trusted_humans`); channel membership, status and presence (`member_channels`,
+`channel_users`, `presences`, `set_presence`, `set_custom_status`,
+`clear_custom_status`); posting and replying (`post`, `post_sync`,
+`post_by_name_sync`); reading (`thread`, `channel_posts`, `posts_after`,
+`reactions`). Posts and threads cross it as `Post` and `Thread`.
+`client.MattermostAdapter` implements it; mypy checks that structurally.
+The wake gate, lease and roster, slim results, departed agents, ask
+reminders, stall check, own post, stats and the pending count (`gate.py`,
+`lease.py`, `slim.py`, `departed.py`, `remind.py`, `stall.py`, `ownpost.py`,
+`stats.py`, `unread.py`) take a `ChatPort` and never import `client.py`
+(`unread.py` imports only one helper that reads Mattermost's user JSON);
+`test_adapter_boundary` checks both, and that they use no member the port
+lacks. The tests' fakes stand in for the port with only the members a
+test needs: a Protocol asks for no base class.
+Registration (the registrar, the bot and its token) is no chat operation and
+stays outside the port, in the adapter, driven by `server.py` and
+`hosted.py`. The WebSocket inbox (`websocket_inbox.py`) is the adapter's
+carrier and the hook API (`hookapi.py`) uses its id and pid helpers; with the
+server and the host process they still import `client.py`.

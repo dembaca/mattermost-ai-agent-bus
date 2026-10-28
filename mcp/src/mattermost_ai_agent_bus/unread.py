@@ -26,7 +26,7 @@ from . import a2a, gate, watermark
 from .client import account_created
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .port import ChatPort
     from .model import Post, UnreadChannel
 
 log = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ def _direct(channel: UnreadChannel) -> bool:
     return channel.channel_type in ("D", "G")
 
 
-async def after(client: MattermostClient) -> list[After]:
+async def after(client: ChatPort) -> list[After]:
     """Every channel with posts after its watermark. One request for the
     channels, then one per channel whose newest post is past its mark."""
     me = await client.get_me()
@@ -108,7 +108,7 @@ def _for_me(post: Post, channel: UnreadChannel, name: str) -> bool:
     return f"@{name.lower()}" in names or any(e in names for e in _EVERYONE)
 
 
-async def channels(client: MattermostClient) -> list[Pending]:
+async def channels(client: ChatPort) -> list[Pending]:
     """The channels with something for this agent, each with how much is
     pending there and the posts it was counted from."""
     me = await client.get_me()
@@ -122,7 +122,7 @@ async def channels(client: MattermostClient) -> list[Pending]:
     return out
 
 
-async def detail(client: MattermostClient, rows: list[Pending]) -> list[dict[str, Any]]:
+async def detail(client: ChatPort, rows: list[Pending]) -> list[dict[str, Any]]:
     """The first DETAIL_CHANNELS of channels(): {id, type, pending, fyi}, fyi
     how many of the posts for this agent are an agent's fyi posts (props anyone
     can write count only from an agent). One user lookup, no more."""

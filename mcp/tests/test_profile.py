@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from mattermost_ai_agent_bus import profile
-from mattermost_ai_agent_bus.client import MattermostClient
+from mattermost_ai_agent_bus.client import MattermostAdapter
 
 NAMES = [f"user{i}" for i in range(12)]
 
@@ -31,7 +31,7 @@ def test_an_unreadable_profile_is_not_compared():
 
 
 def _client(handler):
-    c = MattermostClient(base_url="https://mm.example", reg_secret="s",
+    c = MattermostAdapter(base_url="https://mm.example", reg_secret="s",
                          register_url="https://mm.example/register/v1/agents")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return c

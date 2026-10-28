@@ -38,7 +38,7 @@ if os.path.realpath(tempfile.gettempdir()).lower().startswith("/private/tmp/corr
 sys.path.insert(0, str(ROOT / "mcp" / "src"))
 
 from mattermost_ai_agent_bus import hookapi, server  # noqa: E402,F401
-from mattermost_ai_agent_bus.client import MattermostClient  # noqa: E402
+from mattermost_ai_agent_bus.client import MattermostAdapter  # noqa: E402
 
 # Scripts that ask the hook API instead of Mattermost: no token in their environment.
 API_USERS = ("hooks/", "bin/mm-agent-listen.sh", "bin/mm-agent-post.sh", "bin/mm-agent-poll.sh",
@@ -217,7 +217,7 @@ def hook_api(env: dict[str, str], *, write_file: bool = False):
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
     try:
-        client = MattermostClient.from_env()
+        client = MattermostAdapter.from_env()
     except RuntimeError:
         client = None
 

@@ -12,7 +12,7 @@ from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
 
 class _FakeClient:
-    """Minimal stand-in for MattermostClient.ensure_identity's needs."""
+    """Minimal stand-in for MattermostAdapter.ensure_identity's needs."""
 
     def __init__(self, channel_name="agents", project_channel_name="", missing=()):
         self.channel_name = channel_name

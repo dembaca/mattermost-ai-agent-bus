@@ -27,7 +27,7 @@ from . import a2a, gate, lease, session_file
 from .model import Post
 
 if TYPE_CHECKING:
-    from .client import MattermostClient
+    from .port import ChatPort
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ def mentioned(message: str, me: str) -> list[str]:
     return out
 
 
-async def answers(client: MattermostClient, uid: str, name: str) -> bool:
+async def answers(client: ChatPort, uid: str, name: str) -> bool:
     """Whether this server is the one that answers: it holds the 👑, or no
     agent wears one and it is the oldest reachable agent."""
     if lease.crown_held(uid):
@@ -70,7 +70,7 @@ def _hello_of(post: Post, name: str) -> bool:
     return re.search(rf"(?<![\w.-])@{re.escape(name)}(?![\w-])", first, re.I) is not None
 
 
-async def gone(client: MattermostClient, names: list[str]) -> list[Departure]:
+async def gone(client: ChatPort, names: list[str]) -> list[Departure]:
     """Which of the named agents are gone, with since when and the post to link."""
     cid = await client.work_channel_id()
     rows = {str(r["username"]).lower(): r for r in await lease._rows(client, cid)}
@@ -114,7 +114,7 @@ def reply_text(found: list[Departure], permalink_base: str) -> str:
     return " ".join(lines) + " I route this instead."
 
 
-async def check(client: MattermostClient, post: Post, uid: str,
+async def check(client: ChatPort, post: Post, uid: str,
                 name: str) -> tuple[list[Departure], list[Departure]]:
     """The departed agents a work-channel post mentions, and of those the ones
     this server has to tell its thread about (claimed in gate-<uid>.env).
@@ -129,7 +129,7 @@ async def check(client: MattermostClient, post: Post, uid: str,
     return found, [d for d in found if gate.first_reply(uid, f"{root}:{d.username}", "DEPARTED")]
 
 
-async def tell(client: MattermostClient, post: Post, uid: str,
+async def tell(client: ChatPort, post: Post, uid: str,
                found: list[Departure]) -> None:
     """Answer in the post's thread; when that fails, the next mention may try again."""
     root = post.thread

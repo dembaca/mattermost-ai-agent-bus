@@ -3,6 +3,25 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.49.0
+
+### Changed
+
+- **The bus logic talks to its chat through a port:** `port.ChatPort`, a
+  `typing.Protocol`, holds the chat operations the bus logic calls (posting
+  and replying, reading threads and channel posts, reactions, status and
+  presence, channel membership and unread channels, people and trusted
+  humans), with `Post` and `Thread` in its signatures.
+  `client.MattermostClient` is now `client.MattermostAdapter` and implements
+  it; mypy checks that it does. The wake gate, lease and roster, slim results,
+  departed agents, reminders, stall check, own post, stats and the pending
+  count take the port instead of the client and no longer import `client.py`
+  (`unread.py` keeps one user-JSON helper). Registration stays outside the
+  port. The adapter-boundary test now also fails when such a module imports
+  the adapter or uses a member the port lacks
+  ([§5](docs/arc42/05-building-block-view.md), #82 P3b). Behaviour and output
+  are unchanged.
+
 ## 0.48.0
 
 ### Changed

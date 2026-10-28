@@ -1,4 +1,6 @@
-"""Mattermost REST client + registrar session helpers."""
+"""The Mattermost adapter (arc42 §5.1): MattermostAdapter implements the
+chat port (port.ChatPort) over Mattermost's REST API, and holds the registrar
+session helpers, which stay outside the port."""
 
 from __future__ import annotations
 
@@ -10,13 +12,16 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse, urlunparse
 
 import httpx
 
 from . import a2a, links, ownpost, profile, session_file, watermark
 from .model import Post, Thread, UnreadChannel
+
+if TYPE_CHECKING:
+    from .port import ChatPort
 
 log = logging.getLogger(__name__)
 
@@ -214,8 +219,9 @@ class SessionInfo:
 
 
 @dataclass
-class MattermostClient:
-    """Thin async client for registrar + Mattermost API v4."""
+class MattermostAdapter:
+    """The chat port for Mattermost (API v4), plus the registrar session:
+    registering, adopting and ending the bot, which is no port operation."""
 
     base_url: str
     token: str | None = None
@@ -281,7 +287,7 @@ class MattermostClient:
         return self.project_channel_name or self.channel_name
 
     @classmethod
-    def from_env(cls) -> MattermostClient:
+    def from_env(cls) -> MattermostAdapter:
         base = (env("MM_CHAT_URL") or env("MATTERMOST_URL")).rstrip("/")
         if not base:
             raise RuntimeError("MM_CHAT_URL or MATTERMOST_URL is required")
@@ -1055,3 +1061,9 @@ class MattermostClient:
                 break
         return sorted((post_of(links.read_post(p, self.permalink_base)) for p in found.values()),
                       key=lambda p: p.create_at)
+
+
+if TYPE_CHECKING:
+    def _implements_the_port(adapter: MattermostAdapter) -> ChatPort:
+        """mypy checks that the adapter satisfies the port, structurally."""
+        return adapter
