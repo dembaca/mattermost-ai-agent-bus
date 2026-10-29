@@ -108,6 +108,18 @@ def test_a_short_profile_is_warned_about(mm, run):
     assert "lacks some" not in run(START, MM_TRUSTED_HUMANS="dembaca,kollegin", **env).stderr
 
 
+def test_an_unbound_bot_is_warned_about(mm, run):
+    """RT-6.16 step 1: registered with the shared secret, the bot is unbound and
+    has no owner split; the banner says so, with or without trusted names."""
+    env = dict(MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", **HOST)
+    mm.bot_description = "unbound · claims @dembaca · trusts @dembaca · via agent-registrar"
+    for trusted in ("dembaca", ""):
+        err = run(START, MM_TRUSTED_HUMANS=trusted, **env).stderr
+        assert "is unbound (registered with the shared secret)" in err and "enrollment token" in err
+    mm.bot_description = "for @dembaca · trusts @dembaca · via agent-registrar"
+    assert "unbound" not in run(START, MM_TRUSTED_HUMANS="dembaca", **env).stderr
+
+
 def test_autonomous_agent(mm, run):
     r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x",
             MM_RESPONSIBLE_HUMAN="@ops-team", MM_AGENT_KIND="autonomous", **HOST)

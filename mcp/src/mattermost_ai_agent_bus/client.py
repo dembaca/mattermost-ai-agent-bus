@@ -18,7 +18,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import a2a, links, ownpost, profile, session_file, watermark
+from . import a2a, links, owners, ownpost, profile, session_file, watermark
 from .model import Channel, ChannelUser, Me, Post, Reaction, Thread, UnreadChannel
 
 if TYPE_CHECKING:
@@ -319,6 +319,9 @@ class MattermostAdapter:
     # user id -> (when read, its bot description; None: not readable), ADR-003.
     _descriptions: dict[str, tuple[float, str | None]] = field(
         default_factory=dict, repr=False, init=False)
+    # user id -> (when read, its owner as agent_owner gives it), ADR-003, WP3.
+    _owners: dict[str, tuple[float, str | None]] = field(
+        default_factory=dict, repr=False, init=False)
     session: SessionInfo | None = field(default=None, repr=False, init=False)
     _trusted: dict[str, str] | None = field(default=None, repr=False, init=False)
     profile_warning: str = field(default="", repr=False, init=False)
@@ -468,17 +471,48 @@ class MattermostAdapter:
 
     async def _profile_warning(self, info: SessionInfo, sent: list[str]) -> str:
         """Does the profile the registrar wrote carry every trusted name sent
-        (RT-6.8)? '' when it does, or when it cannot be read; never fails."""
-        if not sent:
-            return ""
+        (RT-6.8), and is the bot bound to an owner (RT-6.16 step 1)? '' when
+        both hold, or when it cannot be read; never fails."""
         description = await self.bot_description(info.user_id)
         if description is None:
             log.info("profile not readable: trusted names not compared")
             return ""
-        text = profile.warning(info.username, sent, description)
+        texts = [profile.unbound_warning(info.username)] if profile.unbound(description) else []
+        text = profile.warning(info.username, sent, description) if sent else ""
         if text:
             log.warning("trusted list vs profile: %s", text)
-        return text
+            texts.append(text)
+        return "; ".join(texts)
+
+    async def agent_owner(self, user_id: str) -> str | None:
+        """Whose agent the bot is (ADR-003, WP3; owners.decide): its native
+        owner from `/api/v4/bots/<id>` (`owner_id`), readable only with
+        `read_others_bots` (arc42 §7.3), else `for @…` from its description.
+        Cached like the description; never fails."""
+        now = time.monotonic()
+        hit = self._owners.get(user_id)
+        if hit and now - hit[0] < (DESCRIPTION_TTL_SEC if hit[1] is not None
+                                   else DESCRIPTION_TTL_SEC / 10):
+            return hit[1]
+        description = await self.bot_description(user_id)
+        owner = owners.decide(await self._native_owner(user_id), description, user_id)
+        self._owners[user_id] = (now, owner)
+        return owner
+
+    async def _native_owner(self, user_id: str) -> str | None:
+        """The username of the human Mattermost keeps as the bot's owner; None
+        when it cannot be read (403 without `read_others_bots`) or the owner is
+        no human (a plugin id, a bot)."""
+        try:
+            data = await self._api("GET", f"/api/v4/bots/{mm_id(user_id, 'user')}")
+            owner_id = data.get("owner_id") if isinstance(data, dict) else None
+            if not isinstance(owner_id, str) or not owner_id:
+                return None
+            name = (await self.usernames({owner_id})).get(owner_id)
+        except Exception as exc:  # noqa: BLE001 — not readable: the description decides
+            log.debug("native owner of %s not readable: %s", user_id, exc)
+            return None
+        return name.lower() if name and owner_id not in self._bots else None
 
     async def bot_description(self, user_id: str) -> str | None:
         """A bot's description (ADR-003), None when it cannot be read; never
@@ -515,6 +549,7 @@ class MattermostAdapter:
     def _take(self, info: SessionInfo) -> None:
         """Make ``info`` this process's bot and hand it to the hooks."""
         self._descriptions.clear()
+        self._owners.clear()
         self.base_url = info.url
         self.token = info.bot_token
         self.session = info

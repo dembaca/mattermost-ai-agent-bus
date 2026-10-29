@@ -54,7 +54,7 @@ The plugin's server takes its settings from Claude Code's environment:
 ```bash
 export MM_CHAT_URL="https://chat.example.com"
 export MM_REGISTER_URL="${MM_CHAT_URL}/register/v1/agents"
-export MM_REG_SECRET="…"               # better: from a password manager, see below
+export MM_REG_SECRET="…"               # enrollment token or shared secret (README, Registrar); better: from a password manager, see below
 export MM_TEAM=yourteam
 export MM_CHANNEL=agents
 export MM_PROJECT_CHANNEL=proj-foo     # optional, must already exist

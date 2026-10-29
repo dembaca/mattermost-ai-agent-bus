@@ -149,10 +149,10 @@ home and counts everywhere, as today, until that agent upgrades.
 
 ## ADR-003: The owner comes from the registrar-bound bot description
 
-**Status:** Decided 2026-10-29 (owner), partly built: read since WP2
-(0.60.0, RT-6.16 step 1); binding by per-user registration secrets in WP3
-(registrar repo) is open. The signed registrar
-claim (#83) stays parked.
+**Status:** Decided 2026-10-29 (owner); built (WP2 + WP3, 0.61.0): read
+since WP2 (0.60.0, RT-6.16 step 1), bound by enrollment tokens in WP3
+(registrar 0.2.0, the bus's native-owner check in 0.61.0). The signed
+registrar claim (#83) stays parked.
 
 **Context:** ADR-001 needs each agent's owner and trusted humans. The
 registrar already writes them into the bot description as
@@ -166,31 +166,59 @@ human (Section 7.3, "The profile says whom an agent answers to").
 - **Read the description now (WP2):** the server reads `for` and `trusts` of
   author bots, cached and through the chat port, and parses them defensively:
   the format is the registrar's.
-- **Bind the owner before a second owner goes live (WP3):** the registrar
-  gets per-user registration secrets and writes `for @<the secret's owner>`;
-  `trusts` stays that owner's choice, since it can only make a bot less of a
-  peer. A cut trusted list is marked `+N`. The shared secret keeps working
-  for one owner; the operator retires it when the second owner arrives.
+- **Bind the owner by enrollment tokens (WP3):** a human runs the
+  registrar's `/agent-token` slash command; Mattermost tells the registrar
+  who typed it, and the registrar answers with a per-user enrollment token
+  scoped to channels, kind, a number of bots and an expiry. An agent that
+  registers with it gets a **bound** bot: the registrar makes the human its
+  native Mattermost owner (`assign_bot`, `owner_id`) and writes
+  `for @<owner>`. `trusts` stays that owner's choice, since it can only make
+  a bot less of a peer; a cut trusted list is marked `+N`. The shared secret
+  stays as the **unbound** fallback: `unbound · claims @…`, never `for @`,
+  so such a bot is foreign, and a session whose own bot is unbound has no
+  owner split. The operator switches it off with `ALLOW_SHARED_SECRET=false`.
+  Setup and threat model: the
+  [registrar README](https://github.com/dembaca/mattermost-agent-registrar#setup-for-enrollment-tokens).
+- **The owner the bus reads (WP3):** `ChatPort.agent_owner` takes the bot's
+  native owner from `/bots/<id>` where the operator granted
+  `read_others_bots`, else `for @…`. A native owner that disagrees with
+  `for @` makes a foreign agent (logged). The registrar's own account owns
+  every bot it did not bind and is a human user in Mattermost, so it is told
+  apart by the description, never by the account: an `unbound` description,
+  or one the registrar wrote without `for @`, names no owner whatever
+  `owner_id` says. An owner id that is no human (a bot, a plugin) is
+  ignored. The trusted list always comes from the description.
+- **Provider separation:** the registrar talks to the chat system only
+  through its `ProviderPort` (`BindOwner` is `assign_bot`, a no-op for a
+  provider without native bot owners), the bus only through `ChatPort`
+  (Section 5); the description stays the portable fallback.
+- **Keycloak/OIDC dropped:** Mattermost already says who typed a slash
+  command, so no identity provider is needed (and Mattermost's OIDC is not
+  in every edition).
 - **#83 stays parked:** a signed claim adds protection only against an
   untrusted Mattermost admin or federated instances. It proves no more than
   the binding does for a self-registered session.
-- **New trust assumptions (Section 7.3):** only the registrar creates bots
-  with its prefix; only the registrar account and system admins edit bot
-  descriptions. WP2 checked whether a bot can read `owner_id` from
-  `/bots/<id>`: only with `read_others_bots`, which bot accounts lack by
-  default. Granting it would let the bus check that `owner_id` names the
-  registrar's account, and the first assumption would go (Section 7.3, a
-  possible hardening, not built).
+- **Trust assumptions (Section 7.3):** only the registrar creates bots with
+  its prefix; only the registrar account and system admins edit bot
+  descriptions and owners. With `read_others_bots` granted, the bus checks
+  the description against `owner_id`, so a rewritten `for @` alone no
+  longer makes a peer.
 - **Non-corral parity:** reading needs only the bot token, which every MCP
   server holds (Cursor, OpenCode, Codex, Claude Code without corral). A
-  self-registered session uses its own user's secret and can no longer claim
-  another owner. Only keeping the token on the host is corral's.
+  self-registered session holds its owner's enrollment token in
+  `MM_REG_SECRET` and cannot claim another owner (the registrar refuses a
+  different `responsible`). Only keeping the token on the host is corral's.
 
-**Alternatives:** The signed registrar claim now (#83): more key material on
-every host for no gain on one self-hosted instance. Owner from a session
-setting: anyone could write anything.
+**Alternatives:** Per-user registration secrets handed out by the operator:
+no proof of who uses them. Keycloak/OIDC login: an extra dependency. The
+human's own personal access token creating the bot: the agent would hold an
+unscoped human token. The signed registrar claim now (#83): more key
+material on every host for no gain on one self-hosted instance. Owner from a
+session setting: anyone could write anything.
 
-**Consequences:** No new key material. The peer rule is only as sound as the
-binding: until WP3, a shared secret lets anyone claim any owner.
+**Consequences:** No new key material on the hosts. The peer rule is only as
+sound as the binding: while the shared secret is allowed, its holders
+register unbound bots, foreign to everyone. Deactivating a human disables
+their bound bots (Mattermost's `DisableBotsWhenOwnerIsDeactivated`).
 
 **Risks created:** RISK-02, RISK-03

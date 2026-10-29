@@ -202,3 +202,66 @@ async def test_hello_warns_about_a_foreign_coordinator(monkeypatch):
 
     monkeypatch.setattr(server.lease, "roster", peer_roster)
     assert "warning" not in json.loads(await server.announce(project="p", task="t", model="m"))
+
+
+# WP3: the native owner (owner_id), and bound or unbound bots of the registrar.
+X = "x" * 26
+UNBOUND = "unbound · claims @alice · autonomous · trusts @alice, @bob · via agent-registrar"
+
+
+async def _foreign(**kw):
+    return await owners.foreign(_chat(names=NAMES | {X: "agent-x"}, agents=AGENTS | {X}, **kw), {X})
+
+
+async def test_the_native_owner_is_used():
+    """RT-6.16 step 1: a bot's native owner is its owner, with or without `for @`."""
+    assert await _foreign(descriptions=DESCRIPTIONS | {X: ""}, native_owners={X: "bob"}) == {}
+    assert await _foreign(descriptions=DESCRIPTIONS | {X: ""}, native_owners={X: "carol"}) == {X: "carol"}
+    agreed = DESCRIPTIONS[PEER]
+    assert await _foreign(descriptions=DESCRIPTIONS | {X: agreed}, native_owners={X: "Bob"}) == {}
+
+
+async def test_an_unreadable_native_owner_falls_back_to_the_description():
+    assert await _foreign(descriptions=DESCRIPTIONS | {X: DESCRIPTIONS[PEER]}) == {}
+    assert await _foreign(descriptions=DESCRIPTIONS | {X: DESCRIPTIONS[OTHERS]}) == {X: "carol"}
+
+
+async def test_native_and_description_disagree_foreign(caplog):
+    """Both owners are mine, but they differ: something rewrote one, so foreign."""
+    with caplog.at_level("WARNING"):
+        assert await _foreign(descriptions=DESCRIPTIONS | {X: DESCRIPTIONS[PEER]},
+                              native_owners={X: "alice"}) == {X: ""}
+    assert "native owner @alice but description for @bob" in caplog.text
+
+
+@pytest.mark.parametrize("native", [{}, {X: "alice"}], ids=["no-native", "registrar-account-is-alice"])
+async def test_an_unbound_agent_is_foreign(native):
+    """`claims @alice` is no owner, nor is the registrar's account that owns the
+    bot natively, even when that account is a human I trust."""
+    assert await _foreign(descriptions=DESCRIPTIONS | {X: UNBOUND}, native_owners=native) == {X: ""}
+    no_for = DESCRIPTIONS | {X: "Registered via agent-registrar"}
+    assert await _foreign(descriptions=no_for, native_owners=native) == {X: ""}
+
+
+async def test_my_unbound_bot_turns_the_split_off_and_warns(monkeypatch):
+    """Registered with the shared secret: every agent a peer, as before, and
+    bus_info tells the human why."""
+    mine = DESCRIPTIONS | {BOT: UNBOUND}
+    assert await _classes(_chat(descriptions=mine, native_owners={BOT: "alice"})) == ["agent"] * len(ORDER)
+
+    class Chat(FakeChat):
+        trusted_source = "MM_TRUSTED_HUMANS"
+
+    chat = Chat(names=NAMES, trusted={ALICE: "alice"}, descriptions=mine)
+    monkeypatch.setattr(server, "_get_client", lambda: chat)
+    monkeypatch.setattr(server.lease, "crown_held", lambda uid: False)
+    out = json.loads(await server.bus_info())
+    assert "@agent-me is unbound (registered with the shared secret)" in out["warning"]
+    chat.descriptions[BOT] = MINE
+    assert "warning" not in json.loads(await server.bus_info())
+
+
+async def test_parity_without_any_owner_information():
+    """No description and no native owner anywhere: every agent a peer, as today."""
+    assert await _classes(_chat(descriptions={})) == ["agent"] * len(ORDER)
+    assert await owners.read(_chat(descriptions={}), PEER) is None

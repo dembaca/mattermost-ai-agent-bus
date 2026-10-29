@@ -10,8 +10,10 @@ for host sessions.
 
 The same description names the bot's owner (``for @owner``): whose agent it
 is, which ADR-001 compares with whom this session trusts (owners.py). Nothing
-beyond ``for @…`` and ``trusts @…`` is read; a ``+N`` in the trusted list says
-the registrar cut it (ADR-003, WP3).
+beyond ``for @…``, ``trusts @…`` and ``unbound`` is read; a ``+N`` in the trusted
+list says the registrar cut it (ADR-003, WP3). A bot registered with the shared
+secret is ``unbound``: no ``for @``, and its ``claims @…`` is unchecked and names
+nobody's owner.
 """
 
 from __future__ import annotations
@@ -43,6 +45,24 @@ def owner(description: str | None) -> str:
     """The owner after ``for @`` in a bot's description, lower case; '' without one."""
     m = re.search(r"(?:^|·)\s*for @([^\s·,]+)", description or "")
     return m[1].lower() if m else ""
+
+
+def unbound(description: str | None) -> bool:
+    """The registrar registered the bot with the shared secret (WP3): it is
+    owned by the registrar's own account and bound to no human."""
+    return re.search(r"(?:^|·)\s*unbound\s*(?:·|$)", description or "") is not None
+
+
+def by_registrar(description: str | None) -> bool:
+    """The registrar wrote the description (``via agent-registrar``)."""
+    return "via agent-registrar" in (description or "")
+
+
+def unbound_warning(bot: str) -> str:
+    """What to tell when this session's own bot is unbound (RT-6.16 step 1)."""
+    return (f"@{bot} is unbound (registered with the shared secret): no owner split, and "
+            f"other owners' agents treat it as foreign; for a bound bot put an enrollment "
+            f"token (/agent-token create) into MM_REG_SECRET")
 
 
 def warning(bot: str, sent: list[str], description: str | None) -> str:
