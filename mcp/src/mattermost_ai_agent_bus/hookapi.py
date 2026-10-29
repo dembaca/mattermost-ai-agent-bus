@@ -8,7 +8,7 @@ instead, served next to the WebSocket inbox in the server's event loop:
     GET  /v1/me             {user_id, username, project, crown_until, channel}
     GET  /v1/pending        {count[, stall: 1][, channels: [{id, type, pending, fyi}]]}
                             (?detail=1: up to 5 channels, with fyi counts)
-    GET  /v1/last-post      {at, message}: the own latest post in the work channel
+    GET  /v1/last-post      {at, message, signed_off}: the own latest post in the work channel
     GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
                             message, to, intent, fyi, gated}]}, work channel
                             (or ?channel=ID|NAME of the project or default
@@ -433,21 +433,24 @@ async def last_post(client: MattermostAdapter, query: Mapping[str, str], body: M
     """The own latest post in the work channel (RT-6.2 step 2): from
     last-<uid>.env (ownpost.py) without a request, else from the channel's last
     100 posts; at 0 when there is none."""
-    at, message = await _last(client, query, body)
-    return 200, {"at": at, "message": message}
+    at, message, signed_off = await _last(client, query, body)
+    return 200, {"at": at, "message": message, "signed_off": signed_off}
 
 
 async def _last(client: MattermostAdapter, query: Mapping[str, str],
-                body: Mapping[str, Any]) -> tuple[int, str]:
-    """last_post's (at, message)."""
+                body: Mapping[str, Any]) -> tuple[int, str, bool]:
+    """last_post's (at, message, signed_off): signed_off when nothing changed
+    on the bus since the agent's IDLE/BYE (ownpost.signed_off). A reminder the
+    server sent on its own is no post of the agent's (RT-6.19)."""
     uid = await _uid(client)
     rec = ownpost.read(uid)
     if rec.get("AT", "").isdigit() and rec.get("MSG"):
-        return int(rec["AT"]), rec["MSG"]
+        return int(rec["AT"]), rec["MSG"], ownpost.signed_off(rec["MSG"], rec)
     for post in await client.channel_posts(await client.work_channel_id(), per_page=100):
-        if post.user_id == uid:
-            return post.create_at, post.message.removeprefix("👑 ").replace("\n", " ").strip()
-    return 0, ""
+        if post.user_id == uid and post.kind != a2a.REMINDER:
+            message = post.message.removeprefix("👑 ").replace("\n", " ").strip()
+            return post.create_at, message, ownpost.signed_off(message)
+    return 0, "", False
 
 
 def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
@@ -697,8 +700,9 @@ async def turn_end(client: MattermostAdapter, query: Mapping[str, str],
         count = sum(r.waiting for r in rows) + (1 if stall.waiting() else 0)  # as /v1/pending
         if count > 0:
             return 200, turnend.drain(count, await unread.detail(client, rows) if rows else [])
-    at, message = await _last(client, query, body)
-    if turnend.needs_signoff(message, asked=asked, by_bus=by_bus, push=push):
+    at, message, signed_off = await _last(client, query, body)
+    if turnend.needs_signoff(message, asked=asked, by_bus=by_bus, push=push,
+                             signed_off=signed_off):
         return 200, turnend.signoff(push=push)
     uid = await _uid(client)
     start, until = turnend.listen_window(message, at, project=_project(client),
@@ -736,7 +740,7 @@ async def wake(client: MattermostAdapter, query: Mapping[str, str], body: Mappin
         raise BadRequest("since: epoch ms")
     if not until.isdigit():
         raise BadRequest("until: epoch s")
-    _, message = await _last(client, query, body)
+    _, message, _ = await _last(client, query, body)
     if int(until) <= time.time() or not turnend.listens(message, project=_project(client)):
         return 200, turnend.no_wake()
     count = sum(r.waiting for r in await counted(client))

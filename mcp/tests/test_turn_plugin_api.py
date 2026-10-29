@@ -286,3 +286,17 @@ async def test_a_block_counts_its_kind(api):
         rows += [line for line in path.read_text().splitlines() if '"block"' in line]
     assert rows and '"kind": "drain"' in rows[-1]
     stats.record("block", kind="signoff")  # no TypeError
+
+
+async def test_turn_end_asks_only_when_the_bus_changed_since_the_idle(api, unread_rows):
+    """RT-6.20, RT-6.2 step 2 (0.65.1): after an IDLE and nothing on the bus
+    since, the turn ends without a sign-off, however long the agent worked in
+    its terminal; an addressed event delivered since asks for one."""
+    from mattermost_ai_agent_bus import ownpost
+    from mattermost_ai_agent_bus.client import post_of
+
+    h = await api(FakeClient(posts=[]))
+    ownpost.record(UID, "c", post_of({"id": "i" * 26, "message": "IDLE · done: x", "create_at": 2000}))
+    assert (await h.get("/v1/turn-end?push=0")).json() == {"action": "idle"}
+    ownpost.delivered(UID)
+    assert (await h.get("/v1/turn-end?push=0")).json()["action"] == "signoff"

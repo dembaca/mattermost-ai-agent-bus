@@ -3,6 +3,27 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.65.1
+
+### Changed
+
+- **A stall of reminded asks wakes nobody**
+  ([RT-6.19](docs/arc42/06-runtime-view.md#619-stall-noticed-asks-reminded)).
+  When every open item is an ask within its 24 h whose agent is still on the
+  roster, the coordinator's server sends no stall event and pushes nothing:
+  those asks' reminders nudge the human already. Any item that needs an agent
+  (a task, a post naming an agent, an expired ask, an ask whose agent left)
+  still wakes it, the reminded asks listed beside it; the digest says when an
+  ask is not reminded.
+- **No sign-off request when nothing changed on the bus**
+  ([RT-6.2 step 2](docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)).
+  The Stop hook (and `GET /v1/turn-end`) asks for an `IDLE` only when the
+  agent posted, or an addressed event (mention, DM, an answer on its ask, the
+  👑's human task) reached it, since its last `IDLE`/`BYE`. A turn spent only
+  in the terminal ends without the extra request. The server's own ask
+  reminders no longer count as the agent's latest post. `GET /v1/last-post`
+  adds `signed_off`.
+
 ## 0.65.0
 
 ### Added

@@ -4,7 +4,8 @@
 # Runs three checks in order, each blocking the stop with an instruction for the
 # agent and a one-line banner for the human:
 #   1. drain   — unread mentions/DMs are waiting: collect them via wait_for_events.
-#   2. sign-off — the latest own post in the work channel is not IDLE/BYE: post one.
+#   2. sign-off — something changed on the bus since the agent's last IDLE/BYE
+#                (it posted, or an addressed event reached it): post one.
 #   3. listen  — in a project channel, stay reachable for MM_LISTEN_SEC
 #                (default 5400; the 👑 coordinator MM_LISTEN_COORD_SEC, default
 #                7200): the agent starts bin/mm-agent-listen.sh in the
@@ -146,16 +147,18 @@ go_idle() {
   exit 0
 }
 
-# Latest own post in the work channel: sets LAST_MSG and LAST_AT (epoch ms).
+# Latest own post in the work channel: sets LAST_MSG, LAST_AT (epoch ms) and
+# SIGNED_OFF (1: an IDLE/BYE and nothing changed on the bus since, ownpost.py).
 # Without the 👑 the MCP server puts before a coordinator's posts (RT-6.6).
 # The server keeps it in last-<uid>.env (RT-6.2, ownpost.py, mm-agent-post.sh)
 # and reads the channel's last 100 posts only without that file. Fails when the
 # server cannot tell; LAST_AT 0 when the agent never posted there.
-LAST_MSG="" LAST_AT=0
+LAST_MSG="" LAST_AT=0 SIGNED_OFF=0
 my_last_post() {
   mm_bus GET /v1/last-post || return 1
   LAST_AT="$(jq -r '.at // 0' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
   LAST_MSG="$(jq -r '.message // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
+  SIGNED_OFF="$(jq -r 'if .signed_off == true then 1 else 0 end' <<<"$MM_BUS_BODY" 2>/dev/null)" || SIGNED_OFF=0
   [[ "$LAST_AT" =~ ^[0-9]+$ ]] || LAST_AT=0
 }
 
@@ -192,9 +195,12 @@ my_last_post && have_post=1
 
 # --- 2. sign-off ------------------------------------------------------------
 # Once the turn ends, nobody on the bus can reach this agent until its human
-# resumes it. Other agents should learn that from the channel, so when the
-# agent's latest post in the work channel says it is busy (anything but an
-# IDLE or BYE sign-off), ask for a sign-off — once per turn. An agent that has
+# resumes it. Other agents should learn that from the channel, so when
+# something changed on the bus since the agent's last IDLE or BYE — its latest
+# post in the work channel is another, or a mention, DM or task reached it
+# after it (RT-6.2 step 2) — ask for a sign-off, once per turn. A turn spent
+# only in the terminal changes nothing on the bus and is not asked: the
+# sign-off says what the others need, not the whole session. An agent that has
 # not posted in the work channel at all is not part of the coordination and is
 # left alone. Nor is one answering from inside its listen window: it signed off
 # before the window opened, and a second IDLE after each answer is just noise.
@@ -203,7 +209,7 @@ my_last_post && have_post=1
 CHANNEL=0; mm_channel_push && CHANNEL=1
 if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -n "$LAST_MSG" ]] &&
   ! [[ "$BY_BUS" -eq 1 && "$CHANNEL" -eq 1 ]] &&
-  ! [[ "$LAST_MSG" =~ ^(IDLE|BYE)([^A-Za-z]|$) ]]; then
+  [[ "$SIGNED_OFF" -eq 0 ]]; then
   SIGNOFF_ASKED=1
   if [[ "$CHANNEL" -eq 1 ]]; then
     reason="Before this turn ends: messages still reach you through the channel, but the others need to know what you finished and what is next."
@@ -214,7 +220,7 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
   reason+=" (BYE when the task is done). Give the next step so that you could pick up from it alone: your"
   reason+=" conversation may be compacted while you are idle, and this post is handed back to you then."
   reason+=" If you coordinate and will be gone for long, hand over first."
-  reason+=" If nothing changed since your last post, say so in one line and finish; this check will not block you again this turn."
+  reason+=" You are asked because you posted or were sent something on the bus since your last IDLE; this check will not block you again this turn."
   block "$reason" "✋ Signing off on Mattermost before going idle" signoff
 fi
 

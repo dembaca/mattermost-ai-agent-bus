@@ -1297,6 +1297,7 @@ async def wait_for_events(
         _tool_idle.set()
     payload = await _event_items(events, raw)
     await _typing_for_task(events, payload)
+    await _note_delivered(events, payload)
     if not raw:
         await _compact_bystander(payload)
         for item in payload:
@@ -1321,6 +1322,22 @@ def _ask_answer(event: Any, item: dict[str, Any]) -> bool:
     """A trusted human's yes/no reaction on an open ask, within its 24 h (RT-6.11)."""
     return bool(event.kind == "reaction" and not event.gated and item.get("from_trusted_human")
                 and item.get("answer") and not item.get("expired"))
+
+
+async def _note_delivered(events: list[Any], items: list[dict[str, Any]]) -> None:
+    """RT-6.2 step 2: an addressed event reached the agent — a mention or DM
+    not gated, a trusted human's yes/no on its open ask, holding the crown a
+    human's plain post — so its last IDLE no longer covers the bus and the next
+    turn end asks for a sign-off. A stall event, digest or fyi post does not."""
+    if not events:
+        return
+    uid = await _my_id(_get_client())
+    if not uid:
+        return
+    if any((e.kind in ("mention", "dm") and not e.gated) or _ask_answer(e, i)
+           or (_human_task(e, i) and lease.crown_held(uid))
+           for e, i in zip(events, items, strict=False)):
+        ownpost.delivered(uid)
 
 
 async def _typing_for_task(events: list[Any], items: list[dict[str, Any]]) -> None:
@@ -1544,6 +1561,7 @@ async def _push_wait(timeout: float) -> list[dict[str, Any]]:
     events = await _get_inbox().wait_for_events(timeout_sec=timeout, max_events=10, agent=False)
     items = await _event_items(events)
     await _typing_for_task(events, items)
+    await _note_delivered(events, items)
     for item in items:
         stats.record("push", name=item["kind"], chars=len(json.dumps(item, ensure_ascii=False)))
     for e, item in zip(events, items, strict=True):

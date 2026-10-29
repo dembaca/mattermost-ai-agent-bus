@@ -633,3 +633,23 @@ def test_a_dm_holding_only_the_bots_own_post_is_not_drained(mm, run):
     mm.dm_posts[0]["user_id"] = ME
     r = run(STOP)
     assert not (r.blocked and "unread message" in r.reason)
+
+
+def test_no_signoff_while_nothing_changed_since_the_idle(mm, run):
+    """RT-6.2 step 2 (0.65.1): after an IDLE, a turn with nothing new on the bus
+    (terminal work only) ends without the sign-off request; an addressed
+    event delivered since (DELIVERED, ownpost.py) or an own post that is no
+    sign-off asks for one again; with no sign-off yet it asks too."""
+    last_post(run, "IDLE · done: x")
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+    assert run(STOP, MM_LISTEN_SEC="0").passed  # the next turn alike
+    f = run.state_dir / f"last-{ME}.env"
+    f.write_text(f.read_text() + "DELIVERED=1\n")
+    r = run(STOP, MM_LISTEN_SEC="0")
+    assert r.blocked and "posted or were sent something on the bus since your last IDLE" in r.reason
+    run.state_dir.joinpath(f"turn-{ME}.env").unlink()
+    last_post(run, "ACK · on it")
+    assert run(STOP, MM_LISTEN_SEC="0").blocked
+    run.state_dir.joinpath(f"turn-{ME}.env").unlink()
+    last_post(run, "HELLO @agent-test")
+    assert run(STOP, MM_LISTEN_SEC="0").blocked

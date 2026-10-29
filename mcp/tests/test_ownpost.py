@@ -151,3 +151,48 @@ def test_unregistering_removes_the_file(monkeypatch):
     monkeypatch.setenv("MM_BOT_USER_ID", UID)
     c.shutdown_sync()
     assert not ownpost.path(UID).exists()
+
+
+@pytest.mark.asyncio
+async def test_a_reminder_is_not_the_agents_post(client):
+    """RT-6.2 step 2, RT-6.19 (0.65.1): a reminder the server sends on its own
+    leaves the agent's latest post, its IDLE, as it was."""
+    await client.post("IDLE · done: x", props={"a2a": a2a.annotate("IDLE")})
+    before = ownpost.read(UID)
+    await client.post("🔔 @dembaca — reminder: **Merge?**", root_id="p1".ljust(26, "0"),
+                      props=a2a.props(kind=a2a.REMINDER))
+    assert ownpost.read(UID) == before and ownpost.signed_off(before["MSG"], before)
+
+
+@pytest.mark.asyncio
+async def test_an_addressed_delivery_ends_the_sign_off(client, monkeypatch):
+    """RT-6.2 step 2 (0.65.1): a mention, DM, a trusted human's answer on an ask
+    or (with the crown) a human's task handed to the agent means something
+    changed on the bus since its IDLE; a gated mention, an agent's fyi post
+    or a stall event does not. The next own post clears it."""
+    from mattermost_ai_agent_bus import lease
+    from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
+
+    async def my_id(_client):
+        return UID
+
+    monkeypatch.setattr(server, "_get_client", lambda: client)
+    monkeypatch.setattr(server, "_my_id", my_id)
+    monkeypatch.setattr(lease, "crown_held", lambda uid: False)
+    await client.post("IDLE · done: x")
+
+    def ev(kind, gated=""):
+        return ClassifiedEvent(kind=kind, gated=gated, post=post_of({"id": "x" * 26, "user_id": DM}))
+
+    quiet = [(ev("mention", gated="not trusted"), {"kind": "mention"}),
+             (ev("watched_channel"), {"kind": "watched_channel", "from_agent": True, "intent": "fyi"}),
+             (ev("stall"), {"kind": "stall"})]
+    await server._note_delivered([e for e, _ in quiet], [i for _, i in quiet])
+    rec = ownpost.read(UID)
+    assert ownpost.signed_off(rec["MSG"], rec)
+    await server._note_delivered([ev("mention")], [{"kind": "mention"}])
+    rec = ownpost.read(UID)
+    assert rec["DELIVERED"] == "1" and not ownpost.signed_off(rec["MSG"], rec)
+    await client.post("IDLE · answered")
+    rec = ownpost.read(UID)
+    assert "DELIVERED" not in rec and ownpost.signed_off(rec["MSG"], rec)
