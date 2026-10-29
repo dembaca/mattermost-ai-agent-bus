@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from mattermost_ai_agent_bus import asks, channel, server
+from mattermost_ai_agent_bus import a2a, asks, channel, server
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import Reaction
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
@@ -387,7 +387,9 @@ async def test_an_ask_from_a_thread_stands_on_its_own_and_is_linked_there(monkey
     out = json.loads(await server.ask_human(need="Merge #61?", root_id=task))
     ask, link = c.posted
     assert ask["root_id"] is None and ask["message"] == "🙋 @dembaca — **Merge #61?**"
-    assert link == {"message": f"🙋 asked {ASK}", "channel_id": None, "root_id": task, "props": None}
+    # A pointer, not an ask (RT-6.19): its own kind keeps it out of the open asks.
+    assert link == {"message": f"🙋 asked {ASK}", "channel_id": None, "root_id": task,
+                    "props": {"a2a": {"v": a2a.V, "kind": a2a.ASK_LINK}}}
     assert out["ask"] == ASK and out["linked_in"] == task
     assert asks.expired(BOT, ASK, time.time() + day, thread=True)
     assert not asks.expired(BOT, task, time.time() + day, thread=True)  # no ask lives there
