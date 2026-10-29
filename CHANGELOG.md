@@ -3,6 +3,15 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.57.1
+
+### Changed
+
+- **OpenCode with its plugin finds its runtime file:** `SKILL.md` and
+  `runtime-claude-code.md` say that an OpenCode agent with the plugin reads
+  `runtime-claude-code.md`, without the channel and permission prompt parts
+  ([RT-6.20](docs/arc42/06-runtime-view.md#620-opencode-turn-cycle-through-its-plugin)).
+
 ## 0.57.0
 
 ### Changed
