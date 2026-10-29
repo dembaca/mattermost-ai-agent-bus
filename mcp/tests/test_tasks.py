@@ -3,6 +3,7 @@
 import inspect
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -380,16 +381,44 @@ async def test_bystander_gets_status_posts_cut(bus):
     assert c.posted == []
 
 
-def test_static_budget():
-    """RT-6.14 acceptance, RT-6.9: the per-load text does not grow. SKILL.md
-    (in the context once the agent loads the skill, not every turn) and
-    coordinator.md (the crown holder, per load) stay within their 0.30.0
-    size; the coordinator tool doc grows by its two new actions only. The
-    per-turn text, the MCP instructions, has its own budget below."""
-    from pathlib import Path
+_SKILL = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus"
+# Per-load budgets, about 10 % over the 0.57.0 size (in brackets): SKILL.md is
+# the core every agent loads; the files next to it are read only when they apply.
+_SKILL_BUDGET = {
+    "SKILL.md": 16_500,                 # (16279) was 22,144 before the runtime split
+    "runtime-claude-code.md": 4_850,    # (4417)
+    "runtime-no-hooks.md": 2_600,       # (2381)
+    "self-registration.md": 2_450,      # (2234)
+}
 
-    skill = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus"
-    assert len((skill / "SKILL.md").read_text()) <= 22_080  # + RT-6.15: link PRs/tickets; + RT-6.18: keyless corral session; + RT-6.12: push only for Claude Code; + RT-6.19: reminders; + RT-6.20: OpenCode plugin
+
+@pytest.mark.parametrize("name", sorted(_SKILL_BUDGET))
+def test_skill_file_budget(name):
+    """RT-6.9, RT-6.14 acceptance: the per-load text does not grow. SKILL.md
+    holds what every agent needs on every runtime; runtime-specific text lives
+    in the file for that runtime, read on top, once."""
+    assert len((_SKILL / name).read_text()) <= _SKILL_BUDGET[name]
+
+
+def test_skill_pointers_name_existing_files():
+    """RT-6.9: every file SKILL.md points to lies next to it, and both
+    runtime files are pointed to, so an agent on any runtime finds its part."""
+    import re
+
+    text = (_SKILL / "SKILL.md").read_text()
+    linked = set(re.findall(r"\]\(([\w.-]+\.md)\)", text))
+    assert {"runtime-claude-code.md", "runtime-no-hooks.md", "coordinator.md", "self-registration.md"} <= linked
+    assert [f for f in linked if not (_SKILL / f).is_file()] == []
+    for f in ("runtime-claude-code.md", "runtime-no-hooks.md"):  # read on top of the core
+        assert "[SKILL.md](SKILL.md)" in (_SKILL / f).read_text()
+
+
+def test_static_budget():
+    """RT-6.14 acceptance, RT-6.9: coordinator.md (the crown holder, per
+    load) stays within its 0.30.0 size; the coordinator tool doc grows by its
+    two new actions only. SKILL.md and its files have their budgets above; the
+    per-turn text, the MCP instructions, has its own budget below."""
+    skill = _SKILL
     assert len((skill / "coordinator.md").read_text()) <= 5_350  # + RT-6.16: posts not trusted; + RT-6.19: stall; + RT-6.21: departed
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
     assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90

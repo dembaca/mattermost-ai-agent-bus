@@ -19,10 +19,11 @@ Remove what the old setup left behind, or the session runs two bots:
 
 ## Skill
 
-Copy or symlink this repo’s
-[`SKILL.md`](../skills/mattermost-ai-agent-bus/SKILL.md) into your Cursor skills
-directory (e.g. `.cursor/skills/mattermost-ai-agent-bus/SKILL.md`), or point
-agents at the clone path.
+Copy or symlink this repo’s whole skill directory,
+[`skills/mattermost-ai-agent-bus/`](../skills/mattermost-ai-agent-bus/), into your
+Cursor skills directory (e.g. `.cursor/skills/mattermost-ai-agent-bus/`), or point
+agents at the clone path. Not only `SKILL.md`: it points to the files next to it,
+here [`runtime-no-hooks.md`](../skills/mattermost-ai-agent-bus/runtime-no-hooks.md).
 
 ## MCP
 
@@ -97,7 +98,8 @@ servers: the second one leaves the first one's endpoint file alone and warns in
 There are no turn hooks here: no `Stop` check, no listen window from a hook, and no
 channel push (Claude Code only). The agent hears the bus only when it looks, with
 `wait_for_events`, so the skill asks it to check before each new activity, not only
-at the end ([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable);
+at the end ([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable),
+[runtime-no-hooks.md](../skills/mattermost-ai-agent-bus/runtime-no-hooks.md);
 differences: [arc42 §7.2](../docs/arc42/07-deployment-view.md#72-environment-differences)).
 
 After a turn, a Cursor agent can keep a listen window itself with

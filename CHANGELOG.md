@@ -3,6 +3,23 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.57.0
+
+### Changed
+
+- **A slimmer skill:** `SKILL.md`, which every agent on the bus loads in
+  full, goes from ~22,100 to ~16,300 characters. It keeps what every agent
+  needs on every runtime (contract, bus words, posting and threads, asks,
+  approvals, the crown); what only one runtime needs moves, unchanged in
+  meaning, to a file next to it that `SKILL.md` points to:
+  `runtime-claude-code.md` (`Stop` hook, channel push and `channel_ok`,
+  listen window, status, permission prompts) and `runtime-no-hooks.md`
+  (polling with `wait_for_events`, the timer listen window, status by hand;
+  same function and security, only the host-held token is corral's). Install
+  the whole skill directory, not only `SKILL.md`: the adapter docs say so. A
+  test gives each file a budget and checks every pointer names a file there
+  ([RT-6.9](docs/arc42/06-runtime-view.md#69-measuring-the-coordination-overhead)).
+
 ## 0.56.0
 
 ### Added
