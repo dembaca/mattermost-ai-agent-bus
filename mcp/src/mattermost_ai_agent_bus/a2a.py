@@ -55,7 +55,13 @@ ASK = "ask"
 PERMISSION = "permission"
 # The server's reminder of an open ask (RT-6.19): fyi for agents, no activity.
 REMINDER = "reminder"
-_OWN = (ASK, PERMISSION, REMINDER)
+# The line `🙋 asked <ask id>` ask_human posts in the thread it came from: a
+# pointer to the ask, never an ask itself (RT-6.11 step 1, RT-6.19).
+ASK_LINK = "ask_link"
+_OWN = (ASK, PERMISSION, REMINDER, ASK_LINK)
+# A link line without props (before 0.64.4): the ask's id bare, or as the
+# permalink the server writes (RT-6.15).
+_ASK_LINK = re.compile(r"🙋\s*asked\s+(?:[a-z0-9]{26}|\[[^\]]*\]\([^)\s]*/[a-z0-9]{26}\))\s*")
 # props.a2a.to: the post is for every agent in the channel (RT-6.11, RT-6.2).
 ALL = "all"
 
@@ -214,7 +220,10 @@ def kind_of(post: Mapping[str, Any]) -> str | None:
         k = str(a2a["kind"])
         return k if k in _OWN else k.upper()
     message = str(post.get("message", ""))
-    if message.lstrip().removeprefix("👑").lstrip().startswith("🙋"):
+    text = message.strip().removeprefix("👑").lstrip()
+    if _ASK_LINK.fullmatch(text):
+        return ASK_LINK
+    if text.startswith("🙋"):
         return ASK
     return word(message)
 

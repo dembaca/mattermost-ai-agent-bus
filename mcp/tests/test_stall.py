@@ -604,3 +604,48 @@ async def test_an_own_expired_ask_still_wakes(bus):
     bus.posts += [post(1, ME, "🙋 @dembaca — **Merge PR #4?**", 25 * 60, kind=a2a.ASK)]
     await look(bus)
     assert "ask expired" in bus.woken[0]
+
+
+# --- link lines are pointers, never asks (RT-6.11 step 1, RT-6.19) -----------------------
+
+LINE_KINDS = [a2a.ASK_LINK, ""]  # 0.64.4 on: props.a2a.kind; before: the text alone
+
+
+@pytest.mark.parametrize("text", [f"🙋 asked {pid(1)}", f"👑 🙋 asked {pid(1)}",
+                                  f"👑 🙋 asked [Post](https://mm.example/team/pl/{pid(1)})"])
+@pytest.mark.parametrize("kind", LINE_KINDS)
+def test_a_link_line_is_no_ask(text, kind):
+    """RT-6.19 (reported 0.64.3): the `🙋 asked <id>` line in the thread the ask
+    came from is a pointer: its kind is ask_link, also for one already on the
+    server without props, so it never shows as an open ask."""
+    line = post(2, BOB, text, 50, root=7, kind=kind)
+    assert line.kind == a2a.ASK_LINK
+    assert tasks.open_asks([line], {BOB: "agent-bob"}) == []
+    assert post(1, BOB, "🙋 @dembaca — **Merge PR #4?**", 50).kind == a2a.ASK
+
+
+@pytest.mark.parametrize("kind", LINE_KINDS)
+async def test_the_stall_lists_the_ask_not_its_link_line(bus, kind):
+    """RT-6.19: the ask is listed once; its link line is not, and once the ask
+    is resolved (✅) nothing is open and nobody is woken."""
+    bus.posts += [post(7, HUMAN, "deploy plan", 70),
+                  post(1, BOB, "🙋 @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK),
+                  post(2, BOB, f"🙋 asked {pid(1)}", 50, root=7, kind=kind)]
+    await look(bus)
+    assert len(bus.woken) == 1
+    assert f"ask {pid(1)}" in bus.woken[0] and pid(2) not in bus.woken[0]
+    bus.woken.clear()
+    bus.posts[1] = post_of({**bus.posts[1].raw, "metadata": {"reactions": [
+        {"user_id": BOB, "post_id": pid(1), "emoji_name": "white_check_mark"}]}})
+    await look(bus, after_min=60)
+    assert bus.woken == []
+
+
+async def test_a_link_line_is_never_reminded(bus):
+    """RT-6.19: only the ask is reminded, in its own thread; the link line in
+    the task thread gets no reminder."""
+    ask_id = _ask(25)
+    bus.posts += [post(1, ME, "🙋 @dembaca — **Merge?**", 25, kind=a2a.ASK),
+                  post(2, ME, f"🙋 asked {ask_id}", 25, root=7, kind=a2a.ASK_LINK)]
+    await remind.tick(bus, ME, NOW)
+    assert [s["root_id"] for s in bus.sent] == [ask_id]

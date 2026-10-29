@@ -1122,7 +1122,9 @@ async def ask_human(
                                 here=await lease.crown_here(client, me.id, root_id=root_id))
         stats.record("post", chars=len(link))
         try:
-            linked = await client.post(link, root_id=root_id)
+            # A pointer, not an ask: its kind keeps it out of the open asks (RT-6.19).
+            linked = await client.post(link, root_id=root_id,
+                                       props=a2a.props(kind=a2a.ASK_LINK))
             out["linked_in"] = root_id
             # RT-6.22: an ask from a guest thread keeps that thread the agent's.
             await _as_guest(client, me.id, await _guest_target(client, "", root_id), linked)
