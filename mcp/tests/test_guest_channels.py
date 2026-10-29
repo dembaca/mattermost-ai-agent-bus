@@ -195,6 +195,29 @@ async def test_guests_are_the_memberships_besides_home_lobby_and_stats(monkeypat
     assert await c.guest_channel_ids() == {GUEST}
 
 
+async def test_team_default_channels_are_guests_only_when_named(monkeypatch):
+    """RT-6.22 step 1: the bot is in town-square and off-topic only because it
+    joined the team; they are guests when MM_PROJECT_CHANNEL names them."""
+    monkeypatch.setenv("MM_PROJECT_CHANNEL_ID", WORK)
+    monkeypatch.setenv("MM_CHANNEL_ID", LOBBY)
+    square, off = "q" * 26, "o" * 26
+
+    async def member_channels():
+        return [UnreadChannel(WORK, name="agents"), UnreadChannel(GUEST, name="guest-a"),
+                UnreadChannel(square, name="town-square"), UnreadChannel(off, name="off-topic")]
+
+    async def get_channel_id(name=None, team_name=None):
+        raise LookupError(name)
+
+    for configured, want in (("agents,guest-a", {GUEST}),
+                             ("agents,guest-a,~town-square", {GUEST, square})):
+        c = MattermostAdapter(base_url="https://mm.example", token="t",
+                              project_channel_name=configured)
+        monkeypatch.setattr(c, "member_channels", member_channels)
+        monkeypatch.setattr(c, "get_channel_id", get_channel_id)
+        assert await c.guest_channel_ids() == want
+
+
 # --- what wakes in a guest channel (RT-6.22 step 3) -------------------------------------
 
 async def test_a_mention_wakes_a_plain_post_and_at_channel_do_not(chat):

@@ -235,6 +235,11 @@ def channel_list(value: str) -> list[str]:
     return list(dict.fromkeys(n for n in names if n))
 
 
+# The channels Mattermost puts every member into on joining the team: the bot
+# is in them only because the registrar added it to the team, so they are
+# guests only when MM_PROJECT_CHANNEL names them (RT-6.22 step 1).
+TEAM_DEFAULT_CHANNELS = frozenset({"town-square", "off-topic"})
+
 # How long the guest channels (memberships) are kept before they are read
 # again; a WebSocket membership event forgets them at once (RT-6.22).
 GUEST_TTL_SEC = 60.0
@@ -1066,7 +1071,8 @@ class MattermostAdapter:
             out.append(UnreadChannel(
                 channel_id=cid, channel_type=ctype,
                 last_post_at=int(channel.get("last_post_at") or 0),
-                pending=max(pending, 0), unread=max(unread, 0)))
+                pending=max(pending, 0), unread=max(unread, 0),
+                name=channel.get("name") or ""))
         return out
 
     async def view_channel(self, channel_id: str) -> None:
@@ -1254,15 +1260,18 @@ class MattermostAdapter:
     async def guest_channel_ids(self) -> set[str]:
         """The bot's guest channels (ADR-002, RT-6.22): every team channel it
         is a member of (open or private) other than its home, the lobby
-        (MM_CHANNEL, lobby_ids) and the stats channel. The MM_PROJECT_CHANNEL
-        entries 2..n are among them once joined. Kept GUEST_TTL_SEC and
+        (MM_CHANNEL, lobby_ids) and the stats channel, and other than the
+        team's default channels (TEAM_DEFAULT_CHANNELS) unless MM_PROJECT_CHANNEL
+        names them. The MM_PROJECT_CHANNEL entries 2..n are among them once joined. Kept GUEST_TTL_SEC and
         forgotten on a membership event (forget_guests); raises when the
         memberships cannot be read."""
         now = time.monotonic()
         if self._guests is not None and now - self._guests[0] < GUEST_TTL_SEC:
             return set(self._guests[1])
+        named = set(self.guest_channel_names)
         team = {c.channel_id for c in await self.member_channels()
-                if c.channel_type in ("O", "P")}
+                if c.channel_type in ("O", "P")
+                and (c.name not in TEAM_DEFAULT_CHANNELS or c.name in named)}
         if team:
             team.discard(await self.work_channel_id())
             for other in (self.lobby_channel_id, self._stats_channel_id):

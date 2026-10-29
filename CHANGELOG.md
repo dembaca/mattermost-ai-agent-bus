@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.64.1
+
+### Fixed
+
+- **The corral note names guest channels as `~name`**
+  ([RT-6.22 step 1](docs/arc42/06-runtime-view.md#622-guest-channels)).
+  Bash 5 tilde-expanded the `~` in the note's guest list, so the agent read
+  `Guest channels /Users/youbgl-infra`.
+- **town-square and off-topic are no guest channels unless named**
+  ([RT-6.22 step 1](docs/arc42/06-runtime-view.md#622-guest-channels)).
+  The bot is in the team's default channels only because it joined the team;
+  they now count as guests only when `MM_PROJECT_CHANNEL` lists them. A
+  mention there still wakes the agent, as in any channel.
+
 ## 0.64.0
 
 Closes out #63 (WP6): homes, guest channels, the lobby and owner classes are built.

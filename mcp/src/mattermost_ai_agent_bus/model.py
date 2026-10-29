@@ -156,3 +156,5 @@ class UnreadChannel:
     last_post_at: int = field(default=0, compare=False)
     pending: int = field(default=0, compare=False)
     unread: int = field(default=0, compare=False)
+    # Its name (town-square, …), where Mattermost gives it (RT-6.22 step 1).
+    name: str = field(default="", compare=False)
