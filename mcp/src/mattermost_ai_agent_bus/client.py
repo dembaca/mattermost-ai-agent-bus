@@ -1234,7 +1234,7 @@ class MattermostAdapter:
     async def guest_channel_ids(self) -> set[str]:
         """The bot's guest channels (ADR-002, RT-6.22): every team channel it
         is a member of (open or private) other than its home, the lobby
-        (MM_CHANNEL, WP5) and the stats channel. The MM_PROJECT_CHANNEL
+        (MM_CHANNEL, lobby_ids) and the stats channel. The MM_PROJECT_CHANNEL
         entries 2..n are among them once joined. Kept GUEST_TTL_SEC and
         forgotten on a membership event (forget_guests); raises when the
         memberships cannot be read."""
@@ -1348,6 +1348,21 @@ async def watched_channel_ids(client: MattermostAdapter) -> set[str]:
     except Exception as exc:  # noqa: BLE001
         log.warning("could not resolve the work channel: %s", exc)
     return ids | await guest_ids(client)
+
+
+async def lobby_ids(client: MattermostAdapter) -> set[str]:
+    """The lobby (ADR-002, RT-6.22 step 3): MM_CHANNEL's id while it is not the
+    home. None when it is the home (no project channel) or cannot be resolved:
+    then its posts follow the home's rules, as before 0.63.0."""
+    lobby = getattr(client, "lobby_channel_id", None)
+    if lobby is None:  # a test's stand-in without a lobby
+        return set()
+    try:
+        cid, home = await lobby(), await client.work_channel_id()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not resolve the lobby: %s", exc)
+        return set()
+    return {cid} - {home, ""}
 
 
 async def guest_ids(client: MattermostAdapter) -> set[str]:

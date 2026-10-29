@@ -59,7 +59,7 @@ managed elsewhere.
 | `MM_CHANNEL` | The registrar's default channel. `ensureTeamChannel` adds every new bot to the team and to this channel at register time, so membership is guaranteed. The agent stays addressable here. |
 | `MM_PROJECT_CHANNEL` | Optional, comma-separated. The first entry is the home, where this session works; posts default here. The others are guest channels. Unknown to the registrar, so the bot joins them itself. |
 
-The home, the lobby and the guest channels are watched; what wakes an agent in a guest channel: [RT-6.22](arc42/06-runtime-view.md#622-guest-channels).
+The home, the lobby and the guest channels are watched; what wakes an agent in a guest channel and in the lobby: [RT-6.22](arc42/06-runtime-view.md#622-guest-channels).
 
 **Neither is ever created.** `bin/mm-agent-channels.sh` resolves names to ids and joins
 an existing project channel; a missing channel is an error naming the channel, so an

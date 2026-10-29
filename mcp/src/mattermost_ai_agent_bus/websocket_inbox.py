@@ -13,8 +13,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import asks, departed, gate, lease, ownpost, unread, watermark
-from .client import (MattermostAdapter, guest_ids, post_of, reaction_of, read_links,
+from . import a2a, asks, departed, gate, lease, ownpost, unread, watermark
+from .client import (MattermostAdapter, guest_ids, lobby_ids, post_of, reaction_of, read_links,
                      watched_channel_ids, with_links, ws_url_from_http)
 from .model import Channel, Post, Reaction
 
@@ -33,6 +33,8 @@ class ClassifiedEvent:
     departed: str = ""
     # RT-6.22: the post is in a guest channel (not the home, not the lobby).
     guest: bool = False
+    # RT-6.22 step 3: the post is in the lobby (MM_CHANNEL), which is not the home.
+    lobby: bool = False
 
 
 # WebSocket events that change the bot's channels (RT-6.22): the watched and
@@ -79,6 +81,9 @@ class WebSocketInbox:
     # The guest channels among them (RT-6.22): only a mention or a reply in a
     # thread this agent took part in there is queued.
     guest_channel_ids: set[str] = field(default_factory=set)
+    # The lobby among them while it is not the home (RT-6.22 step 3): only a
+    # mention, a broadcast or a reply in a thread this agent posted in is queued.
+    lobby_channel_ids: set[str] = field(default_factory=set)
     # The lists were read here (not handed in): they follow membership changes.
     _derived: bool = field(default=False, repr=False, init=False)
     _ws: Any = field(default=None, repr=False, init=False)
@@ -133,6 +138,7 @@ class WebSocketInbox:
         if forget is not None:
             forget()
         self.guest_channel_ids = await guest_ids(self.client)
+        self.lobby_channel_ids = await lobby_ids(self.client)
         self.watched_channel_ids = await watched_channel_ids(self.client)
         self._derived = True
 
@@ -158,6 +164,25 @@ class WebSocketInbox:
             return False
         self.handled(post)
         return True
+
+    async def _lobby_drop(self, post: Post, kind: str) -> bool:
+        """RT-6.22 step 3: a post in the lobby (MM_CHANNEL, not the home) that
+        neither names this agent, nor names everyone (@channel, @all, @here, or
+        to all agents), nor answers in a thread it posted in: no event, no
+        digest. Its mark moves on. Unsure about the thread: kept."""
+        if kind != "watched_channel" or post.channel_id not in self.lobby_channel_ids:
+            return False
+        if post.to == a2a.ALL or unread.everyone(post.message):
+            return False
+        if post.root_id and (self.in_my_thread is None or await self.in_my_thread(
+                {"post": {"root_id": post.root_id}}, self._bot_user_id) is not False):
+            return False
+        self.handled(post)
+        return True
+
+    async def _drop(self, post: Post, kind: str) -> bool:
+        """Not for this agent where it is a guest or in the lobby (RT-6.22)."""
+        return self._guest_drop(post, kind) or await self._lobby_drop(post, kind)
 
     async def _channel(self, channel_id: str) -> Channel:
         if channel_id not in self._channel_cache:
@@ -214,13 +239,14 @@ class WebSocketInbox:
                     channel_type=entry.channel_type,
                     watched_channel_ids=self.watched_channel_ids,
                 )
-                if not kind or self._guest_drop(post, kind):
+                if not kind or await self._drop(post, kind):
                     continue
                 if post.id in self._seen_ids:
                     continue
                 self._seen_ids.add(post.id)
                 event = ClassifiedEvent(kind=kind, post=post,
-                                        guest=post.channel_id in self.guest_channel_ids)
+                                        guest=post.channel_id in self.guest_channel_ids,
+                                        lobby=post.channel_id in self.lobby_channel_ids)
                 await self._gate(event, entry.channel_type)
                 await self._departed(event)
                 await self._put(event)
@@ -329,7 +355,7 @@ class WebSocketInbox:
                     channel_type=channel_type,
                     watched_channel_ids=self.watched_channel_ids,
                 )
-                if not kind or self._guest_drop(post, kind):
+                if not kind or await self._drop(post, kind):
                     continue
                 pid = post.id
                 if pid:
@@ -337,7 +363,8 @@ class WebSocketInbox:
                         continue
                     self._seen_ids.add(pid)
                 event = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=msg,
-                                        guest=cid in self.guest_channel_ids)
+                                        guest=cid in self.guest_channel_ids,
+                                        lobby=cid in self.lobby_channel_ids)
                 await self._gate(event, channel_type)
                 await self._departed(event)
                 await self._put(event)
@@ -436,8 +463,8 @@ class WebSocketInbox:
             # which it cannot see): it was told; nor for one that names another
             # agent that trusts its author: that one answers.
             dm = (channel_type or "").upper() in ("D", "G")
-            # RT-6.22: in a guest channel, that channel's own coordinator.
-            guest = post.channel_id if event.guest else ""
+            # RT-6.22: in a guest channel or the lobby, that channel's own coordinator.
+            guest = post.channel_id if event.guest or event.lobby else ""
             answer = why != "broadcast" and not (
                 not dm and await gate.names_coordinator(self.client, post, guest)
             ) and not await gate.mentioned_agent_trusts(

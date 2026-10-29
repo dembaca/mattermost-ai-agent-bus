@@ -3,6 +3,28 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.63.0
+
+### Changed
+
+- **The lobby** (WP5 of #63,
+  [ADR-002](docs/arc42/09-architecture-decisions.md#adr-002-one-home-per-agent-guests-only-talk-a-crown-per-agent-home),
+  [RT-6.22 step 3](docs/arc42/06-runtime-view.md#622-guest-channels)).
+  `MM_CHANNEL`, when it is not the agent's home (a `MM_PROJECT_CHANNEL` is
+  set), wakes the agent only for a mention, a DM, a reply in a thread it
+  posted in, and a broadcast (`@channel` / `@all` / `@here`, `to="all"`). With
+  trusted humans set, a broadcast by someone not trusted or by another owner's
+  agent stays gated, so only trusted humans' and peers' broadcasts wake.
+  - Other lobby posts go nowhere: no event from `wait_for_events`, no push,
+    no digest; their read mark moves on. `list_recent` reads them on demand.
+  - No coordinator wake there: the crown holder of another home wakes like
+    any agent (since 0.59.0, kept).
+  - Events from the lobby carry `lobby`; the gate's "Not woken" answer there
+    names the lobby's own coordinator, as in a guest channel.
+  - The Stop hook's count there is unchanged: a mention, `@channel` and posts
+    for all agents, never a plain post.
+  - Without `MM_PROJECT_CHANNEL` the lobby is the home: nothing changes.
+
 ## 0.62.0
 
 ### Added

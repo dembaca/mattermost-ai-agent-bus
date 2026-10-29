@@ -198,7 +198,9 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
     who waits for it; the coordinator and others in the thread get it in the
     digest. In a guest channel (item guest, RT-6.22) only a mention, a DM, a
     reaction or a reply in its own thread wakes it: no broadcast, no
-    coordinator, and what does not wake goes into no digest either."""
+    coordinator, and what does not wake goes into no digest either. In the
+    lobby while it is not the home (item lobby, RT-6.22 step 3) a broadcast
+    wakes it too (the gate held back an untrusted one), the crown never."""
     if item.get("gated"):
         return False
     if item.get("guest"):
@@ -210,6 +212,8 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
             or broadcast(str((item.get("post") or {}).get("message", "")))):
         return True
     where = str(item.get(CHANNEL_ID) or "")
+    if item.get("lobby"):
+        coordinator = False  # RT-6.22 step 3: not the home, no routing here
     if coordinator and routes is not None and where and where not in routes:
         coordinator = False  # a guest here: this channel has its own crown
     if coordinator or in_my_thread:
@@ -280,6 +284,8 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
             meta[key] = str(item[key])
     if item.get("guest"):
         meta["guest"] = "true"  # RT-6.22: not your home; a task goes there
+    if item.get("lobby"):
+        meta["lobby"] = "true"  # RT-6.22 step 3: the lobby, not your home
     if item.get("foreign"):
         meta["foreign"] = "true"  # ADR-001: another owner's agent, a request
     if item.get("expired"):
@@ -380,8 +386,8 @@ class Pusher:
                         continue
                     if addressed is None or await addressed(item):
                         await self.send(notification(item))
-                    elif item.get("guest"):
-                        continue  # RT-6.22: a guest channel goes into no digest
+                    elif item.get("guest") or item.get("lobby"):
+                        continue  # RT-6.22: a guest channel and the lobby: no digest
                     else:
                         if not self.held:
                             self.held_since = time.time()

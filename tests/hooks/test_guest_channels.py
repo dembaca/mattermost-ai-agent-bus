@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 
-from conftest import GUEST, PROJECT, ROOT
+from conftest import CHANNEL, GUEST, PROJECT, ROOT
 
 STATUS = "bin/mm-agent-status.sh"
 CHANNELS = "bin/mm-agent-channels.sh"
+STOP = "hooks/stop-inbox-check.sh"
 
 
 def _lib(value: str) -> list[str]:
@@ -63,3 +65,17 @@ def test_the_status_names_the_first_entry(mm, run):
     assert run(STATUS, "working", "x", fd_token=True, MM_PROJECT_CHANNEL="team-a,guest-b",
                LC_ALL="C", LANG="C").code == 0
     assert mm.custom_status()["text"].endswith(" · ~team-a")
+
+
+def test_the_lobby_counts_only_what_wakes_there(mm, run):
+    """RT-6.22 step 3, RT-6.2 step 1: with a project channel, MM_CHANNEL is the
+    lobby: a plain post there does not hold the turn, an @channel does."""
+    mm.members.append({"channel_id": CHANNEL, "msg_count": 0, "mention_count": 0,
+                       "last_viewed_at": 0})
+    mm.channels.append({"id": CHANNEL, "type": "O", "total_msg_count": 1})
+    mm.posts.insert(0, {"id": "o1", "user_id": "z" * 26, "root_id": "", "type": "",
+                        "create_at": int(time.time() * 1000) + 2000, "message": "lunch anyone"})
+    assert run(STOP, MM_LISTEN_SEC="0", MM_PROJECT_CHANNEL_ID=PROJECT).passed
+    mm.posts[0]["message"] = "@channel deploy at 5"
+    r = run(STOP, MM_LISTEN_SEC="0", MM_PROJECT_CHANNEL_ID=PROJECT)
+    assert r.blocked and "1 unread message(s)" in r.reason

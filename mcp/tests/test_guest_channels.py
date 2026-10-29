@@ -39,6 +39,15 @@ class GuestChat(FakeChat):
         super().__init__(**kw)
         self.memberships = set(memberships)
         self.joined: list[str] = []
+        self.lobby = LOBBY  # MM_CHANNEL's id; WORK: the lobby is the home
+
+    async def lobby_channel_id(self) -> str:
+        return self.lobby
+
+    async def get_channel_id(self, channel_name: str | None = None) -> str:
+        """By name (MM_CHANNEL's by default): the lobby is watched."""
+        name = channel_name or self.channel_name
+        return self.lobby if name == "lobby" else next(i for i, n in NAMES.items() if n == name)
 
     async def guest_channel_ids(self) -> set[str]:
         return set(self.memberships) - {WORK, LOBBY}
@@ -75,9 +84,9 @@ class _Socket:
         pass
 
 
-def _posted(pid, message, where=GUEST, root=""):
+def _posted(pid, message, where=GUEST, root="", props=None):
     post = {"id": pid, "user_id": HUMAN, "channel_id": where, "root_id": root,
-            "message": message, "create_at": int(time.time() * 1000)}
+            "message": message, "create_at": int(time.time() * 1000), "props": props or {}}
     return {"event": "posted", "data": {"post": json.dumps(post), "channel_type": "O"}}
 
 
@@ -333,3 +342,113 @@ async def test_bus_info_lists_home_guests_and_lobby(chat, monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: chat)
     info = json.loads(await server.bus_info())
     assert (info["home"], info["guests"], info["lobby"]) == ("agents", ["guest-a"], "lobby")
+
+
+# --- the lobby (RT-6.22 step 3, WP5) ----------------------------------------------------
+
+TO_ALL = {"a2a": {"v": 1, "to": "all"}}
+
+
+async def _mine(item, uid):
+    """in_my_thread as the server answers it: the agent posted in thread r…r."""
+    return (item.get("post") or {}).get("root_id") == "r" * 26
+
+
+async def _lobby_inbox(chat, *messages):
+    inbox = WebSocketInbox(client=chat, in_my_thread=_mine)  # type: ignore[arg-type]
+    inbox._bot_user_id, inbox._bot_username = BOT, "agent-me"
+    await inbox.refresh_channels()
+    inbox._ws = _Socket(*messages)
+    await inbox._read_loop()
+    return inbox, [inbox._queue.get_nowait() for _ in range(inbox._queue.qsize())]
+
+
+async def test_the_lobby_queues_mentions_broadcasts_and_my_threads(chat):
+    """RT-6.22 step 3: in the lobby, not the home, a plain post and a reply in
+    a thread the agent never posted in are dropped (no event, no digest)."""
+    inbox, events = await _lobby_inbox(
+        chat,
+        _posted("m" * 26, "@agent-me can you look?", where=LOBBY),
+        _posted("p" * 26, "lunch anyone", where=LOBBY),
+        _posted("b" * 26, "@channel deploy at 5", where=LOBBY),
+        _posted("a" * 26, "main is red", where=LOBBY, props=TO_ALL),
+        _posted("1" * 26, "thanks", where=LOBBY, root="r" * 26),
+        _posted("2" * 26, "thanks", where=LOBBY, root="o" * 26),
+        _posted("w" * 26, "plain post at home", where=WORK))
+    assert inbox.lobby_channel_ids == {LOBBY}
+    assert [(e.post.id[0], e.lobby) for e in events] == [
+        ("m", True), ("b", True), ("a", True), ("1", True), ("w", False)]
+
+
+def test_the_lobby_wakes_for_broadcasts_never_for_the_crown():
+    """RT-6.22 step 3: unlike a guest channel, @channel and to="all" wake in
+    the lobby; a plain post wakes not even the crown holder of another home."""
+    for extra in ({"to": "all"}, {"post": {"message": "@channel all hands"}}):
+        item = {"kind": "watched_channel", "lobby": True, "post": {"message": "x"}} | extra
+        assert channel.wakes(item, coordinator=False, in_my_thread=False)
+        assert not channel.wakes(item | {"lobby": False, "guest": True},
+                                 coordinator=False, in_my_thread=False)
+    plain = {"kind": "watched_channel", "lobby": True, "post": {"message": "lunch"}}
+    assert not channel.wakes(plain, coordinator=True, in_my_thread=False)
+    assert channel.wakes(plain, coordinator=False, in_my_thread=True)
+    assert channel.notification(plain)["meta"]["lobby"] == "true"
+
+
+@pytest.mark.anyio
+async def test_the_lobby_goes_into_no_digest():
+    """RT-6.22 step 3: a lobby post that does not wake (here one the gate held
+    back) is dropped, not held for a digest."""
+    pusher = channel.Pusher(digest_sec=0.2)
+    pusher.connection = Conn()  # type: ignore[assignment]
+    pusher.confirm(pusher.code)
+    gated = {"kind": "watched_channel", "lobby": True, "gated": "broadcast",
+             "post": {"id": "p", "message": "@channel buy now"}}
+    batches = [[gated]]
+
+    async def wait(timeout):
+        if batches:
+            return batches.pop(0)
+        await asyncio.sleep(timeout)
+        return []
+
+    async def addressed(item):
+        return channel.wakes(item, coordinator=False, in_my_thread=False)
+
+    with anyio.move_on_after(0.5):
+        await pusher.run(wait, addressed=addressed, wait_cap=0.1)
+    assert pusher.connection.sent == [] and pusher.held == []
+
+
+async def test_an_untrusted_broadcast_in_the_lobby_stays_gated(chat):
+    """RT-6.16, RT-6.22 step 3: with trusted humans set, an @channel there by
+    someone not trusted is queued gated (data only); a trusted one's is not."""
+    chat.trusted = {"t" * 26: "dembaca"}
+    _, events = await _lobby_inbox(chat, _posted("b" * 26, "@channel buy now", where=LOBBY))
+    assert [(e.lobby, bool(e.gated)) for e in events] == [(True, True)]
+    chat.trusted = {HUMAN: "dembaca"}
+    _, events = await _lobby_inbox(chat, _posted("c" * 26, "@channel deploy at 5", where=LOBBY))
+    assert [(e.lobby, bool(e.gated)) for e in events] == [(True, False)]
+
+
+async def test_the_lobby_counts_what_wakes_there(chat):
+    """RT-6.2 step 1: the Stop hook's count in the lobby takes a mention, an
+    @channel and a post for all agents, never a plain post."""
+    now = int(time.time() * 1000)
+    chat.channels = [UnreadChannel(LOBBY, "O", last_post_at=now + 10)]
+    chat.posts = [{"id": f"{n}" * 26, "user_id": HUMAN, "channel_id": LOBBY, "create_at": now + n,
+                   "message": m} for n, m in enumerate(
+                       ["@agent-me look", "@channel hi", "all agents", "lunch anyone"], start=1)]
+    chat.posts[2]["props"] = TO_ALL
+    rows = await unread.channels(chat, {LOBBY})
+    assert [p.message for p in rows[0].posts] == ["@agent-me look", "@channel hi", "all agents"]
+
+
+async def test_the_lobby_as_home_behaves_as_before(chat):
+    """Parity: no project channel, MM_CHANNEL is the home: no lobby rules, a
+    plain post is queued and wakes its crown holder."""
+    chat.lobby = WORK
+    inbox, events = await _lobby_inbox(chat, _posted("p" * 26, "lunch anyone", where=WORK))
+    assert inbox.lobby_channel_ids == set()
+    assert [(e.kind, e.lobby) for e in events] == [("watched_channel", False)]
+    item = {"kind": "watched_channel", channel.CHANNEL_ID: WORK, "post": {"message": "lunch"}}
+    assert channel.wakes(item, coordinator=True, in_my_thread=False, routes={WORK})

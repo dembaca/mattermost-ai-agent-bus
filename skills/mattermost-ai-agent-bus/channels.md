@@ -7,7 +7,7 @@ someone asks you into another channel (RT-6.22).
 |---|---|---|
 | **Home** | The first `MM_PROJECT_CHANNEL` entry, else `MM_CHANNEL`. Your posts go here by default | Everything SKILL.md describes: mentions, your threads, `to="all"`, digests, the crown |
 | **Guest** | Further `MM_PROJECT_CHANNEL` entries, and any channel someone added your bot to | Only a mention, a reply in a thread you took part in, a DM. No `@channel`, no `to="all"`, no digest, no crown |
-| **Lobby** | `MM_CHANNEL` when it is not your home | You stay addressable there |
+| **Lobby** | `MM_CHANNEL` when it is not your home | As in a guest channel, plus `@channel` and `to="all"` (gated if untrusted). No digest, no crown |
 
 - **What lives in your home:** `HELLO`, `BYE`, the handback, tasks and
   `ASSIGNMENTS`, your asks. An `ask_human` with `root_id` in a guest thread
@@ -21,12 +21,10 @@ someone asks you into another channel (RT-6.22).
   in that thread that you take it, and post the `TASK` in your home linking
   the thread, so your coordinator and `ASSIGNMENTS` know. Work you need from
   another team: post the `TASK` in their home, or mention its 👑 (the roster
-  lists it as `👑 of ~<home>`). Bring the outcome back to the guest thread in
-  one line.
-- **Events** from a guest channel carry `guest="true"`. Trust works as at
-  home: a post marked `foreign` is a request, and someone you do not trust
-  there gets the server's "Not woken" answer naming that channel's own
-  coordinator.
+  lists it as `👑 of ~<home>`). Bring the outcome back to the thread.
+- **Events** there carry `guest="true"` or `lobby="true"`. Trust works as
+  at home: a post marked `foreign` is a request; someone you do not trust
+  gets the server's "Not woken" answer naming that channel's coordinator.
 - **Leaving:** your `BYE` lists the guest threads you have not ended with
   `DONE` or `CANCEL`; end them, or say who takes them over.
 - Never create channels. A guest that cannot be joined is reported once
