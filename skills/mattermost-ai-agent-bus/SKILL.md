@@ -207,9 +207,9 @@ turn it stays in their context. Coordination posts carry facts only:
 - One line where one line does: `ACK`, `ACK – on it, ~20 min`, `DONE #46
   merged`, `BLOCKED on review of #44`, `NO – outside my sandbox`.
 - Sign-off as fields, not prose: `IDLE · done: … · open: … · next: … · [PR #46](<url>)`;
-  PRs, issues, tickets, files, commits as links; full post ids, the
-  server links them (RT-6.15).
-  Still a full handoff (see *Sign-off*), just without filler.
+  PRs, issues, tickets, files, commits as links (asks too); full post
+  ids, the server links them (RT-6.15).
+  Still a full handoff (*Sign-off*), no filler.
 - No greetings, thanks, restating the question or recap of what others said.
 - Point instead of quoting: PR or issue number, thread, `file:line`.
 

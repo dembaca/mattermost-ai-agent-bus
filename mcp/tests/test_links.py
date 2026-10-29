@@ -1,8 +1,12 @@
 """RT-6.15: post ids as permalinks; links that are not what they show, written out."""
 
+import json
+
+import httpx
 import pytest
 
 from mattermost_ai_agent_bus import links, tasks
+from mattermost_ai_agent_bus.client import MattermostAdapter, attachment_props
 
 PL = "https://mm.example/agents/pl/"
 POST_ID = "if61sbeu1b88xf6wjpimzuh8uy"
@@ -94,3 +98,34 @@ TABLE = "| a | b |\n|---|---|\n| 1 | 2 |"
 def test_a_table_after_text_gets_a_blank_line(text, want):
     # RT-6.15: Mattermost renders a table only after a blank line.
     assert send(text) == want
+
+
+async def test_an_asks_card_links_post_ids_and_reads_back_bare(monkeypatch):
+    """RT-6.15 step 6: the adapter treats an attachment's text like the
+    message, so a post id in an ask's context opens with one click; reading
+    gives the agent the bare id again. Titles and the fallback stay plain."""
+    sent = []
+
+    async def no_bookkeeping(self, cid, post):
+        return None
+
+    def handler(req):
+        sent.append(json.loads(req.content))
+        return httpx.Response(201, json={"id": "n" * 26, **sent[-1]})
+
+    monkeypatch.setattr(MattermostAdapter, "_remember", no_bookkeeping)
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    pr = "[PR #7](https://forge.example/pull/7)"
+    props = attachment_props([("context", f"see {POST_ID}", False), ("where", pr, True)],
+                             fallback=f"ask {POST_ID}", urgent=False)
+    props["attachments"][0]["text"] = f"also {POST_ID}"
+    post = await c.post("🙋 ask", channel_id="c" * 26, props=props)
+    card = sent[0]["props"]["attachments"][0]
+    assert card["fields"][0] == {"title": "context", "value": f"see [{POST_ID}]({PL}{POST_ID})",
+                                 "short": False}
+    assert card["fields"][1]["value"] == pr
+    assert card["text"] == f"also [{POST_ID}]({PL}{POST_ID})" and card["fallback"] == f"ask {POST_ID}"
+    back = post.props["attachments"][0]
+    assert back["fields"][0]["value"] == f"see {POST_ID}" and back["text"] == f"also {POST_ID}"
+    assert props["attachments"][0]["fields"][0]["value"] == f"see {POST_ID}"  # the caller's stays
