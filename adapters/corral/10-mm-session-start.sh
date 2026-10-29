@@ -305,12 +305,17 @@ note="You are @${MM_BOT_USERNAME} on the Mattermost agent bus."
 # the home, the others are guest channels.
 HOME_CH="$(mm_home_channel)"
 GUESTS_SHOWN=""
+# The note's "~name" list is built here: a "~" in ${var//#/~} is tilde-expanded
+# to $HOME by bash 5.
+GUESTS_NOTE=""
 while IFS= read -r guest; do
-  [[ "$guest" == "$HOME_CH" ]] || GUESTS_SHOWN+="${GUESTS_SHOWN:+, }#${guest}"
+  [[ "$guest" == "$HOME_CH" ]] && continue
+  GUESTS_SHOWN+="${GUESTS_SHOWN:+, }#${guest}"
+  GUESTS_NOTE+="${GUESTS_NOTE:+, }~${guest}"
 done < <(mm_project_channels)
 if [[ -n "${MM_PROJECT_CHANNEL:-}" ]]; then
   note+=" Home ~${HOME_CH}: work, tasks, HELLO and BYE live there."
-  [[ -n "$GUESTS_SHOWN" ]] && note+=" Guest channels ${GUESTS_SHOWN//#/~}: only a mention or a reply in your thread wakes you there."
+  [[ -n "$GUESTS_NOTE" ]] && note+=" Guest channels ${GUESTS_NOTE}: only a mention or a reply in your thread wakes you there."
   note+=" Lobby ~${MM_CHANNEL}: you are also addressable there."
 else
   note+=" Home channel: ~${MM_CHANNEL}."

@@ -161,6 +161,17 @@ def test_agent_note_names_humans_without_mentioning_them(mm, run):
     assert "@dembaca" not in note and "@kollegin" not in note
 
 
+def test_agent_note_names_guest_channels_with_a_tilde(mm, run):
+    """RT-6.22 step 1: the note says "~guest", not $HOME: bash 5 expands a "~"
+    in ${var//#/~}."""
+    r = run(START, MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x,guest-a,guest-b",
+            **HOST)
+    assert r.code == 0, r.stderr
+    note = json.loads(r.stdout)["agentNotes"][0]
+    assert "Guest channels ~guest-a, ~guest-b:" in note
+    assert str(run.state_dir.parent) not in note
+
+
 def test_the_registrar_prefix_reaches_the_sandbox(mm, run):
     """RT-6.1 step 5, arc42 §7.1: only the host knows the registered name, so it
     derives the prefix and hands it over; the name itself stays withheld."""
