@@ -112,6 +112,12 @@ def _for_me(post: Post, channel: UnreadChannel, name: str) -> bool:
     return f"@{name.lower()}" in names or any(e in names for e in _EVERYONE)
 
 
+def everyone(message: str) -> bool:
+    """The text names everyone: @channel, @all or @here, as the count reads it."""
+    names = {m.removesuffix(".") for m in _MENTION.findall(message.lower())}
+    return any(e in names for e in _EVERYONE)
+
+
 def names_me(message: str, uid: str, username: str) -> bool:
     """The text names this agent: <@uid> or @username, the way the inbox
     reads a mention (websocket_inbox.classify_post) and the count."""

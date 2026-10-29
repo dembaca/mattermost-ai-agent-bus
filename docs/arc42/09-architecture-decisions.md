@@ -10,7 +10,7 @@ code does today and point here where a decision will change them.
 | ADR | Decision | Status | Work packages (#63, #83) |
 |-----|----------|--------|--------------------------|
 | ADR-001 | Authority comes from trust, not from a role or a channel | Decided 2026-10-29, built (WP2, 0.60.0) | WP2 |
-| ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, partly built (WP1, 0.59.0; WP4, 0.62.0) | WP1, WP4, WP5 |
+| ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, built (WP1, 0.59.0; WP4, 0.62.0; WP5, 0.63.0) | WP1, WP4, WP5 |
 | ADR-003 | An agent's owner comes from its registrar-bound bot description | Decided 2026-10-29, partly built (WP2, 0.60.0; WP3 open) | WP2, WP3 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
@@ -84,7 +84,7 @@ server; without one nothing is gated, as today (Section 7.2).
 
 ## ADR-002: One home per agent, guests only talk, a crown per (agent, home)
 
-**Status:** Decided 2026-10-29 (owner), partly built (WP1, WP4). Built in 0.59.0
+**Status:** Decided 2026-10-29 (owner), built (WP1, WP4, WP5). Built in 0.59.0
 (WP1): the home, the status naming it, the crown, roster, election and
 header per home, the 👑 only in the home, coordinator wakes and the gate
 exemption only in the home (so a plain lobby post wakes only the lobby's own
@@ -92,8 +92,10 @@ crown), and the ambassador listing (RT-6.6). Built in 0.62.0 (WP4): guest
 channels (RT-6.22): the list in `MM_PROJECT_CHANNEL`, every membership a
 guest, the guest wake rules, no digest from guests, `props.a2a.home`, the
 `BYE` listing open guest threads, the gate's answer naming the guest
-channel's own coordinator, `post_message(channel=…)`. Planned: WP5 (the rest
-of the lobby: wake rules for addressed posts and broadcasts, no digest).
+channel's own coordinator, `post_message(channel=…)`. Built in 0.63.0 (WP5):
+the lobby (RT-6.22 step 3): where it is not the home, a mention, a DM, a reply
+in the agent's thread and a broadcast (`@channel`, `to="all"`) by a trusted
+human or a peer wake it; nothing else, no crown, no digest.
 
 **Context:** Today one work channel holds everything: crown, tasks, sign-off,
 header, stall watch. A custom status is global per user, so the roster and
@@ -143,7 +145,9 @@ registrar change).
 
 **Consequences:** Cost grows with mentions, not with the number of channels.
 One behaviour change: an agent with a project channel no longer wakes for
-plain posts in the lobby, as coordinator (built in WP1, owner's decision). A status written by an older plugin names no
+plain posts in the lobby, as coordinator (built in WP1, owner's decision), and
+since WP5 (0.63.0) gets them neither in a digest nor from `wait_for_events`:
+`list_recent` reads them on demand. A status written by an older plugin names no
 home and counts everywhere, as today, until that agent upgrades.
 
 **Risks created:** RISK-04, RISK-05
