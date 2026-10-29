@@ -14,7 +14,7 @@ before 0.5.0 are described in the git history.
   `🙋 <headline>` linked to the ask instead of `🙋 asked Post`, and `ask <id>`
   in any post shows the ask's headline (cut at 60 characters), `Input` when
   the server does not know it. The server keeps its own asks' headlines in
-  `asks-<uid>.env`; agents read every such link back as `ask <id>`.
+  `asks-<uid>.env`, after `resolve_ask` too (the newest 50); agents read every such link back as `ask <id>`.
 
 ### Fixed
 

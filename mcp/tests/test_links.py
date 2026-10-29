@@ -173,9 +173,25 @@ async def test_an_own_ask_is_linked_by_its_headline_without_a_request(monkeypatc
     post = await c.post(f"🙋 ask {POST_ID}", channel_id="c" * 26)
     assert sent[0]["message"] == f'🙋 [Merge #61?]({PL}{POST_ID} "ask")'
     assert post.message == f"🙋 ask {POST_ID}"
+    # Resolved, it is no open ask, and the IDLE right after still shows its headline.
     asks.resolve(bot, POST_ID)
-    await c.post(f"IDLE\nopen: ask {POST_ID}", channel_id="c" * 26)
-    assert sent[1]["message"] == f'IDLE\nopen: [Input]({PL}{POST_ID} "ask")'
+    assert asks.open_asks(bot) == [] and asks.waiting(bot) == []
+    await c.post(f"IDLE\ndone: ask {POST_ID} resolved", channel_id="c" * 26)
+    assert sent[1]["message"] == f'IDLE\ndone: [Merge #61?]({PL}{POST_ID} "ask") resolved'
+    await c.post(f"x ask {'q' * 25}1", channel_id="c" * 26)
+    assert sent[2]["message"] == f'x [Input]({PL}{"q" * 25}1 "ask")'
+
+
+def test_ask_titles_outlive_resolve_capped_at_the_newest():
+    """RT-6.15 step 2: headlines stay after resolve_ask, the newest asks.TITLES."""
+    bot = "b" * 26
+    ids = [f"{i:02d}" + "a" * 24 for i in range(asks.TITLES + 2)]
+    for pid in ids:
+        asks.add(bot, pid, "dembaca", pid, title=f"q {pid[:2]}")
+        asks.resolve(bot, pid)
+    got = asks.titles(bot)
+    assert list(got) == ids[2:] and got[ids[-1]] == f"q {ids[-1][:2]}"
+    assert asks.open_asks(bot) == []
 
 
 async def test_an_asks_card_links_post_ids_and_reads_back_bare(monkeypatch):

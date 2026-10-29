@@ -10,8 +10,9 @@ look at. It lives next to the other per-bot state, asks-<uid>.env:
     SEEN=<post_id>:<user_id>:<emoji>   a reaction already handed to the agent
     ANSWERED=<post_id>                 a trusted human answered it (RT-6.9): the
                                        wait is counted once, whatever comes next
-    TITLE=<post_id> <headline>         the ask's bold title, cut (links.headline):
-                                       its links show it (RT-6.15 step 2)
+    TITLE=<post_id> <headline>         the ask's bold title: its links show it
+                                       (RT-6.15 step 2); kept after resolve for
+                                       the newest TITLES asks, open or not
 
 The background listener (bin/mm-agent-listen.sh) wakes the agent for any
 reaction on an open ask that is not SEEN. resolve() drops the ask and its SEEN
@@ -30,6 +31,9 @@ MAX_AGE_SEC = 7 * 86400
 # A yes approves only this long after the ask (RT-6.11): a day later the
 # situation it names may have changed. Kept until MAX_AGE_SEC to say so.
 APPROVAL_SEC = 86400
+# Headlines kept, open asks or resolved: an IDLE right after resolve_ask still
+# links `ask <id>` by its headline (RT-6.15 step 2). Not an open ask.
+TITLES = 50
 
 YES = frozenset({"+1", "thumbsup", "white_check_mark", "heavy_check_mark",
                  "ballot_box_with_check"})
@@ -95,7 +99,8 @@ def _read_answered(uid: str) -> set[str]:
 
 
 def titles(uid: str) -> dict[str, str]:
-    """The headline of each open ask that has one (RT-6.11 step 1, RT-6.15 step 2)."""
+    """The headline of each of the newest TITLES asks, open or resolved, that
+    has one (RT-6.11 step 1, RT-6.15 step 2), oldest first."""
     out = {}
     for v in _lines(uid, "TITLE"):
         pid, _, title = v.partition(" ")
@@ -111,13 +116,16 @@ def _write(uid: str, asks: dict[str, float], seen: set[str],
         whom = _read_all(uid)[2]
     if done is None:
         done = _read_answered(uid)
-    heads = titles(uid) | (title or {})
+    heads = titles(uid)
+    for pid, head in (title or {}).items():
+        heads.pop(pid, None)
+        heads[pid] = head
     seen = {s for s in seen if s.split(":", 1)[0] in asks}
     lines = [f"ASK={pid} {int(at)} {whom[pid]}".rstrip() if pid in whom
              else f"ASK={pid} {int(at)}" for pid, at in asks.items()]
     lines += [f"SEEN={s}" for s in sorted(seen)]
     lines += [f"ANSWERED={p}" for p in sorted(done) if p in asks]
-    lines += [f"TITLE={p} {t}" for p, t in heads.items() if p in asks]
+    lines += [f"TITLE={p} {t}" for p, t in list(heads.items())[-TITLES:]]
     path = _path(uid)
     if not lines:
         path.unlink(missing_ok=True)
