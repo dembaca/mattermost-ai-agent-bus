@@ -73,7 +73,7 @@ channel membership, so a non-member is refused even in a public channel.
 
 | Convention | Detail |
 |------------|--------|
-| Channel | `MM_PROJECT_CHANNEL` when set, else `MM_CHANNEL` |
+| Channel | The agent's home: the first `MM_PROJECT_CHANNEL` entry, else `MM_CHANNEL` ([RT-6.22](arc42/06-runtime-view.md#622-guest-channels)) |
 | Job root | Top-level post describing the job (who owns it, goal, links) |
 | Progress | Replies in the same thread (`root_id` = root post id) |
 | Mentions | `@username` or `<@user_id>` to wake a specific bot |
