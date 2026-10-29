@@ -339,7 +339,8 @@ class WebSocketInbox:
         a reaction asks nothing. The coordinator is never gated; errors fail open."""
         me = self._bot_user_id
         try:
-            if not me or lease.crown_held(me) or not await self.client.trusted_humans():
+            if (not me or await lease.coordinates_in(self.client, me, event.post.channel_id)
+                    or not await self.client.trusted_humans()):
                 return
             if (await gate.author_classes(self.client, [event.post]))[0] != gate.OTHER:
                 return
@@ -358,7 +359,8 @@ class WebSocketInbox:
         post, me = event.post, self._bot_user_id
         root = post.thread
         try:
-            if not me or lease.crown_held(me):
+            # The coordinator is never gated where it routes (RT-6.16 step 2).
+            if not me or await lease.coordinates_in(self.client, me, post.channel_id):
                 return
             if not await self.client.trusted_humans():
                 return

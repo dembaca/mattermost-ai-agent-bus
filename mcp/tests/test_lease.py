@@ -121,10 +121,11 @@ def _coord_file(tmp_path, monkeypatch, **values):
 
 async def test_every_status_is_a_lease(mm, client, tmp_path):
     """RT-6.6 step 1: a status always carries an expiry, so a dead session's
-    runs out; presence online, the project as label, the state kept locally."""
+    runs out; presence online, the project as label and the home after it
+    (ADR-002), the state kept locally."""
     await lease.set_status(client, "working")
     s = mm.custom_status()
-    assert s["emoji"] == "hammer_and_wrench" and s["text"] == "working · proj"
+    assert s["emoji"] == "hammer_and_wrench" and s["text"] == "working · proj · ~agents"
     assert s["duration"] == "date_and_time" and s["expires_at"].endswith("Z")
     assert ("PUT", f"/api/v4/users/{UID}/status", {"user_id": UID, "status": "online"}) in mm.writes
     assert (_dir(tmp_path) / f"presence-{UID}.env").read_text() == "STATE=working\nLABEL=proj\n"
@@ -152,7 +153,7 @@ async def test_listening_ends_with_its_window(mm, client, tmp_path):
 async def test_renew_without_a_report_is_on_the_bus(mm, client):
     """RT-6.6 step 1: no turn hooks (Cursor, OpenCode) report a state: 📡."""
     await lease.set_status(client, "renew")
-    assert mm.custom_status()["text"] == "on the bus · proj"
+    assert mm.custom_status()["text"] == "on the bus · proj · ~agents"
 
 
 async def test_offline_ends_status_and_lease(mm, client, tmp_path, monkeypatch):

@@ -63,7 +63,7 @@ def test_listener_and_prompt_hook_through_the_server(mm, run):
     """RT-6.17 step 3: presence and the listener's wake-ups go through the
     server, which holds the token."""
     assert run(PROMPT, CORRAL_WORKDIR="/x/myproj").code == 0
-    assert mm.custom_status()["text"] == "working · myproj"
+    assert mm.custom_status()["text"] == "working · myproj · ~agents"
     mm.unread_dm(1)
     r = run(LISTEN, "--until", str(int(time.time()) + 20), MM_LISTEN_POLL_SEC="1",
             MM_PROJECT_CHANNEL_ID=PROJECT)

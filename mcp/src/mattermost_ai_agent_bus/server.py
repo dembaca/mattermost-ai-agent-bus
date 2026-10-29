@@ -757,15 +757,15 @@ async def get_me(raw: bool = False) -> str:
 async def post_message(
     message: str, channel_id: str = "", root_id: str = "", to: str = "", kind: str = ""
 ) -> str:
-    """Create a post, in the work channel (MM_PROJECT_CHANNEL, else MM_CHANNEL) when channel_id is empty.
+    """Create a post, in your home (MM_PROJECT_CHANNEL, else MM_CHANNEL) when channel_id is empty.
 
     to: another agent's username — a DM, for back-and-forth that would only
     cost the others tokens; share the outcome in the channel afterwards.
     Agents only: people are asked with ask_human. "all" wakes every agent in
     the channel (RT-6.11); @channel/@here/@all are written plain, they would
     notify every human. kind: the bus word (TASK, ACK, BLOCKED, RESULT, DONE…),
-    put first if missing (RT-6.14). While you hold the coordinator crown the
-    post starts with 👑.
+    put first if missing (RT-6.14). While you hold the coordinator crown a
+    post in your home or a DM starts with 👑.
     """
     return _out("post_message", await post_as_bot(None, message, channel_id, root_id, to, kind))
 
@@ -800,13 +800,13 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
         except Exception as exc:  # noqa: BLE001 — the post still goes out, without a table
             log.warning("ASSIGNMENTS without a table: %s", exc)
     stats.record("post", chars=len(message))
+    here = await lease.crown_here(client, uid, channel_id, root_id)
     try:
         post = await client.post(
-            lease.with_crown(message, uid),
+            lease.with_crown(message, uid, here=here),
             channel_id=channel_id or None,
             root_id=root_id or None,
-            props=a2a.props(message, a2a.ALL if everyone else "",
-                            crown=bool(uid) and lease.crown_held(uid)),
+            props=a2a.props(message, a2a.ALL if everyone else "", crown=here),
         )
     except Refused as exc:
         return _refusal(str(exc))
@@ -823,7 +823,7 @@ async def reply_in_thread(
     channel — a DM too — unless channel_id says otherwise.
 
     to="all" and kind as for post_message. While you hold the coordinator
-    crown the reply starts with 👑.
+    crown a reply in your home or a DM starts with 👑.
     """
     return _out("reply_in_thread", await reply_as_bot(None, root_id, message, channel_id, to, kind))
 
@@ -845,13 +845,13 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
     message, removed = await _unmention(client, message)
     uid = await _my_id(client)
     stats.record("post", chars=len(message))
+    here = await lease.crown_here(client, uid, channel_id, root_id)
     try:
         post = await client.post(
-            lease.with_crown(message, uid),
+            lease.with_crown(message, uid, here=here),
             channel_id=channel_id or None,
             root_id=root_id,
-            props=a2a.props(message, a2a.ALL if everyone else "",
-                            crown=bool(uid) and lease.crown_held(uid)),
+            props=a2a.props(message, a2a.ALL if everyone else "", crown=here),
         )
     except Refused as exc:
         return _refusal(str(exc))
@@ -985,7 +985,8 @@ async def ask_human(
     out["ask"] = post.id
     if root_id:
         # Linked from the thread it came from, without the mention: one notification.
-        link = lease.with_crown(f"🙋 asked {post.id}", me.id)
+        link = lease.with_crown(f"🙋 asked {post.id}", me.id,
+                                here=await lease.crown_here(client, me.id, root_id=root_id))
         stats.record("post", chars=len(link))
         try:
             await client.post(link, root_id=root_id)
@@ -1167,8 +1168,9 @@ async def _typing_for_task(events: list[Any], items: list[dict[str, Any]]) -> No
     task = next((e for e, i in zip(events, items, strict=False) if _human_task(e, i)), None)
     if task is None:
         return
-    uid = await _my_id(_get_client())
-    if uid and lease.crown_held(uid):
+    client = _get_client()
+    uid = await _my_id(client)
+    if await lease.coordinates_in(client, uid, task.post.channel_id):
         _get_inbox().start_typing(task.post.channel_id, task.post.thread)
 
 
@@ -1303,8 +1305,10 @@ async def _push_addressed(item: dict[str, Any]) -> bool:
     if mine is None:
         return True
     root = slim.root_of(item)
-    return channel.wakes(item, coordinator=lease.crown_held(uid), in_my_thread=mine,
-                         my_root=bool(root) and root in _my_roots)
+    crown = lease.crown_held(uid)
+    return channel.wakes(item, coordinator=crown, in_my_thread=mine,
+                         my_root=bool(root) and root in _my_roots,
+                         routes=await lease.routes(_get_client()) if crown else None)
 
 
 async def _compact_bystander(payload: list[dict[str, Any]]) -> None:

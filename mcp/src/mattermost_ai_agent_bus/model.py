@@ -129,13 +129,15 @@ class Thread:
 
 @dataclass(frozen=True)
 class RosterEntry:
-    """A reachable agent of the work channel (RT-6.6). status is a word:
-    working, listening, idle, bus, or what the agent's status text says."""
+    """A reachable agent of the home (RT-6.6). status is a word: working,
+    listening, idle, bus, or what the agent's status text says. crown_of: the
+    other home whose crown it holds, when it is here as a guest (ADR-002)."""
 
     username: str
     status: str = ""
     coordinator: bool = False
     crown: bool = False
+    crown_of: str = ""
 
 
 @dataclass(frozen=True)

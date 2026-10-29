@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from fakes import WORK, FakeChat
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
@@ -127,7 +128,7 @@ def crowned(monkeypatch):
     inbox, ws = _inbox()
     crown = {"held": True}
     monkeypatch.setattr(server, "_get_inbox", lambda: inbox)
-    monkeypatch.setattr(server, "_get_client", lambda: object())
+    monkeypatch.setattr(server, "_get_client", lambda: FakeChat())
 
     async def my_id(_client):
         return "me"
@@ -155,13 +156,13 @@ async def test_a_humans_plain_post_shows_the_crown_typing_in_both_paths(crowned,
     monkeypatch.setattr(server, "_event_items", items)
     monkeypatch.setattr(server, "_compact_bystander", nothing)
     await inbox._queue.put(ClassifiedEvent(
-        kind="watched_channel", post=post_of({"id": "p7", "channel_id": "c1", "root_id": "r7"})))
+        kind="watched_channel", post=post_of({"id": "p7", "channel_id": WORK, "root_id": "r7"})))
     if path == "push":
         await server._push_wait(1)
     else:
         await server.wait_for_events(timeout_sec=1)
     await asyncio.sleep(0)
-    assert ws.typing()[:2] == [{"channel_id": "c1", "parent_id": "r7"}, {"channel_id": "c1", "parent_id": ""}]
+    assert ws.typing()[:2] == [{"channel_id": WORK, "parent_id": "r7"}, {"channel_id": WORK, "parent_id": ""}]
 
 
 @pytest.mark.asyncio

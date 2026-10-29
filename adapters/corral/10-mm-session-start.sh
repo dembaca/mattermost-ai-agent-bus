@@ -449,7 +449,7 @@ jq -nc \
   --arg mcp "tcp://127.0.0.1:${HOST_PORT}" \
   --arg hook "$HOST_HOOK" \
   --arg note "$note" \
-  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_CHANNEL:-}${MM_PROJECT_CHANNEL:+, work #${MM_PROJECT_CHANNEL}}, ${RESPONSIBLE:+for @${RESPONSIBLE}, }trusted ${trusted_shown}; token stays on the host" \
+  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_PROJECT_CHANNEL:-${MM_CHANNEL:-}}${MM_PROJECT_CHANNEL:+, lobby #${MM_CHANNEL:-}}, ${RESPONSIBLE:+for @${RESPONSIBLE}, }trusted ${trusted_shown}; token stays on the host" \
   '{
      corralContributionVersion: 1,
      env: ($env + {MM_BUS_ENDPOINT: $hook, MM_BUS_MCP_ENDPOINT: $mcp, MM_BUS_KEY: $key}),

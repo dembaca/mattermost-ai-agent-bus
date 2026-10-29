@@ -10,7 +10,7 @@ code does today and point here where a decision will change them.
 | ADR | Decision | Status | Work packages (#63, #83) |
 |-----|----------|--------|--------------------------|
 | ADR-001 | Authority comes from trust, not from a role or a channel | Decided 2026-10-29, not built | WP2 |
-| ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, not built | WP1, WP4, WP5 |
+| ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, partly built (WP1, 0.59.0) | WP1, WP4, WP5 |
 | ADR-003 | An agent's owner comes from its registrar-bound bot description | Decided 2026-10-29, not built | WP2, WP3 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
@@ -84,8 +84,12 @@ server; without one nothing is gated, as today (Section 7.2).
 
 ## ADR-002: One home per agent, guests only talk, a crown per (agent, home)
 
-**Status:** Decided 2026-10-29 (owner), not built. Planned in WP1 (home and
-crown per home), WP4 (guest channels), WP5 (lobby).
+**Status:** Decided 2026-10-29 (owner), partly built (WP1). Built in 0.59.0
+(WP1): the home, the status naming it, the crown, roster, election and
+header per home, the 👑 only in the home, coordinator wakes and the gate
+exemption only where the crown routes, and the ambassador listing (RT-6.6).
+Planned: WP4 (guest channels), WP5 (lobby). Until WP5 the crown also routes
+in the lobby, as before.
 
 **Context:** Today one work channel holds everything: crown, tasks, sign-off,
 header, stall watch. A custom status is global per user, so the roster and

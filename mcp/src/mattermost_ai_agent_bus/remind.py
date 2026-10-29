@@ -185,7 +185,8 @@ async def _tick(client: ChatPort, uid: str, now: float) -> float | None:
             if done:
                 stop.add(pid)
                 continue
-            message = lease.with_crown(text(human, title, now - asked), uid)
+            message = lease.with_crown(text(human, title, now - asked), uid,
+                                       here=await lease.crown_here(client, uid, root_id=root or pid))
             stats.record("post", chars=len(message))
             await client.post(message, root_id=root or pid, props=a2a.props(kind=a2a.REMINDER))
             stats.record("remind", id=pid)

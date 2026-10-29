@@ -123,11 +123,74 @@ def take_pending(user_id: str) -> bool:
     return _coord(user_id).get("PENDING", 0) == 1
 
 
-def with_crown(message: str, user_id: str) -> str:
-    """Prefix the coordinator's posts: bot posts never show a custom status."""
-    if user_id and crown_held(user_id) and not message.startswith(CROWN):
+def with_crown(message: str, user_id: str, *, here: bool = True) -> str:
+    """Prefix the coordinator's posts: bot posts never show a custom status.
+    here: the post goes where the crown shows (crown_here); False leaves it
+    plain, as a guest's post (ADR-002)."""
+    if here and user_id and crown_held(user_id) and not message.startswith(CROWN):
         return f"{CROWN} {message}"
     return message
+
+
+# Channel types that are no team channel: a DM, a group message.
+_PRIVATE = ("D", "G")
+_TYPES: dict[str, str] = {}
+
+
+async def _channel_type(client: ChatPort, channel_id: str) -> str:
+    if channel_id not in _TYPES:
+        _TYPES[channel_id] = (await client.get_channel(channel_id)).type
+    return _TYPES[channel_id]
+
+
+async def crown_here(client: ChatPort, user_id: str, channel_id: str = "",
+                     root_id: str = "") -> bool:
+    """Whether a post of this agent in channel_id, or in root_id's thread,
+    shows the 👑 (prefix and props.a2a.crown; RT-6.6 step 5, ADR-002): it
+    holds the crown, and the post goes to its home (no channel: the home), a
+    DM or a group message. Never in another team channel: there the agent is
+    a guest, and that channel has its own crown. Unsure: no crown."""
+    if not user_id or not crown_held(user_id):
+        return False
+    try:
+        if not channel_id and root_id:
+            channel_id = await client.post_channel_id(root_id)
+        if not channel_id or channel_id == await client.work_channel_id():
+            return True
+        return await _channel_type(client, channel_id) in _PRIVATE
+    except Exception as exc:  # noqa: BLE001 — cosmetic: a plain post
+        log.debug("crown here: %s", exc)
+        return False
+
+
+async def routes(client: ChatPort) -> set[str]:
+    """The team channels whose plain posts the crown holder routes (RT-6.6
+    step 5, ADR-002): its home, and the lobby (MM_CHANNEL) until WP5 decides
+    the lobby's rules. In any other team channel it is an agent like the
+    rest. A channel that cannot be resolved is left out."""
+    out: set[str] = set()
+    for get in (client.work_channel_id, client.lobby_channel_id):
+        try:
+            out.add(await get())
+        except Exception as exc:  # noqa: BLE001
+            log.debug("crown channels: %s", exc)
+    return out
+
+
+async def coordinates_in(client: ChatPort, user_id: str, channel_id: str) -> bool:
+    """This agent holds the crown and acts as coordinator for a post in
+    channel_id (RT-6.6 step 5, RT-6.16 step 2): a channel it routes
+    (`routes`), a DM or group message, or one it was not told (''). Unsure:
+    as before, the crown counts."""
+    if not user_id or not crown_held(user_id):
+        return False
+    if not channel_id or channel_id in await routes(client):
+        return True
+    try:
+        return await _channel_type(client, channel_id) in _PRIVATE
+    except Exception as exc:  # noqa: BLE001
+        log.debug("coordinates in: %s", exc)
+        return True
 
 
 async def _user_id(client: ChatPort) -> str:
@@ -209,6 +272,8 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
         emoji, text, until = "crown", f"coordinator · {text}", crown
     else:
         crown = 0
+    if text:
+        text = homed(text, client.work_channel_name)
     if coord is not None and coord.is_file():
         lines = _read_lines(coord)
         _write(coord, "".join(f"CROWN_UNTIL={crown}\n" if ln.startswith("CROWN_UNTIL=") else f"{ln}\n"
@@ -220,12 +285,36 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
         log.debug("status: %s", exc)
     try:
         if emoji:
-            # Mattermost caps custom status text at 100 characters.
-            await client.set_custom_status(emoji, text[:100], _rfc3339(until))
+            await client.set_custom_status(emoji, text[:STATUS_MAX], _rfc3339(until))
         else:
             await client.clear_custom_status()
     except Exception as exc:  # noqa: BLE001
         log.debug("custom status: %s", exc)
+
+
+# Mattermost caps custom status text at 100 characters.
+STATUS_MAX = 100
+_HOME = " · ~"
+
+
+def homed(text: str, home: str) -> str:
+    """A status text that names the agent's home (RT-6.6 step 1, ADR-002):
+    "<text> · ~<home>". A custom status is global per user; the home tells
+    every channel's roster whose crown it is. Past STATUS_MAX the text
+    before it is cut (the label first, it comes last), never the home."""
+    if not home:
+        return text
+    tail = f"{_HOME}{home}"
+    return text[:max(0, STATUS_MAX - len(tail))] + tail
+
+
+def home_of(text: str) -> str | None:
+    """The home a status text names; None for a text without one (an older
+    plugin's, or set by hand), which counts in every channel."""
+    _, sep, home = str(text).rpartition(_HOME)
+    if not sep or not home.strip() or " · " in home:
+        return None
+    return home.strip()
 
 
 def _read_lines(path: Path) -> list[str]:
@@ -262,7 +351,8 @@ def _expired(value: Any, now: datetime) -> bool:
 async def _rows(client: ChatPort, channel_id: str) -> list[dict[str, Any]]:
     """The bus's bots in a channel (the registrar's prefix), oldest first, with
     what the lease rules need: id, username, create_at, presence, emoji, text,
-    live, until_ms (the lease's end, 0 unknown), reachable, crown. A custom
+    home (the one its status names, None: none), live, until_ms (the lease's
+    end, 0 unknown), reachable, crown. A custom
     status counts (live) while its lease has not expired;
     one without an expiry predates the lease (or was set by hand) and proves
     nothing about a live session. Reachable: not offline, a live status, not
@@ -283,12 +373,20 @@ async def _rows(client: ChatPort, channel_id: str) -> list[dict[str, Any]]:
         presence = status.get(u.id) or "offline"
         reachable = presence != "offline" and live and emoji != "zzz"
         until = _at(custom.get("expires_at")) if custom.get("duration") else None
+        text = str(custom.get("text") or "")
         rows.append({"id": u.id, "username": u.username,
                      "create_at": u.create_at, "presence": presence,
-                     "emoji": emoji, "text": str(custom.get("text") or ""), "live": live,
+                     "emoji": emoji, "text": text, "home": home_of(text), "live": live,
                      "until_ms": int(until.timestamp() * 1000) if until else 0,
                      "reachable": reachable, "crown": reachable and emoji == "crown"})
     return rows
+
+
+def _at_home(rows: list[dict[str, Any]], home: str) -> list[dict[str, Any]]:
+    """The rows that count in the roster and the election of the channel
+    `home` (RT-6.6, ADR-002): the agents whose status names it, and those
+    whose status names no home (an older plugin), as before."""
+    return [r for r in rows if r["home"] in (None, home)]
 
 
 def _coordinator_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -301,8 +399,10 @@ def _coordinator_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def roster(client: ChatPort) -> list[RosterEntry]:
-    """The reachable agents of the work channel, coordinator first (RT-6.6,
-    RT-6.14 step 4); [] when it cannot be read."""
+    """The reachable agents of the home, coordinator first (RT-6.6, RT-6.14
+    step 4); [] when it cannot be read. A member whose home is elsewhere does
+    not count; one that holds its own home's crown comes last as that home's
+    ambassador (crown_of, ADR-002): whom to mention for that team's work."""
     if not client.token:
         return []
     try:
@@ -310,18 +410,23 @@ async def roster(client: ChatPort) -> list[RosterEntry]:
     except Exception as exc:  # noqa: BLE001 — an empty roster
         log.debug("roster: %s", exc)
         return []
-    return [entry(r) for r in _coordinator_first(rows)]
+    home = client.work_channel_name
+    guests = [entry(dict(r, crown=False), crown_of=str(r["home"]))
+              for r in rows if r["home"] not in (None, home) and r["crown"]]
+    return [entry(r) for r in _coordinator_first(_at_home(rows, home))] + guests
 
 
-def entry(row: Mapping[str, Any]) -> RosterEntry:
+def entry(row: Mapping[str, Any], crown_of: str = "") -> RosterEntry:
     """One roster row as a bus type: the status word from the status text
-    (after "coordinator"), else from its emoji."""
+    (after "coordinator"), else from its emoji. crown_of: the other home
+    whose crown it holds."""
     text = [w.strip() for w in str(row.get("text", "")).split(" · ")]
     if text and text[0] == "coordinator":
         text = text[1:]
     status = text[0] if text and text[0] else _STATUS.get(str(row.get("emoji", "")), "")
     return RosterEntry(username=str(row.get("username") or ""), status=status,
-                       coordinator=bool(row.get("coordinator")), crown=bool(row.get("crown")))
+                       coordinator=bool(row.get("coordinator")), crown=bool(row.get("crown")),
+                       crown_of=crown_of)
 
 
 # --- the crown --------------------------------------------------------------------------
@@ -358,7 +463,8 @@ async def _command(client: ChatPort, action: str) -> str:
         # Re-read: the renewal may have let an idle crown run out.
         crown = _coord(uid).get("CROWN_UNTIL", crown)
 
-    rows = await _rows(client, cid)
+    # A crown per home (ADR-002): only the agents whose home this is count.
+    rows = _at_home(await _rows(client, cid), client.work_channel_name)
     others = [r for r in rows if r["crown"] and r["id"] != uid]  # oldest first
 
     async def take_now() -> None:
@@ -385,7 +491,7 @@ async def _command(client: ChatPort, action: str) -> str:
 
     holding = crown > now
     if holding and others:
-        # Two crowns (a race): the older agent keeps it.
+        # Two crowns in one home (a race): the older agent keeps it.
         mine = next((r["create_at"] for r in rows if r["id"] == uid), None)
         if mine is not None and others[0]["create_at"] < mine:
             _save_coord(uid, 0, pending, yield_until)

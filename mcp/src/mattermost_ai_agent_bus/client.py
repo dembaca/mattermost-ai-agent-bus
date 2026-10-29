@@ -310,6 +310,8 @@ class MattermostAdapter:
         default_factory=dict, repr=False, init=False
     )
     _usernames: dict[str, str] = field(default_factory=dict, repr=False, init=False)
+    # post id -> (its channel, its root): a post never moves.
+    _roots: dict[str, tuple[str, str]] = field(default_factory=dict, repr=False, init=False)
     _bots: set[str] = field(default_factory=set, repr=False, init=False)
     _is_human: dict[str, bool] = field(default_factory=dict, repr=False, init=False)
     session: SessionInfo | None = field(default=None, repr=False, init=False)
@@ -350,7 +352,8 @@ class MattermostAdapter:
 
     @property
     def work_channel_name(self) -> str:
-        """Channel used for posting: the project channel when set, else the default."""
+        """The agent's home (ADR-002), the channel it posts to: the project
+        channel when set, else the default."""
         return self.project_channel_name or self.channel_name
 
     @classmethod
@@ -965,9 +968,9 @@ class MattermostAdapter:
         if root_id:
             # A reply belongs where its root is: a DM, or another channel. A
             # reply's id names its thread: Mattermost refuses it as root_id.
-            root = await self._api("GET", f"/api/v4/posts/{mm_id(root_id, 'post')}")
-            root_id = mm_id(root.get("root_id") or root_id, "post")
-            channel_id = channel_id or root.get("channel_id") or None
+            in_channel, of_root = await self._root(root_id)
+            root_id = mm_id(of_root or root_id, "post")
+            channel_id = channel_id or in_channel or None
         cid = mm_id(channel_id or await self.get_channel_id(), "channel")
         # RT-6.15: post ids as permalinks, odd links written out for the human.
         # The same for an attachment's text (an ask's card), so no caller forgets it.
@@ -982,6 +985,21 @@ class MattermostAdapter:
                                   self.permalink_base))
         await self._remember(cid, post)
         return post
+
+    async def _root(self, post_id: str) -> tuple[str, str]:
+        """A post's channel and thread root ('' for a root), cached."""
+        pid = mm_id(post_id, "post")
+        hit = self._roots.get(pid)
+        if hit is None:
+            data = await self._api("GET", f"/api/v4/posts/{pid}")
+            hit = (str(data.get("channel_id") or ""), str(data.get("root_id") or ""))
+            if len(self._roots) >= 2000:
+                self._roots.clear()
+            self._roots[pid] = hit
+        return hit
+
+    async def post_channel_id(self, post_id: str) -> str:
+        return (await self._root(post_id))[0]
 
     async def _remember(self, channel_id: str, post: Post) -> None:
         """Keep the bot's latest post in the work channel for the Stop hook and
@@ -1092,6 +1110,12 @@ class MattermostAdapter:
         if not self.project_channel_name and env("MM_CHANNEL_ID"):
             return env("MM_CHANNEL_ID")
         return await self.get_channel_id()
+
+    async def lobby_channel_id(self) -> str:
+        """MM_CHANNEL's id: MM_CHANNEL_ID, else by name."""
+        if _ID.fullmatch(env("MM_CHANNEL_ID")):
+            return env("MM_CHANNEL_ID")
+        return await self.get_channel_id(self.channel_name)
 
     async def join_channel(self, channel_name: str) -> str:
         cid = mm_id(await self.get_channel_id(channel_name), "channel")
