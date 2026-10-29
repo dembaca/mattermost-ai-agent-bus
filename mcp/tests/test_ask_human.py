@@ -388,8 +388,10 @@ async def test_an_ask_from_a_thread_stands_on_its_own_and_is_linked_there(monkey
     ask, link = c.posted
     assert ask["root_id"] is None and ask["message"] == "🙋 @dembaca — **Merge #61?**"
     # A pointer, not an ask (RT-6.19): its own kind keeps it out of the open asks.
-    assert link == {"message": f"🙋 asked {ASK}", "channel_id": None, "root_id": task,
+    # Humans read it as the ask's headline, linked (RT-6.15 step 2): asks-<uid>.env keeps it.
+    assert link == {"message": f"🙋 ask {ASK}", "channel_id": None, "root_id": task,
                     "props": {"a2a": {"v": a2a.V, "kind": a2a.ASK_LINK}}}
+    assert asks.titles(BOT) == {ASK: "Merge #61?"}
     assert out["ask"] == ASK and out["linked_in"] == task
     assert asks.expired(BOT, ASK, time.time() + day, thread=True)
     assert not asks.expired(BOT, task, time.time() + day, thread=True)  # no ask lives there

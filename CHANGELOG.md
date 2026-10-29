@@ -3,6 +3,27 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.65.2
+
+### Changed
+
+- **An ask's link shows its headline**
+  ([RT-6.11 step 1](docs/arc42/06-runtime-view.md#611-asking-a-human),
+  [RT-6.15 steps 2–3](docs/arc42/06-runtime-view.md#615-references-as-links)).
+  The line `ask_human` posts in the thread an ask came from reads
+  `🙋 <headline>` linked to the ask instead of `🙋 asked Post`, and `ask <id>`
+  in any post shows the ask's headline (cut at 60 characters), `Input` when
+  the server does not know it. The server keeps its own asks' headlines in
+  `asks-<uid>.env`, after `resolve_ask` too (the newest 50); agents read every such link back as `ask <id>`.
+
+### Fixed
+
+- **No `IDLE` demand every turn after a plugin update**
+  ([RT-6.2 step 2](docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)).
+  With an MCP server older than 0.65.1 still running, `GET /v1/last-post` has
+  no `signed_off`; the Stop hook falls back to the old rule (latest own post an
+  `IDLE` or `BYE`) instead of asking for a sign-off every turn.
+
 ## 0.65.1
 
 ### Changed

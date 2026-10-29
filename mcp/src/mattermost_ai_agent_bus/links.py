@@ -15,7 +15,9 @@ and what it reads.
 Permalinks cost tokens in every agent that reads the post, so `read` takes
 the bus's own off again: the bare id says the same. A human reads a short
 label instead of 26 characters: `Post`, or the word before the id
-(`ask <id>` → `[ask](…/pl/<id>)`); the id stays in the URL (RT-6.15 step 2).
+(`thread <id>` → `[thread](…/pl/<id>)`); an ask shows its headline
+(`ask <id>` → `[<headline>](…/pl/<id> "ask")`, `Input` when the server does
+not know it); the id stays in the URL (RT-6.15 step 2).
 """
 
 from __future__ import annotations
@@ -33,17 +35,34 @@ FOLD = ("ask", "thread", "post", "reply", "result")
 _TOKEN = re.compile(
     r"(?P<code>(?P<fence>`{3,}).*?(?:(?P=fence)|\Z)|`[^`\n]+`)"
     rf"|(?P<pre>\b(?P<word>(?i:{'|'.join(FOLD)}))[ \t]+)?"
-    r"(?:(?P<link>!?\[(?P<label>[^\]\n]*)\]\(\s*(?P<url>[^\s)]+)(?:\s+\"[^\"\n]*\")?\s*\))"
+    r"(?:(?P<link>!?\[(?P<label>(?:\\[\\\[\]]|[^\]\n])*)\]\(\s*(?P<url>[^\s)]+)(?:\s+\"(?P<title>[^\"\n]*)\")?\s*\))"
     r"|(?P<id>(?<![@<#/\w-])(?=[a-z]*\d)(?=\d*[a-z])[a-z0-9]{26}(?![\w-])))"
     r"|(?P<bare><?(?<![\w.])(?:https?://|www\.)[^\s<>]+>?)",
     re.S,
 )
 LABEL = "Post"
+# An ask's link shows the ask's headline (its bold title, cut), or ASK_LABEL
+# when the server does not know it; the link title "ask" marks it, so every
+# reader takes it back as `ask <id>` (RT-6.15 steps 2-3, RT-6.11 step 1).
+ASK = "ask"
+ASK_LABEL = "Input"
+HEADLINE = 60
 _ID = re.compile(r"(?=[a-z]*\d)(?=\d*[a-z])[a-z0-9]{26}")
 _HIDDEN = re.compile("[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 _ADDRESS = re.compile(r"://|^www\.|^[\w-]+(?:\.[\w-]+)+/", re.I)
 _NAME = re.compile(r"[\w-]+(?:\.[\w-]+)+")
 _SAFE = "/?#[]@!$&'()*+,;=:%~"
+
+
+def headline(text: str) -> str:
+    """An ask's headline as its link shows it: one line, at most HEADLINE characters."""
+    text = " ".join(text.split())
+    return text if len(text) <= HEADLINE else text[:HEADLINE - 1].rstrip() + "…"
+
+
+def _label(text: str) -> str:
+    """Link text that cannot end the link early: \\, [ and ] escaped."""
+    return re.sub(r"([\\\[\]])", r"\\\1", text)
 
 
 def _host(url: str) -> str:
@@ -138,9 +157,11 @@ def _tables(message: str) -> str:
     return "\n".join(out)
 
 
-def send(message: str, *, post_url: str) -> str:
+def send(message: str, *, post_url: str,
+         ask_title: Callable[[str], str] | None = None) -> str:
     """A post as the human sees it: post ids as permalinks to `post_url` + id,
-    odd links written out, a blank line before a table."""
+    odd links written out, a blank line before a table. `ask_title` gives an
+    ask's headline by its id ('' when unknown), asked only for `ask <id>`."""
     message = _tables(message)
     def one(m: re.Match[str]) -> str:
         if m["bare"]:
@@ -156,6 +177,9 @@ def send(message: str, *, post_url: str) -> str:
         # RT-6.15 step 2: a short label, the id in the URL. A word at the
         # post's start is its bus word (a2a.word): it stays outside the link.
         if pre and m.string[:m.start()].strip():
+            if m["word"].lower() == ASK:
+                title = headline(ask_title(pid) if ask_title else "") or ASK_LABEL
+                return f'[{_label(title)}]({post_url}{pid} "{ASK}")'
             return f"[{m['word']}]({post_url}{pid})"
         return f"{pre}[{LABEL}]({post_url}{pid})"
     return _each(message, one)
@@ -180,6 +204,8 @@ def read(message: str, *, post_url: str) -> str:
                 return pre + pid
             if label.lower() in FOLD:
                 return f"{pre}{label} {pid}"
+            if m["title"] == ASK:
+                return f"{pre}{ASK} {pid}"
         return pre + (_written_out(m["label"], m["url"]) if _odd(m["label"], m["url"], post_url)
                       else m["link"])
     return _each(message, one)

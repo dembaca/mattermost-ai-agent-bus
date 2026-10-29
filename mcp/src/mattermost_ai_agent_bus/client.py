@@ -18,7 +18,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import a2a, links, owners, ownpost, profile, session_file, stats, watermark
+from . import a2a, asks, links, owners, ownpost, profile, session_file, stats, watermark
 from .model import Channel, ChannelUser, FileInfo, Me, Post, Reaction, Thread, UnreadChannel
 
 if TYPE_CHECKING:
@@ -1136,15 +1136,19 @@ class MattermostAdapter:
             root_id = mm_id(of_root or root_id, "post")
             channel_id = channel_id or in_channel or None
         cid = mm_id(channel_id or await self.get_channel_id(), "channel")
-        # RT-6.15: post ids as permalinks labelled `Post` (step 2), odd links written out.
+        # RT-6.15: post ids as permalinks labelled `Post` (step 2), an own ask's
+        # by its headline (asks-<uid>.env, no request), odd links written out.
         # The same for an attachment's text (an ask's card), so no caller forgets it.
-        message = links.send(message, post_url=self.permalink_base)
+        def ask_title(pid: str) -> str:
+            uid = self.bot_id
+            return asks.titles(uid).get(pid, "") if uid else ""
+        message = links.send(message, post_url=self.permalink_base, ask_title=ask_title)
         body: dict[str, Any] = {"channel_id": cid, "message": message}
         if root_id:
             body["root_id"] = root_id
         if props:
             body["props"] = attachment_texts(
-                props, lambda s: links.send(s, post_url=self.permalink_base))
+                props, lambda s: links.send(s, post_url=self.permalink_base, ask_title=ask_title))
         post = post_of(read_links(await self._api("POST", "/api/v4/posts", json=body),
                                   self.permalink_base))
         await self._remember(cid, post)

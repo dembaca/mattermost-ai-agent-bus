@@ -158,7 +158,16 @@ my_last_post() {
   mm_bus GET /v1/last-post || return 1
   LAST_AT="$(jq -r '.at // 0' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
   LAST_MSG="$(jq -r '.message // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
-  SIGNED_OFF="$(jq -r 'if .signed_off == true then 1 else 0 end' <<<"$MM_BUS_BODY" 2>/dev/null)" || SIGNED_OFF=0
+  SIGNED_OFF="$(jq -r 'if has("signed_off") then (if .signed_off == true then 1 else 0 end)
+                       else "" end' <<<"$MM_BUS_BODY" 2>/dev/null)" || SIGNED_OFF=0
+  if [[ -z "$SIGNED_OFF" ]]; then
+    # A server before 0.65.1 (the plugin updated, the session not restarted)
+    # sends no signed_off: the old rule, the latest own post is an IDLE or BYE.
+    local msg="${LAST_MSG#👑}"
+    msg="${msg#"${msg%%[![:space:]]*}"}"
+    SIGNED_OFF=0
+    [[ "$msg" =~ ^(IDLE|BYE)([^A-Za-z]|$) ]] && SIGNED_OFF=1
+  fi
   [[ "$LAST_AT" =~ ^[0-9]+$ ]] || LAST_AT=0
 }
 

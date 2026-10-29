@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import links, tasks
+from mattermost_ai_agent_bus import asks, links, tasks
 from mattermost_ai_agent_bus.client import MattermostAdapter, attachment_props
 
 PL = "https://mm.example/agents/pl/"
@@ -31,7 +31,8 @@ def test_post_ids_become_permalinks_and_read_back_bare():
 @pytest.mark.parametrize(("text", "sent"), [
     (f"ask {POST_ID}", f"ask [Post]({PL}{POST_ID})"),       # a bus word at the start stays
     (f"RESULT {POST_ID}", f"RESULT [Post]({PL}{POST_ID})"),
-    (f"WAITING for approval: merge · ask {POST_ID}", f"WAITING for approval: merge · [ask]({PL}{POST_ID})"),
+    (f"WAITING for approval: merge · ask {POST_ID}",
+     f'WAITING for approval: merge · [Input]({PL}{POST_ID} "ask")'),
     (f"see Thread {POST_ID}, reply {POST_ID}", f"see [Thread]({PL}{POST_ID}), [reply]({PL}{POST_ID})"),
     (f"x [{POST_ID}]({PL}{POST_ID})", f"x [Post]({PL}{POST_ID})"),
     (f"x [`{POST_ID}`]({PL}{POST_ID})", f"x [Post]({PL}{POST_ID})"),
@@ -130,6 +131,67 @@ TABLE = "| a | b |\n|---|---|\n| 1 | 2 |"
 def test_a_table_after_text_gets_a_blank_line(text, want):
     # RT-6.15: Mattermost renders a table only after a blank line.
     assert send(text) == want
+
+
+def test_an_ask_shows_its_headline_and_reads_back_as_ask():
+    """RT-6.15 step 2/3, RT-6.11 step 1: `ask <id>` shows the ask's headline
+    (one line, cut at 60, brackets escaped so the link holds), `Input` when it
+    is unknown; the link title `ask` marks it, so any reader, knowing the
+    headline or not, takes it back as `ask <id>`."""
+    head = "Merge [PR #61] now?\n" + "x" * 80
+    sent = links.send(f"🙋 ask {POST_ID}", post_url=PL, ask_title=lambda pid: head)
+    label = "Merge \\[PR #61\\] now? " + "x" * 39 + "…"
+    assert sent == f'🙋 [{label}]({PL}{POST_ID} "ask")'
+    assert len(links.headline(head)) == links.HEADLINE
+    assert read(sent) == f"🙋 ask {POST_ID}"
+    assert send(sent) == sent  # a second pass leaves the link alone
+    assert send(f"open: ask {POST_ID}") == f'open: [Input]({PL}{POST_ID} "ask")'
+    assert read(f"open: [Input]({PL}{POST_ID})") == f"open: [Input]({PL}{POST_ID})"
+    # Another host's link titled `ask` is no ask of this bus.
+    other = f'[Merge](https://h.example/pl/{POST_ID} "ask")'
+    assert read(other) == other
+
+
+async def test_an_own_ask_is_linked_by_its_headline_without_a_request(monkeypatch):
+    """RT-6.15 step 2, RT-6.11 step 1: the adapter takes the headline from the
+    bot's own asks file (asks-<uid>.env); an ask it does not know reads `Input`."""
+    sent = []
+    bot = "b" * 26
+
+    async def no_bookkeeping(self, cid, post):
+        return None
+
+    def handler(req):
+        sent.append(json.loads(req.content))
+        return httpx.Response(201, json={"id": "n" * 26, **sent[-1]})
+
+    monkeypatch.setattr(MattermostAdapter, "_remember", no_bookkeeping)
+    monkeypatch.setenv("MM_BOT_USER_ID", bot)
+    asks.add(bot, POST_ID, "dembaca", POST_ID, title="Merge #61?")
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    post = await c.post(f"🙋 ask {POST_ID}", channel_id="c" * 26)
+    assert sent[0]["message"] == f'🙋 [Merge #61?]({PL}{POST_ID} "ask")'
+    assert post.message == f"🙋 ask {POST_ID}"
+    # Resolved, it is no open ask, and the IDLE right after still shows its headline.
+    asks.resolve(bot, POST_ID)
+    assert asks.open_asks(bot) == [] and asks.waiting(bot) == []
+    await c.post(f"IDLE\ndone: ask {POST_ID} resolved", channel_id="c" * 26)
+    assert sent[1]["message"] == f'IDLE\ndone: [Merge #61?]({PL}{POST_ID} "ask") resolved'
+    await c.post(f"x ask {'q' * 25}1", channel_id="c" * 26)
+    assert sent[2]["message"] == f'x [Input]({PL}{"q" * 25}1 "ask")'
+
+
+def test_ask_titles_outlive_resolve_capped_at_the_newest():
+    """RT-6.15 step 2: headlines stay after resolve_ask, the newest asks.TITLES."""
+    bot = "b" * 26
+    ids = [f"{i:02d}" + "a" * 24 for i in range(asks.TITLES + 2)]
+    for pid in ids:
+        asks.add(bot, pid, "dembaca", pid, title=f"q {pid[:2]}")
+        asks.resolve(bot, pid)
+    got = asks.titles(bot)
+    assert list(got) == ids[2:] and got[ids[-1]] == f"q {ids[-1][:2]}"
+    assert asks.open_asks(bot) == []
 
 
 async def test_an_asks_card_links_post_ids_and_reads_back_bare(monkeypatch):
