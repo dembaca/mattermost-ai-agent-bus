@@ -855,7 +855,7 @@ async def post_message(
     message: str, channel_id: str = "", root_id: str = "", to: str = "", kind: str = "",
     channel: str = "",
 ) -> str:
-    """Create a post, in your home (MM_PROJECT_CHANNEL, else MM_CHANNEL) when channel_id is empty.
+    """Create a post, in your home (first MM_PROJECT_CHANNEL entry, else MM_CHANNEL) when channel_id and channel are empty.
 
     channel: a channel's name instead of channel_id; a public one is joined
     and becomes a guest channel (RT-6.22): there only a mention or a reply in
@@ -1174,8 +1174,10 @@ async def coordinator(action: str = "who") -> str:
             except Exception as exc:  # noqa: BLE001
                 log.info("asks without the trusted humans: %s", exc)
                 trusted = {}
+            # A foreign agent's ✅ keeps an ask open (RT-6.11, ADR-001).
+            foreign = (await owners.foreign(client, tasks.ask_closers(posts))) if trusted else {}
             return _out("coordinator", {"tasks": await _tasks(client, posts, names),
-                                        "asks": tasks.open_asks(posts, names, trusted)})
+                                        "asks": tasks.open_asks(posts, names, trusted, set(foreign))})
         rows = await lease.roster(client)
         return _out("coordinator", {"roster": tasks.roster(
             rows, posts, names, await _owners_of(client, rows))})

@@ -240,12 +240,23 @@ def channel_list(value: str) -> list[str]:
 GUEST_TTL_SEC = 60.0
 
 
+def _trusted_names() -> list[str]:
+    return [n.strip().lstrip("@") for n in
+            (env("MM_TRUSTED_HUMANS") or env("MM_OWNER")).split(",") if n.strip()]
+
+
+def responsible_human() -> str:
+    """The session's responsible human: MM_RESPONSIBLE_HUMAN, else the first
+    trusted name; '' without either."""
+    trusted = _trusted_names()
+    return env("MM_RESPONSIBLE_HUMAN").strip().lstrip("@") or (trusted[0] if trusted else "")
+
+
 def _registration_fields(name: str, display: str) -> dict[str, Any]:
     """Registration body: who the agent answers to goes along (RT-6.8), so the
     registrar can put it into the bot's profile. Unknown fields are ignored."""
-    trusted = [n.strip().lstrip("@") for n in
-               (env("MM_TRUSTED_HUMANS") or env("MM_OWNER")).split(",") if n.strip()]
-    responsible = env("MM_RESPONSIBLE_HUMAN").strip().lstrip("@") or (trusted[0] if trusted else "")
+    trusted = _trusted_names()
+    responsible = responsible_human()
     body: dict[str, Any] = {
         "name": name, "display_name": display,
         "kind": "autonomous" if env("MM_AGENT_KIND") == "autonomous" else "session",
@@ -504,13 +515,22 @@ class MattermostAdapter:
 
     async def _profile_warning(self, info: SessionInfo, sent: list[str]) -> str:
         """Does the profile the registrar wrote carry every trusted name sent
-        (RT-6.8), and is the bot bound to an owner (RT-6.16 step 1)? '' when
-        both hold, or when it cannot be read; never fails."""
+        (RT-6.8), is the bot bound to an owner (RT-6.16 step 1), and is that
+        owner the responsible human (agent_owner, ADR-003)? '' when all hold,
+        or when it cannot be read; never fails. Only a warning: nothing else
+        changes."""
+        texts: list[str] = []
+        mismatch = profile.owner_warning(info.username, await self.agent_owner(info.user_id) or "",
+                                         responsible_human())
+        if mismatch:
+            log.warning("owner vs responsible human: %s", mismatch)
+            texts.append(mismatch)
         description = await self.bot_description(info.user_id)
         if description is None:
             log.info("profile not readable: trusted names not compared")
-            return ""
-        texts = [profile.unbound_warning(info.username)] if profile.unbound(description) else []
+            return "; ".join(texts)
+        if profile.unbound(description):
+            texts.insert(0, profile.unbound_warning(info.username))
         text = profile.warning(info.username, sent, description) if sent else ""
         if text:
             log.warning("trusted list vs profile: %s", text)

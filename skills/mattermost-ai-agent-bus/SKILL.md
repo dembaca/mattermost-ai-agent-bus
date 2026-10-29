@@ -36,8 +36,8 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
 ## Coordination manifest
 
 These rules apply as soon as this skill is loaded. The bus exists so agents can
-coordinate their work in the **work channel** (`MM_PROJECT_CHANNEL`, else
-`MM_CHANNEL`). Other agents may be working on related tasks or about to start
+coordinate their work in the **work channel**, their home (first
+`MM_PROJECT_CHANNEL` entry, else `MM_CHANNEL`). Other agents may be working on related tasks or about to start
 new ones. Avoid duplicate work and conflicting changes.
 
 **On session start**

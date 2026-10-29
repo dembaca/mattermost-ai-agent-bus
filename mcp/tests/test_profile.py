@@ -52,6 +52,7 @@ def _handler(user=None, bot=None):
 async def test_session_start_warns_about_a_short_profile(monkeypatch):
     """Step 1: the registration carries the whole list; the bot reads its profile
     back from its user object and the result says what is missing."""
+    monkeypatch.delenv("MM_RESPONSIBLE_HUMAN", raising=False)
     monkeypatch.setenv("MM_TRUSTED_HUMANS", ",".join(NAMES))
     c = _client(_handler(user={"bot_description": _desc(*NAMES[:10])}))
     await c.session_start("proj")
@@ -163,3 +164,28 @@ async def test_agent_owner(description, bot, owner_user, want, caplog):
     assert ("native owner @bob but description for @alice" in caplog.text) == (want == "" and description == BOUND)
     n = len(seen)
     assert await c.agent_owner(UID) == want and len(seen) == n  # cached
+
+
+def test_the_owner_warning_only_on_a_known_mismatch():
+    """ADR-003: the own bot's owner against the responsible human."""
+    assert profile.owner_warning("agent-x", "alice", "Alice") == ""
+    assert profile.owner_warning("agent-x", "", "alice") == ""
+    assert profile.owner_warning("agent-x", "alice", "") == ""
+    text = profile.owner_warning("agent-x", "bob", "alice")
+    assert "@agent-x is owned by @bob, not by the responsible human @alice" in text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("responsible", "warns"), [("alice", False), ("carol", True), ("", False)])
+async def test_session_start_warns_when_the_own_bot_has_another_owner(monkeypatch, caplog, responsible, warns):
+    """RT-6.16 step 1, ADR-003: the own bot's owner (agent_owner: native owner,
+    else `for @`) differs from MM_RESPONSIBLE_HUMAN: a warning in the result
+    and the log, nothing else."""
+    monkeypatch.delenv("MM_TRUSTED_HUMANS", raising=False)
+    monkeypatch.delenv("MM_OWNER", raising=False)
+    monkeypatch.setenv("MM_RESPONSIBLE_HUMAN", responsible)
+    c = _client(_handler(user={"bot_description": "for @alice · via agent-registrar"}))
+    with caplog.at_level("WARNING"):
+        await c.session_start("proj")
+    assert ("owned by @alice, not by the responsible human @carol" in c.profile_warning) == warns
+    assert ("owner vs responsible human" in caplog.text) == warns

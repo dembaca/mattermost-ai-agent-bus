@@ -21,8 +21,10 @@ instead, served next to the WebSocket inbox in the server's event loop:
     POST /v1/stat           {k: turn|turn_end|block|compact|wake|transcript, …} → {ok}
                             (one overhead counter, RT-6.9: the hooks of a keyless
                             session cannot reach the server's state dir, RT-6.18)
-    POST /v1/post           {message, channel_id?, root_id?, to?, kind?} → what
-                            post_message returns, a refusal included
+    POST /v1/post           {message, channel_id?, channel?, root_id?, to?, kind?} →
+                            what post_message returns, a refusal included;
+                            channel: the home, a guest channel or the lobby by
+                            name (RT-6.22), any other a 400, nothing joined
     POST /v1/reply          {root_id, message, channel_id?, to?, kind?} → what
                             reply_in_thread returns (mm-agent-post.sh): the tools'
                             own code (server.py), not a second implementation
@@ -602,16 +604,18 @@ async def stat(client: MattermostAdapter, query: Mapping[str, str], body: Mappin
     return 200, {"ok": True}
 
 
-POST_FIELDS = ("message", "channel_id", "root_id", "to", "kind")
+POST_FIELDS = ("message", "channel_id", "channel", "root_id", "to", "kind")
+REPLY_FIELDS = ("message", "channel_id", "root_id", "to", "kind")
 
 
-def _fields(body: Mapping[str, Any], required: str) -> dict[str, str]:
+def _fields(body: Mapping[str, Any], required: str,
+            allowed: tuple[str, ...] = REPLY_FIELDS) -> dict[str, str]:
     """The post fields as strings: an unknown field or another type is a 400."""
-    unknown = sorted(set(body) - set(POST_FIELDS))
+    unknown = sorted(set(body) - set(allowed))
     if unknown:
-        raise BadRequest(f"unknown field {unknown[0]}: {', '.join(POST_FIELDS)}")
+        raise BadRequest(f"unknown field {unknown[0]}: {', '.join(allowed)}")
     out: dict[str, str] = {}
-    for name in POST_FIELDS:
+    for name in allowed:
         value = body.get(name, "")
         if not isinstance(value, str):
             raise BadRequest(f"{name}: a string")
@@ -637,7 +641,24 @@ async def post_route(client: MattermostAdapter, query: Mapping[str, str],
     tools = _tools()
     if tools is None:
         return 503, {"error": "the MCP server is not loaded yet"}
-    return 200, await tools.post_as_bot(client, **_fields(body, "message"))
+    fields = _fields(body, "message", POST_FIELDS)
+    name = fields.pop("channel").strip().lstrip("~")
+    if name:
+        if any(fields.pop(k).strip() for k in ("channel_id", "to")):
+            raise BadRequest("channel: by name or channel_id or to, one of them")
+        fields.update(channel_id=await _post_channel(client, name), to="")
+    return 200, await tools.post_as_bot(client, **fields)
+
+
+async def _post_channel(client: MattermostAdapter, name: str) -> str:
+    """POST /v1/post channel=<name>: the home, a guest channel or the lobby
+    (RT-6.22), the channels the bus watches. The shell joins nothing: a channel
+    of the team the bot is not in is a 400, like one that does not exist."""
+    try:
+        return await _channel(client, name)
+    except Forbidden as exc:
+        raise BadRequest(f"channel {name}: not the home, a guest channel or the lobby of this "
+                         "bot; the bot joins a public channel with post_message(channel=…)") from exc
 
 
 async def reply_route(client: MattermostAdapter, query: Mapping[str, str],

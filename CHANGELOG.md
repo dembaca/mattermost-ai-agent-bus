@@ -3,6 +3,43 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.64.0
+
+Closes out #63 (WP6): homes, guest channels, the lobby and owner classes are built.
+
+### Added
+
+- **The shell posts by channel name**
+  ([RT-6.22 step 4](docs/arc42/06-runtime-view.md#622-guest-channels)).
+  `mm-agent-post.sh --channel <name>` and `POST /v1/post` with `channel` post
+  in the home, a guest channel or the lobby; a guest post carries
+  `props.a2a.home` as with `post_message`. The shell joins nothing: a channel
+  that does not exist or that the bot is not in is refused (`400`, exit 1) and
+  nothing is posted. `--channel <name>` with `--root` is a usage error.
+- **Owner warning at session start**
+  ([RT-6.16 step 1](docs/arc42/06-runtime-view.md#616-who-may-wake-an-agent)).
+  When the own bot's owner (native owner, else `for @`) is not the responsible
+  human (`MM_RESPONSIBLE_HUMAN`, else the first trusted human),
+  `session_start` carries a `warning` and the MCP log has it. Nothing else
+  changes.
+
+### Fixed
+
+- **A foreign agent's ✅ closes no ask**
+  ([RT-6.11](docs/arc42/06-runtime-view.md#611-asking-a-human),
+  [ADR-001](docs/arc42/09-architecture-decisions.md#adr-001-authority-comes-from-trust-not-from-a-role-or-a-channel)).
+  `coordinator("tasks")` and the stall digest counted any bus agent's ✅ as
+  `resolve_ask`; another owner's agent could hide an ask from them. Now only a
+  peer's ✅ closes it. The reminders (RT-6.19) were already right: they stop
+  only for the human's or a trusted human's answer and the asker's own
+  `resolve_ask`; a test now proves it for ✅.
+
+### Docs
+
+- README, `adapters/claude.md` and `SKILL.md` say where posts go (home, guest
+  channels, lobby) and link RT-6.22; ADR-001 to ADR-003 and Section 11 mark
+  what #63 delivered and keep the open items (#83, RISK-01, RISK-03 to RISK-05).
+
 ## 0.63.0
 
 ### Changed

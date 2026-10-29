@@ -533,12 +533,15 @@ def test_only_the_humans_reaction_answers_the_ask_in_the_task_list(by, answers):
     assert (tasks.open_asks([ask], names, {HUMAN}) == []) == answers
 
 
+@pytest.mark.parametrize("emoji", ["+1", "white_check_mark"])
 @pytest.mark.parametrize("by,stops", [(EVE, False), (UNTRUSTED, False), (HUMAN, True)])
-async def test_only_the_human_or_a_trusted_reaction_stops_reminders(bus, by, stops):
-    """RT-6.19: a 👍 by another agent or an untrusted human is no answer."""
+async def test_only_the_human_or_a_trusted_reaction_stops_reminders(bus, by, stops, emoji):
+    """RT-6.19, RT-6.11: a 👍 or ✅ by another agent (peer or foreign: the
+    resolve_ask of an agent that did not ask) or an untrusted human is no
+    answer; only the asker's own resolve_ask ends its reminders."""
     ask_id = _ask(25)
     bus.posts.append(post(1, ME, "🙋 @dembaca — **Merge?**", 25, kind=a2a.ASK))
-    bus.reacts[ask_id] = [{"user_id": by, "emoji_name": "+1"}]
+    bus.reacts[ask_id] = [{"user_id": by, "emoji_name": emoji}]
     await remind.tick(bus, ME, NOW)
     assert (bus.sent == []) == stops
 

@@ -79,3 +79,26 @@ def test_the_lobby_counts_only_what_wakes_there(mm, run):
     mm.posts[0]["message"] = "@channel deploy at 5"
     r = run(STOP, MM_LISTEN_SEC="0", MM_PROJECT_CHANNEL_ID=PROJECT)
     assert r.blocked and "1 unread message(s)" in r.reason
+
+
+POST = "bin/mm-agent-post.sh"
+
+
+def test_the_shell_posts_in_a_guest_channel_by_name(mm, run):
+    """RT-6.22 step 4, RT-6.17: mm-agent-post.sh --channel NAME posts in a
+    channel of the bot by name, with props.a2a.home on a guest post; a channel
+    that does not exist is refused, exit 1, and nothing is posted or joined."""
+    mm.members.append({"channel_id": GUEST, "msg_count": 0, "mention_count": 0, "last_viewed_at": 0})
+    mm.channels.append({"id": GUEST, "type": "O", "total_msg_count": 0})
+    env = {"MM_PROJECT_CHANNEL": "proj-x", "MM_PROJECT_CHANNEL_ID": PROJECT}
+    r = run(POST, "--channel", "guest-x", "PROGRESS · on it", **env)
+    assert r.code == 0, r.stderr
+    body = [b for m, p, b in mm.writes if (m, p) == ("POST", "/api/v4/posts")][-1]
+    assert body["channel_id"] == GUEST and body["props"]["a2a"]["home"] == "proj-x"
+    n = len(mm.writes)
+    mm.missing.add("nope")
+    r = run(POST, "--channel", "nope", "hi", **env)
+    assert r.code == 1 and "no channel nope" in r.stderr
+    r = run(POST, "--channel", "guest-x", "--root", "r" * 26, "hi", **env)
+    assert r.code == 2 and "a reply stays in its root's channel" in r.stderr
+    assert len(mm.writes) == n

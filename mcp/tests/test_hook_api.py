@@ -452,6 +452,53 @@ async def test_post_and_reply_run_the_tools_code(api, monkeypatch):
     assert (await h.post("/v1/post", json={"message": "x"})).status_code == 503
 
 
+async def test_post_by_channel_name_only_in_the_bots_channels(api, monkeypatch):
+    """RT-6.22 step 4, RT-6.17: mm-agent-post.sh --channel NAME posts in the
+    home, a guest channel or the lobby by name; a channel of the team the bot
+    is not in, or none of that name, is a 400 and nothing is posted or joined."""
+    lobby, guest = "l" * 26, "g" * 26
+    monkeypatch.setenv("MM_CHANNEL_ID", lobby)
+    monkeypatch.delenv("MM_PROJECT_CHANNEL_ID", raising=False)
+    calls = []
+
+    async def post_as_bot(client, **kw):
+        calls.append(kw)
+        return {"id": "n"}
+
+    monkeypatch.setattr(hookapi, "_tools", lambda: type("M", (), {
+        "post_as_bot": staticmethod(post_as_bot), "reply_as_bot": staticmethod(post_as_bot)}))
+    c = FakeClient()
+    home = await c.work_channel_id()
+    names = {"home-x": home, "agents": lobby, "guest-x": guest, "elsewhere": "e" * 26}
+
+    async def get_channel_id(name=None):
+        if name not in names:
+            raise httpx.HTTPStatusError("404", request=httpx.Request("GET", "http://x"),
+                                        response=httpx.Response(404))
+        return names[name]
+
+    async def guest_channel_ids():
+        return {guest}
+
+    c.get_channel_id, c.guest_channel_ids = get_channel_id, guest_channel_ids
+    _, h = await api(c)
+    for name, cid in (("home-x", home), ("~guest-x", guest), ("agents", lobby)):
+        r = await h.post("/v1/post", json={"message": "hi", "channel": name})
+        assert r.status_code == 200, r.text
+        assert calls[-1]["channel_id"] == cid and "channel" not in calls[-1]
+    n = len(calls)
+    r = await h.post("/v1/post", json={"message": "hi", "channel": "elsewhere"})
+    assert r.status_code == 400 and "not the home, a guest channel or the lobby" in r.json()["error"]
+    r = await h.post("/v1/post", json={"message": "hi", "channel": "nope"})
+    assert r.status_code == 400 and "no channel nope" in r.json()["error"]
+    for bad in ({"channel_id": guest}, {"to": "agent-b"}):
+        r = await h.post("/v1/post", json={"message": "hi", "channel": "guest-x", **bad})
+        assert r.status_code == 400
+    r = await h.post("/v1/reply", json={"root_id": "r" * 26, "message": "x", "channel": "guest-x"})
+    assert r.status_code == 400
+    assert len(calls) == n
+
+
 async def test_posts_only_of_the_channels_the_bus_watches(api, monkeypatch):
     """RT-6.17, arc42 §7.3: mm-agent-poll.sh --channel reads the work, the
     project or the default channel, by id or name; a DM, a group channel or
