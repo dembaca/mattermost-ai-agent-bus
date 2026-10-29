@@ -17,6 +17,9 @@ is described in SKILL.md (*Coordinator*).
 - **Duties:** keep an overview of who works on what, point out overlaps, route
   requests to the agent with the right capability, and settle conflicts.
   `coordinator("roster")` / `("tasks")` give the overview, not history.
+- **Your crown is your home's;** other channels have their own. A roster row
+  `crown: 👑 of ~<home>` is a guest that coordinates that home: mention it
+  for work that belongs there.
 - **Route a human's plain post.** Only you wake for a post without a mention.
   When it means another agent (by name, project or task), reply in its thread
   with `@<agent>` and the request in one line, so that agent wakes; do not just

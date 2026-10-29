@@ -40,13 +40,25 @@ def test_without_a_server_every_status_is_a_plain_lease(mm, run):
     assert (run.state_dir / f"presence-{ME}.env").read_text() == "STATE=idle\nLABEL=proj\n"
 
 
+def test_without_a_server_the_status_names_the_home(mm, run):
+    """RT-6.6 step 1, ADR-002: the host hooks write the form the server
+    writes (lease.homed): the project channel is the home; past 100
+    characters the label is cut, never the home. Counted in characters, also
+    under a C locale, where bash counts the bytes of " · "."""
+    assert run(STATUS, "working", "l" * 200, fd_token=True, MM_PROJECT_CHANNEL="team-a",
+               LC_ALL="C", LANG="C").code == 0
+    text = mm.custom_status()["text"]
+    assert len(text) == 100 and text.endswith(" · ~team-a")
+    assert text == lease.homed("working · " + "l" * 200, "team-a")
+
+
 def test_without_a_server_a_live_crown_keeps_its_text(mm, run):
     """RT-6.6 step 1: written directly, a crown whose lease still runs keeps
     the coordinator text until that lease ends, not longer."""
     live_crown(run)
     assert run(STATUS, "working", "proj", fd_token=True).code == 0
     s = mm.custom_status()
-    assert s["emoji"] == "crown" and s["text"] == "coordinator · working · proj"
+    assert s["emoji"] == "crown" and s["text"] == "coordinator · working · proj · ~agents"
     crown = int((run.state_dir / f"coord-{ME}.env").read_text().split()[0].split("=")[1])
     assert s["expires_at"] == time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(crown))
 
@@ -82,7 +94,7 @@ def test_with_the_server_it_keeps_the_crown(mm, run):
         until = str(int(time.time()) + 300)
         run(STATUS, "listening", until, bus=None, **bus)
     statuses = [b for m, p, b in mm.writes if p == "/api/v4/users/me/status/custom"]
-    assert statuses[0]["emoji"] == "crown" and statuses[0]["text"] == "coordinator · working · proj"
+    assert statuses[0]["emoji"] == "crown" and statuses[0]["text"] == "coordinator · working · proj · ~agents"
     assert statuses[1]["text"].startswith("coordinator · listening · until")
 
 

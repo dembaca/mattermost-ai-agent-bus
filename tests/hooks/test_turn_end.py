@@ -169,7 +169,7 @@ def test_channel_session_needs_no_listener(mm, run):
     r = run(STOP, **IN_PROJECT)
     assert r.passed
     assert window(run).get("UNTIL", "0") == "0"
-    assert mm.custom_status().get("text") == "listening · the bus wakes me"
+    assert mm.custom_status().get("text") == "listening · the bus wakes me · ~agents"
     # MM_CHANNEL_PUSH=0 overrides: back to the listener.
     assert run(STOP, MM_CHANNEL_PUSH="0", **IN_PROJECT).blocked
 

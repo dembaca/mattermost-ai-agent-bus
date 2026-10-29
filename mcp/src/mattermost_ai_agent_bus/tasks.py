@@ -250,6 +250,8 @@ def roster(rows: list[RosterEntry], posts: Sequence[Post],
         meta = card.get("meta") or {}
         row = {"agent": r.username, "status": r.status,
                "coordinator": r.coordinator or None,
+               # A guest that holds its own home's crown (ADR-002).
+               "crown": f"👑 of ~{r.crown_of}" if r.crown_of else None,
                "model": meta.get("model"), "role": meta.get("role"),
                "task": _first_line(str(card.get("description", "")), TITLE),
                "branch": meta.get("branch"),

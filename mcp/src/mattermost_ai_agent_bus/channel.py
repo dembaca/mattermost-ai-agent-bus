@@ -36,7 +36,7 @@ import os
 import re
 import secrets
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -186,10 +186,12 @@ def inert(text: str) -> str:
 
 
 def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
-          my_root: bool = False) -> bool:
+          my_root: bool = False, routes: Collection[str] | None = None) -> bool:
     """The listener's rules (RT-6.2): what is for this agent is pushed at once,
     a stall the server noticed, too (RT-6.19).
-    A human's plain post wakes only the coordinator, which routes it (RT-6.6);
+    A human's plain post wakes only the coordinator, which routes it (RT-6.6),
+    and only in a channel of `routes` (its home: lease.routes, ADR-002);
+    routes None, or an item without its channel: anywhere.
     a post the inbox gated wakes nobody here (RT-6.16), a mention of a
     departed agent the one that answers it (RT-6.21). An agent's fyi post
     (RT-6.14) wakes only whom it names and the author of its thread's root,
@@ -201,6 +203,9 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
             or item.get("departed")
             or broadcast(str((item.get("post") or {}).get("message", "")))):
         return True
+    where = str(item.get(CHANNEL_ID) or "")
+    if coordinator and routes is not None and where and where not in routes:
+        coordinator = False  # a guest here: this channel has its own crown
     if coordinator or in_my_thread:
         return my_root or item.get("intent") != a2a.FYI
     return False

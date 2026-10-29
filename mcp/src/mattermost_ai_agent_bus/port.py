@@ -54,7 +54,9 @@ class ChatPort(Protocol):
         """When the bot's account was created, epoch ms; 0 unknown."""
         ...
 
-    async def work_channel_id(self) -> str: ...
+    async def work_channel_id(self) -> str:
+        """The home's id (ADR-002): the project channel, else MM_CHANNEL."""
+        ...
 
     async def join_channel(self, channel_name: str) -> str:
         """The team's channel `channel_name`, joined as the bot (a non-member
@@ -105,6 +107,10 @@ class ChatPort(Protocol):
 
     # --- reading -------------------------------------------------------------
     async def thread(self, post_id: str) -> Thread: ...
+
+    async def post_channel_id(self, post_id: str) -> str:
+        """The channel a post is in."""
+        ...
 
     async def channel_posts(self, channel_id: str, *, per_page: int | None = None,
                             since_ms: int | None = None) -> list[Post]: ...

@@ -128,8 +128,14 @@ elif [[ -n "$PRES" ]]; then
     printf 'STATE=%s\nLABEL=%s\n' "$STATE" "$LABEL" >"$PRES" 2>/dev/null || true
 fi
 
-# Mattermost caps custom status text at 100 characters.
-TEXT="${TEXT:0:100}"
+# The status names the agent's home, as the MCP server writes it (lease.homed,
+# ADR-002): "<text> · ~<home>". Mattermost caps custom status text at 100
+# characters: the text before the home is cut (the label first), never the home.
+if [[ -n "$TEXT" ]]; then
+  # jq counts characters in any locale; bash counts bytes under LC_ALL=C.
+  TEXT="$(jq -nr --arg t "$TEXT" --arg h " · ~${MM_PROJECT_CHANNEL:-$(mm_channel)}" \
+    '($t | .[0:([0, 100 - ($h | length)] | max)]) + $h')"
+fi
 
 mm_api PUT "/api/v4/users/${UID_}/status" \
   "$(jq -nc --arg u "$UID_" --arg s "$PRESENCE" '{user_id:$u, status:$s}')" >/dev/null || true

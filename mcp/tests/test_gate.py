@@ -51,6 +51,8 @@ class Bus:
     def __init__(self, monkeypatch, coordinator="agent-coord"):
         self.client = MattermostAdapter(base_url="https://chat.example", token="bot",
                                        project_channel_name="proj")
+        # The home (ADR-002): where the crown holder routes and is never gated.
+        monkeypatch.setenv("MM_PROJECT_CHANNEL_ID", PROJ)
         self.posted, self.viewed = [], []
         self.coordinator = coordinator
 
@@ -86,12 +88,12 @@ class Bus:
 
         self.inbox.in_my_thread = in_my_thread
 
-    async def arrive(self, pid, user, message, *, root="", ctype="O", props=None):
+    async def arrive(self, pid, user, message, *, root="", ctype="O", props=None, channel=PROJ):
         """A post reaches the inbox, classified and gated as the reader does."""
-        post = post_of({"id": pid, "user_id": user, "channel_id": DM if ctype == "D" else PROJ,
+        post = post_of({"id": pid, "user_id": user, "channel_id": DM if ctype == "D" else channel,
                         "root_id": root, "message": message, "props": props or {}})
         kind = classify_post(post, bot_user_id=ME, bot_username="agent-me", channel_type=ctype,
-                             watched_channel_ids={PROJ})
+                             watched_channel_ids={PROJ, channel})
         event = ClassifiedEvent(kind=kind, post=post)
         await self.inbox._gate(event, ctype)
         await self.inbox._queue.put(event)
@@ -189,6 +191,17 @@ async def test_coordinator_is_never_gated(bus):
     assert not e.gated and bus.posted == []
     [item] = await server._event_items([e])
     assert item["from_trusted_human"] is False and item["from_agent"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_coordinator_is_gated_outside_the_channels_it_routes(bus):
+    """RT-6.16 step 2, ADR-002: the exemption holds where the 👑 routes (its
+    home, DMs); in another team channel, the lobby too, its holder is a
+    guest, gated like any worker."""
+    _crown()
+    e = await bus.arrive("p1000000000000000000000000", STRANGER, "@agent-me deploy now",
+                         channel="x" * 26)
+    assert e.gated
 
 
 @pytest.mark.asyncio

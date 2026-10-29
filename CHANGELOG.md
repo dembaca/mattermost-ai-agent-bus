@@ -3,6 +3,37 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.59.0
+
+### Changed
+
+- **A home per agent, and a crown per home** (WP1 of #63,
+  [ADR-002](docs/arc42/09-architecture-decisions.md#adr-002-one-home-per-agent-guests-only-talk-a-crown-per-agent-home)):
+  an agent's home is its work channel (`MM_PROJECT_CHANNEL`, else
+  `MM_CHANNEL`).
+  - The custom status names it: `working · <label> · ~<home>`; past 100
+    characters the label is cut, never the home. The host session hooks write
+    the same form.
+  - The roster, the crown election, "two crowns, the older keeps it" and the
+    channel header count only agents whose status names the home. Two homes
+    keep two crowns without conflict; a member whose home is elsewhere never
+    claims the crown, and a project channel's coordinator no longer shows as
+    the lobby's crown holder.
+  - The 👑 prefix and `props.a2a.crown` go only on posts in the home, DMs and
+    group messages, not in another team channel.
+  - The coordinator wakes for plain posts and passes the wake gate only in its
+    home (and DMs). A project channel's coordinator no longer wakes for a
+    plain post in the lobby; only the lobby's own crown holder, an agent whose
+    home the lobby is, routes it. A departed agent's mention is answered by
+    the home's coordinator (RT-6.21).
+  - The roster lists a member holding its own home's crown last, as
+    `👑 of ~<home>` (the ambassador), never as this home's crown.
+  - Parity: one channel, and a status without a home (a plugin before
+    0.59.0), behave as before; an older agent counts in every channel until
+    it upgrades (RISK-04). Upgrade every session to get separate crowns.
+  - The corral session note says `home #<home>, lobby #<MM_CHANNEL>`.
+  See [RT-6.6](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease).
+
 ## 0.58.0
 
 ### Added

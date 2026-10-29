@@ -14,7 +14,8 @@ from collections.abc import Collection, Iterable, Mapping
 from typing import Any
 
 from mattermost_ai_agent_bus.client import post_of, reaction_of
-from mattermost_ai_agent_bus.model import Channel, Me, Post, Reaction, Thread, UnreadChannel
+from mattermost_ai_agent_bus.model import (Channel, ChannelUser, Me, Post, Reaction, Thread,
+                                           UnreadChannel)
 
 BOT = "u" * 26
 WORK = "c" * 26
@@ -28,6 +29,9 @@ class FakeChat:
     reactions: post id -> Reaction or reaction JSON. names: user id ->
     username; agents: the user ids that are agents; trusted: user id ->
     username of the trusted humans; channel: every channel's name.
+    members, presence: the accounts in every channel with their custom
+    status, and who is online (the lease's roster); status: the own custom
+    status written last; header: the channel header.
     """
 
     token: str | None = "t"
@@ -52,6 +56,11 @@ class FakeChat:
         self.channel = channel
         self.channels = list(channels)
         self.post_id = post_id
+        self.members: list[ChannelUser] = []
+        self.presence: dict[str, str] = {}
+        self.status: dict[str, str] | None = None
+        self.header = ""
+        self.dms: set[str] = set()
         self.posted: list[dict[str, Any]] = []
         self.calls: list[tuple[str, int | None, int | None]] = []
 
@@ -74,7 +83,12 @@ class FakeChat:
         return WORK
 
     async def get_channel(self, channel_id: str) -> Channel:
-        return Channel(id=channel_id, name=self.channel)
+        """Ids in `dms` are DMs; every other channel is open and named `channel`."""
+        return Channel(id=channel_id, name=self.channel, type="D" if channel_id in self.dms else "O")
+
+    async def post_channel_id(self, post_id: str) -> str:
+        """The channel of a post in `posts`, else the work channel."""
+        return next((p.channel_id for p in self._posts() if p.id == post_id and p.channel_id), WORK)
 
     async def usernames(self, user_ids: set[str]) -> dict[str, str]:
         return {i: self.names[i] for i in user_ids if i in self.names}
@@ -87,6 +101,31 @@ class FakeChat:
 
     async def member_channels(self) -> list[UnreadChannel]:
         return list(self.channels)
+
+    async def channel_header(self, channel_id: str) -> str:
+        return self.header
+
+    async def set_channel_header(self, channel_id: str, header: str) -> None:
+        self.header = header
+
+    async def channel_users(self, channel_id: str) -> list[ChannelUser]:
+        return list(self.members)
+
+    async def presences(self, user_ids: list[str]) -> dict[str, str]:
+        return {i: self.presence[i] for i in user_ids if i in self.presence}
+
+    async def set_presence(self, user_id: str, status: str) -> None:
+        self.presence[user_id] = status
+
+    async def set_custom_status(self, emoji: str, text: str, expires_at: str) -> None:
+        """Kept as Mattermost keeps it, and shown on the own member row."""
+        self.status = {"emoji": emoji, "text": text, "duration": "date_and_time",
+                       "expires_at": expires_at}
+        self.members = [ChannelUser(m.id, m.username, m.create_at, custom_status=self.status)
+                        if m.id == self.me.id else m for m in self.members]
+
+    async def clear_custom_status(self) -> None:
+        self.status = None
 
     async def post(self, message: str, *, channel_id: str | None = None,
                    root_id: str | None = None, props: dict[str, Any] | None = None) -> Post:

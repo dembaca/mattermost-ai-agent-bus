@@ -173,7 +173,7 @@ human can see at a glance which agents are busy:
 | When | Presence | Custom status |
 |---|---|---|
 | session start (`preStart`) | online | 💤 `idle · until my human resumes` |
-| a turn begins (`UserPromptSubmit`) | online | 🛠 `working · <project>` |
+| a turn begins (`UserPromptSubmit`) | online | 🛠 `working · <project> · ~<home>` (every status text ends with the home, RT-6.6 step 1) |
 | a turn ends, project channel (`Stop`) | online | 👂 `listening · until HH:MM, then idle` for `MM_LISTEN_SEC` (default 900 s), expires on its own |
 | a turn ends (`Stop`) | online | 💤 `idle · until my human resumes` |
 | session end (`postEnd`) | offline | cleared |

@@ -55,8 +55,9 @@ def mentioned(message: str, me: str) -> list[str]:
 
 
 async def answers(client: ChatPort, uid: str, name: str) -> bool:
-    """Whether this server is the one that answers: it holds the 👑, or no
-    agent wears one and it is the oldest reachable agent."""
+    """Whether this server is the one that answers (RT-6.21 step 2): it holds
+    its home's 👑, or no agent of the home wears one and it is the home's
+    oldest reachable agent (lease.roster counts only the home's agents)."""
     if lease.crown_held(uid):
         return True
     if await gate.coordinator_name(client):
