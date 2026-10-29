@@ -200,19 +200,30 @@ def ask_answered(ask: Post, thread: Collection[Post],
                and not p.delete_at and by_human(p.user_id) for p in thread)
 
 
-def resolved(reactions: Collection[Reaction], names: Mapping[str, str]) -> bool:
-    """An agent closed the ask with resolve_ask: its ✅ (RT-6.11). Any bus agent
-    may, also one that did not ask: a successor session closes its
-    predecessor's asks. It answers nothing: no approval comes of it."""
+def resolved(reactions: Collection[Reaction], names: Mapping[str, str],
+             foreign: Collection[str] = ()) -> bool:
+    """An agent closed the ask with resolve_ask: its ✅ (RT-6.11). Any peer bus
+    agent may, also one that did not ask: a successor session closes its
+    predecessor's asks. A foreign agent's ✅ (ids in `foreign`, ADR-001)
+    closes nothing. It answers nothing: no approval comes of it, and the
+    reminders (RT-6.19) stop only with the asker's own resolve_ask."""
     prefix = session_file.agent_prefix()
-    return any(r.emoji_name == "white_check_mark"
+    return any(r.emoji_name == "white_check_mark" and r.user_id not in foreign
                and names.get(r.user_id, "").startswith(prefix) for r in reactions)
 
 
+def ask_closers(posts: Sequence[Post]) -> set[str]:
+    """Who put a ✅ on an ask: the accounts to sort into peer and foreign
+    (owners.foreign) before open_asks."""
+    return {r.user_id for p in posts if p.kind == a2a.ASK
+            for r in p.reactions if r.emoji_name == "white_check_mark" and r.user_id}
+
+
 def open_asks(posts: Sequence[Post], names: Mapping[str, str],
-              trusted: Collection[str] = ()) -> list[dict[str, Any]]:
+              trusted: Collection[str] = (), foreign: Collection[str] = ()) -> list[dict[str, Any]]:
     """Asks to humans still waiting: not answered by the human asked or a
-    trusted human (ask_answered), and not closed by an agent (resolved)."""
+    trusted human (ask_answered), and not closed by a peer agent (resolved;
+    a foreign agent's ✅, ids in `foreign`, closes nothing)."""
     order = _live(posts)
     out = []
     for p in order:
@@ -222,7 +233,7 @@ def open_asks(posts: Sequence[Post], names: Mapping[str, str],
         human = re.search(r"🙋\s*@([\w.-]*\w)", msg)
         need = re.search(r"\*\*(.+?)\*\*", msg)
         if (ask_answered(p, order, p.reactions, names, human[1] if human else "", trusted)
-                or resolved(p.reactions, names)):
+                or resolved(p.reactions, names, foreign)):
             continue
         row = {"ask": p.id, "by": names.get(p.user_id, ""),
                "human": human[1] if human else None,

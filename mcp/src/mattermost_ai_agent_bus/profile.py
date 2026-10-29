@@ -65,6 +65,16 @@ def unbound_warning(bot: str) -> str:
             f"token (/agent-token create) into MM_REG_SECRET")
 
 
+def owner_warning(bot: str, owner: str, responsible: str) -> str:
+    """What to tell when this session's own bot answers to another human than
+    its responsible one (ADR-003): '' when either is unknown or they agree."""
+    if not owner or not responsible or owner.lower() == responsible.lower():
+        return ""
+    return (f"@{bot} is owned by @{owner}, not by the responsible human @{responsible}: "
+            f"other owners' agents judge it by @{owner}'s trust (ADR-001); check "
+            f"MM_RESPONSIBLE_HUMAN, or register with an enrollment token of @{responsible}")
+
+
 def warning(bot: str, sent: list[str], description: str | None) -> str:
     """What to tell about the profile of `bot`, '' when it carries every name
     sent, or when it could not be read (`description` None)."""

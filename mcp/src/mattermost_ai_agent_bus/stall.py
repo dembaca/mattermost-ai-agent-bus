@@ -43,7 +43,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import a2a, asks, gate, lease, remind, session_file, tasks
+from . import a2a, asks, gate, lease, owners, remind, session_file, tasks
 from .model import Post
 
 if TYPE_CHECKING:
@@ -111,7 +111,8 @@ def _last(thread: Sequence[Post], names: Mapping[str, str]) -> tuple[int, str]:
 
 def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
           rows: Sequence[Mapping[str, Any]], reachable: set[str], now_ms: int,
-          trusted: Collection[str] = (), me: str = "") -> list[dict[str, Any]]:
+          trusted: Collection[str] = (), me: str = "",
+          foreign: Collection[str] = ()) -> list[dict[str, Any]]:
     """The open items, longest quiet first: {what, id, title, next, last, at}.
     An ask of `me` (the crown holder) still within its 24 h is marked own: its
     reminders nudge the human, so it is listed but wakes nobody."""
@@ -141,7 +142,7 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
                     "next": nxt, "last": last, "at": at})
 
     by_id = {p.id: p for p in live}
-    for a in tasks.open_asks(live, names, trusted):
+    for a in tasks.open_asks(live, names, trusted, foreign):
         post = by_id.get(a["ask"])
         asked = _at(post) if post else 0
         at, last = _last(by_thread.get((post.root_id if post else "") or a["ask"], []), names)
@@ -258,8 +259,10 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
                      if c in (gate.OTHER, gate.FOREIGN) and not p.root_id}
     rows = tasks.build(posts, names, now_ms=now_ms, untrusted=untrusted,
                        coordinators={r.username for r in roster if r.coordinator})
+    # A foreign agent's ✅ keeps an ask open (RT-6.11, ADR-001).
+    foreign = await owners.foreign(client, tasks.ask_closers(posts)) if trusted else {}
     found = items(posts, names, classes, rows, {r.username for r in roster}, now_ms, trusted,
-                  me=names.get(uid, ""))
+                  me=names.get(uid, ""), foreign=set(foreign))
     if not quiet:  # nothing that counts in the window: the saved start, else the oldest open item
         quiet = int(st["QUIET"]) or min((i["at"] for i in found if i["at"]), default=now_ms)
     wakes, nxt = int(st["WAKES"]), st["NEXT"]

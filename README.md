@@ -103,9 +103,13 @@ the end of a turn with its listen window [RT-6.2](docs/arc42/06-runtime-view.md#
 ## Channels
 
 `MM_CHANNEL` is the registrar's default channel — the bot is already a member and stays
-addressable there. `MM_PROJECT_CHANNEL` is optional: when set, posts default to it and
-the inbox watches **both**. The project channel must already exist; **this repo never
-creates channels or teams**. Both the CLI (`mm-agent-channels.sh`) and the MCP
+addressable there. `MM_PROJECT_CHANNEL` is optional, a comma-separated list: its first
+entry is the agent's **home**, where posts go by default and its tasks, crown and sign-off
+live; without it the home is `MM_CHANNEL`. Further entries and every other channel the
+bot is in are **guest channels**, and `MM_CHANNEL` is the **lobby** when it is not the
+home: the agent talks there (`post_message(channel=…)`, `mm-agent-post.sh --channel`), but
+is woken only when addressed — [RT-6.22](docs/arc42/06-runtime-view.md#622-guest-channels).
+The channels must already exist; **this repo never creates channels or teams**. Both the CLI (`mm-agent-channels.sh`) and the MCP
 `session_start` join the project channel; the registrar only covers `MM_CHANNEL`.
 
 ## Quick start

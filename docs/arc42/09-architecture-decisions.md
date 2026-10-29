@@ -9,9 +9,9 @@ code does today and point here where a decision will change them.
 
 | ADR | Decision | Status | Work packages (#63, #83) |
 |-----|----------|--------|--------------------------|
-| ADR-001 | Authority comes from trust, not from a role or a channel | Decided 2026-10-29, built (WP2, 0.60.0) | WP2 |
-| ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, built (WP1, 0.59.0; WP4, 0.62.0; WP5, 0.63.0) | WP1, WP4, WP5 |
-| ADR-003 | An agent's owner comes from its registrar-bound bot description | Decided 2026-10-29, partly built (WP2, 0.60.0; WP3 open) | WP2, WP3 |
+| ADR-001 | Authority comes from trust, not from a role or a channel | Decided 2026-10-29, built (WP2, 0.60.0; WP6, 0.64.0) | WP2, WP6 |
+| ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, built (WP1, 0.59.0; WP4, 0.62.0; WP5, 0.63.0; WP6, 0.64.0) | WP1, WP4, WP5, WP6 |
+| ADR-003 | An agent's owner comes from its registrar-bound bot description | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) parked | WP2, WP3, WP6 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -31,6 +31,8 @@ guest channels make them common. WP3 lands before a second owner goes live.
 ## ADR-001: Authority comes from trust, not from a role or a channel
 
 **Status:** Decided 2026-10-29 (owner), built (WP2, 0.60.0): RT-6.16, `owners.py`.
+Closed out in 0.64.0 (WP6): a foreign agent's ✅ closes no ask (RT-6.11,
+RT-6.19). What remains is RISK-01 (an injected peer), accepted.
 
 **Context:** The wake gate (RT-6.16) sorts authors into trusted, agent and
 other. "Agent" is any bot with the registrar's prefix, so another owner's
@@ -95,7 +97,10 @@ guest, the guest wake rules, no digest from guests, `props.a2a.home`, the
 channel's own coordinator, `post_message(channel=…)`. Built in 0.63.0 (WP5):
 the lobby (RT-6.22 step 3): where it is not the home, a mention, a DM, a reply
 in the agent's thread and a broadcast (`@channel`, `to="all"`) by a trusted
-human or a peer wake it; nothing else, no crown, no digest.
+human or a peer wake it; nothing else, no crown, no digest. Closed out in
+0.64.0 (WP6): the Shell CLI posts in the home, a guest channel or the lobby
+by name (`mm-agent-post.sh --channel`, RT-6.22 step 4). Fully built; RISK-04
+(mixed versions) and RISK-05 (token cost) stay on watch.
 
 **Context:** Today one work channel holds everything: crown, tasks, sign-off,
 header, stall watch. A custom status is global per user, so the roster and
@@ -158,8 +163,10 @@ home and counts everywhere, as today, until that agent upgrades.
 
 **Status:** Decided 2026-10-29 (owner); built (WP2 + WP3, 0.61.0): read
 since WP2 (0.60.0, RT-6.16 step 1), bound by enrollment tokens in WP3
-(registrar 0.2.0, the bus's native-owner check in 0.61.0). The signed
-registrar claim (#83) stays parked.
+(registrar 0.2.0, the bus's native-owner check in 0.61.0). 0.64.0 (WP6)
+warns at session start when the own bot's owner is not its responsible
+human (RT-6.16 step 1). The signed registrar claim (#83) stays parked
+(RISK-03).
 
 **Context:** ADR-001 needs each agent's owner and trusted humans. The
 registrar already writes them into the bot description as

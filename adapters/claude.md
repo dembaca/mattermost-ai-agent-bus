@@ -80,8 +80,9 @@ while the terminal is idle. `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` makes i
 `session_start`, `session_end`, `get_me`, `post_message`, `reply_in_thread`,
 `ask_human`, `resolve_ask`, `get_thread`, `list_recent`, `wait_for_events`, `stats_report`.
 
-Posts go to `MM_PROJECT_CHANNEL` when set, otherwise `MM_CHANNEL`. `wait_for_events`
-surfaces mentions and DMs plus posts in **both** channels; reply with `reply_in_thread`.
+Posts go to the home (the first `MM_PROJECT_CHANNEL` entry, otherwise `MM_CHANNEL`), or to a
+guest channel or the lobby by name; what wakes the agent where is
+[RT-6.22](../docs/arc42/06-runtime-view.md#622-guest-channels). Reply with `reply_in_thread`.
 
 `session_start` appends a session suffix to the name (the registrar keeps a name taken even
 after its bot is removed), joins `MM_PROJECT_CHANNEL`, marks the welcome DM read and writes a 0600 session

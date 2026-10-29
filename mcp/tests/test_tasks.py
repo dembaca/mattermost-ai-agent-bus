@@ -555,3 +555,13 @@ def test_an_ask_an_agent_resolved_is_not_open():
              P("q2", A, "🙋 @dembaca — **Rename it?**", at=1,
                metadata={"reactions": [{"emoji_name": "white_check_mark", "user_id": "x" * 26}]})]
     assert [a["ask"] for a in tasks.open_asks(posts, {**NAMES, "x" * 26: "someone"})] == ["q2"]
+
+
+def test_a_foreign_agents_check_mark_keeps_the_ask_open():
+    """RT-6.11, ADR-001: another owner's agent cannot close an ask with ✅;
+    tasks.ask_closers names whom to sort into peer and foreign."""
+    posts = [P("q1", A, "🙋 @dembaca — **Merge #44?**", at=0,
+               metadata={"reactions": [{"emoji_name": "white_check_mark", "user_id": B}]})]
+    assert tasks.ask_closers(posts) == {B}
+    assert [a["ask"] for a in tasks.open_asks(posts, NAMES, foreign={B})] == ["q1"]
+    assert tasks.open_asks(posts, NAMES, foreign=set()) == []
