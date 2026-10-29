@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.64.4
+
+### Fixed
+
+- **An ask's link line is no ask**
+  ([RT-6.11](docs/arc42/06-runtime-view.md#611-asking-a-human),
+  [RT-6.19](docs/arc42/06-runtime-view.md#619-stall-noticed-asks-reminded)).
+  The `🙋 asked <ask id>` line that `ask_human` posts in the thread it was
+  given now carries `props.a2a.kind = "ask_link"`; one already on the server
+  without props is told by its text alone. The stall digest and
+  `coordinator("tasks")` no longer list it as an open ask, also after the
+  real ask was resolved; reminders were and stay for the ask only.
+
 ## 0.64.3
 
 ### Changed
