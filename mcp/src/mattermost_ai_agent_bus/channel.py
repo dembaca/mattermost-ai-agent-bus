@@ -268,9 +268,12 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
             meta["post_id" if key == "id" else key] = str(post[key])
     meta["from_trusted_human"] = "true" if item.get("from_trusted_human") else "false"
     meta["from_agent"] = "true" if item.get("from_agent") else "false"
-    for key in ("trusted_human", "ask", "emoji", "answer", "to", "intent", "departed"):
+    for key in ("trusted_human", "ask", "emoji", "answer", "to", "intent", "departed",
+                "owner", "root_from_trusted_human"):
         if item.get(key):
             meta[key] = str(item[key])
+    if item.get("foreign"):
+        meta["foreign"] = "true"  # ADR-001: another owner's agent, a request
     if item.get("expired"):
         meta["expired"] = "true"  # RT-6.11: too late to approve
     # RT-6.12 step 3: the body cut at slim.BODY_MAX, the rest via get_thread.

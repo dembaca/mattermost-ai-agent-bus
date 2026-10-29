@@ -364,7 +364,8 @@ class WebSocketInbox:
                 return
             if not await self.client.trusted_humans():
                 return
-            if (await gate.author_classes(self.client, [post]))[0] != gate.OTHER:
+            cls = (await gate.author_classes(self.client, [post]))[0]
+            if cls not in (gate.OTHER, gate.FOREIGN):
                 return
             mine: bool | None = False
             if event.kind not in ("mention", "dm") and post.root_id and self.in_my_thread:
@@ -372,21 +373,27 @@ class WebSocketInbox:
                 if mine is None:
                     return  # unsure: as before
             why = gate.wake_reason(event.kind, post, bool(mine))
-            if not why:
+            # A foreign agent (ADR-001) wakes the worker as a request when it
+            # names it or answers in its thread; only its broadcasts are gated.
+            if not why or (cls == gate.FOREIGN and why != "broadcast"):
                 return
             who = await gate.author_name(self.client, post)
             gate.mark_gated(me, post.id)
             # One @channel would get an answer from every worker: none for that.
             # Nor for a post that already names the coordinator (not in a DM,
-            # which it cannot see): it was told.
+            # which it cannot see): it was told; nor for one that names another
+            # agent that trusts its author: that one answers.
             dm = (channel_type or "").upper() in ("D", "G")
             answer = why != "broadcast" and not (
                 not dm and await gate.names_coordinator(self.client, post)
-            ) and gate.first_reply(me, root)
+            ) and not await gate.mentioned_agent_trusts(
+                self.client, post, who, me) and gate.first_reply(me, root)
         except Exception as exc:  # noqa: BLE001 — fail open
             log.info("wake gate open for post %s: %s", post.id or None, exc)
             return
-        event.gated = f"from {who}, not trusted by me: the coordinator answers"
+        event.gated = (f"from {who}, an agent of another owner: its broadcast is no task"
+                       if cls == gate.FOREIGN else
+                       f"from {who}, not trusted by me: the coordinator answers")
         task = asyncio.create_task(self._after_gate(
             event, who, root if answer else "", dm=dm))
         self._gate_tasks.add(task)

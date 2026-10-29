@@ -175,6 +175,8 @@ _NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$")
 _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 
 
+# A bot description (its owner and trusted list, ADR-003) is read again after this.
+DESCRIPTION_TTL_SEC = 600.0
 _ID = re.compile(r"[a-z0-9]{26}")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
@@ -314,6 +316,9 @@ class MattermostAdapter:
     _roots: dict[str, tuple[str, str]] = field(default_factory=dict, repr=False, init=False)
     _bots: set[str] = field(default_factory=set, repr=False, init=False)
     _is_human: dict[str, bool] = field(default_factory=dict, repr=False, init=False)
+    # user id -> (when read, its bot description; None: not readable), ADR-003.
+    _descriptions: dict[str, tuple[float, str | None]] = field(
+        default_factory=dict, repr=False, init=False)
     session: SessionInfo | None = field(default=None, repr=False, init=False)
     _trusted: dict[str, str] | None = field(default=None, repr=False, init=False)
     profile_warning: str = field(default="", repr=False, init=False)
@@ -463,25 +468,10 @@ class MattermostAdapter:
 
     async def _profile_warning(self, info: SessionInfo, sent: list[str]) -> str:
         """Does the profile the registrar wrote carry every trusted name sent
-        (RT-6.8)? A bot's user object carries its description as
-        `bot_description`; `/bots/<id>` is the second try, which its owner may
-        read. '' when it does, or when neither can be read; never fails."""
+        (RT-6.8)? '' when it does, or when it cannot be read; never fails."""
         if not sent:
             return ""
-        description: str | None = None
-        try:
-            mm_id(info.user_id, "user")
-        except InvalidId:
-            return ""
-        for path, key in ((f"/api/v4/users/{info.user_id}", "bot_description"),
-                          (f"/api/v4/bots/{info.user_id}", "description")):
-            try:
-                data = await self._api("GET", path)
-            except Exception:  # noqa: BLE001 — not readable: try the next
-                continue
-            if isinstance(data, dict) and isinstance(data.get(key), str):
-                description = data[key]
-                break
+        description = await self.bot_description(info.user_id)
         if description is None:
             log.info("profile not readable: trusted names not compared")
             return ""
@@ -490,8 +480,41 @@ class MattermostAdapter:
             log.warning("trusted list vs profile: %s", text)
         return text
 
+    async def bot_description(self, user_id: str) -> str | None:
+        """A bot's description (ADR-003), None when it cannot be read; never
+        fails. A bot's user object carries it as `bot_description`, which
+        Mattermost leaves out when it is empty; `/bots/<id>` is the second try
+        for an object that does not say it is a bot, which only an account
+        allowed to read others' bots may read (arc42 §7.3). Cached for
+        DESCRIPTION_TTL_SEC, an unreadable one for a tenth of it."""
+        now = time.monotonic()
+        hit = self._descriptions.get(user_id)
+        if hit and now - hit[0] < (DESCRIPTION_TTL_SEC if hit[1] is not None
+                                   else DESCRIPTION_TTL_SEC / 10):
+            return hit[1]
+        description: str | None = None
+        try:
+            mm_id(user_id, "user")
+        except InvalidId:
+            return None
+        for path, key in ((f"/api/v4/users/{user_id}", "bot_description"),
+                          (f"/api/v4/bots/{user_id}", "description")):
+            try:
+                data = await self._api("GET", path)
+            except Exception:  # noqa: BLE001 — not readable: try the next
+                continue
+            if isinstance(data, dict) and isinstance(data.get(key), str):
+                description = data[key]
+                break
+            if isinstance(data, dict) and data.get("is_bot") is True:
+                description = ""  # an empty description is left out
+                break
+        self._descriptions[user_id] = (now, description)
+        return description
+
     def _take(self, info: SessionInfo) -> None:
         """Make ``info`` this process's bot and hand it to the hooks."""
+        self._descriptions.clear()
         self.base_url = info.url
         self.token = info.bot_token
         self.session = info

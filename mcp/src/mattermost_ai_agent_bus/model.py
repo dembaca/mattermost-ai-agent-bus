@@ -138,6 +138,8 @@ class RosterEntry:
     coordinator: bool = False
     crown: bool = False
     crown_of: str = ""
+    # Its bot's id, to read its description by (ADR-001); not the row's identity.
+    user_id: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)

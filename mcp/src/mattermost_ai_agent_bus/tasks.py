@@ -232,10 +232,11 @@ def open_asks(posts: Sequence[Post], names: Mapping[str, str],
     return out
 
 
-def roster(rows: list[RosterEntry], posts: Sequence[Post],
-           names: Mapping[str, str]) -> list[dict[str, Any]]:
-    """One row per reachable agent: its lease status (lease.roster, RT-6.6) and
-    its newest card (HELLO props, else the HELLO text)."""
+def roster(rows: list[RosterEntry], posts: Sequence[Post], names: Mapping[str, str],
+           owners: Mapping[str, Mapping[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """One row per reachable agent: its lease status (lease.roster, RT-6.6),
+    its newest card (HELLO props, else the HELLO text) and, from its bot
+    description, `owner`, `trusts` and `foreign` (ADR-001; `owners`, by name)."""
     cards: dict[str, dict[str, Any]] = {}
     for p in _live(posts):
         if p.root_id:
@@ -255,7 +256,8 @@ def roster(rows: list[RosterEntry], posts: Sequence[Post],
                "model": meta.get("model"), "role": meta.get("role"),
                "task": _first_line(str(card.get("description", "")), TITLE),
                "branch": meta.get("branch"),
-               "skills": [s.get("name") for s in card.get("skills") or []] or None}
+               "skills": [s.get("name") for s in card.get("skills") or []] or None,
+               **(owners or {}).get(r.username, {})}
         out.append({k: v for k, v in row.items() if v})
     return out
 

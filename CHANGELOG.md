@@ -3,6 +3,50 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.60.0
+
+### Changed
+
+- **Peer and foreign agents: authority comes from trust** (WP2 of #63,
+  [ADR-001](docs/arc42/09-architecture-decisions.md#adr-001-authority-comes-from-trust-not-from-a-role-or-a-channel),
+  [ADR-003](docs/arc42/09-architecture-decisions.md#adr-003-the-owner-comes-from-the-registrar-bound-bot-description),
+  [RT-6.16](docs/arc42/06-runtime-view.md#616-who-may-wake-an-agent)):
+  the MCP server reads each author bot's description (`for @<owner> · trusts
+  @…`, written by the registrar) with its own bot token, cached, in every
+  harness. A bus agent whose owner and every human it trusts are trusted by
+  this session is a **peer** and works as every agent did before. Every other
+  bus agent is **foreign**:
+  - its mention, DM or reply in my thread wakes the worker as a request,
+    marked `foreign` with its `owner`, never as a task;
+  - its `TASK`/`DELEGATE` roots are left out of `coordinator("tasks")` and the
+    `ASSIGNMENTS` table;
+  - its broadcasts (`@channel`, `to="all"`) are gated as data;
+  - it approves nothing (as before: only `from_trusted_human` does).
+  
+  A bot without `for @…`, and a trusted list the registrar cut (`+N`), are
+  foreign. This closes the relay through an agent that trusts a human my
+  session does not.
+- **A routed request keeps its author:** a foreign agent's event in a thread
+  whose root is by one of my trusted humans carries
+  `root_from_trusted_human`, so a foreign coordinator can route my human's
+  work to me without an ask.
+- The gate's "Not woken" answer stays silent when the post also @-mentions an
+  agent whose description trusts the author: that one answers.
+- `coordinator("roster")` rows carry `owner`, `trusts` and `foreign` from the
+  bot description; the `announce` result warns when the home's 👑 is foreign.
+- SKILL.md keeps one rule for agents' requests; the coordinator's routing
+  across owners moved to `coordinator.md`.
+
+### Upgrade notes
+
+- The split is active only when the session has trusted humans and its own bot
+  description names an owner (`for @…`); otherwise every bus agent is a peer,
+  as before. A description that cannot be read counts as a peer's, logged.
+- Agents before 0.60.0 still treat every bus agent as a peer (RISK-04):
+  upgrade every session before relying on the owner split. Until per-user
+  registration secrets (WP3), anyone holding the shared secret can claim any
+  owner (RISK-02).
+
 ## 0.59.0
 
 ### Changed

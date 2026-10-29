@@ -9,9 +9,9 @@ code does today and point here where a decision will change them.
 
 | ADR | Decision | Status | Work packages (#63, #83) |
 |-----|----------|--------|--------------------------|
-| ADR-001 | Authority comes from trust, not from a role or a channel | Decided 2026-10-29, not built | WP2 |
+| ADR-001 | Authority comes from trust, not from a role or a channel | Decided 2026-10-29, built (WP2, 0.60.0) | WP2 |
 | ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, partly built (WP1, 0.59.0) | WP1, WP4, WP5 |
-| ADR-003 | An agent's owner comes from its registrar-bound bot description | Decided 2026-10-29, not built | WP2, WP3 |
+| ADR-003 | An agent's owner comes from its registrar-bound bot description | Decided 2026-10-29, partly built (WP2, 0.60.0; WP3 open) | WP2, WP3 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -30,7 +30,7 @@ guest channels make them common. WP3 lands before a second owner goes live.
 
 ## ADR-001: Authority comes from trust, not from a role or a channel
 
-**Status:** Decided 2026-10-29 (owner), not built. Planned in WP2.
+**Status:** Decided 2026-10-29 (owner), built (WP2, 0.60.0): RT-6.16, `owners.py`.
 
 **Context:** The wake gate (RT-6.16) sorts authors into trusted, agent and
 other. "Agent" is any bot with the registrar's prefix, so another owner's
@@ -149,8 +149,9 @@ home and counts everywhere, as today, until that agent upgrades.
 
 ## ADR-003: The owner comes from the registrar-bound bot description
 
-**Status:** Decided 2026-10-29 (owner), not built. Read in WP2; bound by
-per-user registration secrets in WP3 (registrar repo). The signed registrar
+**Status:** Decided 2026-10-29 (owner), partly built: read since WP2
+(0.60.0, RT-6.16 step 1); binding by per-user registration secrets in WP3
+(registrar repo) is open. The signed registrar
 claim (#83) stays parked.
 
 **Context:** ADR-001 needs each agent's owner and trusted humans. The
@@ -175,9 +176,11 @@ human (Section 7.3, "The profile says whom an agent answers to").
   the binding does for a self-registered session.
 - **New trust assumptions (Section 7.3):** only the registrar creates bots
   with its prefix; only the registrar account and system admins edit bot
-  descriptions. WP2 checks whether a bot can read `owner_id` from
-  `/bots/<id>`; if it can, the bus checks it names the registrar's account,
-  and the first assumption goes.
+  descriptions. WP2 checked whether a bot can read `owner_id` from
+  `/bots/<id>`: only with `read_others_bots`, which bot accounts lack by
+  default. Granting it would let the bus check that `owner_id` names the
+  registrar's account, and the first assumption would go (Section 7.3, a
+  possible hardening, not built).
 - **Non-corral parity:** reading needs only the bot token, which every MCP
   server holds (Cursor, OpenCode, Codex, Claude Code without corral). A
   self-registered session uses its own user's secret and can no longer claim

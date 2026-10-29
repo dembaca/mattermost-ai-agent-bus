@@ -162,7 +162,7 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
         if (cls.get(pid, gate.OTHER) == gate.OTHER or now_ms - _at(p) > ADDRESSED_KEEP_SEC * 1000
                 or kind in (a2a.ASK, a2a.PERMISSION, a2a.REMINDER)
                 or (kind in ("TASK", "DELEGATE") and not p.root_id)
-                or (cls[pid] == gate.AGENT and p.intent == a2a.FYI)):
+                or (cls[pid] in gate.AGENTS and p.intent == a2a.FYI)):
             continue
         thread = by_thread.get(p.root_id or pid, [])
         for agent in dict.fromkeys(tasks._mentions(p.message)):
@@ -255,7 +255,7 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
     untrusted: set[str] = set()
     if trusted:
         untrusted = {p.id for p, c in zip(posts, classes, strict=True)
-                     if c == gate.OTHER and not p.root_id}
+                     if c in (gate.OTHER, gate.FOREIGN) and not p.root_id}
     rows = tasks.build(posts, names, now_ms=now_ms, untrusted=untrusted,
                        coordinators={r.username for r in roster if r.coordinator})
     found = items(posts, names, classes, rows, {r.username for r in roster}, now_ms, trusted,

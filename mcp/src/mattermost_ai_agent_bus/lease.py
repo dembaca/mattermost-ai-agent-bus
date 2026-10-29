@@ -425,7 +425,7 @@ def entry(row: Mapping[str, Any], crown_of: str = "") -> RosterEntry:
     status = text[0] if text and text[0] else _STATUS.get(str(row.get("emoji", "")), "")
     return RosterEntry(username=str(row.get("username") or ""), status=status,
                        coordinator=bool(row.get("coordinator")), crown=bool(row.get("crown")),
-                       crown_of=crown_of)
+                       crown_of=crown_of, user_id=str(row.get("id") or ""))
 
 
 # --- the crown --------------------------------------------------------------------------

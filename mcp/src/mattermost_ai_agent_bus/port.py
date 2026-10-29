@@ -79,6 +79,12 @@ class ChatPort(Protocol):
 
     async def trusted_humans(self) -> dict[str, str]: ...
 
+    async def bot_description(self, user_id: str) -> str | None:
+        """A bot's profile description, read with the bot's own token, where
+        the registrar writes `for @<owner> · trusts @…` (ADR-003); None when
+        it cannot be read."""
+        ...
+
     # --- channel membership, status and presence -----------------------------
     async def member_channels(self) -> list[UnreadChannel]: ...
 
