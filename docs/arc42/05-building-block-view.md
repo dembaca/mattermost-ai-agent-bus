@@ -60,7 +60,7 @@ The MCP server's inside is cut once more, at the chat: see 5.2.
 | Layer | Modules | Responsibility |
 |-------|---------|----------------|
 | Entry points | `server.py` (MCP tools, instructions), `hookapi.py` (hook API, RT-6.17), `hosted.py` (host process, RT-6.18), `websocket_inbox.py` (inbox) | Take requests and events and drive the bus logic; the only modules besides the adapter that import `client.py` |
-| Bus logic | `gate.py`, `lease.py`, `slim.py`, `departed.py`, `remind.py`, `stall.py`, `ownpost.py`, `stats.py`, `unread.py` | Wake gate, lease and roster, slim results, departed agents, ask reminders, stall check, own post, stats, pending count. Take a `ChatPort`, never import `client.py` |
+| Bus logic | `gate.py`, `owners.py`, `lease.py`, `slim.py`, `departed.py`, `remind.py`, `stall.py`, `ownpost.py`, `stats.py`, `unread.py` | Wake gate, peer or foreign agent (ADR-001), lease and roster, slim results, departed agents, ask reminders, stall check, own post, stats, pending count. Take a `ChatPort`, never import `client.py` |
 | Port | `port.py` | `ChatPort`, a `typing.Protocol` with the chat operations the bus logic calls and nothing more |
 | Bus types | `model.py` | `Post`, `Thread`, `Me`, `Channel`, `ChannelUser`, `Reaction` and the bus's own rows: only the fields the bus reads |
 | Adapter | `client.py` (`MattermostAdapter`), with `a2a.py` (the bus's props) and `lease.py` (status, crown, roster) | The only code that reads or writes Mattermost's carriers: REST, post props, custom status, unread counters, the registrar's profile |
@@ -69,7 +69,7 @@ The MCP server's inside is cut once more, at the chat: see 5.2.
 **Port.** `ChatPort` covers who and where (the bot's token and session, the
 work channel, permalink base, `get_me`, `account_created`, `get_channel`,
 `channel_header`, `set_channel_header`);
-people (`usernames`, `agents`, `trusted_humans`); membership, status and
+people (`usernames`, `agents`, `trusted_humans`, `bot_description`); membership, status and
 presence (`member_channels`, `channel_users`, `presences`, `set_presence`,
 `set_custom_status`, `clear_custom_status`); posting (`post`, `post_sync`,
 `post_by_name_sync`); reading (`thread`, `channel_posts`, `posts_after`,

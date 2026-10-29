@@ -1,9 +1,11 @@
 """Who may wake an agent (RT-6.16 in docs/arc42/06-runtime-view.md).
 
-Every post's author is one of three classes, by the account Mattermost
+Every post's author is one of four classes, by the account Mattermost
 authenticates, never by what the post says: trusted (a trusted human, RT-6.8),
-agent (a bot account named agent-*) or other (people, bots that are no bus
-agents, and every webhook post, whatever account it names).
+agent (a peer: a bus agent whose owner and trusted humans are all mine,
+ADR-001), foreign (any other bus agent, owners.py) or other (people, bots that
+are no bus agents, and every webhook post, whatever account it names). While
+the owner split is off, every bus agent is an agent.
 
 With trusted humans configured, a post by `other` that would wake a worker is
 gated: it reaches the agent only as data, and the worker's MCP server answers
@@ -20,19 +22,23 @@ Entries older than MAX_AGE_SEC are dropped.
 
 from __future__ import annotations
 
+import logging
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import a2a, channel, lease, session_file
+from . import a2a, channel, lease, owners, session_file
 from .model import Post
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .port import ChatPort
 
-TRUSTED, AGENT, OTHER = "trusted", "agent", "other"
+TRUSTED, AGENT, FOREIGN, OTHER = "trusted", "agent", "foreign", "other"
+AGENTS = frozenset({AGENT, FOREIGN})  # bus agents, peer or foreign
 MAX_AGE_SEC = 7 * 86400
 # The coordinator's name is read with the roster, several requests: at most this often.
 COORD_TTL_SEC = 60.0
@@ -40,20 +46,25 @@ COORD_TTL_SEC = 60.0
 _coord: tuple[float, str] | None = None
 
 
-def author_class(post: Post, trusted: Mapping[str, str], agents: set[str]) -> str:
+def author_class(post: Post, trusted: Mapping[str, str], agents: set[str],
+                 foreign: Collection[str] = ()) -> str:
     if post.from_webhook:
         return OTHER
     uid = post.user_id
     if uid in trusted:
         return TRUSTED
-    return AGENT if uid in agents else OTHER
+    if uid not in agents:
+        return OTHER
+    return FOREIGN if uid in foreign else AGENT
 
 
 async def author_classes(client: ChatPort, posts: Sequence[Post]) -> list[str]:
-    """The class of each post's author; raises when the accounts cannot be read."""
+    """The class of each post's author; raises when the accounts cannot be
+    read. Whether an agent is foreign never raises: unsure, it is a peer."""
     trusted = await client.trusted_humans()
     agents = await client.agents({p.user_id for p in posts} - {""})
-    return [author_class(p, trusted, agents) for p in posts]
+    foreign = await owners.foreign(client, agents)
+    return [author_class(p, trusted, agents, foreign) for p in posts]
 
 
 def wake_reason(kind: str, post: Post, in_my_thread: bool) -> str:
@@ -94,6 +105,27 @@ async def names_coordinator(client: ChatPort, post: Post) -> bool:
     name = await coordinator_name(client)
     return bool(name) and re.search(
         rf"(?<![\w.-])@{re.escape(name)}(?![\w-]|\.\w)", post.message, re.I) is not None
+
+
+async def mentioned_agent_trusts(client: ChatPort, post: Post, author: str, me: str) -> bool:
+    """RT-6.16 step 3: another agent the post @-mentions trusts its author (its
+    description names them as owner or trusted): that one wakes and answers,
+    a "Not woken" here would only add noise. Reads the roster, never fails."""
+    prefix = re.escape(session_file.agent_prefix())
+    named = {n.lower() for n in re.findall(rf"@({prefix}[\w.-]*\w)", post.message)}
+    if not named or post.from_webhook:
+        return False
+    try:
+        rows = await lease.roster(client)
+    except Exception as exc:  # noqa: BLE001 — unsure: the answer goes out
+        log.info("mentioned agents not read: %s", exc)
+        return False
+    for r in rows:
+        if r.user_id and r.user_id != me and r.username.lower() in named:
+            agent = await owners.read(client, r.user_id)
+            if agent is not None and author.lower() in agent.circle():
+                return True
+    return False
 
 
 async def reply_text(client: ChatPort, author: str, *, dm: bool) -> str:

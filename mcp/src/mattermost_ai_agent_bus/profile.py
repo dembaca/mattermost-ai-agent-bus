@@ -7,6 +7,11 @@ MM_TRUSTED_HUMANS, so the profile can under-report whom the agent trusts. The
 bus assumes nothing about the registrar's cap: it compares what the profile
 actually carries. bin/mm-agent-lib.sh (mm_warn_profile_trusted) does the same
 for host sessions.
+
+The same description names the bot's owner (``for @owner``): whose agent it
+is, which ADR-001 compares with whom this session trusts (owners.py). Nothing
+beyond ``for @…`` and ``trusts @…`` is read; a ``+N`` in the trusted list says
+the registrar cut it (ADR-003, WP3).
 """
 
 from __future__ import annotations
@@ -14,10 +19,30 @@ from __future__ import annotations
 import re
 
 
-def listed(description: str) -> set[str]:
-    """The names after ``trusts @`` in a bot's description."""
+_CUT = re.compile(r"\+\d+")
+
+
+def _trusts(description: str | None) -> str:
     m = re.search(r"trusts @([^·]*)", description or "")
-    return {n.strip().lower() for n in re.split(r",\s*@", m[1])} if m else set()
+    return m[1] if m else ""
+
+
+def listed(description: str | None) -> set[str]:
+    """The names after ``trusts @`` in a bot's description; a ``+N`` that
+    marks a cut list names nobody."""
+    names = re.split(r"[,\s]+@?", _CUT.sub(" ", _trusts(description)))
+    return {n.lower() for n in names if re.fullmatch(r"[\w.-]+", n)}
+
+
+def cut(description: str | None) -> bool:
+    """The registrar wrote only part of the trusted list, marked ``+N`` (WP3)."""
+    return _CUT.search(_trusts(description)) is not None
+
+
+def owner(description: str | None) -> str:
+    """The owner after ``for @`` in a bot's description, lower case; '' without one."""
+    m = re.search(r"(?:^|·)\s*for @([^\s·,]+)", description or "")
+    return m[1].lower() if m else ""
 
 
 def warning(bot: str, sent: list[str], description: str | None) -> str:
