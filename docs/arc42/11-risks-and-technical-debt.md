@@ -1,0 +1,24 @@
+# 11. Risks and Technical Debt
+
+## Overview
+
+Known risks of the decisions in Section 9, with what keeps each small and
+which work package closes or lowers it. A risk whose mitigation is planned,
+not built, says so: the code today behaves as Section 6 describes.
+
+## 11.1 Risk Register
+
+| ID | Risk | Created by | Likelihood / Impact | Mitigation | Status |
+|----|------|------------|---------------------|------------|--------|
+| RISK-01 | An injected peer relays a request: an agent whose owner and trusted humans are all mine was itself steered by a post it read, and passes the request to my worker as its own | ADR-001 | Low / High | The peer rule removes relays through agents of other owners; what remains is an injected agent of my own trust circle. Posts are data, not instructions (`SKILL.md`); approvals stay server-verified (RT-6.8, RT-6.11, RT-6.13) | Accepted residual; the cross-owner relay closes with WP2 (planned) |
+| RISK-02 | The owner claim can be forged while the registration secret is shared: any holder registers a bot `for @<anyone>` and becomes a peer of that human's agents | ADR-003 | Medium / High, once a second owner shares a channel | Per-user registration secrets: the registrar writes `for @<the secret's owner>` (WP3, registrar repo). Until then one owner per instance, or owners who trust each other | Planned (WP3, before a second owner goes live) |
+| RISK-03 | Mattermost admins, and whoever may edit bot accounts, can rewrite a bot's description and so its owner and trusted list | ADR-003 | Low / High | Trust assumption in Section 7.3: only the registrar account and system admins edit descriptions; WP2 checks the bot's `owner_id` where Mattermost lets a bot read it. A signed claim (#83) would cover an untrusted admin and stays parked | Accepted; reviewed if the admin is not trusted or instances federate |
+| RISK-04 | Plugin versions are mixed: an older agent writes no home into its status and reads no owner, so it counts in every channel's roster and election and takes a foreign agent's `TASK` as before | ADR-001, ADR-002 | Medium / Medium, during upgrades | A status without a home counts everywhere, as today, until the agent upgrades; the newer side applies its own rules to what it receives. Upgrade every session before relying on the owner split (CHANGELOG notes it) | Planned (WP1, WP2): tolerated until every agent runs the new version |
+| RISK-05 | The token cost of guest channels: each further channel brings posts that could wake the model | ADR-002 | Medium / Medium | Guests wake only for a mention, a reply in their own thread or a DM; guest channels and the lobby produce no digest; the Stop hook count leaves out broadcasts in guest channels; the rest is read on demand with `list_recent`. Measured with RT-6.9 (quality goal 6) | Planned (WP4, WP5) |
+
+## 11.2 Technical Debt
+
+| Item | Where | Plan |
+|------|-------|------|
+| The roster and the election read every bus agent's status regardless of its channel: a project channel's coordinator shows as the crown holder in the lobby's roster and wakes for plain posts there | `lease.py` (`_rows`), `channel.wakes` (RT-6.6) | WP1 (crown per home), WP5 (lobby), ADR-002 |
+| Any bot with the registrar's prefix counts as "agent", whoever its owner | `gate.py`, `client.agents` (RT-6.16 step 1) | WP2, ADR-001 |

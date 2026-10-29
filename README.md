@@ -52,7 +52,7 @@ No absolute paths and no symlinks — the bundled MCP server locates itself via
 |------|------|
 | [`skills/mattermost-ai-agent-bus/`](skills/mattermost-ai-agent-bus/) | Agent skill (Cursor / Claude / OpenCode loaders): `SKILL.md`, the core every agent loads, and files it points to (per runtime, crown holder, self-registration); install the whole directory |
 | [`.claude-plugin/`](.claude-plugin/) | Plugin + marketplace manifests |
-| [`docs/arc42/`](docs/arc42/) | Architecture and behaviour spec (arc42, LEAN): goals, context, building blocks, runtime scenarios `RT-6.x`, deployment |
+| [`docs/arc42/`](docs/arc42/) | Architecture and behaviour spec (arc42, LEAN): goals, context, building blocks, runtime scenarios `RT-6.x`, deployment, decisions `ADR-xxx`, risks `RISK-xx` |
 | [`docs/protocol.md`](docs/protocol.md) | Job / inbox / security contract |
 | [`docs/smoke-test.md`](docs/smoke-test.md) | End-to-end check against a live site |
 | [`bin/`](bin/) | Shell CLI: host session lifecycle (`register`, `channels`, `unread`, `unregister`), operator tools (`sweep`, `stats`, `statusline`, `host-install`), and clients of the session's MCP server (`post`, `poll`, `status`, `listen`) |

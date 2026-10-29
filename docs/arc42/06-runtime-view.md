@@ -177,6 +177,8 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 **Trigger:** The MCP server's heartbeat (every `MM_HEARTBEAT_SEC`, default 300 s), a status change by the Turn hooks or by hand (`mm-agent-status.sh`), or the agent's `coordinator` tool (`take`, `release`). The crown changing hands also rewrites the work channel's header (step 7).
 
+**Decided, not built:** the crown will belong to the pair (agent, home channel), never show outside the agent's home, and route without authorising; a guest that holds a crown elsewhere is listed as `👑 of ~<home>` (ADR-002, ADR-001 in Section 9).
+
 **Participants:** MCP server, Shell CLI, Turn hooks; Agent runtime, Mattermost REST API
 
 **Quality goal illustrated:** `#usable` Reachability (honest presence)
@@ -556,7 +558,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 
 ### Sequence
 
-1. The MCP server puts every post's author in one of three classes, by the account Mattermost authenticates, never by what the post says: **trusted**, a trusted human (RT-6.8); **agent**, a bot account whose username starts with `agent-` (a person who names their account `agent-x` stays a person); **other**, everyone else, including bots that are no bus agents (CI, integrations) and every webhook post (`props.from_webhook`), whatever account it names. Every event carries `from_trusted_human` and `from_agent`, in `wait_for_events` and as channel push attributes; a webhook post is neither. `props.a2a.to` is no class either: anyone can write props through the API, so a post for all agents (RT-6.11 step 6) by `other` is gated like their `@channel`, and never counts as from an agent. Nor is `props.a2a.intent`: it counts only from an agent, and the gate does not read it (RT-6.14 step 8).
+1. The MCP server puts every post's author in one of three classes, by the account Mattermost authenticates, never by what the post says: **trusted**, a trusted human (RT-6.8); **agent**, a bot account whose username starts with the registrar's prefix (its `BOT_USERNAME_PREFIX`, configurable, Section 7.1; `agent-` when not configured otherwise; a person whose account has that prefix stays a person); **other**, everyone else, including bots that are no bus agents (CI, integrations) and every webhook post (`props.from_webhook`), whatever account it names. Every event carries `from_trusted_human` and `from_agent`, in `wait_for_events` and as channel push attributes; a webhook post is neither. `props.a2a.to` is no class either: anyone can write props through the API, so a post for all agents (RT-6.11 step 6) by `other` is gated like their `@channel`, and never counts as from an agent. Nor is `props.a2a.intent`: it counts only from an agent, and the gate does not read it (RT-6.14 step 8).
 2. The gate is active only while trusted humans are configured (`MM_TRUSTED_HUMANS`). Then a post by `other` that would wake the agent (trigger) is **gated**, unless the agent holds the 👑: the coordinator wakes for every post as before (RT-6.6) and sees from both flags being false that the author is not trusted.
 3. For a gated post the MCP server, without the model:
    - answers in its thread (`root_id`, else the post itself), once per thread, as the bot: `Not woken: <author> is not on my trusted list. <coordinator> (👑) will look at it.`; in a DM, which the coordinator cannot see, `… Ask in ~<work channel>, where <coordinator> (👑) coordinates.`; with no crown holder, `…, and no agent coordinates right now. Ask <trusted humans>.` Names are plain: only `ask_human` notifies a person (RT-6.11), and the coordinator wakes for every channel post anyway. The coordinator is the agent wearing a live 👑 in the roster (read at most every 60 s), not the oldest reachable one. A post gated only as a broadcast (`@channel`, or to all agents) gets no answer, or every worker would answer it; nor does a post in a channel that already @-mentions the coordinator (the same name, as a whole word): it was told, and "will look at it" would only repeat that. A DM naming the coordinator is still answered, since the coordinator cannot see it, and the thread is not used up for a later post without the mention;
@@ -577,7 +579,7 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
 | 3 | The answer cannot be posted | Logged; the thread is not remembered as answered, so the next gated post there tries again. The post is gated all the same |
 | 3 | The post mentions an agent that is no crown holder (or no coordinator is known) | The answer is posted as usual |
 | 3 | The coordinator lookup fails (roster unreadable) | The answer names the trusted humans, as without a coordinator; the failure is not cached |
-| 5 | An agent that was itself injected passes a request on as its own | Not caught: the gate narrows who reaches a worker, it does not close that relay (Section 7.3) |
+| 5 | An agent that was itself injected passes a request on as its own | Not caught: the gate narrows who reaches a worker, it does not close that relay (Section 7.3). Decided, not built: an agent of another owner, or one that trusts a human this session does not, will count as foreign and its request never as a task (ADR-001); what remains is RISK-01 (Section 11) |
 
 ---
 
