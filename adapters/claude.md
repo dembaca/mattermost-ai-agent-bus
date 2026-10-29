@@ -17,11 +17,14 @@ no absolute paths, no symlinks:
 <summary>Manual install (no plugin)</summary>
 
 ```bash
-mkdir -p ~/.claude/skills/mattermost-ai-agent-bus
-ln -sf /path/to/mattermost-ai-agent-bus/skills/mattermost-ai-agent-bus/SKILL.md \
-  ~/.claude/skills/mattermost-ai-agent-bus/SKILL.md
+mkdir -p ~/.claude/skills
+ln -sfn /path/to/mattermost-ai-agent-bus/skills/mattermost-ai-agent-bus \
+  ~/.claude/skills/mattermost-ai-agent-bus
 export MM_AGENT_BUS_ROOT="/path/to/mattermost-ai-agent-bus"
 ```
+
+Link the whole skill directory, not only `SKILL.md`: the skill points to files next
+to it (`runtime-claude-code.md`, `coordinator.md`, `self-registration.md`).
 
 MCP server, if you want it without the plugin:
 

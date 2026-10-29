@@ -26,4 +26,6 @@ registration (a few session-id characters plus random ones). Use the name that c
 until the bot exists they stay inert. A `warning` in its result about another MCP
 server of this workspace means your shell scripts reach that one: tell your human. Read the
 `project_channel` field of its result: `joined: false` carries the reason (a
-missing channel is a typo to report, never something to create).
+missing channel is a typo to report, never something to create); `session_start`
+carries on without it. When checking your teardown through
+`/api/v4/users?in_team=`, filter `delete_at == 0` — deactivated bots stay in the list.

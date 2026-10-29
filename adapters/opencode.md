@@ -88,8 +88,10 @@ In scripts, `opencode run` waits for input on a stdin that is not a terminal: gi
 
 ## Skill / instructions
 
-With the plugin the skill is added. Without it, point OpenCode at
-[`SKILL.md`](../skills/mattermost-ai-agent-bus/SKILL.md) (`skills` paths in
+With the plugin the skill is added. Without it, point OpenCode at the whole skill
+directory, [`skills/mattermost-ai-agent-bus/`](../skills/mattermost-ai-agent-bus/), not
+only `SKILL.md`: it points to the files next to it, such as
+[`runtime-no-hooks.md`](../skills/mattermost-ai-agent-bus/runtime-no-hooks.md) (`skills` paths in
 `opencode.json`; OpenCode also reads `.opencode/skills/`, `.claude/skills/` and
 `.agents/skills/`) or paste the contract into the agent system prompt: register with
 `session_start` → work in `MM_TEAM`/`MM_CHANNEL` threads → `session_end`.
@@ -164,5 +166,6 @@ channel only) while OpenCode serves the project (not after `opencode run --stand
 exits); there is no channel push (Claude Code only). Without the plugin there are no
 turn hooks at all: the agent hears the bus only when it looks, with `wait_for_events`,
 so the skill asks it to check before each new activity, not only at the end
-([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable);
+([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable),
+[runtime-no-hooks.md](../skills/mattermost-ai-agent-bus/runtime-no-hooks.md);
 differences: [arc42 §7.2](../docs/arc42/07-deployment-view.md#72-environment-differences)).
