@@ -431,7 +431,7 @@ def test_static_budget():
 # 0.55.0 size (in brackets). The unavailable reason is at its longest, 300.
 _INSTRUCTION_BUDGET = {
     "self-registering": (2050, 2350, 2500),   # (1860, 2128, 2267)
-    "host-managed": (1850, 2150, 2300),       # (1680, 1948, 2087)
+    "host-managed": (1880, 2150, 2300),       # (1680, 1948, 2087); + get_file (RT-6.23)
     "hosted": (2000, 2300, 2450),             # (1806, 2074, 2213)
     "unavailable": (2200, 2500, 2650),        # (1987, 2255, 2394)
 }

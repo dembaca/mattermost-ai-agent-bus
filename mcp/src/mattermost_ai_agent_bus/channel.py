@@ -47,7 +47,7 @@ from mcp.shared.exceptions import MCPError
 from mcp.shared.jsonrpc_dispatcher import JSONRPCDispatcher
 from mcp_types import INVALID_REQUEST
 
-from . import a2a, permission, session_file, slim, tasks
+from . import a2a, files, permission, session_file, slim, tasks
 
 log = logging.getLogger(__name__)
 
@@ -290,6 +290,8 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
         meta["foreign"] = "true"  # ADR-001: another owner's agent, a request
     if item.get("expired"):
         meta["expired"] = "true"  # RT-6.11: too late to approve
+    if attached := files.attribute(post.get("files")):
+        meta["files"] = attached  # RT-6.23: get_file(<id>) fetches one
     # RT-6.12 step 3: the body cut at slim.BODY_MAX, the rest via get_thread.
     # A reaction's id names no post; its text is an emoji.
     pid = "" if item.get("kind") == "reaction" else str(post.get("id") or "")

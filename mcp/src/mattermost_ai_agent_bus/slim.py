@@ -3,7 +3,9 @@
 Mattermost's post JSON carries metadata, props, hashtags, file ids and more;
 an agent reads every token of it in every turn the result stays in context.
 A slim post keeps id, thread, channel name, author name, time and text — about
-a fifth of the size. Tools take raw=true for the full JSON.
+a fifth of the size — and, for a post with attachments, a short `files` hint
+(id, name, type, size) to fetch them by with get_file (RT-6.23). Tools take
+raw=true for the full JSON.
 
 What the bus brings unasked (a channel push, a wait_for_events item) has its
 text cut at BODY_MAX characters with a pointer to get_thread (RT-6.12 step 3);
@@ -15,6 +17,8 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
+
+from . import files
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -77,6 +81,8 @@ def _one(p: Post, users: dict[str, str], channels: dict[str, str]) -> dict[str, 
         out["edited"] = True
     if p.reply_count:
         out["replies"] = p.reply_count
+    if p.files:
+        out["files"] = [files.hint(f) for f in p.files]  # RT-6.23: get_file fetches one
     return out
 
 

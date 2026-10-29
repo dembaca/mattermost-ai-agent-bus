@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from .model import Channel, ChannelUser, Me, Post, Reaction, Thread, UnreadChannel
+    from .model import Channel, ChannelUser, FileInfo, Me, Post, Reaction, Thread, UnreadChannel
 
 
 class BotSession(Protocol):
@@ -133,3 +133,12 @@ class ChatPort(Protocol):
                           max_pages: int = 25) -> list[Post]: ...
 
     async def reactions(self, post_id: str) -> list[Reaction]: ...
+
+    async def file_info(self, file_id: str) -> FileInfo:
+        """A file attached to a post (RT-6.23); raises where the bot may not read it."""
+        ...
+
+    async def file_bytes(self, file_id: str, *, preview: bool = False, limit: int) -> bytes:
+        """A file's content, or with preview its image preview: at most
+        limit + 1 bytes (more than limit: it is longer)."""
+        ...

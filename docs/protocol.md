@@ -203,11 +203,13 @@ Listening members wake at once only for posts meant for them (that one, and a
 human's `@channel`); the rest reaches them as a digest
 ([arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)).
 
-Tool results carry slim posts (`id`, `root_id`, channel, author, time, message) in
-compact JSON; `list_recent` leaves system messages out. `raw=true` returns
+Tool results carry slim posts (`id`, `root_id`, channel, author, time, message,
+`files` when it has attachments) in compact JSON; `list_recent` leaves system messages out. `raw=true` returns
 Mattermost's full JSON. A pushed or `wait_for_events` post over 2,000 characters
 is cut with a pointer to `get_thread`
 ([arc42 §6.12](arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)).
+`get_file` fetches an attached file through the server
+([arc42 §6.23](arc42/06-runtime-view.md#623-files-attached-to-a-post)).
 
 Every session posts one `STATS {…}` line to `agents-stats` (`MM_STATS_CHANNEL`; `off`
 disables it, a missing channel is skipped) at its end: counts, sizes and seconds of what the bus added to the session, never content
