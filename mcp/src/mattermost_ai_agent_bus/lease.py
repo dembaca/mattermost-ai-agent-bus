@@ -415,6 +415,15 @@ async def roster(client: ChatPort) -> list[RosterEntry]:
     return [entry(r) for r in _coordinator_first(_at_home(rows, home))] + guests
 
 
+async def coordinator_of(client: ChatPort, channel_id: str) -> str:
+    """The crown holder of channel_id as somebody's home (RT-6.22): the agent
+    with a live 👑 among those whose status names that channel (or no home,
+    an older plugin); '' for none. A guest's 👑 of its own home is none."""
+    name = (await client.get_channel(channel_id)).name
+    rows = _at_home(await _rows(client, channel_id), name)
+    return next((str(r["username"]) for r in rows if r["crown"]), "")
+
+
 def entry(row: Mapping[str, Any], crown_of: str = "") -> RosterEntry:
     """One roster row as a bus type: the status word from the status text
     (after "coordinator"), else from its emoji. crown_of: the other home

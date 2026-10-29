@@ -18,7 +18,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import a2a, links, owners, ownpost, profile, session_file, watermark
+from . import a2a, links, owners, ownpost, profile, session_file, stats, watermark
 from .model import Channel, ChannelUser, Me, Post, Reaction, Thread, UnreadChannel
 
 if TYPE_CHECKING:
@@ -227,6 +227,19 @@ def env(name: str, default: str = "") -> str:
     return value
 
 
+def channel_list(value: str) -> list[str]:
+    """MM_PROJECT_CHANNEL as a list (ADR-002, RT-6.22): comma-separated names,
+    each trimmed of blanks and a leading ~, empty and repeated ones dropped.
+    The first is the home, the others guest channels joined at start."""
+    names = (n.strip().lstrip("~").strip() for n in value.split(","))
+    return list(dict.fromkeys(n for n in names if n))
+
+
+# How long the guest channels (memberships) are kept before they are read
+# again; a WebSocket membership event forgets them at once (RT-6.22).
+GUEST_TTL_SEC = 60.0
+
+
 def _registration_fields(name: str, display: str) -> dict[str, Any]:
     """Registration body: who the agent answers to goes along (RT-6.8), so the
     registrar can put it into the bot's profile. Unknown fields are ignored."""
@@ -299,7 +312,14 @@ class MattermostAdapter:
     team_name: str = "agents"
     channel_name: str = "agents"
     project_channel_name: str = ""
+    # MM_PROJECT_CHANNEL entries 2..n (RT-6.22); a list given as
+    # project_channel_name is split into the home and these.
+    guest_channel_names: list[str] = field(default_factory=list)
     _client: httpx.AsyncClient | None = field(default=None, repr=False, init=False)
+    # (when read, the guest channel ids): the bot's memberships (RT-6.22).
+    _guests: tuple[float, frozenset[str]] | None = field(default=None, repr=False, init=False)
+    # Guest entries the session start could not join: name -> why (RT-6.22).
+    guest_join_failures: dict[str, str] = field(default_factory=dict, repr=False, init=False)
     _me: Me | None = field(default=None, repr=False, init=False)
     # Bumped whenever the identity changes (_take, session_end): a get_me that
     # started before must not cache the old bot's answer.
@@ -335,6 +355,19 @@ class MattermostAdapter:
     # bots of long-ended sessions it unregistered first.
     reused: bool = field(default=False, repr=False, init=False)
     reaped: list[str] = field(default_factory=list, repr=False, init=False)
+
+    def __post_init__(self) -> None:
+        if "," in self.project_channel_name or "~" in self.project_channel_name:
+            names = channel_list(self.project_channel_name)
+            self.project_channel_name = names[0] if names else ""
+            self.guest_channel_names = [*names[1:], *self.guest_channel_names]
+        self.guest_channel_names = list(dict.fromkeys(
+            n for n in self.guest_channel_names if n and n != self.project_channel_name))
+
+    @property
+    def project_channels(self) -> str:
+        """MM_PROJECT_CHANNEL as configured, the home first: for the session file."""
+        return ",".join(n for n in (self.project_channel_name, *self.guest_channel_names) if n)
 
     @property
     def keeps_bot_on_exit(self) -> bool:
@@ -557,6 +590,7 @@ class MattermostAdapter:
         self._me_gen += 1
         self._team_id = None
         self._channel_ids.clear()
+        self._guests = None
         os.environ["MM_CHAT_URL"] = info.url
         os.environ["MATTERMOST_URL"] = info.url
         os.environ["MM_REG_BOT_NAME"] = info.name
@@ -567,7 +601,8 @@ class MattermostAdapter:
         os.environ["MATTERMOST_TOKEN"] = info.bot_token
         self.session_file_status: dict[str, Any]
         try:
-            path = session_file.write(info, self.team_name, self.channel_name)
+            path = session_file.write(info, self.team_name, self.channel_name,
+                                      self.project_channels)
             self.session_file_status = {"path": str(path), "written": True}
         except OSError as exc:
             # The MCP tools do not need the file, but the hooks do — say so
@@ -655,38 +690,55 @@ class MattermostAdapter:
                 reaped.append(name)
         return reaped
 
+    async def _join_named(self, name: str, user_id: str) -> dict[str, Any]:
+        """Join the team's channel `name`: {name, id, joined: true} or {name,
+        joined: false, error}. Never raises for a channel it cannot join."""
+        try:
+            cid = await self.get_channel_id(name)
+            # No membership pre-check: a non-member cannot read the member
+            # list (403, not 404). Joining twice is harmless.
+            await self._api(
+                "POST",
+                f"/api/v4/channels/{mm_id(cid, 'channel')}/members",
+                json={"user_id": user_id},
+            )
+            return {"name": name, "id": cid, "joined": True}
+        except InvalidId as exc:
+            return {"name": name, "joined": False, "error": str(exc)}
+        except httpx.HTTPStatusError as exc:
+            code = exc.response.status_code
+            reason = {
+                404: f"channel '{name}' does not exist in team '{self.team_name}' "
+                "(check the name; this server never creates channels)",
+                403: f"cannot join '{name}': private channel (a human must add "
+                "the bot) or joining is denied on this instance",
+            }.get(code, f"HTTP {code}")
+            return {"name": name, "joined": False, "error": reason}
+
     async def finish_session_setup(self) -> dict[str, Any]:
-        """What session_start leaves undone: join the project channel, empty the inbox.
+        """What session_start leaves undone: join the home and the guest
+        channels (MM_PROJECT_CHANNEL, RT-6.22), empty the inbox.
 
         Best effort — the bot is already registered, so a failure is reported,
         never raised. The registrar only makes the bot a member of MM_CHANNEL;
         without the join, posting to the project channel is a 403 even though
-        reading it works.
+        reading it works. A guest channel that cannot be joined is reported
+        once, here (guest_channels, guest_warning), and the session goes on.
         """
         result: dict[str, Any] = {}
         name = self.project_channel_name
         if name and self.session:
-            try:
-                cid = await self.get_channel_id(name)
-                # No membership pre-check: a non-member cannot read the member
-                # list (403, not 404). Joining twice is harmless.
-                await self._api(
-                    "POST",
-                    f"/api/v4/channels/{mm_id(cid, 'channel')}/members",
-                    json={"user_id": self.session.user_id},
-                )
-                result["project_channel"] = {"name": name, "id": cid, "joined": True}
-            except InvalidId as exc:
-                result["project_channel"] = {"name": name, "joined": False, "error": str(exc)}
-            except httpx.HTTPStatusError as exc:
-                code = exc.response.status_code
-                reason = {
-                    404: f"channel '{name}' does not exist in team '{self.team_name}' "
-                    "(check the name; this server never creates channels)",
-                    403: f"cannot join '{name}': private channel (a human must add "
-                    "the bot) or joining is denied on this instance",
-                }.get(code, f"HTTP {code}")
-                result["project_channel"] = {"name": name, "joined": False, "error": reason}
+            result["project_channel"] = await self._join_named(name, self.session.user_id)
+        if self.guest_channel_names and self.session:
+            joined = [await self._join_named(g, self.session.user_id)
+                      for g in self.guest_channel_names]
+            self.guest_join_failures = {j["name"]: j["error"] for j in joined if not j["joined"]}
+            self._guests = None
+            result["guest_channels"] = joined
+            if self.guest_join_failures:
+                result["guest_warning"] = ("guest channel(s) not joined, the session goes on: "
+                                           + "; ".join(f"~{n}: {why}" for n, why
+                                                       in self.guest_join_failures.items()))
         # A fresh bot is born with a welcome DM from itself, which Mattermost's
         # UI shows unread. The bus never counts it: an own post (RT-6.2).
         try:
@@ -1169,6 +1221,42 @@ class MattermostAdapter:
             return env("MM_CHANNEL_ID")
         return await self.get_channel_id()
 
+    async def lobby_channel_id(self) -> str:
+        """MM_CHANNEL's id (ADR-002: the lobby), by the id the host passed or by name."""
+        if _ID.fullmatch(env("MM_CHANNEL_ID")):
+            return env("MM_CHANNEL_ID")
+        return await self.get_channel_id(self.channel_name)
+
+    def forget_guests(self) -> None:
+        """The bot's channel memberships changed (RT-6.22): read them again."""
+        self._guests = None
+
+    async def guest_channel_ids(self) -> set[str]:
+        """The bot's guest channels (ADR-002, RT-6.22): every team channel it
+        is a member of (open or private) other than its home, the lobby
+        (MM_CHANNEL, WP5) and the stats channel. The MM_PROJECT_CHANNEL
+        entries 2..n are among them once joined. Kept GUEST_TTL_SEC and
+        forgotten on a membership event (forget_guests); raises when the
+        memberships cannot be read."""
+        now = time.monotonic()
+        if self._guests is not None and now - self._guests[0] < GUEST_TTL_SEC:
+            return set(self._guests[1])
+        team = {c.channel_id for c in await self.member_channels()
+                if c.channel_type in ("O", "P")}
+        if team:
+            team.discard(await self.work_channel_id())
+            for other in (self.lobby_channel_id, self._stats_channel_id):
+                try:
+                    team.discard(await other())
+                except Exception as exc:  # noqa: BLE001 — not there: nothing to leave out
+                    log.debug("channel left out of the guests: %s", exc)
+        self._guests = (now, frozenset(team))
+        return set(team)
+
+    async def _stats_channel_id(self) -> str:
+        name = stats.channel()
+        return await self.get_channel_id(name) if name else ""
+
     async def join_channel(self, channel_name: str) -> str:
         cid = mm_id(await self.get_channel_id(channel_name), "channel")
         me = await self.get_me()
@@ -1239,13 +1327,15 @@ class MattermostAdapter:
 
 
 async def watched_channel_ids(client: MattermostAdapter) -> set[str]:
-    """The channels the bus watches (RT-6.2 step 1): the work channel, the
-    project channel and the default channel, by the ids the host passed
-    (MM_PROJECT_CHANNEL_ID, MM_CHANNEL_ID) and by name. Never a DM or group
-    channel. The one list for both sides: the inbox delivers their posts
-    (websocket_inbox), the hook API counts and reads them (hookapi), so what
-    the Stop hook counts is what wait_for_events can hand over. A channel that
-    does not resolve is left out, the others still count."""
+    """The channels the bus watches (RT-6.2 step 1): the work channel (the
+    home), the project channel and the default channel (the lobby), by the
+    ids the host passed (MM_PROJECT_CHANNEL_ID, MM_CHANNEL_ID) and by name,
+    and the guest channels (RT-6.22: the bot's other team channels, where
+    only a mention or a reply in its own thread wakes it). Never a DM or
+    group channel. The one list for both sides: the inbox delivers their
+    posts (websocket_inbox), the hook API counts and reads them (hookapi), so
+    what the Stop hook counts is what wait_for_events can hand over. A
+    channel that does not resolve is left out, the others still count."""
     ids = {v for v in (env("MM_PROJECT_CHANNEL_ID"), env("MM_CHANNEL_ID")) if _ID.fullmatch(v)}
     names = dict.fromkeys(n for n in (client.channel_name, client.project_channel_name) if n)
     for name in names:
@@ -1257,7 +1347,20 @@ async def watched_channel_ids(client: MattermostAdapter) -> set[str]:
         ids.add(await client.work_channel_id())
     except Exception as exc:  # noqa: BLE001
         log.warning("could not resolve the work channel: %s", exc)
-    return ids
+    return ids | await guest_ids(client)
+
+
+async def guest_ids(client: MattermostAdapter) -> set[str]:
+    """client.guest_channel_ids, none when the memberships cannot be read
+    (RT-6.22): the home and the lobby still count."""
+    guests = getattr(client, "guest_channel_ids", None)
+    if guests is None:  # a test's stand-in without memberships
+        return set()
+    try:
+        return set(await guests())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not read the guest channels: %s", exc)
+        return set()
 
 
 if TYPE_CHECKING:

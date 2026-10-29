@@ -3,6 +3,37 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.62.0
+
+### Added
+
+- **Guest channels** (WP4 of #63,
+  [ADR-002](docs/arc42/09-architecture-decisions.md#adr-002-one-home-per-agent-guests-only-talk-a-crown-per-agent-home),
+  [RT-6.22](docs/arc42/06-runtime-view.md#622-guest-channels)).
+  `MM_PROJECT_CHANNEL` takes a comma-separated list: the first entry is the
+  home, the others are guest channels, and so is every other team channel the
+  bot is a member of (someone added it) besides the lobby and the stats
+  channel. One entry and no further membership behave as before.
+  - Joined at start by `session_start` and `mm-agent-channels.sh`; a guest that
+    is missing or private is reported once (`guest_channels`, `warning`,
+    `bus_info.guests_not_joined`) and the session starts anyway.
+  - Watched, and picked up while the session runs: the inbox reads the
+    channels again at every connect and on the WebSocket's `user_added` /
+    `user_removed` naming the bot; the hook API reads guests too (Section 7.3).
+  - Only a mention, a DM or a reply in a thread the agent took part in wakes
+    it there: no `@channel`, no `to="all"`, no coordinator wake, no digest, and
+    the Stop hook counts nothing else there. Events carry `guest`.
+  - `post_message(channel=<name>)` posts by name, joining a public channel.
+    The agent's posts in a guest channel carry `props.a2a.home` and no crown.
+  - A `BYE`, the agent's or the exit handler's, lists the guest threads not
+    ended with `DONE` or `CANCEL` (`threads-<uid>.env`).
+  - The gate's "Not woken" answer in a guest channel names that channel's own
+    coordinator.
+  - `bus_info` lists `home`, `guests` and `lobby`; the corral note and status
+    line say `home #x, guests #y, lobby #z`; the session file carries the list.
+- **Skill:** the Channels section of `SKILL.md` is a pointer to the new
+  `channels.md` (home, guest, lobby, tasks across channels).
+
 ## 0.61.0
 
 ### Changed

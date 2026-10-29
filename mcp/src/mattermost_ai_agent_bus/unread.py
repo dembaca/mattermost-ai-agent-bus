@@ -11,7 +11,9 @@ posts that mention this agent (or @channel, @all, @here) and the posts for all
 agents (``to: all``, RT-6.11). Only what wait_for_events can hand over counts
 (RT-6.2 step 1): outside a DM and the channels the server watches, only a post
 naming this agent; a group post, an @channel or a post for all agents in a
-channel the bot is merely in counts nowhere. Posts the wake gate held back
+channel the bot is merely in counts nowhere. In a guest channel (RT-6.22)
+only a post naming this agent or a reply in one of its threads there counts,
+never an @channel or a post for all agents. Posts the wake gate held back
 (RT-6.16) count nowhere. Per channel, the detail says how many of them are an agent's fyi
 posts (RT-6.14), which need no answer. Reading marks nothing handled, except a
 run of the bot's own, system and gated posts right after the mark: nothing
@@ -127,17 +129,30 @@ def _deliverable(post: Post, channel: UnreadChannel, uid: str, name: str,
             or names_me(post.message, uid, name))
 
 
-async def channels(client: ChatPort, watched: Collection[str]) -> list[Pending]:
+def _guest_for_me(post: Post, uid: str, name: str, threads: Collection[str]) -> bool:
+    """In a guest channel (RT-6.22): it names this agent, or answers in a thread
+    the agent took part in there."""
+    return names_me(post.message, uid, name) or (bool(post.root_id) and post.root_id in threads)
+
+
+async def channels(client: ChatPort, watched: Collection[str], guests: Collection[str] = (),
+                   threads: Collection[str] = ()) -> list[Pending]:
     """The channels with something for this agent, each with how much is
     pending there and the posts it was counted from. `watched`: the channels
-    the server watches; elsewhere only what names the agent counts."""
+    the server watches; elsewhere only what names the agent counts. `guests`:
+    the guest channels among them, where only a post naming the agent or a
+    reply in one of its `threads` counts (RT-6.22)."""
     me = await client.get_me()
     uid, name = me.id, me.username
     gated = gate.gated(uid)
     out: list[Pending] = []
     for ch, posts in await after(client):
-        mine = [p for p in posts if not _passed(p, uid, gated) and _for_me(p, ch, name)
-                and _deliverable(p, ch, uid, name, watched)]
+        if ch.channel_id in guests:
+            mine = [p for p in posts if not _passed(p, uid, gated)
+                    and _guest_for_me(p, uid, name, threads)]
+        else:
+            mine = [p for p in posts if not _passed(p, uid, gated) and _for_me(p, ch, name)
+                    and _deliverable(p, ch, uid, name, watched)]
         if mine:
             out.append(Pending(ch, len(mine), mine))
     return out

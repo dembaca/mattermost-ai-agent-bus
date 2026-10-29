@@ -389,6 +389,7 @@ _SKILL_BUDGET = {
     "runtime-claude-code.md": 4_850,    # (4417)
     "runtime-no-hooks.md": 2_600,       # (2381)
     "self-registration.md": 2_450,      # (2234)
+    "channels.md": 2_200,               # RT-6.22: home, guests, lobby
 }
 
 
@@ -407,7 +408,8 @@ def test_skill_pointers_name_existing_files():
 
     text = (_SKILL / "SKILL.md").read_text()
     linked = set(re.findall(r"\]\(([\w.-]+\.md)\)", text))
-    assert {"runtime-claude-code.md", "runtime-no-hooks.md", "coordinator.md", "self-registration.md"} <= linked
+    assert {"runtime-claude-code.md", "runtime-no-hooks.md", "coordinator.md", "self-registration.md",
+            "channels.md"} <= linked
     assert [f for f in linked if not (_SKILL / f).is_file()] == []
     for f in ("runtime-claude-code.md", "runtime-no-hooks.md"):  # read on top of the core
         assert "[SKILL.md](SKILL.md)" in (_SKILL / f).read_text()

@@ -10,7 +10,7 @@
 # argument is a channel id followed by a message: its MESSAGE and ROOT_ID are
 # never read as options. MESSAGE "-" reads it from stdin, in the new form
 # only (in the 0.36 form it is the text "-"). Without --channel the post goes to the work
-# channel (MM_PROJECT_CHANNEL, else MM_CHANNEL); with --root it is a reply in
+# channel (the first MM_PROJECT_CHANNEL entry, else MM_CHANNEL); with --root it is a reply in
 # that thread (in the root's channel). The server posts it with the code of
 # post_message / reply_in_thread: humans' @-mentions become plain names,
 # @channel/@here/@all plain words, --kind leads the text and goes into the

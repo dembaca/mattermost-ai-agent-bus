@@ -150,6 +150,32 @@ mm_channel() {
   printf '%s' "${MM_CHANNEL:-agents}"
 }
 
+# MM_PROJECT_CHANNEL as a list (ADR-002, RT-6.22), one name per line: the
+# comma-separated entries without blanks or a leading ~, empty and repeated
+# ones dropped, as client.channel_list reads them. The first is the home, the
+# others are guest channels. Splits on ASCII only, so any locale (CI's C too)
+# reads the same names.
+mm_project_channels() {
+  local raw="${MM_PROJECT_CHANNEL:-}" entry seen=","
+  local -a parts=()
+  [[ -n "$raw" ]] || return 0
+  IFS=, read -r -a parts <<<"$raw"
+  for entry in "${parts[@]+"${parts[@]}"}"; do
+    entry="${entry//[[:space:]]/}"
+    entry="${entry#\~}"
+    [[ -n "$entry" && "$seen" != *",${entry},"* ]] || continue
+    seen+="${entry},"
+    printf '%s\n' "$entry"
+  done
+}
+
+# The agent's home (ADR-002): the first MM_PROJECT_CHANNEL entry, else MM_CHANNEL.
+mm_home_channel() {
+  local first
+  first="$(mm_project_channels | head -n 1)"
+  printf '%s' "${first:-$(mm_channel)}"
+}
+
 # Should a session hook register a bot for this session on its own?
 # Always when MM_PROJECT_CHANNEL is set: a session working in a project channel
 # takes part in the coordination, so registering is not optional there.
@@ -212,7 +238,8 @@ mm_api() {
 }
 
 # Print the id of the work channel: the argument (an id or a channel name in
-# MM_TEAM) when given, else the project channel, else the default channel.
+# MM_TEAM) when given, else the home (the first MM_PROJECT_CHANNEL entry,
+# RT-6.22), else the default channel.
 # Prefers resolved ids from the environment and asks the API only for names.
 # shellcheck disable=SC2120  # the argument comes from other scripts (stats)
 mm_work_channel_id() {
@@ -222,8 +249,8 @@ mm_work_channel_id() {
     if [[ "$arg" =~ ^[a-z0-9]{26}$ ]]; then id="$arg"; else name="$arg"; fi
   elif [[ -n "${MM_PROJECT_CHANNEL_ID:-}" ]]; then
     id="$MM_PROJECT_CHANNEL_ID"
-  elif [[ -n "${MM_PROJECT_CHANNEL:-}" ]]; then
-    name="$MM_PROJECT_CHANNEL"
+  elif [[ -n "$(mm_project_channels)" ]]; then
+    name="$(mm_home_channel)"
   elif [[ -n "${MM_CHANNEL_ID:-}" ]]; then
     id="$MM_CHANNEL_ID"
   else
@@ -288,7 +315,7 @@ mm_load_env_file() {
     local key="${line%%=*}"
     local val="${line#*=}"
     case "$key" in
-      MM_CHAT_URL|MM_REG_BOT_NAME|MM_BOT_USERNAME|MM_AGENT_PREFIX|MM_BOT_USER_ID|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_TEAM|MM_CHANNEL)
+      MM_CHAT_URL|MM_REG_BOT_NAME|MM_BOT_USERNAME|MM_AGENT_PREFIX|MM_BOT_USER_ID|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_TEAM|MM_CHANNEL|MM_PROJECT_CHANNEL)
         export "$key=$val"
         ;;
     esac
@@ -708,5 +735,6 @@ MATTERMOST_URL=${MATTERMOST_URL:-${MM_CHAT_URL:-}}
 MATTERMOST_TOKEN=${MATTERMOST_TOKEN:-${MM_BOT_TOKEN:-}}
 MM_TEAM=${MM_TEAM:-}
 MM_CHANNEL=${MM_CHANNEL:-}
+${MM_PROJECT_CHANNEL:+MM_PROJECT_CHANNEL=${MM_PROJECT_CHANNEL}}
 EOF
 }

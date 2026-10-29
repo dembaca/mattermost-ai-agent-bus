@@ -479,7 +479,7 @@ async def test_posts_only_of_the_channels_the_bus_watches(api, monkeypatch):
     dm, group = "x" * 26, "g" * 26
     for chan in (dm, group, "elsewhere"):
         r = await h.get(f"/v1/posts?channel={chan}&since=1")
-        assert r.status_code == 403 and "work, project and default" in r.json()["error"]
+        assert r.status_code == 403 and "work, project, default and guest" in r.json()["error"]
     assert (await h.get("/v1/posts?channel=../x")).status_code == 400
     assert len(seen) == 4
 

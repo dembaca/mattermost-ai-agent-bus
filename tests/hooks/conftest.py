@@ -47,6 +47,7 @@ ME = "a" * 26
 TEAM = "t" * 26
 CHANNEL = "c" * 26
 PROJECT = "p" * 26
+GUEST = "g" * 26
 OWNER = "h" * 26          # the human the registration PAT belongs to
 PAT = "pat-for-tests"
 
@@ -65,6 +66,7 @@ class FakeMattermost:
     bot_description: str | None = None  # the bot's profile; None: not in its user object
     prefix: str = "agent-"  # the registrar's BOT_USERNAME_PREFIX (arc42 §7.1)
     register_reply: dict | None = None  # the registrar's answer instead of a bot
+    missing: set[str] = field(default_factory=set)  # channel names answered with 404
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -136,6 +138,10 @@ def _handler(fake: FakeMattermost):
                 return self._send({"id": TEAM})
             if p.startswith(f"/api/v4/teams/{TEAM}/channels/name/"):
                 name = p.rsplit("/", 1)[1]
+                if name in fake.missing:
+                    return self._send({"message": "not found"}, 404)
+                if name.startswith("guest"):  # a guest channel (RT-6.22)
+                    return self._send({"id": GUEST})
                 return self._send({"id": PROJECT if name.startswith("proj") else CHANNEL})
             if p.startswith("/api/v4/posts/") and p.endswith("/reactions"):
                 return self._send(fake.reactions.get(p.split("/")[4], []))

@@ -301,8 +301,17 @@ trusted_shown="none (set MM_TRUSTED_HUMANS)"
 # host owns. The prefix
 # goes along instead (MM_AGENT_PREFIX, arc42 §7.1): the sandbox cannot derive it.
 note="You are @${MM_BOT_USERNAME} on the Mattermost agent bus."
+# Home, guests, lobby (ADR-002, RT-6.22): the first MM_PROJECT_CHANNEL entry is
+# the home, the others are guest channels.
+HOME_CH="$(mm_home_channel)"
+GUESTS_SHOWN=""
+while IFS= read -r guest; do
+  [[ "$guest" == "$HOME_CH" ]] || GUESTS_SHOWN+="${GUESTS_SHOWN:+, }#${guest}"
+done < <(mm_project_channels)
 if [[ -n "${MM_PROJECT_CHANNEL:-}" ]]; then
-  note+=" Work in ~${MM_PROJECT_CHANNEL}; you are also addressable in ~${MM_CHANNEL}."
+  note+=" Home ~${HOME_CH}: work, tasks, HELLO and BYE live there."
+  [[ -n "$GUESTS_SHOWN" ]] && note+=" Guest channels ${GUESTS_SHOWN//#/~}: only a mention or a reply in your thread wakes you there."
+  note+=" Lobby ~${MM_CHANNEL}: you are also addressable there."
 else
   note+=" Home channel: ~${MM_CHANNEL}."
 fi
@@ -449,7 +458,7 @@ jq -nc \
   --arg mcp "tcp://127.0.0.1:${HOST_PORT}" \
   --arg hook "$HOST_HOOK" \
   --arg note "$note" \
-  --arg status "registered ${MM_BOT_USERNAME}, home #${MM_PROJECT_CHANNEL:-${MM_CHANNEL:-}}${MM_PROJECT_CHANNEL:+, lobby #${MM_CHANNEL:-}}, ${RESPONSIBLE:+for @${RESPONSIBLE}, }trusted ${trusted_shown}; token stays on the host" \
+  --arg status "registered ${MM_BOT_USERNAME}, home #${HOME_CH}${GUESTS_SHOWN:+, guests ${GUESTS_SHOWN}}${MM_PROJECT_CHANNEL:+, lobby #${MM_CHANNEL:-}}, ${RESPONSIBLE:+for @${RESPONSIBLE}, }trusted ${trusted_shown}; token stays on the host" \
   '{
      corralContributionVersion: 1,
      env: ($env + {MM_BUS_ENDPOINT: $hook, MM_BUS_MCP_ENDPOINT: $mcp, MM_BUS_KEY: $key}),

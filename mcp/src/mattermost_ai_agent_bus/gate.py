@@ -99,10 +99,16 @@ async def coordinator_name(client: ChatPort) -> str:
     return _coord[1]
 
 
-async def names_coordinator(client: ChatPort, post: Post) -> bool:
+async def coordinator_in(client: ChatPort, guest: str = "") -> str:
+    """The coordinator a gated post's author is pointed to: the home's, or in
+    the guest channel `guest` (an id) that channel's own (RT-6.22)."""
+    return await lease.coordinator_of(client, guest) if guest else await coordinator_name(client)
+
+
+async def names_coordinator(client: ChatPort, post: Post, guest: str = "") -> bool:
     """RT-6.16 step 3: the post already @-mentions the agent wearing the 👑: it was told, an
-    answer saying that it will look would only repeat it."""
-    name = await coordinator_name(client)
+    answer saying that it will look would only repeat it. guest: as coordinator_in."""
+    name = await coordinator_in(client, guest)
     return bool(name) and re.search(
         rf"(?<![\w.-])@{re.escape(name)}(?![\w-]|\.\w)", post.message, re.I) is not None
 
@@ -128,20 +134,23 @@ async def mentioned_agent_trusts(client: ChatPort, post: Post, author: str, me: 
     return False
 
 
-async def reply_text(client: ChatPort, author: str, *, dm: bool) -> str:
+async def reply_text(client: ChatPort, author: str, *, dm: bool, guest: str = "") -> str:
     """The answer to a gated post. Names stay plain: only ask_human notifies a
-    person, and the coordinator wakes for every channel post anyway."""
-    coord = await coordinator_name(client)
+    person, and the coordinator wakes for every channel post anyway. guest:
+    the guest channel (an id) the post is in, whose own coordinator it names,
+    the crown holder of the channel whose home it is (RT-6.22)."""
+    coord = await coordinator_in(client, guest)
     head = f"Not woken: {author} is not on my trusted list"
     if coord and dm:
         # The coordinator cannot see a DM.
         return f"{head}. Ask in ~{client.work_channel_name}, where {coord} ({lease.CROWN}) coordinates."
     if coord:
         return f"{head}. {coord} ({lease.CROWN}) will look at it."
+    where = f"~{(await client.get_channel(guest)).name}" if guest else "right now"
     trusted = await client.trusted_humans()
     names = [n for n in trusted.values() if n] or sorted(
         (await client.usernames(set(trusted))).values())
-    return f"{head}, and no agent coordinates right now. Ask {', '.join(names)}."
+    return f"{head}, and no agent coordinates {where}. Ask {', '.join(names)}."
 
 
 def _path(uid: str) -> Path:
