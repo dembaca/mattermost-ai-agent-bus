@@ -20,5 +20,5 @@ not built, says so: the code today behaves as Section 6 describes.
 
 | Item | Where | Plan |
 |------|-------|------|
-| A project channel's coordinator still wakes for plain posts in the lobby and is not gated there; next to the lobby's own crown that can be two coordinators routing one lobby post. Closed in 0.59.0 (WP1): the roster, the election and the header count only the agents whose status names the home, so it no longer shows as the lobby's crown holder | `lease.routes`, `channel.wakes` (RT-6.6 step 5) | WP5 (lobby), ADR-002 |
+| Closed in 0.59.0 (WP1): the roster and the election read every bus agent's status regardless of its channel, so a project channel's coordinator showed as the lobby's crown holder and woke for plain posts there. Now they count only the agents whose status names the home, and the crown routes only in its home. Left for WP5: the lobby's wake rules for addressed posts and broadcasts, and no digest there | `lease.py` (`_rows`, `routes`), `channel.wakes` (RT-6.6) | WP5 (lobby), ADR-002 |
 | Any bot with the registrar's prefix counts as "agent", whoever its owner | `gate.py`, `client.agents` (RT-6.16 step 1) | WP2, ADR-001 |

@@ -165,16 +165,15 @@ async def crown_here(client: ChatPort, user_id: str, channel_id: str = "",
 
 async def routes(client: ChatPort) -> set[str]:
     """The team channels whose plain posts the crown holder routes (RT-6.6
-    step 5, ADR-002): its home, and the lobby (MM_CHANNEL) until WP5 decides
-    the lobby's rules. In any other team channel it is an agent like the
-    rest. A channel that cannot be resolved is left out."""
-    out: set[str] = set()
-    for get in (client.work_channel_id, client.lobby_channel_id):
-        try:
-            out.add(await get())
-        except Exception as exc:  # noqa: BLE001
-            log.debug("crown channels: %s", exc)
-    return out
+    step 5, ADR-002): its home only. In any other team channel, the lobby
+    too when it is not its home, it is an agent like the rest: a plain post
+    there wakes only that channel's own crown, if someone has it as home.
+    Empty when the home cannot be resolved."""
+    try:
+        return {await client.work_channel_id()}
+    except Exception as exc:  # noqa: BLE001
+        log.debug("crown channels: %s", exc)
+        return set()
 
 
 async def coordinates_in(client: ChatPort, user_id: str, channel_id: str) -> bool:

@@ -167,23 +167,48 @@ async def test_a_post_outside_the_home_carries_no_crown(home):
 
 # --- the coordinator coordinates only where it routes (RT-6.12 step 3, RT-6.16 step 2) ------
 
-async def test_the_coordinator_routes_in_its_home_and_the_lobby_only(home):
-    """Its home, and MM_CHANNEL until WP5 (ADR-002): there a plain post wakes
-    it and the gate passes it; in another team channel it is a guest."""
+async def test_the_coordinator_routes_in_its_home_only(home):
+    """ADR-002: in its home, a DM or a group message a plain post wakes the
+    crown holder and the gate passes it; in another team channel it is a guest."""
     _crown(home)
-    home.lobby, home.dms = LOBBY, {DM}
-    assert await lease.routes(home) == {WORK, LOBBY}
-    for cid, expected in ((WORK, True), (LOBBY, True), (DM, True), ("", True), (OTHER, False)):
+    home.dms = {DM}
+    assert await lease.routes(home) == {WORK}
+    for cid, expected in ((WORK, True), (DM, True), ("", True), (OTHER, False)):
         assert await lease.coordinates_in(home, BOT, cid) is expected, cid
     plain = {"kind": "watched_channel", "post": {"message": "deploy?"}}
-    for cid, expected in ((WORK, True), (LOBBY, True), (OTHER, False)):
+    for cid, expected in ((WORK, True), (OTHER, False)):
         item = plain | {channel.CHANNEL_ID: cid}
         assert channel.wakes(item, coordinator=True, in_my_thread=False,
-                             routes={WORK, LOBBY}) is expected, cid
+                             routes={WORK}) is expected, cid
     # A mention wakes it anywhere; without routes, as before.
     assert channel.wakes({"kind": "mention", channel.CHANNEL_ID: OTHER}, coordinator=False,
                          in_my_thread=False, routes={WORK})
     assert channel.wakes(plain | {channel.CHANNEL_ID: OTHER}, coordinator=True, in_my_thread=False)
+
+
+class Lobby(Home):
+    """An agent whose home is the lobby: its home's id is LOBBY."""
+
+    async def work_channel_id(self) -> str:
+        return LOBBY
+
+
+async def test_a_plain_lobby_post_wakes_the_lobbys_crown_not_a_project_coordinator(home):
+    """RT-6.6 step 5, ADR-002 (owner, strategy Q8): a project channel's
+    coordinator is a guest in the lobby: a plain post there neither wakes it
+    nor passes its gate. The lobby's own crown holder, whose home it is,
+    routes it."""
+    _crown(home)
+    post = {"kind": "watched_channel", "post": {"message": "who can help?"},
+            channel.CHANNEL_ID: LOBBY}
+    project = await lease.routes(home)
+    assert not channel.wakes(post, coordinator=True, in_my_thread=False, routes=project)
+    assert not await lease.coordinates_in(home, BOT, LOBBY)
+    lobby = Lobby(username="agent-me")
+    lobby_routes = await lease.routes(lobby)
+    assert lobby_routes == {LOBBY}
+    assert channel.wakes(post, coordinator=True, in_my_thread=False, routes=lobby_routes)
+    assert await lease.coordinates_in(lobby, BOT, LOBBY)
 
 
 async def test_one_channel_routes_as_before(home):

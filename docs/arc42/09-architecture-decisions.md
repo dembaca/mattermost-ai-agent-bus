@@ -87,9 +87,10 @@ server; without one nothing is gated, as today (Section 7.2).
 **Status:** Decided 2026-10-29 (owner), partly built (WP1). Built in 0.59.0
 (WP1): the home, the status naming it, the crown, roster, election and
 header per home, the 👑 only in the home, coordinator wakes and the gate
-exemption only where the crown routes, and the ambassador listing (RT-6.6).
-Planned: WP4 (guest channels), WP5 (lobby). Until WP5 the crown also routes
-in the lobby, as before.
+exemption only in the home (so a plain lobby post wakes only the lobby's own
+crown), and the ambassador listing (RT-6.6). Planned: WP4 (guest channels),
+WP5 (the rest of the lobby: wake rules for addressed posts and broadcasts,
+no digest).
 
 **Context:** Today one work channel holds everything: crown, tasks, sign-off,
 header, stall watch. A custom status is global per user, so the roster and
@@ -139,7 +140,7 @@ registrar change).
 
 **Consequences:** Cost grows with mentions, not with the number of channels.
 One behaviour change: an agent with a project channel no longer wakes for
-plain posts in the lobby (WP5). A status written by an older plugin names no
+plain posts in the lobby, as coordinator (built in WP1, owner's decision). A status written by an older plugin names no
 home and counts everywhere, as today, until that agent upgrades.
 
 **Risks created:** RISK-04, RISK-05

@@ -1111,12 +1111,6 @@ class MattermostAdapter:
             return env("MM_CHANNEL_ID")
         return await self.get_channel_id()
 
-    async def lobby_channel_id(self) -> str:
-        """MM_CHANNEL's id: MM_CHANNEL_ID, else by name."""
-        if _ID.fullmatch(env("MM_CHANNEL_ID")):
-            return env("MM_CHANNEL_ID")
-        return await self.get_channel_id(self.channel_name)
-
     async def join_channel(self, channel_name: str) -> str:
         cid = mm_id(await self.get_channel_id(channel_name), "channel")
         me = await self.get_me()

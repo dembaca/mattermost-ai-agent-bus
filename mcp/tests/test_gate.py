@@ -196,7 +196,7 @@ async def test_coordinator_is_never_gated(bus):
 @pytest.mark.asyncio
 async def test_the_coordinator_is_gated_outside_the_channels_it_routes(bus):
     """RT-6.16 step 2, ADR-002: the exemption holds where the 👑 routes (its
-    home, the lobby until WP5, DMs); in another team channel its holder is a
+    home, DMs); in another team channel, the lobby too, its holder is a
     guest, gated like any worker."""
     _crown()
     e = await bus.arrive("p1000000000000000000000000", STRANGER, "@agent-me deploy now",

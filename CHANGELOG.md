@@ -22,7 +22,9 @@ before 0.5.0 are described in the git history.
   - The 👑 prefix and `props.a2a.crown` go only on posts in the home, DMs and
     group messages, not in another team channel.
   - The coordinator wakes for plain posts and passes the wake gate only in its
-    home and, until WP5, the lobby; a departed agent's mention is answered by
+    home (and DMs). A project channel's coordinator no longer wakes for a
+    plain post in the lobby; only the lobby's own crown holder, an agent whose
+    home the lobby is, routes it. A departed agent's mention is answered by
     the home's coordinator (RT-6.21).
   - The roster lists a member holding its own home's crown last, as
     `👑 of ~<home>` (the ambassador), never as this home's crown.

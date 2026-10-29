@@ -56,7 +56,6 @@ class FakeChat:
         self.channel = channel
         self.channels = list(channels)
         self.post_id = post_id
-        self.lobby = WORK
         self.members: list[ChannelUser] = []
         self.presence: dict[str, str] = {}
         self.status: dict[str, str] | None = None
@@ -76,10 +75,6 @@ class FakeChat:
 
     async def work_channel_id(self) -> str:
         return WORK
-
-    async def lobby_channel_id(self) -> str:
-        """The lobby: the home itself unless a test sets `lobby`."""
-        return self.lobby
 
     async def join_channel(self, channel_name: str) -> str:
         """Any channel is the work channel; a name not in `channel` is missing."""

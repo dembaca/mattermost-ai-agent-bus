@@ -190,9 +190,8 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
     """The listener's rules (RT-6.2): what is for this agent is pushed at once,
     a stall the server noticed, too (RT-6.19).
     A human's plain post wakes only the coordinator, which routes it (RT-6.6),
-    and only in a channel of `routes` (its home and, until WP5, the lobby:
-    lease.routes, ADR-002); routes None, or an item without its channel:
-    anywhere.
+    and only in a channel of `routes` (its home: lease.routes, ADR-002);
+    routes None, or an item without its channel: anywhere.
     a post the inbox gated wakes nobody here (RT-6.16), a mention of a
     departed agent the one that answers it (RT-6.21). An agent's fyi post
     (RT-6.14) wakes only whom it names and the author of its thread's root,

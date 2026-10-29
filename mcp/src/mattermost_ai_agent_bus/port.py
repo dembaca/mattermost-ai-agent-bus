@@ -58,10 +58,6 @@ class ChatPort(Protocol):
         """The home's id (ADR-002): the project channel, else MM_CHANNEL."""
         ...
 
-    async def lobby_channel_id(self) -> str:
-        """MM_CHANNEL's id, the lobby (ADR-002); the home when no project channel is set."""
-        ...
-
     async def join_channel(self, channel_name: str) -> str:
         """The team's channel `channel_name`, joined as the bot (a non-member
         cannot read it; joining twice is harmless): its id. Never creates one:
