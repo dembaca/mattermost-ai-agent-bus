@@ -371,7 +371,7 @@ async def test_reminders_follow_the_schedule_in_the_asks_thread(bus):
     assert sent["message"].startswith("🔔 @dembaca — reminder: **Go to install on hogan?**")
     assert "waiting 20 min" in sent["message"]
     assert sent["props"]["a2a"]["kind"] == a2a.REMINDER and sent["props"]["a2a"]["intent"] == a2a.FYI
-    assert stats.summary("0", 0)["ask_reminders"] == 3
+    assert stats.summary("0")["ask_reminders"] == 3
 
 
 async def test_a_top_level_ask_is_reminded_in_its_own_thread(bus):

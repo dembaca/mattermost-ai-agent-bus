@@ -1037,6 +1037,22 @@ async def coordinator(action: str = "who") -> str:
 
 
 @mcp.tool()
+async def stats_report(versions: int = 3) -> str:
+    """The bus's overhead per plugin version from the stats channel, as
+    `bin/mm-agent-stats.sh report --json` gives it (RT-6.9): the newest
+    `versions`. Read-only."""
+    name = stats.channel()
+    if not name:
+        return _refused("stats_report", "stats are off (MM_STATS_CHANNEL)")
+    try:
+        rows = await stats.read_report(_get_client(), name)
+    except Exception as exc:  # noqa: BLE001 — off the bus, the channel missing or not readable
+        why = str(exc).split(" for url ")[0] or type(exc).__name__
+        return _refused("stats_report", f"cannot read ~{name}: {why}"[:300])
+    return _out("stats_report", {"channel": name, "versions": rows[-max(1, versions):]})
+
+
+@mcp.tool()
 async def get_thread(post_id: str, raw: bool = False) -> str:
     """Fetch a thread (root + replies, oldest first) for post_id.
 
@@ -1467,10 +1483,11 @@ _exit_handled = False
 
 
 def _fixed() -> overhead.Fixed:
-    """Instructions, tool docs and skill, each in characters (RT-6.9)."""
+    """Instructions and tool docs (every turn), skill (per load), each in
+    characters (RT-6.9)."""
     skill = Path(__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
     tools: tuple[Callable[..., Any], ...] = (bus_info, announce, get_me, post_message, reply_in_thread, ask_human,
-             resolve_ask, coordinator, get_thread, list_recent, wait_for_events)
+             resolve_ask, coordinator, get_thread, list_recent, wait_for_events, stats_report)
     if not (HOST_MANAGED or UNAVAILABLE):
         tools += (session_start, session_end)
     if PUSH:
@@ -1481,12 +1498,6 @@ def _fixed() -> overhead.Fixed:
         skill_chars = 0
     return overhead.Fixed(len(mcp.instructions or ""), sum(len(f.__doc__ or "") for f in tools),
                           skill_chars)
-
-
-def _static_chars() -> int:
-    """Skill + instructions + tool docs: in the context of every turn."""
-    f = _fixed()
-    return f.instructions + f.tools + f.skill
 
 
 def _cleanup_on_exit() -> None:
@@ -1510,7 +1521,7 @@ def _cleanup_on_exit() -> None:
     except Exception as exc:  # noqa: BLE001 — never block teardown
         log.info("BYE skipped: %s", exc)
     try:
-        data = stats.summary(VERSION, _static_chars(), _fixed())
+        data = stats.summary(VERSION, _fixed())
         if data:
             log.info("overhead stats: %s", stats.post_sync(_client, data))
     except Exception as exc:  # noqa: BLE001 — never block teardown

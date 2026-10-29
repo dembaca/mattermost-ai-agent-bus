@@ -69,7 +69,7 @@ def test_work_carries_only_the_fixed_share(tmp_path):
     assert r["req"] == 2 and r["bus_req"] == 0
     share = (400 + 4000) / 4 / 101_010
     assert r["bus"]["read"] == round(2 * 100_000 * share) and r["bus"]["out"] == 0
-    assert r["fixed"] == 1100
+    assert r["fixed"] == 1100 and r["skill"] == 0              # skill never loaded
     assert r["all"] == {"in": 20, "read": 200_000, "w5m": 2000, "w1h": 0, "out": 400}
 
 
@@ -122,7 +122,7 @@ def test_bus_data_stays_in_the_context_until_compaction(tmp_path):
     t.request()
     r = measure(t, tmp_path)
     tool_call = len(json.dumps({"post_id": "x" * 26}))
-    assert r["bus_req"] == 0 and r["fixed"] == (400 + 20000) // 4
+    assert r["bus_req"] == 0 and r["fixed"] == (400 + 20000) // 4 and r["skill"] == 1
     shares = [400 / 4 / 101_010,                                         # deferred, no skill yet
               (20400 + len(schema)) / 4 / 101_010,                      # skill and schema loaded
               (20400 + len(schema) + tool_call + 40_000) / 4 / 101_010,  # + the bus's result
@@ -158,10 +158,10 @@ def test_the_summary_carries_the_tokens(state, tmp_path):
     path = t.write(tmp_path / "t.jsonl")
     stats.record("turn")
     stats.record("transcript", path=str(path))
-    s = stats.summary("0.32.0", 1, FIXED)
+    s = stats.summary("0.32.0", FIXED)
     assert s["tok"]["req"] == 1 and s["tok"]["all"]["read"] == 100_000
     stats.record("transcript", path=str(tmp_path / "gone.jsonl"))
-    assert "tok" not in stats.summary("0.32.0", 1, FIXED)
+    assert "tok" not in stats.summary("0.32.0", FIXED)
 
 
 def test_never_through_a_symlink(tmp_path):
