@@ -1113,13 +1113,14 @@ async def ask_human(
     # Always top-level, its thread its own: only a reply there answers it, not
     # a later post in a shared thread; too late after 24 h (RT-6.11).
     post = await client.post(text, props=props)
-    asks.add(me.id, post.id, who, post.id)
+    asks.add(me.id, post.id, who, post.id, title=head)
     stats.record("ask", id=post.id)  # RT-6.9
     out = await slim.post(client, post)
     out["ask"] = post.id
     if root_id:
         # Linked from the thread it came from, without the mention: one notification.
-        link = lease.with_crown(f"🙋 asked {post.id}", me.id,
+        # links.send shows `ask <id>` as the ask's headline, linked (RT-6.15 step 2).
+        link = lease.with_crown(f"🙋 ask {post.id}", me.id,
                                 here=await lease.crown_here(client, me.id, root_id=root_id))
         stats.record("post", chars=len(link))
         try:

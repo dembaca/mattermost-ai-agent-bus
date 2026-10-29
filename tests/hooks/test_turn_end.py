@@ -69,6 +69,24 @@ def test_coordinators_signoff_counts_with_its_crown(mm, run):
     assert run(STOP, MM_LISTEN_SEC="0").passed
 
 
+def test_signoff_from_a_server_without_signed_off(mm, run, monkeypatch):
+    """RT-6.2 step 2 (reported 0.65.1): a server before 0.65.1 still runs after a
+    plugin update and sends /v1/last-post without signed_off; the hook falls
+    back to the old rule, an IDLE or BYE as the latest own post (👑 or not)."""
+    from mattermost_ai_agent_bus import hookapi
+
+    async def old_last_post(client, query, body):
+        at, message, _ = await hookapi._last(client, query, body)
+        return 200, {"at": at, "message": message}
+
+    monkeypatch.setitem(hookapi._ROUTES, ("GET", "/v1/last-post"), old_last_post)
+    mm.own_post("👑 IDLE · done: x · next: y")
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+    mm.own_post("PROGRESS · still going")
+    r = run(STOP, MM_LISTEN_SEC="0")
+    assert r.blocked and "IDLE" in r.reason
+
+
 BUS_PROMPT = json.dumps({"prompt": '<channel source="plugin:mattermost-ai-agent-bus:mattermost-agent-bus" kind="dm">hi</channel>'})
 
 
