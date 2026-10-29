@@ -757,7 +757,7 @@ async def get_me(raw: bool = False) -> str:
 async def post_message(
     message: str, channel_id: str = "", root_id: str = "", to: str = "", kind: str = ""
 ) -> str:
-    """Create a post. Uses default MM_CHANNEL when channel_id is empty.
+    """Create a post, in the work channel (MM_PROJECT_CHANNEL, else MM_CHANNEL) when channel_id is empty.
 
     to: another agent's username — a DM, for back-and-forth that would only
     cost the others tokens; share the outcome in the channel afterwards.

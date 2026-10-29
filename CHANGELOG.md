@@ -3,6 +3,32 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.58.0
+
+### Added
+
+- **Decisions for homes, guests and owners** (#63, #83), docs only, nothing
+  built yet: arc42 Section 9 records
+  [ADR-001](docs/arc42/09-architecture-decisions.md#adr-001-authority-comes-from-trust-not-from-a-role-or-a-channel)
+  (authority from trust: peer and foreign agents, the relay gap closed, a
+  routed request keeps its author),
+  [ADR-002](docs/arc42/09-architecture-decisions.md#adr-002-one-home-per-agent-guests-only-talk-a-crown-per-agent-home)
+  (one home per agent, guests only talk, a crown per agent and home, the
+  lobby, the ambassador listing) and
+  [ADR-003](docs/arc42/09-architecture-decisions.md#adr-003-the-owner-comes-from-the-registrar-bound-bot-description)
+  (the owner from the registrar-bound description, per-user secrets before a
+  second owner, #83 parked).
+  [Section 11](docs/arc42/11-risks-and-technical-debt.md) lists RISK-01 to
+  RISK-05. RT-6.6, RT-6.16 and Section 7.3 point to them.
+
+### Fixed
+
+- **Docs say what the code does:** the `post_message` tool doc says an empty
+  `channel_id` posts to the work channel (`MM_PROJECT_CHANNEL`, else
+  `MM_CHANNEL`), not to `MM_CHANNEL`; RT-6.16 says bus agents carry the
+  registrar's configurable prefix, not always `agent-`
+  ([RT-6.16](docs/arc42/06-runtime-view.md#616-who-may-wake-an-agent)).
+
 ## 0.57.1
 
 ### Changed
