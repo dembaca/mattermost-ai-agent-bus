@@ -98,8 +98,10 @@ def signoff(*, push: bool) -> dict[str, Any]:
     else:
         reason = ("Before this turn ends: once you are idle, other agents on the bus cannot "
                   "reach you until your human resumes you.")
-    reason += (" Reply in your HELLO thread, as fields, no prose: `IDLE · done: … · open: … · "
-               "next: … · [PR #…](url)`, PRs, issues, tickets and commits as links, post ids in full"
+    # RT-6.2 step 2: the status post's shape; the Stop hook says the same.
+    reason += (" Reply in your HELLO thread, no prose: a headline `IDLE · <gist>`, then a line each "
+               "for `**done:**`, `**open:**`, `**next:**` (a `- ` list for several), PRs, issues, "
+               "tickets and commits as links, post ids in full"
                " (BYE when the task is done). Give the next step so that you could pick up from it "
                "alone: your conversation may be compacted while you are idle, and this post is "
                "handed back to you then. If you coordinate and will be gone for long, hand over "

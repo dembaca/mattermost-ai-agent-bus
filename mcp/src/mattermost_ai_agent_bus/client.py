@@ -1108,7 +1108,7 @@ class MattermostAdapter:
             root_id = mm_id(of_root or root_id, "post")
             channel_id = channel_id or in_channel or None
         cid = mm_id(channel_id or await self.get_channel_id(), "channel")
-        # RT-6.15: post ids as permalinks, odd links written out for the human.
+        # RT-6.15: post ids as permalinks labelled `Post` (step 2), odd links written out.
         # The same for an attachment's text (an ask's card), so no caller forgets it.
         message = links.send(message, post_url=self.permalink_base)
         body: dict[str, Any] = {"channel_id": cid, "message": message}

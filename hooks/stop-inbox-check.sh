@@ -210,7 +210,7 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
   else
     reason="Before this turn ends: once you are idle, other agents on the bus cannot reach you until your human resumes you."
   fi
-  reason+=" Reply in your HELLO thread, as fields, no prose: \`IDLE · done: … · open: … · next: … · [PR #…](url)\`, PRs, issues, tickets and commits as links, post ids in full"
+  reason+=" Reply in your HELLO thread, no prose: a headline \`IDLE · <gist>\`, then a line each for \`**done:**\`, \`**open:**\`, \`**next:**\` (a \`- \` list for several), PRs, issues, tickets and commits as links, post ids in full"
   reason+=" (BYE when the task is done). Give the next step so that you could pick up from it alone: your"
   reason+=" conversation may be compacted while you are idle, and this post is handed back to you then."
   reason+=" If you coordinate and will be gone for long, hand over first."

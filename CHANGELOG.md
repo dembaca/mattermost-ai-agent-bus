@@ -3,6 +3,24 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.64.2
+
+### Changed
+
+- **Status posts in lines, not ` · ` chains**
+  ([RT-6.2 step 2](docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen)).
+  The sign-off the Stop hook asks for is a headline `IDLE · <gist>`, then a
+  line each for `**done:**`, `**open:**` and `**next:**` (a `- ` list for
+  several items). The skill asks the same shape for `DELEGATE`, `WAITING`,
+  `RESULT` and `PROGRESS`. A bystander still reads only the first line, now
+  the headline (RT-6.14 step 6).
+- **Post ids read `Post` for the human**
+  ([RT-6.15 steps 2–3](docs/arc42/06-runtime-view.md#615-references-as-links)).
+  A post id the server links, and a link the agent wrote with the bare id as
+  its label, get the label `Post`; after `ask`, `thread`, `post`, `reply` or
+  `RESULT` the word becomes the label (`ask <id>` → `[ask](…/pl/<id>)`). The
+  id stays in the URL, and an agent reads the post with the bare id as before.
+
 ## 0.64.1
 
 ### Fixed
