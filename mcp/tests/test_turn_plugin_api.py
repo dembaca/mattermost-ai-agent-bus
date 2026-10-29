@@ -83,7 +83,8 @@ async def test_turn_end_drains_signs_off_then_goes_idle(api, unread_rows):
     got = (await h.get(f"/v1/turn-end?push=1&drains={turnend.MAX_DRAIN}")).json()
     assert got["action"] == "signoff"
     assert got["reason"].startswith("Before this turn ends: bus messages still wake you")
-    assert "IDLE · done: … · open: … · next: …" in got["reason"]
+    # RT-6.2 step 2: a headline, then a line each.
+    assert "a headline `IDLE · <gist>`, then a line each for `**done:**`" in got["reason"]
     assert (await h.get("/v1/turn-end?push=0&drains=3")).json()["reason"].startswith(
         "Before this turn ends: once you are idle")
     unread_rows.clear()

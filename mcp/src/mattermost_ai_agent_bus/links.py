@@ -13,7 +13,9 @@ links stay as they are. Both ways: what the agent posts (what the human sees)
 and what it reads.
 
 Permalinks cost tokens in every agent that reads the post, so `read` takes
-the bus's own off again: the bare id says the same.
+the bus's own off again: the bare id says the same. A human reads a short
+label instead of 26 characters: `Post`, or the word before the id
+(`ask <id>` → `[ask](…/pl/<id>)`); the id stays in the URL (RT-6.15 step 2).
 """
 
 from __future__ import annotations
@@ -23,15 +25,20 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlsplit
 
+# Words a post id after them folds into its link's label (RT-6.15 step 2).
+FOLD = ("ask", "thread", "post", "reply", "result")
 # One pass, first match wins: code is left alone (a fence ends only at a fence
-# as long), a link before the inline code its label may hold, then bare URLs, ids.
+# as long), a link before the inline code its label may hold, then ids, bare
+# URLs. A link or id may come with the word before it (`pre`) to fold.
 _TOKEN = re.compile(
     r"(?P<code>(?P<fence>`{3,}).*?(?:(?P=fence)|\Z)|`[^`\n]+`)"
-    r"|(?P<link>!?\[(?P<label>[^\]\n]*)\]\(\s*(?P<url>[^\s)]+)(?:\s+\"[^\"\n]*\")?\s*\))"
-    r"|(?P<bare><?(?<![\w.])(?:https?://|www\.)[^\s<>]+>?)"
-    r"|(?P<id>(?<![@<#/\w-])(?=[a-z]*\d)(?=\d*[a-z])[a-z0-9]{26}(?![\w-]))",
+    rf"|(?P<pre>\b(?P<word>(?i:{'|'.join(FOLD)}))[ \t]+)?"
+    r"(?:(?P<link>!?\[(?P<label>[^\]\n]*)\]\(\s*(?P<url>[^\s)]+)(?:\s+\"[^\"\n]*\")?\s*\))"
+    r"|(?P<id>(?<![@<#/\w-])(?=[a-z]*\d)(?=\d*[a-z])[a-z0-9]{26}(?![\w-])))"
+    r"|(?P<bare><?(?<![\w.])(?:https?://|www\.)[^\s<>]+>?)",
     re.S,
 )
+LABEL = "Post"
 _ID = re.compile(r"(?=[a-z]*\d)(?=\d*[a-z])[a-z0-9]{26}")
 _HIDDEN = re.compile("[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 _ADDRESS = re.compile(r"://|^www\.|^[\w-]+(?:\.[\w-]+)+/", re.I)
@@ -136,12 +143,21 @@ def send(message: str, *, post_url: str) -> str:
     odd links written out, a blank line before a table."""
     message = _tables(message)
     def one(m: re.Match[str]) -> str:
-        if m["id"]:
-            return f"[{m['id']}]({post_url}{m['id']})" if post_url else m["id"]
         if m["bare"]:
             return _bare(m["bare"])
-        return _written_out(m["label"], m["url"]) if _odd(m["label"], m["url"], post_url) \
-            else m["link"]
+        pre, label = m["pre"] or "", (m["label"] or "").strip().strip("`")
+        if m["link"] and not (post_url and not m["link"].startswith("!")
+                              and _ID.fullmatch(label) and m["url"] == post_url + label):
+            return pre + (_written_out(m["label"], m["url"])
+                          if _odd(m["label"], m["url"], post_url) else m["link"])
+        pid = m["id"] or label
+        if not post_url:
+            return m[0]
+        # RT-6.15 step 2: a short label, the id in the URL. A word at the
+        # post's start is its bus word (a2a.word): it stays outside the link.
+        if pre and m.string[:m.start()].strip():
+            return f"[{m['word']}]({post_url}{pid})"
+        return f"{pre}[{LABEL}]({post_url}{pid})"
     return _each(message, one)
 
 
@@ -149,15 +165,23 @@ def read(message: str, *, post_url: str) -> str:
     """A post as an agent reads it: the bus's permalinks as bare ids, odd links
     written out."""
     def one(m: re.Match[str]) -> str:
-        if m["id"]:
-            return m["id"]
         if m["bare"]:
             return _bare(m["bare"])
+        pre = m["pre"] or ""
+        if m["id"]:
+            return m[0]
         label = m["label"].strip("`")
-        if post_url and _ID.fullmatch(label) and m["url"] == post_url + label:
-            return m["label"]
-        return _written_out(m["label"], m["url"]) if _odd(m["label"], m["url"], post_url) \
-            else m["link"]
+        pid = m["url"][len(post_url):] if post_url and m["url"].startswith(post_url) else ""
+        if _ID.fullmatch(pid) and not m["link"].startswith("!"):
+            # RT-6.15 step 3: the short labels of step 2 read as the id again.
+            if label == pid:
+                return pre + m["label"]
+            if label == LABEL:
+                return pre + pid
+            if label.lower() in FOLD:
+                return f"{pre}{label} {pid}"
+        return pre + (_written_out(m["label"], m["url"]) if _odd(m["label"], m["url"], post_url)
+                      else m["link"])
     return _each(message, one)
 
 

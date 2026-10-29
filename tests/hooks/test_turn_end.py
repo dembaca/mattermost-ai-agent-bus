@@ -55,10 +55,11 @@ def test_drain_blocks_at_most_three_times(mm, run):
 
 
 def test_signoff_requested_once_per_turn(mm, run):
-    """RT-6.2 step 2: a busy latest post asks for IDLE/BYE once."""
+    """RT-6.2 step 2: a busy latest post asks for IDLE/BYE once, as a headline
+    and a line each for done, open, next."""
     mm.own_post("HELLO working on x")
     r = run(STOP)
-    assert r.blocked and "IDLE" in r.reason
+    assert r.blocked and "a headline `IDLE · <gist>`, then a line each for `**done:**`" in r.reason
     assert run(STOP).passed
 
 

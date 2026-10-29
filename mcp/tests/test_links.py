@@ -23,9 +23,41 @@ def read(text):
 
 def test_post_ids_become_permalinks_and_read_back_bare():
     """RT-6.15 step 2/3: the one reference that surely belongs to the bus."""
-    assert send(f"see {POST_ID}.") == f"see [{POST_ID}]({PL}{POST_ID})."
+    assert send(f"see {POST_ID}.") == f"see [Post]({PL}{POST_ID})."
     assert read(send(f"see {POST_ID}.")) == f"see {POST_ID}."
     assert links.send(POST_ID, post_url="") == POST_ID
+
+
+@pytest.mark.parametrize(("text", "sent"), [
+    (f"ask {POST_ID}", f"ask [Post]({PL}{POST_ID})"),       # a bus word at the start stays
+    (f"RESULT {POST_ID}", f"RESULT [Post]({PL}{POST_ID})"),
+    (f"WAITING for approval: merge · ask {POST_ID}", f"WAITING for approval: merge · [ask]({PL}{POST_ID})"),
+    (f"see Thread {POST_ID}, reply {POST_ID}", f"see [Thread]({PL}{POST_ID}), [reply]({PL}{POST_ID})"),
+    (f"x [{POST_ID}]({PL}{POST_ID})", f"x [Post]({PL}{POST_ID})"),
+    (f"x [`{POST_ID}`]({PL}{POST_ID})", f"x [Post]({PL}{POST_ID})"),
+    (f"x post [{POST_ID}]({PL}{POST_ID}).", f"x [post]({PL}{POST_ID})."),
+    (f"x task {POST_ID}", f"x task [Post]({PL}{POST_ID})"),
+    (f"x unmask {POST_ID}", f"x unmask [Post]({PL}{POST_ID})"),
+    ("x post [docs](https://h.example/d)", "x post [docs](https://h.example/d)"),
+    (f"x `ask {POST_ID}` and\n```\n{POST_ID}\n```", f"x `ask {POST_ID}` and\n```\n{POST_ID}\n```"),
+])
+def test_post_ids_get_a_short_label_and_read_back_as_ids(text, sent):
+    """RT-6.15 step 2/3: a human reads `Post` or the word before the id, not 26
+    characters; the id stays in the URL, and an agent reads it back."""
+    assert send(text) == sent
+    back = read(sent)
+    assert "[Post]" not in back and f"{PL}{POST_ID}" not in back
+    assert (POST_ID in back) == (POST_ID in text)
+    assert read(send(f"x ask {POST_ID}")) == f"x ask {POST_ID}"
+    assert read(send(f"x [{POST_ID}]({PL}{POST_ID})")) == f"x {POST_ID}"
+
+
+def test_a_short_label_elsewhere_is_no_bus_link():
+    """RT-6.15 step 3/4: `Post` on another host's URL stays as written; an
+    image of a permalink is no reference."""
+    other = f"[Post](https://h.example/pl/{POST_ID})"
+    assert read(other) == other and send(other) == other
+    assert read(f"[ask]({PL}{POST_ID})") == f"ask {POST_ID}"
 
 
 def test_everything_else_stays_as_written():
@@ -122,10 +154,10 @@ async def test_an_asks_card_links_post_ids_and_reads_back_bare(monkeypatch):
     props["attachments"][0]["text"] = f"also {POST_ID}"
     post = await c.post("🙋 ask", channel_id="c" * 26, props=props)
     card = sent[0]["props"]["attachments"][0]
-    assert card["fields"][0] == {"title": "context", "value": f"see [{POST_ID}]({PL}{POST_ID})",
+    assert card["fields"][0] == {"title": "context", "value": f"see [Post]({PL}{POST_ID})",
                                  "short": False}
     assert card["fields"][1]["value"] == pr
-    assert card["text"] == f"also [{POST_ID}]({PL}{POST_ID})" and card["fallback"] == f"ask {POST_ID}"
+    assert card["text"] == f"also [Post]({PL}{POST_ID})" and card["fallback"] == f"ask {POST_ID}"
     back = post.props["attachments"][0]
     assert back["fields"][0]["value"] == f"see {POST_ID}" and back["text"] == f"also {POST_ID}"
     assert props["attachments"][0]["fields"][0]["value"] == f"see {POST_ID}"  # the caller's stays
