@@ -75,7 +75,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import a2a, asks, channel, gate, lease, ownpost, session_file, stall, stats, turnend, unread
-from .client import InvalidId, _pid_alive, mm_name, watched_channel_ids
+from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
 from .model import Post
 
 if TYPE_CHECKING:
@@ -416,7 +416,7 @@ async def pending(client: MattermostAdapter, query: Mapping[str, str], body: Map
     """Unread mentions, DMs and posts for all agents (RT-6.2 step 1, unread.py),
     plus a stall event still to collect (RT-6.19); with detail=1 per channel,
     with its fyi posts (RT-6.14)."""
-    rows = await unread.channels(client, await watched(client))
+    rows = await counted(client)
     # A stall the server noticed waits in the inbox like a message (RT-6.19).
     waits = 1 if stall.waiting() else 0
     result: dict[str, Any] = {"count": sum(r.waiting for r in rows) + waits}
@@ -467,8 +467,19 @@ def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
 
 async def watched(client: MattermostAdapter) -> set[str]:
     """The channels the bus watches, the inbox's list (client.watched_channel_ids):
-    the work, project and default channel. Never a DM or group channel."""
+    the work, project and default channel and the guest channels (RT-6.22).
+    Never a DM or group channel."""
     return await watched_channel_ids(client)
+
+
+async def counted(client: MattermostAdapter) -> list[unread.Pending]:
+    """What waits for the agent (RT-6.2 step 1): in a guest channel only a
+    mention or a reply in its own thread there (RT-6.22)."""
+    guests = await guest_ids(client)
+    if not guests:
+        return await unread.channels(client, await watched(client))
+    return await unread.channels(client, await watched(client), guests=guests,
+                                 threads=ownpost.guest_threads(await _uid(client)))
 
 
 async def _channel(client: MattermostAdapter, chan: str) -> str:
@@ -488,7 +499,7 @@ async def _channel(client: MattermostAdapter, chan: str) -> str:
                 raise BadRequest(f"no channel {chan} in the team") from exc
             raise
     if cid not in await watched(client):
-        raise Forbidden("channel: only the work, project and default channel")
+        raise Forbidden("channel: only the work, project, default and guest channels")
     return cid
 
 
@@ -661,7 +672,7 @@ async def turn_end(client: MattermostAdapter, query: Mapping[str, str],
         raise BadRequest("listen_since: epoch s")
     asked, by_bus, push = (_flag(query, n) for n in ("signoff_asked", "by_bus", "push"))
     if int(drains) < turnend.MAX_DRAIN:
-        rows = await unread.channels(client, await watched(client))
+        rows = await counted(client)
         count = sum(r.waiting for r in rows) + (1 if stall.waiting() else 0)  # as /v1/pending
         if count > 0:
             return 200, turnend.drain(count, await unread.detail(client, rows) if rows else [])
@@ -707,7 +718,7 @@ async def wake(client: MattermostAdapter, query: Mapping[str, str], body: Mappin
     _, message = await _last(client, query, body)
     if int(until) <= time.time() or not turnend.listens(message, project=_project(client)):
         return 200, turnend.no_wake()
-    count = sum(r.waiting for r in await unread.channels(client, await watched(client)))
+    count = sum(r.waiting for r in await counted(client))
     waits = 1 if stall.waiting() else 0  # a stall event for the coordinator (RT-6.19)
     if count > 0:
         return 200, turnend.wake_pending(count + waits)

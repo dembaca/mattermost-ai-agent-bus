@@ -13,9 +13,9 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import asks, departed, gate, lease, unread, watermark
-from .client import (MattermostAdapter, post_of, reaction_of, read_links, watched_channel_ids,
-                     with_links, ws_url_from_http)
+from . import asks, departed, gate, lease, ownpost, unread, watermark
+from .client import (MattermostAdapter, guest_ids, post_of, reaction_of, read_links,
+                     watched_channel_ids, with_links, ws_url_from_http)
 from .model import Channel, Post, Reaction
 
 log = logging.getLogger(__name__)
@@ -31,6 +31,13 @@ class ClassifiedEvent:
     gated: str = ""
     # RT-6.21: the departed agents it mentions, for the agent that answers.
     departed: str = ""
+    # RT-6.22: the post is in a guest channel (not the home, not the lobby).
+    guest: bool = False
+
+
+# WebSocket events that change the bot's channels (RT-6.22): the watched and
+# guest channels are read again when they name the bot.
+MEMBERSHIP = ("user_added", "user_removed")
 
 
 def classify_post(
@@ -69,6 +76,11 @@ def classify_post(
 class WebSocketInbox:
     client: MattermostAdapter
     watched_channel_ids: set[str] = field(default_factory=set)
+    # The guest channels among them (RT-6.22): only a mention or a reply in a
+    # thread this agent took part in there is queued.
+    guest_channel_ids: set[str] = field(default_factory=set)
+    # The lists were read here (not handed in): they follow membership changes.
+    _derived: bool = field(default=False, repr=False, init=False)
     _ws: Any = field(default=None, repr=False, init=False)
     _seq: int = field(default=1, repr=False, init=False)
     _queue: asyncio.Queue[ClassifiedEvent] = field(
@@ -107,10 +119,45 @@ class WebSocketInbox:
         me = await self.client.get_me()
         self._bot_user_id = me.id
         self._bot_username = me.username
-        if not self.watched_channel_ids:
+        if not self.watched_channel_ids or self._derived:
             # The work, project and default channel (where the agent works and
-            # stays addressable): the same list the hook API counts from.
-            self.watched_channel_ids = await watched_channel_ids(self.client)
+            # stays addressable) and the guest channels: the same list the
+            # hook API counts from. Read again at every connect.
+            await self.refresh_channels()
+
+    async def refresh_channels(self) -> None:
+        """Read the watched and guest channels again (RT-6.2 step 1, RT-6.22):
+        at connect, and when a WebSocket event says the bot joined or left a
+        channel. Unreadable memberships leave the guests out, the rest stays."""
+        forget = getattr(self.client, "forget_guests", None)
+        if forget is not None:
+            forget()
+        self.guest_channel_ids = await guest_ids(self.client)
+        self.watched_channel_ids = await watched_channel_ids(self.client)
+        self._derived = True
+
+    async def _on_membership(self, msg: dict[str, Any]) -> None:
+        """user_added / user_removed naming this bot: someone added it to a
+        channel (a guest channel now) or removed it (RT-6.22)."""
+        data, where = msg.get("data") or {}, msg.get("broadcast") or {}
+        me = self._bot_user_id
+        if not self._derived or not me or me not in (data.get("user_id"), where.get("user_id")):
+            return
+        try:
+            await self.refresh_channels()
+        except Exception as exc:  # noqa: BLE001 — the old lists stay
+            log.warning("channels not read again after %s: %s", msg.get("event"), exc)
+
+    def _guest_drop(self, post: Post, kind: str) -> bool:
+        """RT-6.22: a post in a guest channel that neither names this agent nor
+        answers in a thread it took part in there (threads-<uid>.env, the list
+        the count reads): no event, no digest. Its mark moves on."""
+        if kind != "watched_channel" or post.channel_id not in self.guest_channel_ids:
+            return False
+        if post.root_id and post.root_id in ownpost.guest_threads(self._bot_user_id):
+            return False
+        self.handled(post)
+        return True
 
     async def _channel(self, channel_id: str) -> Channel:
         if channel_id not in self._channel_cache:
@@ -167,12 +214,13 @@ class WebSocketInbox:
                     channel_type=entry.channel_type,
                     watched_channel_ids=self.watched_channel_ids,
                 )
-                if not kind:
+                if not kind or self._guest_drop(post, kind):
                     continue
                 if post.id in self._seen_ids:
                     continue
                 self._seen_ids.add(post.id)
-                event = ClassifiedEvent(kind=kind, post=post)
+                event = ClassifiedEvent(kind=kind, post=post,
+                                        guest=post.channel_id in self.guest_channel_ids)
                 await self._gate(event, entry.channel_type)
                 await self._departed(event)
                 await self._put(event)
@@ -245,6 +293,9 @@ class WebSocketInbox:
                 if msg.get("event") == "reaction_added":
                     await self._on_reaction_event(msg)
                     continue
+                if msg.get("event") in MEMBERSHIP:
+                    await self._on_membership(msg)
+                    continue
                 if msg.get("event") != "posted":
                     continue
                 data = msg.get("data") or {}
@@ -278,14 +329,15 @@ class WebSocketInbox:
                     channel_type=channel_type,
                     watched_channel_ids=self.watched_channel_ids,
                 )
-                if not kind:
+                if not kind or self._guest_drop(post, kind):
                     continue
                 pid = post.id
                 if pid:
                     if pid in self._seen_ids:
                         continue
                     self._seen_ids.add(pid)
-                event = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=msg)
+                event = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=msg,
+                                        guest=cid in self.guest_channel_ids)
                 await self._gate(event, channel_type)
                 await self._departed(event)
                 await self._put(event)
@@ -384,8 +436,10 @@ class WebSocketInbox:
             # which it cannot see): it was told; nor for one that names another
             # agent that trusts its author: that one answers.
             dm = (channel_type or "").upper() in ("D", "G")
+            # RT-6.22: in a guest channel, that channel's own coordinator.
+            guest = post.channel_id if event.guest else ""
             answer = why != "broadcast" and not (
-                not dm and await gate.names_coordinator(self.client, post)
+                not dm and await gate.names_coordinator(self.client, post, guest)
             ) and not await gate.mentioned_agent_trusts(
                 self.client, post, who, me) and gate.first_reply(me, root)
         except Exception as exc:  # noqa: BLE001 — fail open
@@ -395,18 +449,19 @@ class WebSocketInbox:
                        if cls == gate.FOREIGN else
                        f"from {who}, not trusted by me: the coordinator answers")
         task = asyncio.create_task(self._after_gate(
-            event, who, root if answer else "", dm=dm))
+            event, who, root if answer else "", dm=dm, guest=guest))
         self._gate_tasks.add(task)
         task.add_done_callback(self._gate_tasks.discard)
 
-    async def _after_gate(self, event: ClassifiedEvent, who: str, root: str, *, dm: bool) -> None:
+    async def _after_gate(self, event: ClassifiedEvent, who: str, root: str, *, dm: bool,
+                          guest: str = "") -> None:
         """Answer a gated post in thread `root` ('' for no answer), without the
         model. The gated post and the answer are handled (RT-6.2): the read
         watermark passes them, unless a post before them there still waits."""
         cid = event.post.channel_id
         if root:
             try:
-                text = await gate.reply_text(self.client, who, dm=dm)
+                text = await gate.reply_text(self.client, who, dm=dm, guest=guest)
                 self.handled(await self.client.post(text, channel_id=cid or None, root_id=root))
             except Exception as exc:  # noqa: BLE001 — the post is gated all the same
                 log.info("no answer to the gated post in thread %s: %s", root, exc)

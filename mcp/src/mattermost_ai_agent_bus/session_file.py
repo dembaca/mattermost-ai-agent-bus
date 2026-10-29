@@ -294,8 +294,9 @@ def session_file_path() -> Path:
     return keyed_path("mcp")
 
 
-def write(info: SessionInfo, team: str, channel: str) -> Path:
-    """Write the session file, 0600 in a 0700 directory. Returns its path."""
+def write(info: SessionInfo, team: str, channel: str, project: str = "") -> Path:
+    """Write the session file, 0600 in a 0700 directory. Returns its path.
+    project: MM_PROJECT_CHANNEL, the home first, then the guests (RT-6.22)."""
     path = session_file_path()
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     lines = [
@@ -310,6 +311,7 @@ def write(info: SessionInfo, team: str, channel: str) -> Path:
         f"MATTERMOST_TOKEN={info.bot_token}",
         f"MM_TEAM={team}",
         f"MM_CHANNEL={channel}",
+        *([f"MM_PROJECT_CHANNEL={project}"] if project else []),
         f"MM_SESSION_PID={os.getppid()}",
     ]
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

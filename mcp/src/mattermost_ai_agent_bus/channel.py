@@ -196,9 +196,15 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
     departed agent the one that answers it (RT-6.21). An agent's fyi post
     (RT-6.14) wakes only whom it names and the author of its thread's root,
     who waits for it; the coordinator and others in the thread get it in the
-    digest."""
+    digest. In a guest channel (item guest, RT-6.22) only a mention, a DM, a
+    reaction or a reply in its own thread wakes it: no broadcast, no
+    coordinator, and what does not wake goes into no digest either."""
     if item.get("gated"):
         return False
+    if item.get("guest"):
+        if item.get("kind") in ("mention", "dm", "reaction", "stall"):
+            return True
+        return in_my_thread and (my_root or item.get("intent") != a2a.FYI)
     if (item.get("kind") in ("mention", "dm", "reaction", "stall") or item.get("to") == a2a.ALL
             or item.get("departed")
             or broadcast(str((item.get("post") or {}).get("message", "")))):
@@ -272,6 +278,8 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
                 "owner", "root_from_trusted_human"):
         if item.get(key):
             meta[key] = str(item[key])
+    if item.get("guest"):
+        meta["guest"] = "true"  # RT-6.22: not your home; a task goes there
     if item.get("foreign"):
         meta["foreign"] = "true"  # ADR-001: another owner's agent, a request
     if item.get("expired"):
@@ -372,6 +380,8 @@ class Pusher:
                         continue
                     if addressed is None or await addressed(item):
                         await self.send(notification(item))
+                    elif item.get("guest"):
+                        continue  # RT-6.22: a guest channel goes into no digest
                     else:
                         if not self.held:
                             self.held_since = time.time()

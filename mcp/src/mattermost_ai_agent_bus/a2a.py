@@ -127,13 +127,15 @@ def branch(message: str) -> str | None:
 
 
 def annotate(message: str = "", to: str = "", kind: str = "",
-             crown: bool = False) -> dict[str, Any] | None:
+             crown: bool = False, home: str = "") -> dict[str, Any] | None:
     """props.a2a for a post the server writes, or None for a plain message.
     kind: one the server sets itself (ask, permission, reminder); else the first word.
     pr, branch: what the text names. crown: the author held the crown when it
-    posted (RT-6.14 step 3)."""
+    posted (RT-6.14 step 3). home: the author's home, on a post in a guest
+    channel (RT-6.22)."""
     w = kind or word(message)
-    named = {"pr": pr(message), "branch": branch(message), "crown": crown or None}
+    named = {"pr": pr(message), "branch": branch(message), "crown": crown or None,
+             "home": home or None}
     if w is None and not to and not any(named.values()):
         return None
     out: dict[str, Any] = {"v": V}
@@ -149,11 +151,12 @@ def annotate(message: str = "", to: str = "", kind: str = "",
 
 
 def props(message: str = "", to: str = "", kind: str = "",
-          card: dict[str, Any] | None = None, crown: bool = False) -> dict[str, Any] | None:
+          card: dict[str, Any] | None = None, crown: bool = False,
+          home: str = "") -> dict[str, Any] | None:
     """The props of a post the server writes: the agent's card on its HELLO,
     props.a2a (annotate); None for a plain message."""
     out: dict[str, Any] = {"agent_card": card} if card else {}
-    note = annotate(message, to, kind, crown)
+    note = annotate(message, to, kind, crown, home)
     if note:
         out["a2a"] = note
     return out or None

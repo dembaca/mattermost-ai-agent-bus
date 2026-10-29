@@ -4,7 +4,7 @@
 #
 #   mm-agent-poll.sh [--channel ID|NAME] [--interval SEC] [--since-ms MS] [--once]
 #
-# Default channel: the work channel (MM_PROJECT_CHANNEL, else MM_CHANNEL); a
+# Default channel: the home (the first MM_PROJECT_CHANNEL entry, else MM_CHANNEL); a
 # NAME is looked up in the bot's team. Only the work, project and default
 # channel can be read, never a DM or group channel (the server's 403, exit 1). Default start: one minute ago. Each line
 # is one post as GET /v1/posts gives it: id, user_id, root_id, create_at, type,

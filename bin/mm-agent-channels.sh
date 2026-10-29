@@ -4,14 +4,18 @@
 #   eval "$(./bin/mm-agent-channels.sh resolve)"
 #
 # Emits export lines for MM_TEAM_ID, MM_CHANNEL_ID and — when MM_PROJECT_CHANNEL
-# is set — MM_PROJECT_CHANNEL_ID.
+# is set — MM_PROJECT_CHANNEL (the list as read) and MM_PROJECT_CHANNEL_ID (the
+# home's id).
 #
-# Two channels, two roles:
-#   MM_CHANNEL          the registrar's default channel; the agent is already a
-#                       member (ensureTeamChannel adds it at register time) and
-#                       stays addressable there.
-#   MM_PROJECT_CHANNEL  optional; where this session actually works. Not known to
-#                       the registrar, so the bot joins it here.
+# The roles (ADR-002, RT-6.22):
+#   MM_CHANNEL          the registrar's default channel, the lobby; the agent is
+#                       already a member (ensureTeamChannel adds it at register
+#                       time) and stays addressable there.
+#   MM_PROJECT_CHANNEL  optional, comma-separated. The first entry is the home,
+#                       where this session works; the others are guest
+#                       channels. Not known to the registrar, so the bot joins
+#                       them here. The home must resolve and join; a guest that
+#                       does not is reported once on stderr and left out.
 #
 # This script NEVER creates a team or a channel. A missing one is reported with
 # the name that is missing, so the operator can create it deliberately.
@@ -63,11 +67,37 @@ ensure_member() {
   esac
 }
 
+# Join a guest channel (RT-6.22): like resolve_channel and ensure_member, but a
+# failure is reported and returns 1 instead of ending the session start.
+join_guest() {
+  local cname="$1" tid="$2" uid="$3" gid why=""
+  mm_api GET "/api/v4/teams/${tid}/channels/name/${cname}"
+  case "$MM_API_STATUS" in
+    200) gid="$(jq -r '.id' <<<"$MM_API_BODY")" ;;
+    404) why="does not exist (this tool never creates channels)" ;;
+    *) why="HTTP ${MM_API_STATUS}" ;;
+  esac
+  if [[ -z "$why" ]]; then
+    mm_api POST "/api/v4/channels/${gid}/members" "$(jq -nc --arg u "$uid" '{user_id:$u}')"
+    case "$MM_API_STATUS" in
+      200|201) echo "member of guest channel ${cname}" >&2; return 0 ;;
+      403) why="private (a human must add the bot) or joining is denied" ;;
+      *) why="HTTP ${MM_API_STATUS}" ;;
+    esac
+  fi
+  echo "guest channel '${cname}' not joined: ${why}; the session goes on" >&2
+  return 1
+}
+
 case "$CMD" in
   resolve)
     TEAM="$(mm_team)"
     CHANNEL="$(mm_channel)"
-    PROJECT="${MM_PROJECT_CHANNEL:-}"
+    PROJECT=""
+    GUESTS=()
+    while IFS= read -r entry; do
+      if [[ -z "$PROJECT" ]]; then PROJECT="$entry"; else GUESTS+=("$entry"); fi
+    done < <(mm_project_channels)
 
     mm_api GET "/api/v4/users/me"
     [[ "$MM_API_STATUS" == "200" ]] ||
@@ -94,12 +124,18 @@ case "$CMD" in
     if [[ -n "$PROJECT" ]]; then
       PROJECT_ID="$(resolve_channel "$PROJECT" "project channel" "$TEAM_ID" "$TEAM")"
       ensure_member "$PROJECT_ID" "$PROJECT" "$USER_ID"
-      OUT+=$'\n'"export MM_PROJECT_CHANNEL=$(printf '%q' "$PROJECT")"
+      LIST="$PROJECT"
+      JOINED=""
+      for guest in "${GUESTS[@]+"${GUESTS[@]}"}"; do
+        LIST+=",${guest}"
+        join_guest "$guest" "$TEAM_ID" "$USER_ID" && JOINED+=" #${guest}"
+      done
+      OUT+=$'\n'"export MM_PROJECT_CHANNEL=$(printf '%q' "$LIST")"
       OUT+=$'\n'"export MM_PROJECT_CHANNEL_ID=$(printf '%q' "$PROJECT_ID")"
     fi
 
     printf '%s\n' "$OUT"
-    echo "channels resolved: #${CHANNEL}${PROJECT:+ + #${PROJECT}} in ${TEAM}" >&2
+    echo "channels resolved: lobby #${CHANNEL}${PROJECT:+, home #${PROJECT}}${JOINED:+, guests${JOINED}} in ${TEAM}" >&2
     ;;
   *)
     echo "usage: $0 resolve" >&2

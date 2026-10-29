@@ -133,7 +133,7 @@ fi
 # characters: the text before the home is cut (the label first), never the home.
 if [[ -n "$TEXT" ]]; then
   # jq counts characters in any locale; bash counts bytes under LC_ALL=C.
-  TEXT="$(jq -nr --arg t "$TEXT" --arg h " · ~${MM_PROJECT_CHANNEL:-$(mm_channel)}" \
+  TEXT="$(jq -nr --arg t "$TEXT" --arg h " · ~$(mm_home_channel)" \
     '($t | .[0:([0, 100 - ($h | length)] | max)]) + $h')"
 fi
 

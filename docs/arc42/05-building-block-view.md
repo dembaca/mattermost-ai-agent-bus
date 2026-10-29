@@ -96,7 +96,7 @@ state file, not a carrier.
 
 **Watched channels.** `client.watched_channel_ids` is the one list of the
 channels the server watches (work, project and default channel, by id and by
-name): the inbox delivers their posts and the hook API counts and reads only
+name, and the guest channels: the bot's other team channels, RT-6.22): the inbox delivers their posts and the hook API counts and reads only
 them, so the `Stop` hook counts what `wait_for_events` can hand over (RT-6.2).
 
 **Checks.** `mcp/tests/test_adapter_boundary.py` checks that only the adapter

@@ -12,7 +12,15 @@ it in ``last-<uid>.env`` in the state directory (``mm_bot_state_file last``):
     HELLO=<post id>        the agent's announcement: the thread a BYE goes to
 
 Written by the MCP server (client.post) and bin/mm-agent-post.sh; a reader
-without a file asks the channel as before. A post by another route leaves it
+without a file asks the channel as before.
+
+The threads the agent took part in in guest channels (RT-6.22) live next to
+it, in ``threads-<uid>.env``, one line per thread, the latest last:
+
+    <root id> <channel name> <bus word of the agent's latest post there>
+
+A reply there wakes the agent (it is its thread), and a BYE lists those not
+ended with DONE or CANCEL. A post by another route leaves it
 stale, accepted: the hook asked for a sign-off before it too only saw what the
 channel showed it a moment later.
 """
@@ -70,6 +78,62 @@ def remove(uid: str) -> None:
         path(uid).unlink(missing_ok=True)
 
 
+# Guest threads (RT-6.22): at most this many are kept; a thread whose latest
+# own post says one of these is no longer open.
+GUEST_THREADS_MAX = 50
+CLOSED = ("DONE", "CANCEL", "BYE")
+
+
+def threads_path(uid: str) -> Path:
+    return session_file.state_dir() / f"threads-{uid}.env"
+
+
+def guest_threads(uid: str) -> dict[str, tuple[str, str]]:
+    """root id -> (channel name, latest own word), oldest first."""
+    try:
+        lines = threads_path(uid).read_text().splitlines() if uid else []
+    except OSError:
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 2:
+            out.pop(parts[0], None)
+            out[parts[0]] = (parts[1], parts[2] if len(parts) > 2 else "")
+    return out
+
+
+def record_guest(uid: str, channel_name: str, post: Post) -> None:
+    """The agent posted in a guest channel: its thread is the agent's (RT-6.22)."""
+    root = post.root_id or post.id
+    if not uid or not root:
+        return
+    rows = guest_threads(uid)
+    rows.pop(root, None)
+    rows[root] = (channel_name or "-", a2a.word(post.message.removeprefix("👑").strip()) or "-")
+    kept = list(rows.items())[-GUEST_THREADS_MAX:]
+    try:
+        session_file.write_private(threads_path(uid), "".join(
+            f"{r} {c} {w}\n" for r, (c, w) in kept))
+    except OSError as exc:
+        log.info("guest thread not remembered: %s", exc)
+
+
+def open_guest_threads(uid: str) -> list[tuple[str, str]]:
+    """(root id, channel name) of the guest threads not ended (RT-6.22)."""
+    return [(r, c) for r, (c, w) in guest_threads(uid).items() if w not in CLOSED]
+
+
+def with_guest_threads(message: str, uid: str) -> str:
+    """A BYE with the guest threads still open (RT-6.22): whoever reads the
+    home learns where this agent left work in other channels."""
+    left = open_guest_threads(uid)
+    if not left:
+        return message
+    return message.rstrip() + "\nOpen in guest channels: " + ", ".join(
+        f"~{c} {r}" for r, c in left)
+
+
 def bye_sync(client: ChatPort, uid: str) -> str:
     """Post BYE in the agent's HELLO thread when its last post in the work
     channel is no sign-off (RT-6.2). Synchronous, for the exit handler: one
@@ -80,8 +144,9 @@ def bye_sync(client: ChatPort, uid: str) -> str:
     if a2a.word(last.get("MSG", "")) in SIGN_OFFS:
         return "signed off"
     try:
-        post = client.post_sync(BYE, channel_id=last["CHANNEL"], root_id=last["HELLO"],
-                                props=a2a.props(BYE), timeout=BYE_TIMEOUT_SEC)
+        post = client.post_sync(with_guest_threads(BYE, uid), channel_id=last["CHANNEL"],
+                                root_id=last["HELLO"], props=a2a.props(BYE),
+                                timeout=BYE_TIMEOUT_SEC)
         record(uid, last["CHANNEL"], post)
     except Exception as exc:  # noqa: BLE001 — exit handler: fail open
         return f"BYE not posted: {type(exc).__name__}"

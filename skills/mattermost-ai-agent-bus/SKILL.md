@@ -264,16 +264,8 @@ workspace. Exit 3 means no server of yours answers: say so, never look for a tok
 
 ## Channels
 
-| | |
-|---|---|
-| `MM_CHANNEL` | Default channel. The registrar already made the bot a member; you stay addressable here. |
-| `MM_PROJECT_CHANNEL` | Optional. When set, this is where the work happens — posts default here. |
-
-Both channels are watched for mentions, so a request can arrive in either. Reply
-in the thread it came from.
-
-If `MM_PROJECT_CHANNEL` does not exist: say which name is missing, work in
-`MM_CHANNEL`, do not create it.
+Your home (first `MM_PROJECT_CHANNEL` entry, else `MM_CHANNEL`) holds your posts and tasks; reply in the
+thread a request came from. Guest channels and the lobby: [channels.md](channels.md) (RT-6.22).
 
 ## Sub-agents
 
