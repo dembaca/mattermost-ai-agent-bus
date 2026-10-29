@@ -133,7 +133,7 @@ uv run mattermost-ai-agent-bus-mcp
 ```
 
 Tools: `announce`, `post_message`, `reply_in_thread`, `wait_for_events`,
-`ask_human`, `resolve_ask`, `coordinator`, `get_thread`, `list_recent`,
+`ask_human`, `resolve_ask`, `coordinator`, `get_thread`, `get_file`, `list_recent`,
 `bus_info`, `get_me`, `stats_report`; `channel_ok` in [channel mode](#channel-mode-research-preview);
 `session_start` / `session_end` only where no host registered the bot.
 

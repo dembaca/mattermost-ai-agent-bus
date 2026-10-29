@@ -15,8 +15,8 @@ from typing import Any
 
 from mattermost_ai_agent_bus import owners
 from mattermost_ai_agent_bus.client import post_of, reaction_of
-from mattermost_ai_agent_bus.model import (Channel, ChannelUser, Me, Post, Reaction, Thread,
-                                           UnreadChannel)
+from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, Post, Reaction,
+                                           Thread, UnreadChannel)
 
 BOT = "u" * 26
 WORK = "c" * 26
@@ -71,6 +71,9 @@ class FakeChat:
         self.dms: set[str] = set()
         self.posted: list[dict[str, Any]] = []
         self.calls: list[tuple[str, int | None, int | None]] = []
+        # RT-6.23: file id -> its info, and its content and preview.
+        self.files: dict[str, FileInfo] = {}
+        self.contents: dict[tuple[str, bool], bytes] = {}
 
     def _posts(self) -> list[Post]:
         return [p if isinstance(p, Post) else post_of(p) for p in self.posts]
@@ -164,6 +167,14 @@ class FakeChat:
                           max_pages: int = 25) -> list[Post]:
         """All posts: the test hands only what came after."""
         return self._posts()
+
+    async def file_info(self, file_id: str) -> FileInfo:
+        return self.files[file_id]
+
+    async def file_bytes(self, file_id: str, *, preview: bool = False, limit: int) -> bytes:
+        """The content handed in self.contents[(id, preview)], cut at limit + 1."""
+        self.calls.append(("preview" if preview else "file", limit, None))
+        return self.contents[(file_id, preview)][:limit + 1]
 
     async def reactions(self, post_id: str) -> list[Reaction]:
         return [r if isinstance(r, Reaction) else reaction_of(r) for r in self.reacts.get(post_id, [])]

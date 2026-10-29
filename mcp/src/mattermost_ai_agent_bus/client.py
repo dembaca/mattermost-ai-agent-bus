@@ -19,7 +19,7 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from . import a2a, links, owners, ownpost, profile, session_file, stats, watermark
-from .model import Channel, ChannelUser, Me, Post, Reaction, Thread, UnreadChannel
+from .model import Channel, ChannelUser, FileInfo, Me, Post, Reaction, Thread, UnreadChannel
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -67,9 +67,37 @@ def post_of(raw: Mapping[str, Any]) -> Post:
         branch=a2a.branch_of(raw),
         crowned=a2a.crowned(raw),
         reactions=tuple(reaction_of(r) for r in reactions or () if isinstance(r, Mapping)),
+        files=files_of(raw),
         props=props,
         raw=MappingProxyType(dict(raw)),
     )
+
+
+def file_of(raw: Mapping[str, Any]) -> FileInfo:
+    """The bus's FileInfo from Mattermost's file info JSON (RT-6.23)."""
+    return FileInfo(
+        id=str(raw.get("id") or ""),
+        name=str(raw.get("name") or ""),
+        extension=str(raw.get("extension") or "").lower().lstrip("."),
+        size=_int(raw.get("size")),
+        mime_type=str(raw.get("mime_type") or ""),
+        width=_int(raw.get("width")),
+        height=_int(raw.get("height")),
+        has_preview_image=bool(raw.get("has_preview_image")),
+        post_id=str(raw.get("post_id") or ""),
+        user_id=str(raw.get("user_id") or ""),
+    )
+
+
+def files_of(raw: Mapping[str, Any]) -> tuple[FileInfo, ...]:
+    """A post's attachments (RT-6.23): metadata.files where Mattermost sends
+    them, else bare ids from file_ids (a WebSocket post may come without)."""
+    meta = raw.get("metadata")
+    rows = meta.get("files") if isinstance(meta, Mapping) else None
+    if isinstance(rows, list) and rows:
+        return tuple(file_of(r) for r in rows if isinstance(r, Mapping))
+    ids = raw.get("file_ids")
+    return tuple(FileInfo(id=str(i)) for i in ids if i) if isinstance(ids, list) else ()
 
 
 def reaction_of(raw: Mapping[str, Any]) -> Reaction:
@@ -186,15 +214,15 @@ class InvalidId(ValueError):
 
 
 class Refused(Exception):
-    """Mattermost refused a post; the text says why, for the agent."""
+    """Mattermost refused a post or a file; the text says why, for the agent."""
 
 
-def _refused(exc: httpx.HTTPStatusError) -> Refused:
+def _refused(exc: httpx.HTTPStatusError, what: str = "post") -> Refused:
     try:
         why = str(exc.response.json().get("message") or "")
-    except ValueError:
+    except (ValueError, httpx.ResponseNotRead):
         why = ""
-    return Refused(f"Mattermost refused the post ({exc.response.status_code})" + (f": {why}" if why else ""))
+    return Refused(f"Mattermost refused the {what} ({exc.response.status_code})" + (f": {why}" if why else ""))
 
 
 def mm_id(value: object, what: str) -> str:
@@ -1222,6 +1250,34 @@ class MattermostAdapter:
     async def reactions(self, post_id: str) -> list[Reaction]:
         rows = await self._api("GET", f"/api/v4/posts/{mm_id(post_id, 'post')}/reactions") or []
         return [reaction_of(r) for r in rows if isinstance(r, Mapping)]
+
+    async def file_info(self, file_id: str) -> FileInfo:
+        """What Mattermost keeps about a file (RT-6.23); Refused for one the bot
+        may not read (403, 404): Mattermost decides."""
+        try:
+            return file_of(await self._api("GET", f"/api/v4/files/{mm_id(file_id, 'file')}/info") or {})
+        except httpx.HTTPStatusError as exc:
+            raise _refused(exc, "file") from exc
+
+    async def file_bytes(self, file_id: str, *, preview: bool = False, limit: int) -> bytes:
+        """A file's content, or its preview (a JPEG Mattermost makes of an
+        image), read through the bot's token on this server, never written
+        anywhere (RT-6.23). At most limit + 1 bytes: more says it is longer."""
+        path = f"/api/v4/files/{mm_id(file_id, 'file')}" + ("/preview" if preview else "")
+        async with self._http().stream("GET", f"{self.base_url}{path}",
+                                       headers=self._auth_headers()) as resp:
+            if resp.is_error:
+                await resp.aread()  # its message says why
+                try:
+                    resp.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    raise _refused(exc, "file") from exc
+            out = bytearray()
+            async for chunk in resp.aiter_bytes():
+                out += chunk
+                if len(out) > limit:
+                    break
+        return bytes(out[:limit + 1])
 
     async def thread(self, post_id: str) -> Thread:
         """Return post + ordered replies for a thread root (or any post id)."""

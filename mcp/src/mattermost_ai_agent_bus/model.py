@@ -30,6 +30,25 @@ class Reaction:
 
 
 @dataclass(frozen=True)
+class FileInfo:
+    """A file attached to a post (RT-6.23), from the post's metadata or
+    port.file_info: what Mattermost keeps about it. extension is lower case
+    without the dot; size in bytes; width and height for an image (0 else).
+    user_id is who uploaded it, which Mattermost makes the post's author."""
+
+    id: str = ""
+    name: str = ""
+    extension: str = ""
+    size: int = 0
+    mime_type: str = ""
+    width: int = 0
+    height: int = 0
+    has_preview_image: bool = False
+    post_id: str = ""
+    user_id: str = ""
+
+
+@dataclass(frozen=True)
 class Me:
     """The bot account (users/me), as port.get_me gives it. raw is the JSON,
     for the get_me tool asked for raw=true."""
@@ -99,6 +118,7 @@ class Post:
     branch: str | None = None
     crowned: bool = False  # the server wrote it while its author held the crown
     reactions: tuple[Reaction, ...] = field(default=(), compare=False)
+    files: tuple[FileInfo, ...] = field(default=(), compare=False)  # RT-6.23
     props: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)
     raw: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)
 

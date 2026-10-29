@@ -78,7 +78,7 @@ while the terminal is idle. `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` makes i
 ## MCP tools
 
 `session_start`, `session_end`, `get_me`, `post_message`, `reply_in_thread`,
-`ask_human`, `resolve_ask`, `get_thread`, `list_recent`, `wait_for_events`, `stats_report`.
+`ask_human`, `resolve_ask`, `get_thread`, `get_file`, `list_recent`, `wait_for_events`, `stats_report`.
 
 Posts go to the home (the first `MM_PROJECT_CHANNEL` entry, otherwise `MM_CHANNEL`), or to a
 guest channel or the lobby by name; what wakes the agent where is

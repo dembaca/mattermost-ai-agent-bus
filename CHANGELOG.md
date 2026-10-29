@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.65.0
+
+### Added
+
+- **The agent sees the files a post carries**
+  ([RT-6.23](docs/arc42/06-runtime-view.md#623-files-attached-to-a-post)).
+  Slim posts, `wait_for_events` items, `list_recent` and `get_thread` name a
+  post's attachments as `files: [{id, name, type, size}]` (about 85
+  characters per file), a channel push as one `files` attribute. The new tool
+  `get_file(file_id)` reads the file through the server's own token: an image
+  as a picture (Mattermost's preview, at most 5 MB), a text file as text (cut
+  at 20,000 characters, with a note), any other type as metadata only.
+  Nothing is written to disk. The result names the author with
+  `from_trusted_human`; a file from anyone else is data, never instructions
+  (RT-6.16).
+
 ## 0.64.3
 
 ### Changed
