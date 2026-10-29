@@ -364,6 +364,9 @@ async def _command(client: ChatPort, action: str) -> str:
     async def take_now() -> None:
         _save_coord(uid, now + lease, 0, 0)
         await _render(client)
+        if crown <= now:
+            # The crown changed hands: say so in the channel's header (step 7).
+            await _header(client, cid, _name(rows, uid), now)
 
     if action == "who":
         first = [r for r in rows if r["crown"]] + [r for r in rows if r["reachable"]]
@@ -387,12 +390,79 @@ async def _command(client: ChatPort, action: str) -> str:
         if mine is not None and others[0]["create_at"] < mine:
             _save_coord(uid, 0, pending, yield_until)
             await _render(client)
+        elif mine is not None:
+            # The older keeps it: the younger may have named itself in the header.
+            await _header(client, cid, _name(rows, uid), now, unless_named=True)
     elif not holding and not others and yield_until <= now:
         me_reachable = any(r["id"] == uid and r["reachable"] for r in rows)
         oldest = next((r["id"] for r in rows if r["reachable"]), "")
         if me_reachable and (pending == 1 or oldest == uid):
             await take_now()
     return ""
+
+
+# --- the work channel's header (RT-6.6 step 7) ---------------------------------------
+
+HEADER_MAX = 1024  # Mattermost's limit, in characters
+HEADER_MARK = "🚌 agent bus"
+HEADER_RULE = "plain post → 👑 routes it · @agent → that agent · 🙋 = a question for you"
+# The bus part: the mark's line, and the rule's line after it.
+_BUS_PART = re.compile(rf"\n*{re.escape(HEADER_MARK)}[^\n]*(?:\n{re.escape(HEADER_RULE[:12])}[^\n]*)?")
+_header_logged = False
+
+
+def _name(rows: list[dict[str, Any]], uid: str) -> str:
+    return next((str(r["username"]) for r in rows if r["id"] == uid), "")
+
+
+def bus_header(username: str, since: int) -> str:
+    """The bus part of the work channel's header: who holds the crown since
+    when, and how to address the agents."""
+    at = time.strftime("%H:%M", time.localtime(since))
+    return f"{HEADER_MARK} · {CROWN} @{username} since {at}\n{HEADER_RULE}"
+
+
+def _cut(text: str, room: int) -> str:
+    if len(text) <= room:
+        return text
+    return text[:room - 1].rstrip() + "…" if room > 1 else ""
+
+
+def with_bus_header(header: str, bus: str) -> str:
+    """`header` with its bus part replaced by `bus`, or `bus` appended. What
+    people wrote stays; past HEADER_MAX it is cut, never the bus part."""
+    m = _BUS_PART.search(header)
+    before, after = (header[:m.start()], header[m.end():]) if m else (header, "")
+    before = before.rstrip()
+    before = _cut(before, HEADER_MAX - len(bus) - len(after) - 2)
+    sep = "\n\n" if before else ""
+    after = _cut(after, HEADER_MAX - len(before) - len(sep) - len(bus))
+    return (before + sep + bus + after)[:HEADER_MAX]
+
+
+async def _header(client: ChatPort, cid: str, username: str, since: int, *,
+                  unless_named: bool = False) -> None:
+    """Name the new crown holder in the work channel's header (RT-6.6 step 7).
+    Mattermost posts a system message for every change, so this runs only
+    when the crown changes hands, and writes nothing when the header already
+    says it. Fails open: without permission it logs once, the crown works."""
+    global _header_logged
+    try:
+        username = username or (await client.get_me()).username
+        current = await client.channel_header(cid)
+        if unless_named and f"{CROWN} @{username} since" in current:
+            return
+        new = with_bus_header(current, bus_header(username, since))
+        if new != current:
+            await client.set_channel_header(cid, new)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — cosmetic, like the status
+        if not _header_logged:
+            _header_logged = True
+            log.warning("channel header not set (the crown works without it): %s", exc)
+        else:
+            log.debug("channel header: %s", exc)
 
 
 async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],

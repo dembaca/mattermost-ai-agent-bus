@@ -27,6 +27,8 @@ class FakeMattermost:
         self.presence: dict[str, str] = {}
         self.writes: list[tuple[str, str, dict | None]] = []
         self.fail = False
+        self.header: str | None = None   # the work channel's header; None: no permission
+        self.patches: list[str] = []
 
     def agent(self, uid, username, create_at, emoji="", expires_in=600, presence="online"):
         """A bot in the work channel; expires_in=None: a status without expiry."""
@@ -58,6 +60,14 @@ class FakeMattermost:
         if p == "/api/v4/users/status/ids":
             return httpx.Response(200, json=[{"user_id": u, "status": self.presence.get(u, "offline")}
                                              for u in body])
+        if p == f"/api/v4/channels/{CHANNEL}" and req.method == "GET":
+            return httpx.Response(200, json={"id": CHANNEL, "name": "agents", "header": self.header or ""})
+        if p == f"/api/v4/channels/{CHANNEL}/patch" and req.method == "PUT":
+            if self.header is None:
+                return httpx.Response(403, json={"message": "no permission"})
+            self.header = body["header"]
+            self.patches.append(self.header)
+            return httpx.Response(200, json={"id": CHANNEL, "name": "agents", "header": self.header})
         if req.method in ("PUT", "DELETE"):
             self.writes.append((req.method, p, body))
             return httpx.Response(200, json={})
@@ -384,3 +394,58 @@ async def test_idle_in_a_channel_session_is_reachable_and_keeps_the_crown(mm, cl
     await lease.command(client, "release")
     await lease.set_status(client, "renew")
     assert mm.custom_status()["emoji"] == "ear"
+
+
+# --- the work channel's header (RT-6.6 step 7) ---------------------------------------
+
+def _bus(at: str = "") -> str:
+    return (f"🚌 agent bus · 👑 @agent-me since {at or time.strftime('%H:%M')}\n"
+            "plain post → 👑 routes it · @agent → that agent · 🙋 = a question for you")
+
+
+async def test_the_new_crown_holder_names_itself_in_the_header(mm, client):
+    """RT-6.6 step 7: when the crown changes hands, the new holder's server puts
+    who holds it, since when, and the addressing rule into the work channel's
+    header, after what people wrote there. Every change posts a system
+    message, so a renewal or a header that says it already writes nothing."""
+    mm.header = "Release on Fridays"
+    me(mm)
+    await lease.command(client, "tick")
+    assert holds() and mm.header == f"Release on Fridays\n\n{_bus()}"
+    await lease.command(client, "tick")
+    await lease.command(client, "take")
+    assert len(mm.patches) == 1
+    await lease.command(client, "release")
+    assert len(mm.patches) == 1                  # the next holder writes it
+    assert await lease.command(client, "take") == "taken"
+    assert len(mm.patches) == 1                  # the same minute: it says that already
+
+
+async def test_the_header_replaces_only_the_bus_part(mm, client):
+    """RT-6.6 step 7: another holder's bus part is replaced where it stands;
+    what people wrote before and after it stays."""
+    mm.header = f"Notes\n\n{_bus('09:00').replace('agent-me', 'agent-old')}\nmore notes"
+    me(mm)
+    await lease.command(client, "tick")
+    assert mm.header == f"Notes\n\n{_bus()}\nmore notes"
+
+
+def test_the_header_stays_within_mattermosts_limit():
+    """RT-6.6 step 7: past 1024 characters people's text is cut, never the bus part."""
+    bus = lease.bus_header("agent-me", int(time.time()))
+    out = lease.with_bus_header("x" * 2000, bus)
+    assert len(out) == lease.HEADER_MAX and out.endswith(bus) and "…\n\n" in out
+    assert lease.with_bus_header("", bus) == bus
+    assert lease.with_bus_header(f"a\n{bus}", bus) == f"a\n\n{bus}"
+
+
+async def test_without_permission_the_crown_works_and_it_logs_once(mm, client, caplog, monkeypatch):
+    """RT-6.6 step 7: a header the bot may not change is logged once; the crown is taken."""
+    monkeypatch.setattr(lease, "_header_logged", False)
+    me(mm)
+    with caplog.at_level("DEBUG", logger="mattermost_ai_agent_bus.lease"):
+        await lease.command(client, "tick")
+        assert holds()
+        await lease._header(client, CHANNEL, "agent-me", int(time.time()))
+    assert mm.patches == []
+    assert [r.levelname for r in caplog.records if "header" in r.getMessage()] == ["WARNING", "DEBUG"]
