@@ -50,13 +50,18 @@ def drain(pending: int, channels: Iterable[Mapping[str, Any]]) -> dict[str, Any]
             "banner": f"📨 Collecting {pending} unread Mattermost message(s)", "pending": pending}
 
 
-def needs_signoff(last_message: str, *, asked: bool, by_bus: bool, push: bool) -> bool:
-    """The latest own post in the work channel still says busy (RT-6.2 step 2):
-    once per turn, not for a turn the bus started where the bus wakes the agent,
-    not for an agent that never posted there."""
+def needs_signoff(last_message: str, *, asked: bool, by_bus: bool, push: bool,
+                  signed_off: bool | None = None) -> bool:
+    """Something changed on the bus since the agent's last IDLE/BYE (RT-6.2
+    step 2): its latest own post in the work channel is none, or an addressed
+    event reached it after it (signed_off False, ownpost.signed_off). Once per
+    turn, not for a turn the bus started where the bus wakes the agent, not for
+    an agent that never posted there."""
     if asked or not last_message or (by_bus and push):
         return False
-    return not _SIGNED_OFF.match(last_message)
+    if signed_off is None:
+        signed_off = bool(_SIGNED_OFF.match(last_message))
+    return not signed_off
 
 
 def listen_sec(*, coordinator: bool) -> int:
@@ -105,8 +110,8 @@ def signoff(*, push: bool) -> dict[str, Any]:
                " (BYE when the task is done). Give the next step so that you could pick up from it "
                "alone: your conversation may be compacted while you are idle, and this post is "
                "handed back to you then. If you coordinate and will be gone for long, hand over "
-               "first. If nothing changed since your last post, say so in one line and finish; "
-               "this check will not block you again this turn.")
+               "first. You are asked because you posted or were sent something on the bus since "
+               "your last IDLE; this check will not block you again this turn.")
     return {"action": "signoff", "reason": reason,
             "banner": "✋ Signing off on Mattermost before going idle"}
 

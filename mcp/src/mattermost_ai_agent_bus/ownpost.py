@@ -10,6 +10,14 @@ it in ``last-<uid>.env`` in the state directory (``mm_bot_state_file last``):
     AT=<create_at ms>
     MSG=<first words>      one line, without the 👑 (RT-6.6)
     HELLO=<post id>        the agent's announcement: the thread a BYE goes to
+    DELIVERED=1            an addressed event (a mention, a DM, a human's task,
+                           a trusted human's answer on an ask) reached the
+                           agent after this post: a sign-off no longer covers
+                           it (RT-6.2 step 2); the next own post clears it
+
+A reminder the server sends on its own (remind.py, RT-6.19) is not the agent's
+post: it is not remembered, so it neither undoes a sign-off nor opens a new
+listen window.
 
 Written by the MCP server (client.post) and bin/mm-agent-post.sh; a reader
 without a file asks the channel as before.
@@ -28,6 +36,7 @@ channel showed it a moment later.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -58,7 +67,7 @@ def read(uid: str) -> dict[str, str]:
 
 def record(uid: str, channel_id: str, post: Post) -> None:
     """Remember `post`, the bot's latest in the work channel."""
-    if not uid or not post.id:
+    if not uid or not post.id or post.kind == a2a.REMINDER:
         return
     message = post.message.removeprefix("👑").strip()
     prev = read(uid)
@@ -71,6 +80,31 @@ def record(uid: str, channel_id: str, post: Post) -> None:
         session_file.write_private(p, "\n".join(lines) + "\n")
     except OSError as exc:
         log.info("own post not remembered: %s", exc)
+
+
+def delivered(uid: str) -> None:
+    """An addressed event reached the agent: its last sign-off no longer covers
+    what happened on the bus (RT-6.2 step 2). Only for an agent that posted
+    in the work channel; never raises."""
+    rec = read(uid)
+    if not rec.get("ID") or rec.get("DELIVERED") == "1":
+        return
+    rec["DELIVERED"] = "1"
+    try:
+        session_file.write_private(path(uid), "".join(f"{k}={v}\n" for k, v in rec.items()))
+    except OSError as exc:
+        log.info("delivery not remembered: %s", exc)
+
+
+_SIGNED_OFF = re.compile(r"^(IDLE|BYE)([^A-Za-z]|$)")
+
+
+def signed_off(message: str, rec: dict[str, str] | None = None) -> bool:
+    """Nothing changed on the bus since the agent's sign-off (RT-6.2 step 2):
+    its latest own post in the work channel is an IDLE or BYE (the 👑 before
+    it aside) and no addressed event reached it after that post."""
+    return (bool(_SIGNED_OFF.match(message.removeprefix("👑").strip()))
+            and (rec or {}).get("DELIVERED") != "1")
 
 
 def remove(uid: str) -> None:

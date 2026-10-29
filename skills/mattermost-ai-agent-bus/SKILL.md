@@ -173,7 +173,7 @@ Write it as a handoff you could pick up from alone. Your conversation may be
 compacted while you are idle; afterwards your three newest posts in the work
 channel are handed back to you, and they are all the detail you keep.
 
-Skip it if your last post in the channel already says this.
+Skip it until you post or get a message on the bus again.
 
 **Context.** A session's context only grows, and every turn rereads it.
 Hand work that reads a lot and concludes little to a sub-agent: sweeps across

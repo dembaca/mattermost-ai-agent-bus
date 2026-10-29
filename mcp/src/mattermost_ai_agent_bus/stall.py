@@ -14,9 +14,12 @@ trusted human (the ask reminders of remind.py are none) and no agent with the
 status `working`; the crown holder's own posts and status are none either (its
 nudges would start a new quiet period), they only push the next wake to
 MM_STALL_SEC after them. Without any activity in the window the quiet period
-starts with the oldest open item. The crown holder's own asks within their
-24 h are listed but are no reason to wake it: remind.py nudges their human, so
-a stall whose only items they are wakes nobody. Then the server wakes its agent with an event
+starts with the oldest open item. An ask within its 24 h whose asking agent is
+still on the roster (the crown holder's own too) is listed but is no reason to
+wake it: that agent's remind.py nudges the human, the coordinator would find
+nothing to do, so a stall whose only items they are wakes nobody (RT-6.19
+step 2). An ask expired, or whose agent left (no reminders any more), still
+wakes it, and so does any other item. Then the server wakes its agent with an event
 `{kind: "stall"}` whose text lists the items: what, who is next, the last
 activity. The event goes into the inbox queue, so it reaches the agent like
 any event: pushed as a channel tag (RT-6.12), from wait_for_events, and the
@@ -114,8 +117,9 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
           trusted: Collection[str] = (), me: str = "",
           foreign: Collection[str] = ()) -> list[dict[str, Any]]:
     """The open items, longest quiet first: {what, id, title, next, last, at}.
-    An ask of `me` (the crown holder) still within its 24 h is marked own: its
-    reminders nudge the human, so it is listed but wakes nobody."""
+    An ask still within its 24 h by `me` (the crown holder) or by an agent in
+    `reachable` is marked reminded: that agent's server reminds the human
+    (remind.py), so it is listed but wakes nobody (RT-6.19 step 2)."""
     live = [p for p in posts if not p.type and not p.delete_at]
     by_thread: dict[str, list[Post]] = {}
     for p in live:
@@ -146,14 +150,18 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
         post = by_id.get(a["ask"])
         asked = _at(post) if post else 0
         at, last = _last(by_thread.get((post.root_id if post else "") or a["ask"], []), names)
+        by = a.get("by", "")
+        reminded = bool(by) and (by == me or by in reachable)
         if asked and now_ms - asked >= asks.APPROVAL_SEC * 1000:
-            what, nxt = "ask expired", f"{a.get('by', '–')}: resolve it, open a new ask"
-        else:
+            what, nxt = "ask expired", f"{by or '–'}: resolve it, open a new ask"
+        elif reminded:
             what, nxt = "ask", f"{a.get('human', '–')} (human; reminded automatically)"
+        else:
+            what, nxt = "ask", f"{a.get('human', '–')} (human; {by or 'its agent'} left: not reminded)"
         item = {"what": what, "id": a["ask"], "title": a.get("need", ""),
                 "next": nxt, "last": last, "at": at}
-        if what == "ask" and me and a.get("by") == me:
-            item["own"] = True
+        if what == "ask" and reminded:
+            item["reminded"] = True
         out.append(item)
 
     cls = {p.id: c for p, c in zip(posts, classes, strict=True)}
@@ -272,9 +280,11 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
         quiet = int(st["QUIET"])
     # Own posts and a fresh crown only push the next wake out; the backoff goes on.
     nxt = max(nxt, own / 1000 + stall_sec() if own else 0.0, st["FROM"])
-    if all(i.get("own") for i in found):
-        # Nothing open, or only the crown holder's own asks: their reminders
-        # already nudge the human, a wake would find nothing to do.
+    if all(i.get("reminded") for i in found):
+        # RT-6.19 step 2: nothing open, or only asks their agents' servers
+        # remind: the human is nudged already, a wake would find nothing to
+        # do — no event, no push. The quiet period and backoff are kept, so a
+        # later item that needs an agent wakes as if these had not been there.
         _save(uid, quiet, wakes, nxt, st["FROM"])
         return None
     if nxt > now:

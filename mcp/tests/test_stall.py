@@ -124,13 +124,14 @@ def _open(bus, what: str) -> None:
 @pytest.mark.parametrize("quiet_min", [5, 15])
 @pytest.mark.parametrize("working", [False, True])
 async def test_stall_needs_something_open_quiet_and_nobody_working(bus, what, quiet_min, working):
-    """RT-6.19: open item × 10 min quiet × no agent working, and only then."""
+    """RT-6.19: open item × 10 min quiet × no agent working, and only then;
+    an ask its agent's server reminds is no item that wakes (step 2)."""
     _open(bus, what)
     bus.posts.append(post(3, EVE, "PROGRESS · still reading", quiet_min))
     if working:
         bus.roster["agent-eve"] = "working"
     await look(bus)
-    assert bool(bus.woken) == (what != "nothing" and quiet_min >= 10 and not working)
+    assert bool(bus.woken) == (what not in ("nothing", "ask") and quiet_min >= 10 and not working)
 
 
 async def test_nothing_open_looks_again_later_without_waking(bus):
@@ -196,7 +197,7 @@ async def test_addressed_posts_count_until_the_addressee_answers(bus):
 
 async def test_reminders_are_no_activity(bus):
     """RT-6.19: the server's own ask reminders do not end the quiet."""
-    _open(bus, "ask")
+    _open(bus, "task")
     bus.posts.append(post(5, BOB, "🔔 @dembaca — reminder: **Merge PR #4?**", 2, root=1, kind=a2a.REMINDER))
     await look(bus)
     assert len(bus.woken) == 1
@@ -594,9 +595,34 @@ async def test_the_crown_holders_own_ask_alone_wakes_nobody(bus):
     bus.posts += [post(1, ME, "🙋 @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK)]
     await look(bus)
     assert bus.woken == []
-    bus.posts += [post(2, BOB, "🙋 @dembaca — **Deploy?**", 45, kind=a2a.ASK)]
+    bus.posts += [post(2, HUMAN, "@agent-bob can you look at the build?", 45)]
     await look(bus)
     assert len(bus.woken) == 1 and pid(1) in bus.woken[0] and pid(2) in bus.woken[0]
+
+
+async def test_reminded_human_asks_alone_wake_nobody(bus):
+    """RT-6.19 step 2 (0.65.1): asks of agents still on the roster are reminded
+    by their servers; with only those open the coordinator is not woken, no
+    event, no push. A task that needs an agent, added later, still wakes it,
+    and the digest lists the asks beside it."""
+    bus.posts += [post(1, BOB, "🙋 @dembaca — **Merge PR #129?**", 50, kind=a2a.ASK),
+                  post(2, EVE, "🙋 @dembaca — **Deploy?**", 45, kind=a2a.ASK)]
+    assert await look(bus) is None or bus.woken == []
+    await look(bus, 60)
+    assert bus.woken == []
+    bus.posts += [post(3, HUMAN, "@agent-bob can you look at the build?", 40)]
+    await look(bus, 61)
+    assert len(bus.woken) == 1
+    assert "reminded automatically" in bus.woken[0] and pid(3) in bus.woken[0]
+
+
+async def test_an_ask_whose_agent_left_still_wakes(bus):
+    """RT-6.19 step 2: an ask whose agent is no longer on the roster has no
+    reminders any more: it wakes the coordinator and says so."""
+    bus.posts += [post(1, BOB, "🙋 @dembaca — **Merge PR #129?**", 50, kind=a2a.ASK)]
+    del bus.roster["agent-bob"]
+    await look(bus)
+    assert len(bus.woken) == 1 and "agent-bob left: not reminded" in bus.woken[0]
 
 
 async def test_an_own_expired_ask_still_wakes(bus):
@@ -631,6 +657,7 @@ async def test_the_stall_lists_the_ask_not_its_link_line(bus, kind):
     bus.posts += [post(7, HUMAN, "deploy plan", 70),
                   post(1, BOB, "🙋 @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK),
                   post(2, BOB, f"🙋 asked {pid(1)}", 50, root=7, kind=kind)]
+    del bus.roster["agent-bob"]  # its asks are reminded no more: they wake (step 2)
     await look(bus)
     assert len(bus.woken) == 1
     assert f"ask {pid(1)}" in bus.woken[0] and pid(2) not in bus.woken[0]

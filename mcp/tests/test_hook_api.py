@@ -10,7 +10,7 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import channel, hookapi, lease, session_file, unread
+from mattermost_ai_agent_bus import channel, hookapi, lease, ownpost, session_file, unread
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import UnreadChannel
 
@@ -144,17 +144,42 @@ async def test_last_post_from_the_file_else_the_channel(api):
     client = FakeClient(posts=[post("a", "hi", at=3000),
                                post("b", "👑 IDLE · done\nnext: x", user=UID, at=2000)])
     _, h = await api(client)
-    assert (await h.get("/v1/last-post")).json() == {"at": 2000, "message": "IDLE · done next: x"}
+    assert (await h.get("/v1/last-post")).json() == {"at": 2000, "message": "IDLE · done next: x",
+                                                     "signed_off": True}
     assert client.calls == [("posts", 100, None)]
     d = session_file.state_dir()
     d.mkdir(parents=True, exist_ok=True)
     (d / f"last-{UID}.env").write_text("CHANNEL=c\nID=z\nAT=5000\nMSG=BYE · gone\n")
     client.calls.clear()
-    assert (await h.get("/v1/last-post")).json() == {"at": 5000, "message": "BYE · gone"}
+    assert (await h.get("/v1/last-post")).json() == {"at": 5000, "message": "BYE · gone",
+                                                     "signed_off": True}
     assert client.calls == []
     (d / f"last-{UID}.env").unlink()
     client.posts = [post("a", "hi")]
-    assert (await h.get("/v1/last-post")).json() == {"at": 0, "message": ""}
+    assert (await h.get("/v1/last-post")).json() == {"at": 0, "message": "", "signed_off": False}
+
+
+async def test_signed_off_until_something_changes_on_the_bus(api):
+    """RT-6.2 step 2 (0.65.1): signed off while the latest own post is an IDLE
+    and no addressed event reached the agent after it; a delivery or a new own
+    post ends it. A reminder the server sent is no own post."""
+    reminder = {"a2a": {"v": 1, "kind": "reminder", "intent": "fyi"}}
+    client = FakeClient(posts=[post("r", "🔔 @dembaca — reminder: **Merge?**", user=UID, at=3000,
+                                    props=reminder),
+                               post("b", "IDLE · done", user=UID, at=2000)])
+    _, h = await api(client)
+    assert (await h.get("/v1/last-post")).json()["signed_off"] is True
+    ownpost.record(UID, "c", post_of({"id": "i" * 26, "message": "👑 IDLE · done", "create_at": 4000}))
+    ownpost.record(UID, "c", post_of({"id": "r" * 26, "message": "🔔 reminder", "create_at": 5000,
+                                      "props": reminder}))
+    assert (await h.get("/v1/last-post")).json() == {"at": 4000, "message": "IDLE · done",
+                                                     "signed_off": True}
+    ownpost.delivered(UID)
+    assert (await h.get("/v1/last-post")).json()["signed_off"] is False
+    ownpost.record(UID, "c", post_of({"id": "j" * 26, "message": "IDLE · answered", "create_at": 6000}))
+    assert (await h.get("/v1/last-post")).json()["signed_off"] is True
+    ownpost.record(UID, "c", post_of({"id": "k" * 26, "message": "ACK · on it", "create_at": 7000}))
+    assert (await h.get("/v1/last-post")).json()["signed_off"] is False
 
 
 async def test_posts_say_what_the_listener_needs(api):
