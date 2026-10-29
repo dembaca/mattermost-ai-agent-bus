@@ -132,8 +132,9 @@ fi
 # ADR-002): "<text> · ~<home>". Mattermost caps custom status text at 100
 # characters: the text before the home is cut (the label first), never the home.
 if [[ -n "$TEXT" ]]; then
-  tail=" · ~${MM_PROJECT_CHANNEL:-$(mm_channel)}"
-  TEXT="${TEXT:0:$((100 - ${#tail}))}${tail}"
+  # jq counts characters in any locale; bash counts bytes under LC_ALL=C.
+  TEXT="$(jq -nr --arg t "$TEXT" --arg h " · ~${MM_PROJECT_CHANNEL:-$(mm_channel)}" \
+    '($t | .[0:([0, 100 - ($h | length)] | max)]) + $h')"
 fi
 
 mm_api PUT "/api/v4/users/${UID_}/status" \

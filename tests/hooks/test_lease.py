@@ -43,8 +43,10 @@ def test_without_a_server_every_status_is_a_plain_lease(mm, run):
 def test_without_a_server_the_status_names_the_home(mm, run):
     """RT-6.6 step 1, ADR-002: the host hooks write the form the server
     writes (lease.homed): the project channel is the home; past 100
-    characters the label is cut, never the home."""
-    assert run(STATUS, "working", "l" * 200, fd_token=True, MM_PROJECT_CHANNEL="team-a").code == 0
+    characters the label is cut, never the home. Counted in characters, also
+    under a C locale, where bash counts the bytes of " · "."""
+    assert run(STATUS, "working", "l" * 200, fd_token=True, MM_PROJECT_CHANNEL="team-a",
+               LC_ALL="C", LANG="C").code == 0
     text = mm.custom_status()["text"]
     assert len(text) == 100 and text.endswith(" · ~team-a")
     assert text == lease.homed("working · " + "l" * 200, "team-a")
