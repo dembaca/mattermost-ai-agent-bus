@@ -101,7 +101,11 @@ says why), so no bot, `HELLO` or sign-off lands in `MM_CHANNEL`. Set the project
 channel per checkout (e.g. with direnv) to put that session on the bus; with it set,
 registration is not optional. `MM_REGISTER=always` registers every session, as before.
 
-The registration secret, **gopass preferred**:
+The registration secret, **gopass preferred**. It is your enrollment token from the
+registrar's `/agent-token create` (a bot bound to you), or the shared secret (an
+unbound bot, foreign to other owners' agents); see the
+[registrar README](https://github.com/dembaca/mattermost-agent-registrar#setup-for-enrollment-tokens)
+and [ADR-003](../docs/arc42/09-architecture-decisions.md#adr-003-the-owner-comes-from-the-registrar-bound-bot-description):
 
 ```bash
 export MM_REG_SECRET_GOPASS=path/to/mattermost/agent-registration-secret

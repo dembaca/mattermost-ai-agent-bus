@@ -3,6 +3,40 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.61.0
+
+### Changed
+
+- **The owner is bound, and read natively where possible** (WP3 of #63,
+  [ADR-003](docs/arc42/09-architecture-decisions.md#adr-003-the-owner-comes-from-the-registrar-bound-bot-description),
+  [RT-6.16](docs/arc42/06-runtime-view.md#616-who-may-wake-an-agent) step 1).
+  Needs [mattermost-agent-registrar](https://github.com/dembaca/mattermost-agent-registrar)
+  0.2.0 for bound bots. New `ChatPort.agent_owner`:
+  - the bot's native Mattermost owner (`owner_id` of `/api/v4/bots/<id>`) where
+    the operator grants bot accounts `read_others_bots`, else `for @…` from its
+    description, cached like the description; the trusted list still comes
+    from the description;
+  - a native owner that disagrees with `for @…` makes a foreign agent (logged);
+  - an `unbound` bot (registered with the shared secret) and one the registrar
+    described without `for @` have no owner, whatever `owner_id` says: the
+    registrar's own account owns them. Their `claims @…` is never read as the
+    owner. An owner id that is no human (a bot, a plugin) is ignored;
+  - a bot made by hand, without a registrar description, now has its native
+    owner as owner where that is readable (it was foreign before).
+- **An unbound own bot is named:** the owner split stays off for it, as
+  before, and `bus_info`, `session_start` and the host's banner carry a
+  `warning` that the bot is unbound and an enrollment token in
+  `MM_REG_SECRET` (`/agent-token create`) binds it.
+
+### Docs
+
+- ADR-003 records the decided design (registrar `/agent-token` → per-user
+  scoped enrollment tokens, native owner via `assign_bot`, the shared secret as
+  the unbound fallback; Keycloak/OIDC dropped; #83 parked) and is built.
+  RISK-02 is mitigated once the shared secret is off
+  (`ALLOW_SHARED_SECRET=false`), RISK-03 reduced with `read_others_bots`.
+  Setup links to the registrar README instead of restating it.
+
 ## 0.60.0
 
 ### Changed

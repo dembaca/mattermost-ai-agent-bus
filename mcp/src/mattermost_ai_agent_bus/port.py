@@ -85,6 +85,14 @@ class ChatPort(Protocol):
         it cannot be read."""
         ...
 
+    async def agent_owner(self, user_id: str) -> str | None:
+        """Whose agent the bot is (ADR-003, WP3): the username of its native
+        owner where the chat system keeps one and lets the bot read it, else
+        `for @<owner>` from its description, lower case; '' when it has none
+        (unbound, owned by the registrar's account, or the two disagree), None
+        when neither can be read. owners.decide has the rule."""
+        ...
+
     # --- channel membership, status and presence -----------------------------
     async def member_channels(self) -> list[UnreadChannel]: ...
 

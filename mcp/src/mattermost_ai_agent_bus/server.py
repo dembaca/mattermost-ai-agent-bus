@@ -20,8 +20,8 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from . import (
-    a2a, asks, channel, gate, hookapi, lease, overhead, owners, ownpost, permission, session_file, slim, stall,
-    stats, tasks,
+    a2a, asks, channel, gate, hookapi, lease, overhead, owners, ownpost, permission, profile, session_file, slim,
+    stall, stats, tasks,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, mm_id
 from .model import Post
@@ -565,6 +565,10 @@ async def bus_info() -> str:
             except Exception:  # noqa: BLE001 — diagnostic only
                 name = None
         humans.append({"id": uid, "username": name})
+    # My bot registered with the shared secret: no owner split (RT-6.16 step 1).
+    unbound = (profile.unbound_warning(me.username)
+               if profile.unbound(await client.bot_description(me.id)) else "")
+    warnings = [w for w in (unbound, _hook_warning().get("warning", "")) if w]
     return _out("bus_info", {
         "version": VERSION,
         "on_bus": True,
@@ -578,7 +582,7 @@ async def bus_info() -> str:
         "permission_relay": RELAY,
         **({"update": {"installed": newer, "how": "quit, then claude --continue"}}
            if (newer := _newer_installed()) else {}),
-        **_hook_warning(),
+        **({"warning": "; ".join(warnings)} if warnings else {}),
     })
 
 

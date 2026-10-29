@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Collection, Iterable, Mapping
 from typing import Any
 
+from mattermost_ai_agent_bus import owners
 from mattermost_ai_agent_bus.client import post_of, reaction_of
 from mattermost_ai_agent_bus.model import (Channel, ChannelUser, Me, Post, Reaction, Thread,
                                            UnreadChannel)
@@ -29,7 +30,9 @@ class FakeChat:
     reactions: post id -> Reaction or reaction JSON. names: user id ->
     username; agents: the user ids that are agents; trusted: user id ->
     username of the trusted humans; descriptions: user id -> bot description
-    (missing: not readable, ADR-003); channel: every channel's name.
+    (missing: not readable, ADR-003); native_owners: user id -> username of
+    the bot's native owner (missing: not readable, WP3); channel: every
+    channel's name.
     members, presence: the accounts in every channel with their custom
     status, and who is online (the lease's roster); status: the own custom
     status written last; header: the channel header.
@@ -44,7 +47,8 @@ class FakeChat:
                  reactions: Mapping[str, Iterable[Reaction | Mapping[str, Any]]] | None = None,
                  names: Mapping[str, str] | None = None, agents: Collection[str] = (),
                  trusted: Mapping[str, str] | None = None,
-                 descriptions: Mapping[str, str] | None = None, channel: str = "agents",
+                 descriptions: Mapping[str, str] | None = None,
+                 native_owners: Mapping[str, str] | None = None, channel: str = "agents",
                  channels: Iterable[UnreadChannel] = (), post_id: str = "new") -> None:
         self.me = Me(id=uid, username=username, raw={"id": uid, "username": username})
         self.created = created
@@ -56,6 +60,7 @@ class FakeChat:
         self._agents = set(agents)
         self.trusted = dict(trusted or {})
         self.descriptions = dict(descriptions or {})
+        self.native_owners = dict(native_owners or {})
         self.channel = channel
         self.channels = list(channels)
         self.post_id = post_id
@@ -104,6 +109,10 @@ class FakeChat:
 
     async def bot_description(self, user_id: str) -> str | None:
         return self.descriptions.get(user_id)
+
+    async def agent_owner(self, user_id: str) -> str | None:
+        """The adapter's rule (owners.decide) on `native_owners` and `descriptions`."""
+        return owners.decide(self.native_owners.get(user_id), self.descriptions.get(user_id), user_id)
 
     async def member_channels(self) -> list[UnreadChannel]:
         return list(self.channels)

@@ -563,12 +563,12 @@ mm_trusted_names() {
 # human accounts only), while the bus trusts all of it. Reads the description
 # from the bot's own user object (bot_description), else /bots/<id>; when
 # neither is readable there is nothing to compare and it stays silent. Warns on
-# stderr, never fails. Same as mcp/.../profile.py.
+# stderr, never fails. Same as mcp/.../profile.py. Also warns when the bot is
+# unbound (registered with the shared secret): no owner split (RT-6.16 step 1).
 # mm_warn_profile_trusted <bot user id> <bot username> <name>...
 mm_warn_profile_trusted() {
   local uid="$1" bot="$2" n desc="" got=0 listed missing=""
   shift 2
-  [[ $# -gt 0 ]] || return 0
   if mm_api GET "/api/v4/users/${uid}" && [[ "$MM_API_STATUS" == "200" ]] &&
     jq -e 'has("bot_description")' >/dev/null 2>&1 <<<"$MM_API_BODY"; then
     desc="$(jq -r '.bot_description // ""' <<<"$MM_API_BODY")" got=1
@@ -577,6 +577,11 @@ mm_warn_profile_trusted() {
     desc="$(jq -r '.description // ""' <<<"$MM_API_BODY")" got=1
   fi
   [[ "$got" -eq 1 ]] || return 0
+  case " · ${desc} · " in
+    *" · unbound · "*)
+      echo "mm-bus: WARNING: @${bot} is unbound (registered with the shared secret): no owner split, and other owners' agents treat it as foreign; for a bound bot put an enrollment token (/agent-token create) into MM_REG_SECRET" >&2 ;;
+  esac
+  [[ $# -gt 0 ]] || return 0
   listed="$(sed -n 's/.*trusts @\([^·]*\).*/\1/p' <<<"$desc" | tr 'A-Z ' 'a-z,' | sed 's/,@/,/g')"
   for n in "$@"; do
     [[ ",${listed//,,/,}," == *",$(tr 'A-Z' 'a-z' <<<"$n"),"* ]] || missing+="${missing:+, }$n"

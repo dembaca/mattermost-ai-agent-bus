@@ -69,12 +69,18 @@ The MCP server's inside is cut once more, at the chat: see 5.2.
 **Port.** `ChatPort` covers who and where (the bot's token and session, the
 work channel, permalink base, `get_me`, `account_created`, `get_channel`,
 `channel_header`, `set_channel_header`);
-people (`usernames`, `agents`, `trusted_humans`, `bot_description`); membership, status and
+people (`usernames`, `agents`, `trusted_humans`, `bot_description`, `agent_owner`);
+membership, status and
 presence (`member_channels`, `channel_users`, `presences`, `set_presence`,
 `set_custom_status`, `clear_custom_status`); posting (`post`, `post_sync`,
 `post_by_name_sync`); reading (`thread`, `channel_posts`, `posts_after`,
 `reactions`). Nothing crosses it as Mattermost's JSON. `MattermostAdapter`
-implements it; mypy checks that structurally.
+implements it; mypy checks that structurally. `agent_owner` is the bot's
+native owner where the chat system keeps one (Mattermost: `owner_id`), else
+the registrar's `for @…`; the rule that combines them (`owners.decide`) is
+the bus's own (RT-6.16 step 1). The registrar has the same split on its side:
+its core reaches the chat system only through its `ProviderPort`, whose
+Mattermost adapter binds the owner with `assign_bot`.
 
 **Bus types.** A post is built once where it enters the server
 (`client.post_of`: the client's post and read calls, the WebSocket inbox),

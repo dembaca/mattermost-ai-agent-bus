@@ -5,13 +5,16 @@ trusted by this session: ``{owner(B)} ∪ trusts(B) ⊆ trusted(me)``. Every oth
 bus agent is **foreign**: its mention wakes the worker as a request, its
 ``TASK`` binds nothing, its broadcasts are gated (RT-6.16, RT-6.14).
 
-Owner and trusted list come from B's bot description, which the registrar
-writes (``for @<owner> · trusts @…``) and which every MCP server reads with its
-own bot token through the chat port: the same in every harness. The split is
-active only when this session has trusted humans and its own description names
-an owner; otherwise every agent is a peer, as before. A description that
-cannot be read counts as a peer's, with a log line: like the gate, this fails
-open. One without ``for @`` is foreign, and so is a cut list (``+N``).
+The owner is B's native owner in the chat system where the bus can read it,
+else ``for @<owner>`` from B's bot description (``agent_owner``, WP3); the
+trusted list always comes from the description, which the registrar writes
+(``for @<owner> · trusts @…``). Every MCP server reads both with its own bot
+token through the chat port: the same in every harness. The split is active
+only when this session has trusted humans and its own bot has an owner;
+otherwise every agent is a peer, as before. An agent whose owner and
+description cannot be read counts as a peer, with a log line: like the gate,
+this fails open. One without an owner is foreign (``unbound`` too), and so is
+a cut list (``+N``).
 """
 
 from __future__ import annotations
@@ -52,14 +55,44 @@ def is_peer(agent: Owner, mine: set[str]) -> bool:
     return bool(agent.owner) and not agent.cut and agent.circle() <= mine
 
 
+def decide(native: str | None, description: str | None, user_id: str = "") -> str | None:
+    """The agent's owner, lower case, from its native owner (`native`: the
+    username the chat system keeps as the bot's owner; None when unreadable or
+    not a human) and its description (ADR-003, WP3); '' for none, None when
+    neither can be read.
+
+    The registrar's own account is never a human owner: it owns every bot it
+    did not bind, so an ``unbound`` description, and one the registrar wrote
+    without ``for @``, name no owner whatever `native` says. A native owner
+    that disagrees with ``for @`` makes no owner either (foreign), logged."""
+    if native is None and description is None:
+        return None
+    claimed = profile.owner(description)
+    if native is None or profile.unbound(description):
+        return claimed
+    native = native.lower()
+    if claimed and claimed != native:
+        log.warning("agent %s: native owner @%s but description for @%s: foreign",
+                    user_id, native, claimed)
+        return ""
+    if not claimed and profile.by_registrar(description):
+        return ""  # the registrar's account owns it
+    return native
+
+
 async def read(client: ChatPort, user_id: str) -> Owner | None:
-    """The bot's owner and trusted list; None when its description cannot be read."""
+    """The bot's owner (``agent_owner``) and trusted list (its description);
+    None when neither can be read."""
     try:
         description = await client.bot_description(user_id)
+        owner = await client.agent_owner(user_id)
     except Exception as exc:  # noqa: BLE001 — unreadable
-        log.info("description of %s not readable: %s", user_id, exc)
+        log.info("owner of %s not readable: %s", user_id, exc)
         return None
-    return None if description is None else parse(description)
+    if owner is None:
+        return None
+    return Owner(owner=owner, trusts=frozenset(profile.listed(description)),
+                 cut=profile.cut(description))
 
 
 async def trusted_names(client: ChatPort) -> set[str]:
@@ -74,8 +107,8 @@ async def trusted_names(client: ChatPort) -> set[str]:
 
 async def mine(client: ChatPort) -> tuple[set[str], str]:
     """My trusted humans' names and my bot's id while the owner split is
-    active; (set(), '') while it is not: no trusted humans, or my own
-    description names no owner or cannot be read."""
+    active; (set(), '') while it is not: no trusted humans, or my own bot
+    has no owner (unbound, say) or it cannot be read."""
     try:
         names = await trusted_names(client)
         if not names:

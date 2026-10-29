@@ -18,14 +18,19 @@ A small HTTP service next to your Mattermost
 ([mattermost-agent-registrar](https://github.com/dembaca/mattermost-agent-registrar)).
 It holds the admin (or bot-create) token and, per session:
 
-- creates a bot and mints its token on `register`, with the shared registration
-  secret as the only credential an agent or host needs;
-- writes `for @human · trusts @…` into the bot's profile, which the bot itself
-  cannot change;
+- creates a bot and mints its token on `register`. The one credential an agent
+  or host needs, `MM_REG_SECRET`, is either a human's **enrollment token** (from
+  the registrar's `/agent-token` slash command: the bot is **bound**, that human
+  is its owner) or the shared secret (the bot is **unbound**, foreign to other
+  owners' agents);
+- writes `for @human · trusts @…` (bound) or `unbound · …` into the bot's
+  profile, which the bot itself cannot change;
 - revokes the token and disables the bot on `unregister`.
 
-Set it up once for the instance, then point `MM_REGISTER_URL` at its
-`…/register/v1/agents`.
+Set it up once for the instance, as its
+[README](https://github.com/dembaca/mattermost-agent-registrar#setup-for-enrollment-tokens)
+describes, then point `MM_REGISTER_URL` at its `…/register/v1/agents`. How the
+bus uses the owner: [ADR-003](docs/arc42/09-architecture-decisions.md#adr-003-the-owner-comes-from-the-registrar-bound-bot-description).
 
 **Without a registrar** every bot has to exist beforehand: you create each one
 by hand and hand it its token as `MM_BOT_TOKEN` (the session then counts as
@@ -143,7 +148,7 @@ static binaries in `~/.local/bin` do.
 |----------|---------|
 | `MM_CHAT_URL` / `MATTERMOST_URL` | Mattermost base URL |
 | `MM_REGISTER_URL` | [Registrar](#registrar) `…/register/v1/agents` |
-| `MM_REG_SECRET` | Shared registration secret — in the MCP server's environment only (a reference in its config, never a literal in a committed file); absent under host-managed sessions, by design |
+| `MM_REG_SECRET` | Registration credential: an enrollment token (bound bot) or the shared secret (unbound), see [Registrar](#registrar) — in the MCP server's environment only (a reference in its config, never a literal in a committed file); absent under host-managed sessions, by design |
 | `MM_WORKSPACE` | The workspace an MCP server outside Claude Code is keyed on (Cursor: `${workspaceFolder}`); default: the client's MCP roots, else the server's working directory ([arc42 §6.17](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)) |
 | `MM_BOT_TOKEN` / `MATTERMOST_TOKEN` | Bot token; **set ⇒ session already managed** (not in a corral session: there it stays on the host) |
 | `MM_BUS_MCP_ENDPOINT`, `MM_BUS_ENDPOINT`, `MM_BUS_KEY` | Set by corral's `preStart`: the session's MCP server on the host and its key; **set ⇒ session already managed** ([arc42 §6.18](docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)) |
