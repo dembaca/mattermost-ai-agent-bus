@@ -206,4 +206,4 @@ def measure(path: str | Path, since: float, fixed: Fixed) -> dict[str, Any] | No
     if not count.reqs:
         return None
     return {"req": count.reqs, "bus_req": count.bus_reqs, "fixed": round(base() / CHARS_PER_TOKEN),
-            "all": count.all, "bus": {k: round(v) for k, v in count.bus.items()}}
+            "skill": int(skill), "all": count.all, "bus": {k: round(v) for k, v in count.bus.items()}}

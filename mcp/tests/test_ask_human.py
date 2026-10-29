@@ -475,7 +475,7 @@ async def test_the_wait_for_an_ask_ends_at_the_first_trusted_answer(monkeypatch,
     assert [(a["id"], a["wait"]) for a in _answers()] == [(ASK, 90)]
     # The file remembers: a server that starts afresh counts the ask no more.
     assert asks.answered(BOT, ASK, asked + 500) is None
-    s = stats.summary("0.36.0", 1)
+    s = stats.summary("0.36.0")
     assert (s["asks"], s["asks_answered"], s["ask_wait_sec"], s["asks_open"]) == (1, 1, 90, 0)
 
 

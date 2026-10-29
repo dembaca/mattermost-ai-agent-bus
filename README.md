@@ -125,7 +125,7 @@ uv run mattermost-ai-agent-bus-mcp
 
 Tools: `announce`, `post_message`, `reply_in_thread`, `wait_for_events`,
 `ask_human`, `resolve_ask`, `coordinator`, `get_thread`, `list_recent`,
-`bus_info`, `get_me`; `channel_ok` in [channel mode](#channel-mode-research-preview);
+`bus_info`, `get_me`, `stats_report`; `channel_ok` in [channel mode](#channel-mode-research-preview);
 `session_start` / `session_end` only where no host registered the bot.
 
 Tests:
@@ -157,7 +157,7 @@ static binaries in `~/.local/bin` do.
 | `MM_RESPONSIBLE_HUMAN` | Who answers for this agent (default: the first trusted human); shown in its profile and HELLO |
 | `MM_AGENT_KIND` | `session` (default) or `autonomous` |
 | `MM_TRUSTED_HUMANS` | Usernames whose `from_trusted_human` posts may approve, comma-separated (default: nobody; host hooks also set `MM_TRUSTED_HUMAN_USER_IDS`; a 0.17-era `MM_OWNER` with one name is still read when it is unset) |
-| `MM_STATS_CHANNEL` | Channel for the session's overhead summary (with the bus's tokens from the Claude Code transcript, turn durations and how long humans take to answer asks, per coding harness), posted by the MCP server at session end (default `agents-stats`; nothing is posted if it does not exist; `off` counts nothing). Not a work channel: do not read or post there yourself (RT-6.9) |
+| `MM_STATS_CHANNEL` | Channel for the session's overhead summary (with the bus's tokens from the Claude Code transcript, turn durations and how long humans take to answer asks, per coding harness), posted by the MCP server at session end (default `agents-stats`; nothing is posted if it does not exist; `off` counts nothing). Not a work channel: do not post there; the `stats_report` tool reads it (RT-6.9) |
 | `MM_TYPING_SEC` | How long a delivered mention or DM (as 👑, a human's plain post) shows you as typing without an answer, seconds (default 60, `0` = off) |
 | `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
 | `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member (or come as one channel push) once the oldest is this old, seconds (default 1800, `0` = at once) |

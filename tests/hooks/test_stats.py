@@ -151,6 +151,41 @@ def test_report_groups_turns_and_asks_by_harness(mm, run):
     assert ["0.36.0", "claude-code", "2", "1.5", "67%", "5", "min", "8", "min", "1", "83%"] in cells
 
 
+def test_the_tool_reports_what_the_script_reports(mm, run):
+    """RT-6.9 step 3: stats_report (stats.report) gives the same JSON as
+    `mm-agent-stats.sh report --json`, for old lines (static with the skill,
+    no rt, wake-ups instead of bus_turns) and new ones (skill apart, tok.skill)."""
+    from mattermost_ai_agent_bus import stats
+
+    tok = {"req": 90, "bus_req": 7, "fixed": 1201, "skill": 1,
+           "all": {"in": 3, "read": 900_001, "w5m": 17, "w1h": 5, "out": 20_003},
+           "bus": {"in": 1, "read": 90_001, "w5m": 3, "w1h": 0, "out": 2_001}}
+    lines = [
+        {"v": "0.20.0", "min": 61, "turns": 20, "wakes": {"addressed": 4}, "blocks": {"listen": 3},
+         "tools": {"wait_for_events": [4, 4001]}, "posts": [1, 121], "compact": [1, 333], "static": 29500},
+        {"v": "0.36.0", "rt": "claude-code", "min": 37, "turns": 7, "bus_turns": 3, "static": 28000,
+         "turns_timed": 5, "turn_sec": 1001, "turn_max_sec": 600, "bus_turns_timed": 2,
+         "bus_turn_sec": 95, "bus_turn_max_sec": 60, "asks": 3, "asks_answered": 2,
+         "ask_wait_sec": 605, "ask_wait_max_sec": 500, "asks_open": 1, "ask_open_sec": 5401,
+         "ask_open_max_sec": 5401, "tok": {k: v for k, v in tok.items() if k != "skill"}},
+        {"v": "0.36.0", "rt": "cursor", "min": 125, "turns": 0, "asks": 1, "asks_answered": 1,
+         "ask_wait_sec": 301, "ask_wait_max_sec": 301, "asks_open": 0, "ask_open_sec": 0,
+         "ask_open_max_sec": 0},
+        {"v": "0.53.0", "rt": "claude-code", "min": 45, "turns": 9, "bus_turns": 1, "static": 4800,
+         "skill": 22078, "blocks": {"drain": 2}, "tok": tok},
+        {"v": "0.53.0", "rt": "claude-code", "min": 15, "turns": 2, "bus_turns": 0, "static": 4800,
+         "skill": 22078, "tok": tok | {"skill": 0}},
+    ]
+    mm.posts[:0] = [{"id": f"s{i}", "user_id": "x" * 26, "create_at": 1,
+                     "message": "STATS " + json.dumps(line)} for i, line in enumerate(lines)]
+    r = run(REPORT, "report", "agents-stats", "--json")
+    assert r.code == 0, r.stderr
+    assert json.loads(r.stdout) == stats.report(lines)
+    new = stats.report(lines)[-1]
+    assert (new["static"], new["skill"], new["tok"]["skill_loaded"]) == (4800, 22078, 1)
+    assert "1/2" in run(REPORT, "report", "agents-stats").stdout       # skill loaded in 1 of 2
+
+
 def test_off_counts_nothing(mm, run):
     run(PROMPT, MM_STATS_CHANNEL="off")
     assert events(run) == []
