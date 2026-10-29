@@ -256,7 +256,7 @@ last item is `{kind: more_pending, count}`: call again until it is gone. Collect
 
 <!-- RT-6.5 in docs/arc42/06-runtime-view.md -->
 
-A mention or DM (as 👑 a human's plain post) shows you as *typing* in its
+A mention, DM, trusted 👍/👎 on your ask (as 👑 a human's plain post) shows you as *typing* in its
 thread until you post, wait again, or 60 s pass. So answer it promptly, even
 with a one-line `ACK`; if you will not, the indicator ends on its own.
 

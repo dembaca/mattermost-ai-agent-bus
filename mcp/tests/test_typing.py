@@ -198,3 +198,82 @@ async def test_no_typing_for_what_is_no_task_of_the_crown(crowned, monkeypatch, 
     await server._typing_for_task([event], [item])
     await asyncio.sleep(0)
     assert ws.typing() == []
+
+
+# --- RT-6.5 / RT-6.11: a trusted human's answer on an open ask (0.64.3) ------------------
+
+def _reaction(post: dict | None = None, gated: str = "") -> ClassifiedEvent:
+    """The inbox's event for a reaction on ask a1: a synthetic post in the ask's thread."""
+    return ClassifiedEvent(kind="reaction", gated=gated, raw={"emoji": "+1", "ask": "a1"},
+                           post=post_of({"id": "a1:u1:+1", "root_id": "a1", "channel_id": "c1",
+                                         "user_id": "u1", "message": ":+1:"} | (post or {})))
+
+
+def _answer(**kw) -> dict:
+    return {"kind": "reaction", "from_trusted_human": True, "from_agent": False,
+            "ask": "a1", "emoji": "+1", "answer": "yes"} | kw
+
+
+@pytest.mark.parametrize("path", ["wait_for_events", "push"])
+@pytest.mark.asyncio
+async def test_a_trusted_answer_on_an_ask_shows_typing_in_its_thread(crowned, monkeypatch, path):
+    """RT-6.5 / RT-6.11: a trusted human's 👍 on an open ask shows the agent
+    typing in the ask's thread, from wait_for_events and from the push (RT-6.12)."""
+    from mattermost_ai_agent_bus import asks
+
+    server, inbox, ws, crown = crowned
+    crown["held"] = False  # not the crown's rule: any agent's own ask
+
+    async def items(events, raw=False):
+        return [_answer() for _ in events]
+
+    async def nothing(payload):
+        return None
+
+    monkeypatch.setattr(server, "_event_items", items)
+    monkeypatch.setattr(server, "_compact_bystander", nothing)
+    monkeypatch.setattr(asks, "mark_seen", lambda uid, key: None)
+    await inbox._queue.put(_reaction())
+    if path == "push":
+        await server._push_wait(1)
+    else:
+        await server.wait_for_events(timeout_sec=1)
+    await asyncio.sleep(0)
+    assert ws.typing()[:2] == [{"channel_id": "c1", "parent_id": "a1"}, {"channel_id": "c1", "parent_id": ""}]
+
+
+@pytest.mark.asyncio
+async def test_an_answer_fetched_on_connect_finds_the_asks_channel(crowned):
+    """RT-6.11 step 3: a reaction fetched on (re)connect carries no channel id;
+    the indicator goes to the ask's channel."""
+    server, _, ws, _ = crowned
+    await server._typing_for_task([_reaction({"channel_id": ""})], [_answer()])
+    await asyncio.sleep(0)
+    assert ws.typing()[:1] == [{"channel_id": WORK, "parent_id": "a1"}]
+
+
+@pytest.mark.parametrize(("item", "gated"), [
+    (_answer(from_trusted_human=False), ""),                     # not trusted
+    (_answer(from_trusted_human=False, from_agent=True), ""),    # an agent's
+    (_answer(from_trusted_human=False), "from visitor, not trusted by me: approves nothing"),
+    (_answer(expired=True), ""),                                 # older than 24 h
+    (_answer(emoji="tada", answer=None), ""),                    # a remark, no answer
+])
+@pytest.mark.asyncio
+async def test_no_typing_for_a_reaction_that_promises_nothing(crowned, item, gated):
+    """RT-6.5 / RT-6.11: untrusted, an agent's, gated, expired or a remark emoji: none."""
+    server, _, ws, _ = crowned
+    await server._typing_for_task([_reaction(gated=gated)], [item])
+    await asyncio.sleep(0)
+    assert ws.typing() == []
+
+
+@pytest.mark.asyncio
+async def test_a_mention_keeps_the_indicator_over_an_ask_answer(crowned):
+    """RT-6.5: one indicator at a time; a mention in the same delivery keeps it."""
+    server, inbox, ws, _ = crowned
+    mention = ClassifiedEvent(kind="mention", post=post_of({"id": "m1", "channel_id": "c2"}))
+    inbox.start_typing("c2", "m1")  # what the inbox does for the delivered mention
+    await server._typing_for_task([_reaction(), mention], [_answer(), _item(kind="mention")])
+    await asyncio.sleep(0)
+    assert {m["channel_id"] for m in ws.typing()} == {"c2"}

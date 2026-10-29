@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.64.3
+
+### Changed
+
+- **A trusted human's 👍/👎 on an ask shows the agent typing**
+  ([RT-6.5](docs/arc42/06-runtime-view.md#65-typing-indicator-while-a-mention-is-answered),
+  [RT-6.11](docs/arc42/06-runtime-view.md#611-asking-a-human)). A yes/no
+  reaction by a trusted human on an open ask, delivered by `wait_for_events`
+  or the channel push, starts the typing indicator in the ask's thread, as a
+  mention does, so the human sees the agent picked it up. An expired answer,
+  another emoji and anyone else's reaction start none; a mention or DM in the
+  same delivery keeps the indicator.
+
 ## 0.64.2
 
 ### Changed

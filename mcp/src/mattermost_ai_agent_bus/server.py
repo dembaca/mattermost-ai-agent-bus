@@ -1260,8 +1260,9 @@ async def wait_for_events(
     more than 24 h after it, which approves nothing (RT-6.11). departed: mentioned
     agents that are gone, your server told the thread: route it (RT-6.21). Mentions and DMs come first; when more than
     max_events were waiting, a last item {kind: more_pending, count} says so —
-    call again to collect them. A delivered mention or DM, and holding
-    the crown a human's plain post, shows you as typing in its thread until
+    call again to collect them. A delivered mention or DM, a trusted human's
+    yes/no on your open ask, and holding the crown a human's plain post,
+    shows you as typing in its thread until
     you post, wait again, or MM_TYPING_SEC (default 60) runs out. Holding the crown you may get
     {kind: stall}: the bus is stuck, its text lists what is open (RT-6.19,
     coordinator.md). Keep timeout_sec below the
@@ -1298,13 +1299,32 @@ def _human_task(event: Any, item: dict[str, Any]) -> bool:
                 and not tasks._mentions(post.message) and not channel.broadcast(post.message))
 
 
+def _ask_answer(event: Any, item: dict[str, Any]) -> bool:
+    """A trusted human's yes/no reaction on an open ask, within its 24 h (RT-6.11)."""
+    return bool(event.kind == "reaction" and not event.gated and item.get("from_trusted_human")
+                and item.get("answer") and not item.get("expired"))
+
+
 async def _typing_for_task(events: list[Any], items: list[dict[str, Any]]) -> None:
     """RT-6.5: a human's plain post wakes only the 👑, as its task (RT-6.16),
     so it shows typing in that post's thread like a mention, from
-    wait_for_events and the channel push alike. A delivered mention or DM
-    started it in the inbox already; a gated, digest-only or fyi post promises
-    nothing."""
+    wait_for_events and the channel push alike; so does a trusted human's
+    👍/👎 on an open ask, in the ask's thread (RT-6.11). A delivered mention
+    or DM started it in the inbox already and keeps it; a gated, digest-only
+    or fyi post, an expired answer and anyone else's reaction promise nothing."""
     if any(e.kind in ("mention", "dm") and not e.gated for e in events):
+        return
+    answer = next((e for e, i in zip(events, items, strict=False) if _ask_answer(e, i)), None)
+    if answer is not None:
+        # Its post is synthetic: root_id is the ask, a top-level post with its own
+        # thread; channel_id is the broadcast's, empty when fetched on (re)connect.
+        ask = answer.post.root_id
+        try:
+            cid = answer.post.channel_id or await _get_client().post_channel_id(ask)
+        except Exception as exc:  # noqa: BLE001 — cosmetic: no indicator
+            log.info("no channel for ask %s: %s", ask, exc)
+            return
+        _get_inbox().start_typing(cid, ask)
         return
     task = next((e for e, i in zip(events, items, strict=False) if _human_task(e, i)), None)
     if task is None:
