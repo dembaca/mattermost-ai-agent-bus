@@ -252,7 +252,10 @@ def digest(items: Sequence[Mapping[str, Any]], since: float) -> dict[str, Any]:
         text = inert(" ".join(tasks.compact(str(post.get("message", ""))).split()))
         where = f"post {post.get('id', '')}" + (f", thread {post['root_id']}" if post.get("root_id") else "")
         mark = "(not trusted) " if item.get("gated") else ""
-        lines.append(f"- {mark}[{post.get('at', '')}] {post.get('author', '')} ({where}): {text[:300]}")
+        line = f"- {mark}[{post.get('at', '')}] {post.get('author', '')} ({where}): {text[:300]}"
+        if attached := files.attribute(post.get("files")):
+            line += f" · files: {attached}"  # RT-6.23: after the cut, never cut off
+        lines.append(line)
     if rest:
         lines.append(_more(rest))
     head = (f"Digest: {len(items)} post(s) on the bus since {time.strftime('%H:%M', time.localtime(since))}, "

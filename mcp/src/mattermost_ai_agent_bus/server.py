@@ -654,6 +654,24 @@ def _headline(need: str) -> tuple[str, str]:
     return head, text[len(head):].strip()
 
 
+# What in an ask holds no question of its own (RT-6.11 step 1): a code span or
+# block, a quote (an apostrophe opens none), a URL up to its closing punctuation.
+_NOT_ASKED = re.compile(
+    r"```.*?```|`[^`]*`"
+    r"|\"[^\"\n]*\"|“[^”\n]*”|„[^“”\n]*[“”]|«[^»\n]*»|»[^«\n]*«"
+    r"|(?<!\w)'[^'\n]*'(?!\w)|(?<!\w)‘[^’\n]*’(?!\w)"
+    r"|\b[a-z][a-z0-9+.-]*://\S*?(?=[.,;:!?)\]]*(?:\s|$))",
+    re.I | re.S)
+# A question mark that ends a sentence: whitespace or the end follows it.
+_QUESTION_END = re.compile(r"\?[?!]*[)\]*_]*(?=\s|$)")
+
+
+def _questions(text: str) -> int:
+    """How many questions an ask asks (RT-6.11 step 1): the question marks that
+    end a sentence, not those in a quoted example, a code span or a URL."""
+    return len(_QUESTION_END.findall(_NOT_ASKED.sub(" ", text)))
+
+
 _MENTION_RE = re.compile(r"(?<![\w@`])@([a-z0-9][a-z0-9._-]*[a-z0-9]|[a-z0-9])", re.I)
 _EVERYONE = ("channel", "all", "here")
 _EVERYONE_RE = re.compile(rf"(?<![\w`])@+({'|'.join(_EVERYONE)})(?!\w)", re.I)
@@ -1085,7 +1103,7 @@ async def ask_human(
             hint = (f"your ask {pending[0]} to {who} is more than 24 h old, a yes to it "
                     "approves nothing: resolve_ask it, then ask again")
         return _out("ask_human", {"posted": False, "open_ask": pending[0], "hint": hint})
-    if f"{need} {context}".count("?") > 1:
+    if _questions(f"{need} {context}") > 1:
         return _out("ask_human", {
             "posted": False,
             "hint": "one question per ask: ask the most important one now, wait for the "

@@ -213,6 +213,19 @@ async def test_posts_say_what_the_listener_needs(api):
     assert (await h.get("/v1/posts?since=yesterday")).status_code == 400
 
 
+async def test_posts_name_their_files(api):
+    """RT-6.23 step 1: a post with attachments names them as a slim post does,
+    for mm-agent-poll.sh and the compaction hook; one without has no `files`."""
+    fid = "f" * 26
+    shot = {"id": fid, "name": "shot.png", "extension": "png", "size": 9, "mime_type": "image/png"}
+    client = FakeClient(posts=[post("p1", "see this") | {"file_ids": [fid], "metadata": {"files": [shot]}},
+                               post("p2", "no files")])
+    _, h = await api(client)
+    got = (await h.get("/v1/posts?limit=5")).json()["posts"]
+    assert got[0]["files"] == [{"id": fid, "name": "shot.png", "type": "png", "size": 9}]
+    assert "files" not in got[1]
+
+
 async def test_ask_reactions_counts_only_what_was_not_handed_over(api):
     """RT-6.17, RT-6.11: a reaction raises no counter; the server counts those
     on open asks that are neither own nor SEEN."""

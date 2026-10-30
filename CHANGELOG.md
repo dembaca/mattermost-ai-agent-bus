@@ -3,6 +3,30 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.65.3
+
+### Fixed
+
+- **`ask_human` counts only real questions**
+  ([RT-6.11 step 1](docs/arc42/06-runtime-view.md#611-asking-a-human)).
+  The one-question check counts a `?` only where it ends a sentence (a space
+  or the end follows), and none in a code span, a quoted example (`"…"`,
+  `„…“`, `“…”`, `«…»`, `'…'`) or a URL. An ask whose context quotes an example
+  headline such as `"Merge PR #1?"` or links `https://…?a=b` is no longer
+  refused; two real questions still are.
+- **A post's files in `GET /v1/posts` and in the digest**
+  ([RT-6.23 step 1](docs/arc42/06-runtime-view.md#623-files-attached-to-a-post)).
+  The hook API's `/v1/posts` (and so `mm-agent-poll.sh`) names a post's
+  attachments as a slim post does (`files`, only when it has any); a digest
+  line and a post in the compaction handoff end with
+  ` · files: <id> <name>; …` after their cut text, so the agent knows to call
+  `get_file`.
+
+### Changed
+
+- **Leaner `SKILL.md`**: about 670 characters shorter (15,769 of its 16,500
+  budget), the same rules, tool names and scenario ids; repetitions merged.
+
 ## 0.65.2
 
 ### Changed

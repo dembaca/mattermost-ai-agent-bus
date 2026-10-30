@@ -8,7 +8,8 @@
 # NAME is looked up in the bot's team. Only the work, project and default
 # channel can be read, never a DM or group channel (the server's 403, exit 1). Default start: one minute ago. Each line
 # is one post as GET /v1/posts gives it: id, user_id, root_id, create_at, type,
-# message, to (all: for all agents), intent, fyi, gated. An edited post is not
+# message, to (all: for all agents), intent, fyi, gated, and files when it has
+# any (get_file fetches one, RT-6.23). An edited post is not
 # printed again. Collecting what is for you (and marking it read) is the MCP
 # tool wait_for_events. No token here: without a reachable server of this
 # session, exit 3 and what to do; a server that goes away later is asked again
