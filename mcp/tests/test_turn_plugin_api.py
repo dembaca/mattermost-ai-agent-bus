@@ -273,6 +273,15 @@ async def test_handoff_hands_back_the_own_posts(api):
     assert (await h.get("/v1/handoff")).json() == {"context": ""}
 
 
+def test_handoff_finds_a_coordinators_hello():
+    """RT-6.7 step 1: a coordinator's HELLO starts with 👑 (RT-6.6 step 3);
+    its thread is still named."""
+    posts = [{"id": "a", "user_id": UID, "root_id": "h", "message": "IDLE · waiting", "create_at": 3000},
+             {"id": "h", "user_id": UID, "root_id": "", "create_at": 2000,
+              "message": "👑 HELLO · **coordinate**\n`bus` · `–` · Opus · coordinator\nfor h · trusts – · can: –"}]
+    assert "Your HELLO thread: root h; read it with get_thread for more." in turnend.handoff(posts, UID)
+
+
 async def test_a_block_counts_its_kind(api):
     """RT-6.20 (RT-6.9): the plugin and the Stop hook count a block with its
     kind= (drain, signoff); the field must not collide with stats.record's own

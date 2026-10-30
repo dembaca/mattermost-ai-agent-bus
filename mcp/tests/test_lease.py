@@ -399,41 +399,72 @@ async def test_idle_in_a_channel_session_is_reachable_and_keeps_the_crown(mm, cl
 
 # --- the work channel's header (RT-6.6 step 7) ---------------------------------------
 
-def _bus(at: str = "") -> str:
-    return (f"🚌 agent bus · 👑 @agent-me since {at or time.strftime('%H:%M')}\n"
+BUS = "🚌 agent bus · plain post → 👑 routes it · @agent → that agent · 🙋 = a question for you"
+
+
+def _old_bus(name: str, at: str) -> str:
+    """The bus part before 0.65.4: it named the holder and the time."""
+    return (f"🚌 agent bus · 👑 @{name} since {at}\n"
             "plain post → 👑 routes it · @agent → that agent · 🙋 = a question for you")
 
 
-async def test_the_new_crown_holder_names_itself_in_the_header(mm, client):
-    """RT-6.6 step 7: when the crown changes hands, the new holder's server puts
-    who holds it, since when, and the addressing rule into the work channel's
-    header, after what people wrote there. Every change posts a system
-    message, so a renewal or a header that says it already writes nothing."""
+@pytest.fixture(autouse=True)
+def fresh_process(monkeypatch):
+    monkeypatch.setattr(lease, "_header_seen", set())
+
+
+async def test_the_header_bus_part_is_static(mm, client):
+    """RT-6.6 step 7: the crown holder's server puts the addressing rule into
+    the work channel's header, after what people wrote there; it names no
+    holder. Every change posts a system message, so a renewal and a crown
+    change write nothing once the header says it."""
+    assert lease.BUS_HEADER == BUS
     mm.header = "Release on Fridays"
     me(mm)
     await lease.command(client, "tick")
-    assert holds() and mm.header == f"Release on Fridays\n\n{_bus()}"
+    assert holds() and mm.header == f"Release on Fridays\n\n{BUS}"
     await lease.command(client, "tick")
     await lease.command(client, "take")
     assert len(mm.patches) == 1
     await lease.command(client, "release")
-    assert len(mm.patches) == 1                  # the next holder writes it
-    assert await lease.command(client, "take") == "taken"
-    assert len(mm.patches) == 1                  # the same minute: it says that already
+    assert await lease.command(client, "take") == "taken"  # the crown passes again
+    assert len(mm.patches) == 1
+    mm.header = "Release on Fridays"                       # someone removed it
+    await lease.command(client, "release")
+    await lease.command(client, "take")
+    assert mm.header == f"Release on Fridays\n\n{BUS}" and len(mm.patches) == 2
 
 
-async def test_the_header_replaces_only_the_bus_part(mm, client):
-    """RT-6.6 step 7: another holder's bus part is replaced where it stands;
-    what people wrote before and after it stays."""
-    mm.header = f"Notes\n\n{_bus('09:00').replace('agent-me', 'agent-old')}\nmore notes"
+async def test_an_old_crown_naming_header_is_replaced_once(mm, client):
+    """RT-6.6 step 7: the bus part before 0.65.4 (holder and time) is replaced
+    where it stands, once; what people wrote before and after it stays, and
+    the next crown change leaves the header alone."""
+    mm.header = f"Notes\n\n{_old_bus('agent-old', '22:40')}\nmore notes"
     me(mm)
     await lease.command(client, "tick")
-    assert mm.header == f"Notes\n\n{_bus()}\nmore notes"
+    assert mm.header == f"Notes\n\n{BUS}\nmore notes" and len(mm.patches) == 1
+    await lease.command(client, "release")
+    mm.agent(OLDER, "agent-old", 1000, "crown")              # another holder now
+    await lease.command(client, "tick")
+    mm.agent(OLDER, "agent-old", 1000, "hammer_and_wrench", expires_in=-60)
+    await lease.command(client, "take")
+    assert holds() and len(mm.patches) == 1
+
+
+async def test_a_holder_checks_the_header_once_after_it_starts(mm, client, tmp_path, monkeypatch):
+    """RT-6.6 step 7: a server that starts while its agent holds the crown (an
+    upgrade) replaces an old bus part once, without a crown change."""
+    _coord_file(tmp_path, monkeypatch, CROWN_UNTIL=int(time.time()) + 600)
+    me(mm, "crown")
+    mm.header = _old_bus("agent-me", "09:00")
+    await lease.command(client, "tick")
+    await lease.command(client, "tick")
+    assert holds() and mm.header == BUS and len(mm.patches) == 1
 
 
 def test_the_header_stays_within_mattermosts_limit():
     """RT-6.6 step 7: past 1024 characters people's text is cut, never the bus part."""
-    bus = lease.bus_header("agent-me", int(time.time()))
+    bus = lease.BUS_HEADER
     out = lease.with_bus_header("x" * 2000, bus)
     assert len(out) == lease.HEADER_MAX and out.endswith(bus) and "…\n\n" in out
     assert lease.with_bus_header("", bus) == bus
@@ -447,6 +478,6 @@ async def test_without_permission_the_crown_works_and_it_logs_once(mm, client, c
     with caplog.at_level("DEBUG", logger="mattermost_ai_agent_bus.lease"):
         await lease.command(client, "tick")
         assert holds()
-        await lease._header(client, CHANNEL, "agent-me", int(time.time()))
+        await lease._header(client, CHANNEL)
     assert mm.patches == []
     assert [r.levelname for r in caplog.records if "header" in r.getMessage()] == ["WARNING", "DEBUG"]

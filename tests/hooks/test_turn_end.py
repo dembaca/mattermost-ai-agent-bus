@@ -85,6 +85,17 @@ def test_signoff_from_a_server_without_signed_off(mm, run, monkeypatch):
     mm.own_post("PROGRESS · still going")
     r = run(STOP, MM_LISTEN_SEC="0")
     assert r.blocked and "IDLE" in r.reason
+    # RT-6.14 step 2: since 0.65.4 the word is in backticks.
+    mm.own_post("👑 `IDLE` · done: x\n\nnext: y")
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+
+
+def test_no_window_after_a_bye_in_backticks(mm, run):
+    """RT-6.2 step 3, RT-6.14 step 2: a `BYE` (👑 or not) skips the window too."""
+    for bye in ("`BYE` · done", "👑 `BYE` · done"):
+        mm.own_post(bye)
+        r = run(STOP, **IN_PROJECT)
+        assert r.passed and window(run) == {}, bye
 
 
 BUS_PROMPT = json.dumps({"prompt": '<channel source="plugin:mattermost-ai-agent-bus:mattermost-agent-bus" kind="dm">hi</channel>'})
@@ -152,10 +163,10 @@ def test_the_cli_post_keeps_the_file(mm, run):
     f = run.state_dir / f"last-{ME}.env"
     text = f.read_text()
     assert f"CHANNEL={PROJECT}" in text and "AT=5000" in text and f"HELLO={'n' * 26}" in text
-    assert "MSG=HELLO @agent-test project: x" in text
+    assert "MSG=`HELLO` @agent-test project: x" in text  # RT-6.14 step 2
     assert run(post, PROJECT, "👑 PROGRESS · building", "r" * 26, **IN_PROJECT).code == 0
     text = f.read_text()
-    assert "MSG=PROGRESS · building" in text and f"HELLO={'n' * 26}" in text
+    assert "MSG=`PROGRESS` · building" in text and f"HELLO={'n' * 26}" in text
     assert run(post, "d" * 26, "private", **IN_PROJECT).code == 0
     assert f.read_text() == text
 

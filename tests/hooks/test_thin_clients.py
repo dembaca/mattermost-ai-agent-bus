@@ -38,7 +38,7 @@ def test_post_goes_through_the_servers_post_message(mm, run):
     r = run(POST, "--kind", "RESULT", "--to", "all", "@dembaca @channel built it")
     assert r.code == 0, r.stderr
     out = json.loads(r.stdout)
-    assert out["message"] == "RESULT · dembaca channel built it"
+    assert out["message"] == "`RESULT` · dembaca channel built it"  # RT-6.14 step 2: in backticks
     assert out["unmentioned"] == ["dembaca", "channel"] and "ask_human" in out["hint"]
     body = posted(mm)
     assert body["channel_id"] == CHANNEL
@@ -50,7 +50,7 @@ def test_reply_and_the_old_form(mm, run):
     through reply_in_thread's code; a message from stdin with "-"."""
     root = "r" * 26
     assert run(POST, "--root", root, "-", stdin="ACK on it\n").code == 0
-    assert posted(mm)["root_id"] == root and posted(mm)["message"] == "ACK on it"
+    assert posted(mm)["root_id"] == root and posted(mm)["message"] == "`ACK` on it"
     assert run(POST, PROJECT, "PROGRESS · half way", root).code == 0
     assert {"channel_id": PROJECT, "root_id": root}.items() <= posted(mm).items()
 

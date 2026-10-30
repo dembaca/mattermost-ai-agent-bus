@@ -17,13 +17,14 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from . import files
+from . import a2a, files
 
 # Drain rounds per turn before a counter wait_for_events cannot clear counts
 # as stale (MAX_DRAIN in the Stop hook).
 MAX_DRAIN = 3
-_SIGNED_OFF = re.compile(r"^(IDLE|BYE)([^A-Za-z]|$)")
-_BYE = re.compile(r"^BYE([^A-Za-z]|$)")
+# After an optional 👑, plain or in backticks (RT-6.14 step 2).
+_SIGNED_OFF = re.compile(r"^(?:👑\s*)?`?(IDLE|BYE)([^A-Za-z]|$)")
+_BYE = re.compile(r"^(?:👑\s*)?`?BYE([^A-Za-z]|$)")
 # The listen window after a turn (RT-6.2 step 3): the Stop hook's defaults and
 # cap, so an agent stays reachable as long in every harness.
 LISTEN_SEC = 5400
@@ -195,12 +196,13 @@ def handoff(posts: Iterable[Mapping[str, Any]], me: str) -> str:
     lines = []
     for p in own[:3]:
         at = time.strftime("%Y-%m-%d %H:%M", time.localtime(int(p.get("create_at") or 0) / 1000))
-        line = f"- [{at}] " + str(p.get("message") or "").replace("\n", " ")[:600]
+        line = f"- [{at}] " + re.sub(r"\n+", " ", str(p.get("message") or ""))[:600]
         if attached := files.attribute(p.get("files")):
             line += f" · files: {attached}"  # RT-6.23
         lines.append(line)
+    # A coordinator's HELLO starts with 👑 (RT-6.6 step 3).
     hello = next((p.get("id") for p in own
-                  if not p.get("root_id") and str(p.get("message") or "").startswith("HELLO")), None)
+                  if not p.get("root_id") and a2a.word(str(p.get("message") or "")) == "HELLO"), None)
     return ("Your conversation was just compacted. Your own latest posts on the Mattermost agent bus "
             "(work channel), newest first, are your handoff state:\n" + "\n".join(lines)
             + (f"\nYour HELLO thread: root {hello}; read it with get_thread for more." if hello else "")

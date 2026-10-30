@@ -50,6 +50,9 @@ class Bus:
                 return [dict(u, delete_at=0) for u in self.users.values()]
             if path == "/api/v4/users/status/ids":
                 return [{"user_id": i, "status": "online"} for i in json]
+            if path == "/api/v4/users/ids":  # accounts outlive their channel membership
+                names = {ME: "agent-me", OLD: "agent-old", IDLE: "agent-idle", WORKER: "agent-w"}
+                return [{"id": i, "username": names[i]} for i in json if i in names]
             if path == f"/api/v4/channels/{PROJ}/posts":
                 return {"order": [p["id"] for p in self.posts], "posts": {p["id"]: p for p in self.posts}}
             if path.startswith("/api/v4/posts/"):
@@ -169,6 +172,20 @@ async def test_gone_from_the_channel_counts_unknown_names_do_not(bus):
     await bus.arrive("q" * 26, "@agent-old and @agent-nobody?")
     [reply] = bus.posted
     assert reply["message"].startswith("👑 agent-old is gone since ") and "nobody" not in reply["message"]
+    assert f"its last post: {BASE}{HELLO}." in reply["message"]
+
+
+@pytest.mark.asyncio
+async def test_gone_from_the_channel_found_by_its_hellos_author(bus):
+    """RT-6.21 step 3, RT-6.14 step 1: the three-line HELLO names nobody; a
+    removed member's HELLO is found by its author."""
+    _crown()
+    del bus.users[OLD]
+    bus.posts.pop(1)
+    bus.posts[-1]["message"] = "HELLO · **x**\n`bus` · `–` · Opus · member\nfor h · trusts – · can: –"
+    await bus.arrive("q" * 26, "@agent-old?")
+    [reply] = bus.posted
+    assert reply["message"].startswith("👑 agent-old is gone since ")
     assert f"its last post: {BASE}{HELLO}." in reply["message"]
 
 

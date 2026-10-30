@@ -298,6 +298,19 @@ async def test_posts_carry_their_kind(bus):
 
 
 @pytest.mark.asyncio
+async def test_a_status_post_gets_its_word_in_backticks_and_a_blank_line(bus):
+    """RT-6.14 step 2: post_message and reply_in_thread write the bus word in
+    backticks, after the 👑, and a blank line after the headline; the props
+    are the same as for the plain word, and other text stays as it is."""
+    c = bus([], crown=True)
+    await server.reply_in_thread(root_id=T26, message="IDLE · waiting\n**done:** x\n**next:** y")
+    await server.post_message(message="all green\nsee CI", kind="")
+    assert c.posted[0]["message"] == "👑 `IDLE` · waiting\n\n**done:** x\n**next:** y"
+    assert c.posted[0]["props"]["a2a"]["kind"] == "idle"
+    assert c.posted[1]["message"] == "👑 all green\nsee CI"
+
+
+@pytest.mark.asyncio
 async def test_posts_carry_pr_branch_and_crown(bus):
     """RT-6.14 step 2: post_message and reply_in_thread write pr, branch and,
     while the author holds the crown, crown into props.a2a."""
@@ -340,15 +353,15 @@ async def test_assignments_table_comes_from_the_server(bus):
     c = bus(_leitstand_thread(), crown=True)
     await server.post_message(message="ASSIGNMENTS · #57 in review")
     text = c.posted[0]["message"]
-    assert text.startswith("👑 ASSIGNMENTS · #57 in review\n| Agent | Task |")
+    assert text.startswith("👑 `ASSIGNMENTS` · #57 in review\n\n| Agent | Task |")
     assert "| agent-me | bus · relay Claude Code" in text and "| review | RT-6.8 | #57 |" in text
     assert c.posted[0]["props"]["a2a"]["kind"] == "assignments"
     own = "ASSIGNMENTS · mine\n| Agent | Task |\n|---|---|\n| a | b |"
     await server.post_message(message=own)
-    assert c.posted[1]["message"] == "👑 " + own
+    assert c.posted[1]["message"] == "👑 " + a2a.styled(own)
     c = bus(_leitstand_thread(), crown=False)
     await server.post_message(message="ASSIGNMENTS · x")
-    assert c.posted[0]["message"] == "ASSIGNMENTS · x"
+    assert c.posted[0]["message"] == "`ASSIGNMENTS` · x"
 
 
 @pytest.mark.asyncio
@@ -360,7 +373,7 @@ async def test_assignments_go_out_when_the_channel_cannot_be_read(bus):
         raise RuntimeError("HTTP 500")
     c.posts_after = broken
     await server.post_message(message="ASSIGNMENTS · x")
-    assert c.posted[0]["message"] == "👑 ASSIGNMENTS · x"
+    assert c.posted[0]["message"] == "👑 `ASSIGNMENTS` · x"
 
 
 @pytest.mark.asyncio
@@ -496,7 +509,7 @@ async def test_kind_is_written_to_text_and_props(bus):
     c = bus([])
     await server.reply_in_thread(root_id=T26, message="merged", kind="done")
     await server.post_message(message="relay · @agent-a", kind="TASK")
-    assert [p["message"] for p in c.posted] == ["DONE · merged", "TASK · relay · @agent-a"]
+    assert [p["message"] for p in c.posted] == ["`DONE` · merged", "`TASK` · relay · @agent-a"]  # step 2: in backticks
     assert [p["props"]["a2a"]["intent"] for p in c.posted] == ["fyi", "action"]
     out = json.loads(await server.reply_in_thread(root_id=T26, message="DONE", kind="ACK"))
     assert "kind is ACK" in out["refused"] and "ACK" in out["kinds"]

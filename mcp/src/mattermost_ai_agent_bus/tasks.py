@@ -36,7 +36,7 @@ LEGACY_CROWN_BEFORE_MS = 1_793_145_600_000
 
 _ISSUE = re.compile(r"(?<![\w/&])#(\d+)\b")
 _SPEC = re.compile(r"\bRT-\d+\.\d+\b|\b[A-Z][A-Z0-9]+-\d+\b(?!\.\d)")
-_LEAD = re.compile(r"^[^\w@#]*(TASK|DELEGATE)\b[\s·:–-]*")
+_LEAD = re.compile(r"^[^\w@#]*(TASK|DELEGATE)\b[\s·:–`-]*")  # `TASK` too (RT-6.14 step 2)
 
 
 def _mentions(message: str) -> list[str]:

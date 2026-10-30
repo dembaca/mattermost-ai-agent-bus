@@ -4,7 +4,8 @@
 # Compaction keeps a summary and drops the details. The agent's own sign-offs
 # on the bus (IDLE/BYE handoffs, RT-6.2 step 2) say what is done, what is open,
 # the branch or PR and the next step, so hand them back right away: the newest
-# few own posts in the work channel, plus where its HELLO thread is.
+# few own posts in the work channel, plus where its HELLO thread is (a
+# coordinator's HELLO starts with 👑; since 0.65.4 the word is in backticks).
 # Spec: RT-6.7 in docs/arc42/06-runtime-view.md.
 #
 # Reads only the agent's own posts, through the MCP server (RT-6.17). Fails
@@ -28,11 +29,12 @@ context="$(jq -r --arg me "$MM_BOT_USER_ID" '
   [.posts[] | select(.user_id == $me and (.type // "") == "")] as $own
   | if ($own | length) == 0 then empty else
       ($own[:3] | map("- [\(.create_at / 1000 | floor | strflocaltime("%Y-%m-%d %H:%M"))] "
-                      + (.message | gsub("\n"; " ") | .[:600])
+                      + (.message | gsub("\n+"; " ") | .[:600])
                       + (if (.files // []) == [] then "" else " · files: "
                          + ([.files[] | [.id, (.name // empty)] | join(" ")] | join("; ")) end))
                 | join("\n")) as $posts
-      | ([$own[] | select((.root_id // "") == "" and (.message | startswith("HELLO")))][0].id // null) as $hello
+      | ([$own[] | select((.root_id // "") == ""
+                          and (.message | ltrimstr("👑 ") | ltrimstr("`") | startswith("HELLO")))][0].id // null) as $hello
       | "Your conversation was just compacted. Your own latest posts on the Mattermost agent bus "
         + "(work channel), newest first, are your handoff state:\n" + $posts
         + (if $hello then "\nYour HELLO thread: root \($hello); read it with get_thread for more." else "" end)

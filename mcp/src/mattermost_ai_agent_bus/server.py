@@ -541,7 +541,7 @@ async def bus_info() -> str:
     takes a restart (quit, then `claude --continue`).
 
     responsible names who answers for you and kind is "session" or
-    "autonomous" — announce puts both into your HELLO (for: / trusts:). trusted_humans says
+    "autonomous" — announce puts both into your HELLO (for / trusts). trusted_humans says
     whose posts are marked from_trusted_human and where that came from; if the
     list is empty, approvals over the bus are off. Off the bus (no chat URL, no
     bot yet) it says so in on_bus/reason instead of failing.
@@ -637,6 +637,17 @@ async def _as_guest(client: MattermostAdapter, uid: str, guest: str, post: Post)
 
 def _one_line(text: str) -> str:
     return " ".join(str(text).split())
+
+
+# One word, no link: a markdown link, a URL, text with spaces or a backtick
+# stays as given.
+_PLAIN = re.compile(r"[^\s`\[\]()<>]+")
+
+
+def _code(text: str) -> str:
+    """A plain token in backticks (a project, a branch), anything else as given."""
+    text = text or "–"
+    return f"`{text}`" if _PLAIN.fullmatch(text) and "://" not in text else text
 
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=\S)")
@@ -799,9 +810,9 @@ async def announce(
 
     You give what only you know: project (repo), task (one line; customers as
     placeholders), model ("Claude Code · Opus 5.5"), capabilities (names only),
-    branch or PR, role ("coordinator" or "member"). The server adds your
-    username and, from the session's configuration, for: (responsible human,
-    "autonomous" if so) and trusts:. Later changes go in replies to this post.
+    branch or PR, role ("coordinator" or "member"). The server adds, from the
+    session's configuration, for (responsible human, "autonomous" if so) and
+    trusts. Later changes go in replies to this post.
     """
     if role not in ("coordinator", "member"):
         return _refused("announce", 'role must be "coordinator" or "member"')
@@ -813,14 +824,11 @@ async def announce(
     who = responsible or "–"
     if autonomous:
         who += " (autonomous)"
+    # Three lines, no self-mention: Mattermost shows the author (RT-6.14 step 1).
     lines = [
-        f"HELLO @{me.username}",
-        f"project: {_one_line(project)} · branch/PR: {_one_line(branch) or '–'}",
-        f"task: {_one_line(task)}",
-        f"model: {_one_line(model)}",
-        f"for: {who} · trusts: {', '.join(trusted) or '–'}",
-        f"capabilities: {_one_line(capabilities) or '–'}",
-        f"role: {role}",
+        f"HELLO · **{_one_line(task) or '–'}**",
+        f"{_code(_one_line(project))} · {_code(_one_line(branch))} · {_one_line(model) or '–'} · {role}",
+        f"for {who} · trusts {', '.join(trusted) or '–'} · can: {_one_line(capabilities) or '–'}",
     ]
     # The same as a card in the post's props, for the server's roster (RT-6.14).
     card = a2a.card(
@@ -832,8 +840,9 @@ async def announce(
     )
     _done_typing()
     stats.set_user(me.id)
-    stats.record("post", chars=sum(len(x) + 1 for x in lines))
-    post = await client.post(lease.with_crown(_unbroadcast("\n".join(lines))[0], me.id),
+    text = a2a.styled("\n".join(lines))  # `HELLO`, a blank line, the two lines
+    stats.record("post", chars=len(text))
+    post = await client.post(lease.with_crown(_unbroadcast(text)[0], me.id),
                              props=a2a.props("HELLO", card=card))
     out = await slim.post(client, post)
     warning = await _foreign_coordinator(client, me.id)
@@ -946,6 +955,7 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
     guest = await _guest_target(client, channel_id, root_id)
     if not guest and a2a.word(message) == "BYE":
         message = ownpost.with_guest_threads(message, uid)  # RT-6.22
+    message = a2a.styled(message)  # `IDLE` and a blank line after it (RT-6.14 step 2)
     stats.record("post", chars=len(message))
     here = await lease.crown_here(client, uid, channel_id, root_id)
     try:
@@ -994,6 +1004,7 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
     message, removed = await _unmention(client, message)
     uid = await _my_id(client)
     guest = await _guest_target(client, channel_id, root_id)
+    message = a2a.styled(message)  # `IDLE` and a blank line after it (RT-6.14 step 2)
     stats.record("post", chars=len(message))
     here = await lease.crown_here(client, uid, channel_id, root_id)
     try:
@@ -1114,16 +1125,16 @@ async def ask_human(
         context = f"{rest} {context}"
     text = lease.with_crown(f"🙋 @{who} — **{head}**", me.id)
     fields = [
-        ("from", f"@{me.username}", True),
-        ("blocking", "yes" if blocking else "no", True),
-        ("where", _one_line(where) or "–", False),
+        ("From", f"@{me.username}", True),
+        ("Blocking", "yes" if blocking else "no", True),
+        ("Where", _one_line(where) or "–", False),
     ]
-    for title, value in (("context", context), ("recommendation", recommendation),
-                         ("decision", decision)):
+    for title, value in (("Context", context), ("Recommendation", recommendation),
+                         ("Decision", decision)):
         if value.strip():
             fields.append((title, " ".join(value.split()), False))
     yes = "👍 = yes to the decision" if decision.strip() else "👍 = yes"
-    fields.append(("answer", (f"{_one_line(answers)} — " if answers else "")
+    fields.append(("Answer", (f"{_one_line(answers)} — " if answers else "")
                    + f"{yes} · 👎 = no · or reply in this thread", False))
     props = (attachment_props(fields, fallback=f"{who}: {_one_line(need)}", urgent=blocking)
              | (a2a.props(kind=a2a.ASK) or {}))
