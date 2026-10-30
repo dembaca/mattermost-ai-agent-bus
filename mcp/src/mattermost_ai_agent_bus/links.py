@@ -17,7 +17,11 @@ the bus's own off again: the bare id says the same. A human reads a short
 label instead of 26 characters: `Post`, or the word before the id
 (`thread <id>` → `[thread](…/pl/<id>)`); an ask shows its headline
 (`ask <id>` → `[<headline>](…/pl/<id> "ask")`, `Input` when the server does
-not know it); the id stays in the URL (RT-6.15 step 2).
+not know it); the id stays in the URL (RT-6.15 step 2). An id alone in a code
+span (`` `<id>` ``, after the word too) is linked as a bare one is; other code
+stays as written. The adapter knows an own ask's headline from its asks file
+and reads another agent's ask post for it once: `asks_in` names the ids it
+looks up, so `send` itself makes no request.
 """
 
 from __future__ import annotations
@@ -29,14 +33,18 @@ from urllib.parse import quote, urlsplit
 
 # Words a post id after them folds into its link's label (RT-6.15 step 2).
 FOLD = ("ask", "thread", "post", "reply", "result")
-# One pass, first match wins: code is left alone (a fence ends only at a fence
-# as long), a link before the inline code its label may hold, then ids, bare
-# URLs. A link or id may come with the word before it (`pre`) to fold.
+_POST_ID = r"(?=[a-z]*\d)(?=\d*[a-z])[a-z0-9]{26}"
+# One pass, the leftmost match wins: a link (before the inline code its label
+# may hold), an id, or an id alone in a code span (`tid`), each with the word
+# before it (`pre`) to fold; other code is left alone (a fence ends only at a
+# fence as long); then bare URLs. `tid` and code both start at a backtick, so
+# `tid` comes first; an id in double backticks is code.
 _TOKEN = re.compile(
-    r"(?P<code>(?P<fence>`{3,}).*?(?:(?P=fence)|\Z)|`[^`\n]+`)"
-    rf"|(?P<pre>\b(?P<word>(?i:{'|'.join(FOLD)}))[ \t]+)?"
+    rf"(?P<pre>\b(?P<word>(?i:{'|'.join(FOLD)}))[ \t]+)?"
     r"(?:(?P<link>!?\[(?P<label>(?:\\[\\\[\]]|[^\]\n])*)\]\(\s*(?P<url>[^\s)]+)(?:\s+\"(?P<title>[^\"\n]*)\")?\s*\))"
-    r"|(?P<id>(?<![@<#/\w-])(?=[a-z]*\d)(?=\d*[a-z])[a-z0-9]{26}(?![\w-])))"
+    rf"|(?P<id>(?<![@<#/\w-]){_POST_ID}(?![\w-]))"
+    rf"|(?<!`)`(?P<tid>{_POST_ID})`(?!`))"
+    r"|(?P<code>(?P<fence>`{3,}).*?(?:(?P=fence)|\Z)|`[^`\n]+`)"
     r"|(?P<bare><?(?<![\w.])(?:https?://|www\.)[^\s<>]+>?)",
     re.S,
 )
@@ -47,7 +55,7 @@ LABEL = "Post"
 ASK = "ask"
 ASK_LABEL = "Input"
 HEADLINE = 60
-_ID = re.compile(r"(?=[a-z]*\d)(?=\d*[a-z])[a-z0-9]{26}")
+_ID = re.compile(_POST_ID)
 _HIDDEN = re.compile("[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 _ADDRESS = re.compile(r"://|^www\.|^[\w-]+(?:\.[\w-]+)+/", re.I)
 _NAME = re.compile(r"[\w-]+(?:\.[\w-]+)+")
@@ -171,7 +179,7 @@ def send(message: str, *, post_url: str,
                               and _ID.fullmatch(label) and m["url"] == post_url + label):
             return pre + (_written_out(m["label"], m["url"])
                           if _odd(m["label"], m["url"], post_url) else m["link"])
-        pid = m["id"] or label
+        pid = m["id"] or m["tid"] or label
         if not post_url:
             return m[0]
         # RT-6.15 step 2: a short label, the id in the URL. A word at the
@@ -185,6 +193,18 @@ def send(message: str, *, post_url: str,
     return _each(message, one)
 
 
+def asks_in(message: str, *, post_url: str) -> list[str]:
+    """The ids `send` links as asks (`ask <id>`, ``ask `<id>` ``), each once, in
+    order: the ones whose headline the caller looks up first."""
+    ids: list[str] = []
+
+    def note(pid: str) -> str:
+        ids.append(pid)
+        return ""
+    send(message, post_url=post_url, ask_title=note)
+    return list(dict.fromkeys(ids))
+
+
 def read(message: str, *, post_url: str) -> str:
     """A post as an agent reads it: the bus's permalinks as bare ids, odd links
     written out."""
@@ -192,7 +212,7 @@ def read(message: str, *, post_url: str) -> str:
         if m["bare"]:
             return _bare(m["bare"])
         pre = m["pre"] or ""
-        if m["id"]:
+        if m["id"] or m["tid"]:
             return m[0]
         label = m["label"].strip("`")
         pid = m["url"][len(post_url):] if post_url and m["url"].startswith(post_url) else ""
