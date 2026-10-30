@@ -255,21 +255,37 @@ async def test_another_agents_ask_is_linked_by_its_headline_read_once(monkeypatc
 
 async def test_a_post_that_is_no_ask_or_cannot_be_read_reads_input(monkeypatch):
     """RT-6.15 step 2, fail open: a post that is no ask, an ask without a bold
-    title, one not found, a server error or no connection give `Input`, and the
-    post still goes; the miss is remembered too."""
-    ids = [f"{i}" + "z" * 25 for i in range(5)]
+    title, one not visible or not found, a server error, no connection or bad
+    JSON give `Input`, and the post still goes. A definite answer is
+    remembered; an error that may pass (500, connection, bad JSON) is read
+    again in the next post."""
+    ids = [f"{i}" + "z" * 25 for i in range(7)]
     c, sent, reads = _adapter(monkeypatch, {
         ids[0]: {"id": ids[0], "message": "**Merge?** said someone"},
         ids[1]: {"id": ids[1], "message": "🙋 @dembaca — merge?"},
-        ids[2]: httpx.Response(500, text="oops"),
-        ids[3]: httpx.ConnectError("down"),
-        # ids[4]: not found
+        ids[2]: httpx.Response(403, json={}),
+        # ids[3]: not found
+        ids[4]: httpx.Response(500, text="oops"),
+        ids[5]: httpx.ConnectError("down"),
+        ids[6]: httpx.Response(200, text="not json"),
     })
-    text = " ".join(f"x ask {p}" for p in ids)
-    await c.post(text, channel_id="c" * 26)
-    assert sent[0]["message"] == " ".join(f'x [Input]({PL}{p} "ask")' for p in ids)
-    await c.post(text, channel_id="c" * 26)
-    assert reads == ids
+    definite, passing = ids[:4], ids[4:]
+    for part in (definite, passing, definite, passing):
+        await c.post(" ".join(f"x ask {p}" for p in part), channel_id="c" * 26)
+        assert sent[-1]["message"] == " ".join(f'x [Input]({PL}{p} "ask")' for p in part)
+    assert reads == definite + passing + passing
+
+
+async def test_another_agents_headline_mentions_nobody(monkeypatch):
+    """RT-6.15 step 2, RT-6.11 step 1: a read headline comes from someone
+    else's post and goes into ours after its mentions were checked, so its @
+    are dropped and it notifies nobody."""
+    other = "a1" * 13
+    c, sent, _ = _adapter(monkeypatch, {other: {
+        "id": other, "message": "🙋 @dembaca — **Tell @dembaca and @channel, @all?**",
+        "props": {"a2a": {"kind": "ask"}}}})
+    await c.post(f"x ask {other}", channel_id="c" * 26)
+    assert sent[0]["message"] == f'x [Tell dembaca and channel, all?]({PL}{other} "ask")'
 
 
 async def test_at_most_five_asks_are_read_per_post(monkeypatch):

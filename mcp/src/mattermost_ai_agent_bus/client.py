@@ -154,24 +154,27 @@ def read_links(post: dict[str, Any], post_url: str) -> dict[str, Any]:
 
 
 # RT-6.15 step 2: another agent's ask is read for its headline, at most
-# ASK_READS requests per post, each id once per process (the newest ASK_HEADS
-# remembered, misses too).
+# ASK_READS requests per post; a definite answer is remembered for the
+# process (the newest ASK_HEADS), an error that may pass is not.
 ASK_READS = 5
 ASK_HEADS = 500
 _BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+_AT = re.compile(r"@(?=[a-z0-9])", re.I)
 
 
 def ask_headline(post: Mapping[str, Any]) -> str:
     """An ask post's headline, its first bold text (`👑 🙋 @<human> — **<need>**`);
     '' for a post that is no ask: props a2a kind `ask`, or `🙋 @` at the start
-    after an optional 👑 (RT-6.15 step 2)."""
+    after an optional 👑 (RT-6.15 step 2). Its @ dropped (`@dembaca` →
+    `dembaca`, `@channel` → `channel`): it comes from someone else's post and
+    goes into ours after its mentions were checked (RT-6.11 step 1)."""
     props = post.get("props")
     note = props.get("a2a") if isinstance(props, Mapping) else None
     message = str(post.get("message") or "")
     asked = (isinstance(note, Mapping) and note.get("kind") == a2a.ASK) \
         or message.lstrip().removeprefix("👑").lstrip().startswith("🙋 @")
     bold = _BOLD.search(message) if asked else None
-    return bold[1].strip() if bold else ""
+    return _AT.sub("", bold[1]).strip() if bold else ""
 
 
 def attachment_texts(props: Mapping[str, Any], edit: Callable[[str], str]) -> dict[str, Any]:
@@ -1188,28 +1191,37 @@ class MattermostAdapter:
         return post
 
     async def _ask_headlines(self, ids: list[str]) -> dict[str, str]:
-        """Other agents' asks by their headline (RT-6.15 step 2): each post read
-        once per process, at most ASK_READS reads per call. Fail open: a post
-        that is no ask or cannot be read gives '', its label stays `Input`."""
+        """Other agents' asks by their headline (RT-6.15 step 2), at most
+        ASK_READS reads per call. A definite answer is remembered, so that
+        post is read once per process; an error that may pass is read again
+        in a later post. Fail open: an id missing here reads `Input`."""
         out: dict[str, str] = {}
         reads = 0
         for pid in ids:
             hit = self._ask_heads.get(pid)
-            if hit is None:
-                if reads >= ASK_READS:
-                    continue
+            if hit is None and reads < ASK_READS:
                 reads += 1
-                try:
-                    data = await self._api("GET", f"/api/v4/posts/{pid}")
-                    hit = ask_headline(read_links(data, self.permalink_base)) \
-                        if isinstance(data, dict) else ""
-                except Exception:  # noqa: BLE001 — a label never fails the post
-                    hit = ""
-                if len(self._ask_heads) >= ASK_HEADS:
-                    del self._ask_heads[next(iter(self._ask_heads))]
-                self._ask_heads[pid] = hit
-            out[pid] = hit
+                hit = await self._ask_headline(pid)
+                if hit is not None:
+                    if len(self._ask_heads) >= ASK_HEADS:
+                        del self._ask_heads[next(iter(self._ask_heads))]
+                    self._ask_heads[pid] = hit
+            if hit is not None:
+                out[pid] = hit
         return out
+
+    async def _ask_headline(self, pid: str) -> str | None:
+        """The ask's headline; '' for a post that is no ask, gone or not
+        visible (403/404); None for an error that may pass (5xx, timeout, no
+        connection, bad JSON). Never raises: a label never fails the post."""
+        try:
+            data = await self._api("GET", f"/api/v4/posts/{pid}")
+            return ask_headline(read_links(data, self.permalink_base)) \
+                if isinstance(data, dict) else None
+        except httpx.HTTPStatusError as exc:
+            return "" if exc.response.status_code in (403, 404) else None
+        except Exception:  # noqa: BLE001 — may pass: read again next post
+            return None
 
     async def _root(self, post_id: str) -> tuple[str, str]:
         """A post's channel and thread root ('' for a root), cached."""

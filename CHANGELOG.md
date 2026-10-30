@@ -18,9 +18,12 @@ before 0.5.0 are described in the git history.
   `ask <id>` of an ask the agent did not post read `Input`; the adapter now
   reads that post once (`GET /api/v4/posts/<id>`) and takes its first bold
   text when the post is an ask (`props.a2a.kind = "ask"`, or `🙋 @` at its
-  start after an optional 👑). At most 5 reads per post, each id once per
-  process (misses remembered too); a post that is no ask or cannot be read
-  keeps `Input`, and the post goes all the same. The same for an ask's card.
+  start after an optional 👑), its `@` dropped (`@dembaca` → `dembaca`,
+  `@channel` → `channel`) so it notifies nobody. At most 5 reads per post; a
+  definite answer (the headline, no ask, 403/404) is remembered while the
+  server runs, an error that may pass (5xx, timeout, connection, bad JSON) is
+  read again in a later post. A post that is no ask or cannot be read keeps
+  `Input`, and the post goes all the same. The same for an ask's card.
 
 ## 0.65.4
 
