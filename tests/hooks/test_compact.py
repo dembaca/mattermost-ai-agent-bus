@@ -29,6 +29,16 @@ def test_compaction_hands_back_the_own_latest_posts(mm, run):
     assert f"root {hello}" in c and "wait_for_events(timeout_sec=1)" in c
 
 
+def test_compaction_finds_a_coordinators_hello(mm, run):
+    """RT-6.7 step 1: a coordinator's HELLO starts with 👑 (RT-6.6 step 3);
+    its thread is still named."""
+    mm.own_post("👑 HELLO · **coordinate**\n`bus` · `–` · Opus · coordinator\n"
+                "for h · trusts – · can: –", 1000)
+    mm.own_post("IDLE · waiting", 2000)
+    hello = next(p["id"] for p in mm.posts if "HELLO" in p["message"])
+    assert f"Your HELLO thread: root {hello};" in context(run(COMPACT))
+
+
 def test_compaction_names_the_files_of_an_own_post(mm, run):
     """RT-6.7, RT-6.23 step 1: an own post's files follow its text as a push
     names them, so get_file can fetch one after the compaction."""

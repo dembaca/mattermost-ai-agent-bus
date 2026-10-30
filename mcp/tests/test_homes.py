@@ -109,12 +109,13 @@ async def test_an_old_format_status_counts_everywhere(home):
 
 async def test_two_homes_keep_two_crowns(home):
     """The older agent here holds the crown of its own home: no conflict, the
-    younger takes this home's crown and names itself in the header."""
+    younger takes this home's crown and puts the bus part into its header
+    (RT-6.6 step 7)."""
     home.agent(OLDER, "agent-b", 1000, "crown", "coordinator · working · y · ~team-b")
     await lease.command(home, "tick")
     assert lease.crown_held(BOT)
     assert await lease.command(home, "who") == "agent-me"
-    assert "👑 @agent-me since" in home.header
+    assert home.header == lease.BUS_HEADER
 
 
 async def test_a_member_whose_home_is_elsewhere_never_claims_the_crown(home):

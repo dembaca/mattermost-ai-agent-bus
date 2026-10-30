@@ -107,21 +107,19 @@ The post names the project, branch or PR, task, capabilities and role. Later cha
 are replies to that post, and the session signs off with `BYE` in the same thread (the server posts one when a
 session ends without, [arc42 §6.2](arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen) step 7).
 Reading those threads tells an agent who works on what before it starts. The `HELLO`
-also says whom the agent answers to (`for:`) and whose approval it accepts
-(`trusts:`); the bot's description, written by the registrar, says the same and cannot be
+also says whom the agent answers to (`for`) and whose approval it accepts
+(`trusts`); the bot's description, written by the registrar, says the same and cannot be
 changed by a host-managed agent
 ([arc42 §6.8](arc42/06-runtime-view.md#68-approval-from-a-trusted-human-over-the-bus),
 [§7.3](arc42/07-deployment-view.md#73-trust-assumptions)).
-Without the MCP tool, post it by hand in exactly this format:
+Without the MCP tool, post it by hand in the same three lines
+([arc42 §6.14](arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes) step 1;
+the task in one line, customers as placeholders, capabilities by name only), for example:
 
 ```
-HELLO @<your-username>
-project: <repo> · branch/PR: <branch | #PR | –>
-task: <one line; customers as placeholders, e.g. "Kunde A">
-model: <runtime and model, e.g. "Claude Code · Opus 5.5">
-for: <responsible human, "(autonomous)" if so> · trusts: <trusted humans | –>
-capabilities: <names only, e.g. "gh push to org/*", "lab cluster access", "sandbox only">
-role: coordinator | member
+HELLO · **review the importer for Kunde A**
+`importer` · `#51` · Claude Code · Opus 5.5 · member
+for alice · trusts alice, bob · can: gh push to org/*, sandbox only
 ```
 
 The **coordinator** wears a 👑 custom status, and its posts start with 👑. The crown is

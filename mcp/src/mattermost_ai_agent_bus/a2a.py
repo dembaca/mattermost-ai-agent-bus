@@ -266,31 +266,53 @@ def card(
             "meta": {k: v for k, v in meta.items() if v}}
 
 
+# The HELLO announce writes (RT-6.14 step 1): `HELLO · **<task>**`, then
+# project · branch · model · role, then `for <who> · trusts <names> · can: <caps>`.
+_HELLO_HEAD = re.compile(r"\bHELLO\s+·\s+(.*)$")
+_HELLO_WHO = re.compile(r"^for\s+(.*?)\s+·\s+trusts\s+(.*?)\s+·\s+can:\s*(.*)$")
+# Before 0.65.4: `HELLO @<name>`, then one `key: value` line per field.
 _HELLO_FIELDS = re.compile(r"^(task|model|capabilities|role):\s*(.*)$")
 _HELLO_PAIR = re.compile(r"^(project|for):\s*(.*?)\s+·\s+(branch/PR|trusts):\s*(.*)$")
 
 
+def _compact_hello(lines: list[str]) -> dict[str, str] | None:
+    """The three-line HELLO's fields, under the old names; None for another form."""
+    head = _HELLO_HEAD.search(lines[0]) if lines else None
+    who = _HELLO_WHO.match(lines[2]) if len(lines) > 2 else None
+    if not (head and who):
+        return None
+    # The model may hold " · " itself: project and branch lead, the role ends.
+    parts = [p.strip() for p in lines[1].split(" · ")]
+    role = parts.pop() if len(parts) > 2 and parts[-1] in ("coordinator", "member") else "member"
+    project, branch = ([p.strip("`") for p in parts[:2]] + ["", ""])[:2]
+    return {"task": head[1].strip().removeprefix("**").removesuffix("**").strip(),
+            "project": project, "branch/PR": branch, "model": " · ".join(parts[2:]),
+            "role": role, "for": who[1], "trusts": who[2], "capabilities": who[3]}
+
+
 def card_of(post: Post, name: str = "") -> dict[str, Any] | None:
     """A HELLO post's card: props.agent_card, else read from the HELLO text
-    (the format announce writes, protocol.md); None for any other post."""
+    (the three lines announce writes, or the seven before 0.65.4); None for
+    any other post. `name` is the post's author: the three lines name none."""
     stored = post.props.get("agent_card")
     if isinstance(stored, Mapping) and stored.get("name"):
         return dict(stored)
     message = post.message
     if word(message) != "HELLO":
         return None
-    fields: dict[str, str] = {}
-    for line in message.splitlines()[1:]:
+    lines = [x.strip() for x in message.splitlines()]
+    compact = _compact_hello(lines)
+    fields: dict[str, str] = compact or {}
+    for line in [] if compact else lines[1:]:
         # Two lines hold two fields each; values may contain " · " themselves.
-        pair = _HELLO_PAIR.match(line.strip())
+        pair = _HELLO_PAIR.match(line)
         if pair:
             fields[pair[1]], fields[pair[3]] = pair[2].strip(), pair[4].strip()
             continue
-        m = _HELLO_FIELDS.match(line.strip())
+        m = _HELLO_FIELDS.match(line)
         if m:
             fields[m[1]] = m[2].strip()
-    first = message.splitlines()[0] if message else ""
-    m = re.search(r"@([\w.-]+)", first)
+    m = None if compact or not lines else re.search(r"@([\w.-]+)", lines[0])
     found = card(
         name=name or (m[1] if m else ""), task=fields.get("task", ""), version="",
         capabilities=fields.get("capabilities", ""), project=fields.get("project", ""),

@@ -66,9 +66,22 @@ async def answers(client: ChatPort, uid: str, name: str) -> bool:
     return bool(rows) and rows[0].username.lower() == name.lower()
 
 
-def _hello_of(post: Post, name: str) -> bool:
+def _hello_of(post: Post, name: str, authors: dict[str, str]) -> bool:
+    """Whether `post` is the HELLO of `name`: by its author, else (a HELLO
+    before 0.65.4 whose author cannot be read) by `HELLO @<name>`."""
+    if authors.get(post.user_id, "").lower() == name.lower():
+        return True
     first = post.message.split("\n", 1)[0]
     return re.search(rf"(?<![\w.-])@{re.escape(name)}(?![\w-])", first, re.I) is not None
+
+
+async def _authors(client: ChatPort, posts: list[Post]) -> dict[str, str]:
+    """{user_id: username} of the posts' authors; {} when they cannot be read."""
+    try:
+        return await client.usernames({p.user_id for p in posts})
+    except Exception as exc:  # noqa: BLE001 — the old HELLO text still names them
+        log.debug("departed: authors: %s", exc)
+        return {}
 
 
 async def gone(client: ChatPort, names: list[str]) -> list[Departure]:
@@ -78,11 +91,13 @@ async def gone(client: ChatPort, names: list[str]) -> list[Departure]:
     posts = [p for p in await client.channel_posts(cid, per_page=RECENT)
              if not p.type and not p.delete_at]  # newest first
     hellos = [p for p in posts if not p.root_id and a2a.word(p.message) == "HELLO"]
+    # A member no longer in the channel has no row: its HELLO's author names it.
+    authors = await _authors(client, hellos) if any(n not in rows for n in names) else {}
     out = []
     for name in names:
         row = rows.get(name)
         uid = str(row["id"]) if row else ""
-        hello = next((p for p in hellos if (p.user_id == uid if uid else _hello_of(p, name))), None)
+        hello = next((p for p in hellos if (p.user_id == uid if uid else _hello_of(p, name, authors))), None)
         uid = uid or (hello.user_id if hello else "")
         if not uid:
             continue  # no agent of this bus that we know of

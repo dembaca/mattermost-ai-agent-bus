@@ -17,7 +17,7 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
-from . import files
+from . import a2a, files
 
 # Drain rounds per turn before a counter wait_for_events cannot clear counts
 # as stale (MAX_DRAIN in the Stop hook).
@@ -199,8 +199,9 @@ def handoff(posts: Iterable[Mapping[str, Any]], me: str) -> str:
         if attached := files.attribute(p.get("files")):
             line += f" · files: {attached}"  # RT-6.23
         lines.append(line)
+    # A coordinator's HELLO starts with 👑 (RT-6.6 step 3).
     hello = next((p.get("id") for p in own
-                  if not p.get("root_id") and str(p.get("message") or "").startswith("HELLO")), None)
+                  if not p.get("root_id") and a2a.word(str(p.get("message") or "")) == "HELLO"), None)
     return ("Your conversation was just compacted. Your own latest posts on the Mattermost agent bus "
             "(work channel), newest first, are your handoff state:\n" + "\n".join(lines)
             + (f"\nYour HELLO thread: root {hello}; read it with get_thread for more." if hello else "")

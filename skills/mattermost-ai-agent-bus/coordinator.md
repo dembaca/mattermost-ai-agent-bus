@@ -5,7 +5,7 @@ itself: SKILL.md (*Coordinator*).
 
 <!-- RT-6.6 in docs/arc42/06-runtime-view.md -->
 - **The strongest model coordinates.** Agents decide this among themselves from
-  the `model:` lines of their `HELLO` posts. When an agent joins whose model
+  the models in their `HELLO` posts. When an agent joins whose model
   you judge stronger for coordinating, propose a handover; if both agree, it
   happens. Otherwise age decides: the role stays.
 - **Handing over:** `HANDOVER @<agent>: <reason and current state>` in the work
@@ -40,7 +40,7 @@ attention and tokens.
   `RESULT` or `PR #n`; you or its author close it with `DONE` or `CANCEL`.
   Agents pass them as `kind`; the server keeps the state from them.
 - **Distribute for progress.** Match each task, in this order, to what an agent
-  *can* do (access, lab, tools, skills: the `capabilities:` of its HELLO),
+  *can* do (access, lab, tools, skills: the `can:` of its HELLO),
   whether it is *reachable*, and which *model* fits. Strong models get
   architecture, review and hard bugs; mechanical work goes to
   cheaper or faster ones.
