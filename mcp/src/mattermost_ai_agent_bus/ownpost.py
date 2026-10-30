@@ -96,7 +96,8 @@ def delivered(uid: str) -> None:
         log.info("delivery not remembered: %s", exc)
 
 
-_SIGNED_OFF = re.compile(r"^(IDLE|BYE)([^A-Za-z]|$)")
+# Plain or in backticks, as the server writes it since 0.65.4 (RT-6.14 step 2).
+_SIGNED_OFF = re.compile(r"^`?(IDLE|BYE)([^A-Za-z]|$)")
 
 
 def signed_off(message: str, rec: dict[str, str] | None = None) -> bool:
@@ -178,7 +179,7 @@ def bye_sync(client: ChatPort, uid: str) -> str:
     if a2a.word(last.get("MSG", "")) in SIGN_OFFS:
         return "signed off"
     try:
-        post = client.post_sync(with_guest_threads(BYE, uid), channel_id=last["CHANNEL"],
+        post = client.post_sync(a2a.styled(with_guest_threads(BYE, uid)), channel_id=last["CHANNEL"],
                                 root_id=last["HELLO"], props=a2a.props(BYE),
                                 timeout=BYE_TIMEOUT_SEC)
         record(uid, last["CHANNEL"], post)

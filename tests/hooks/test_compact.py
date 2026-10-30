@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 COMPACT = "hooks/after-compact.sh"
 
 
@@ -29,14 +31,17 @@ def test_compaction_hands_back_the_own_latest_posts(mm, run):
     assert f"root {hello}" in c and "wait_for_events(timeout_sec=1)" in c
 
 
-def test_compaction_finds_a_coordinators_hello(mm, run):
-    """RT-6.7 step 1: a coordinator's HELLO starts with 👑 (RT-6.6 step 3);
-    its thread is still named."""
-    mm.own_post("👑 HELLO · **coordinate**\n`bus` · `–` · Opus · coordinator\n"
+@pytest.mark.parametrize("head", ["👑 HELLO", "👑 `HELLO`", "`HELLO`"])
+def test_compaction_finds_a_coordinators_hello(mm, run, head):
+    """RT-6.7 step 1: a coordinator's HELLO starts with 👑 (RT-6.6 step 3),
+    since 0.65.4 with the word in backticks and a blank line (RT-6.14 step 2);
+    its thread is still named, and a post comes back on one line."""
+    mm.own_post(f"{head} · **coordinate**\n\n`bus` · `–` · Opus · coordinator\n"
                 "for h · trusts – · can: –", 1000)
-    mm.own_post("IDLE · waiting", 2000)
+    mm.own_post("`IDLE` · waiting\n\ndone: x", 2000)
+    c = context(run(COMPACT))
     hello = next(p["id"] for p in mm.posts if "HELLO" in p["message"])
-    assert f"Your HELLO thread: root {hello};" in context(run(COMPACT))
+    assert f"Your HELLO thread: root {hello};" in c and "] `IDLE` · waiting done: x" in c
 
 
 def test_compaction_names_the_files_of_an_own_post(mm, run):

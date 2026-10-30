@@ -153,20 +153,23 @@ go_idle() {
 # The server keeps it in last-<uid>.env (RT-6.2, ownpost.py, mm-agent-post.sh)
 # and reads the channel's last 100 posts only without that file. Fails when the
 # server cannot tell; LAST_AT 0 when the agent never posted there.
-LAST_MSG="" LAST_AT=0 SIGNED_OFF=0
+# LAST_HEAD: LAST_MSG without the 👑 and the backtick before its bus word
+# (`IDLE`, RT-6.14 step 2).
+LAST_MSG="" LAST_HEAD="" LAST_AT=0 SIGNED_OFF=0
 my_last_post() {
   mm_bus GET /v1/last-post || return 1
   LAST_AT="$(jq -r '.at // 0' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
   LAST_MSG="$(jq -r '.message // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
+  LAST_HEAD="${LAST_MSG#👑}"
+  LAST_HEAD="${LAST_HEAD#"${LAST_HEAD%%[![:space:]]*}"}"
+  LAST_HEAD="${LAST_HEAD#\`}"
   SIGNED_OFF="$(jq -r 'if has("signed_off") then (if .signed_off == true then 1 else 0 end)
                        else "" end' <<<"$MM_BUS_BODY" 2>/dev/null)" || SIGNED_OFF=0
   if [[ -z "$SIGNED_OFF" ]]; then
     # A server before 0.65.1 (the plugin updated, the session not restarted)
     # sends no signed_off: the old rule, the latest own post is an IDLE or BYE.
-    local msg="${LAST_MSG#👑}"
-    msg="${msg#"${msg%%[![:space:]]*}"}"
     SIGNED_OFF=0
-    [[ "$msg" =~ ^(IDLE|BYE)([^A-Za-z]|$) ]] && SIGNED_OFF=1
+    [[ "$LAST_HEAD" =~ ^(IDLE|BYE)([^A-Za-z]|$) ]] && SIGNED_OFF=1
   fi
   [[ "$LAST_AT" =~ ^[0-9]+$ ]] || LAST_AT=0
 }
@@ -249,7 +252,7 @@ fi
 # the MCP server pushes messages into the session itself: nothing to listen for.
 if [[ -n "$LF" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] && ! mm_channel_push &&
   [[ "$MM_BUS_PROJECT" == 1 ]] &&
-  ! [[ "$LAST_MSG" =~ ^BYE([^A-Za-z]|$) ]]; then
+  ! [[ "$LAST_HEAD" =~ ^BYE([^A-Za-z]|$) ]]; then
   now="$(date +%s)"
   # A listener is already waiting in the background: let the turn end and keep
   # the 👂 status. Without this the hook would ask again on every stop.

@@ -49,9 +49,10 @@ async def test_ask_is_one_post_with_the_mention_and_a_callout(monkeypatch):
     assert post["root_id"] is None  # stands on its own
     box = post["props"]["attachments"][0]
     fields = {f["title"]: f["value"] for f in box["fields"]}
-    assert fields == {"from": "@agent-vtpm-hogan-1", "blocking": "yes",
-                      "where": "#50, hogan",
-                      "answer": "go / not now — 👍 = yes · 👎 = no · or reply in this thread"}
+    # RT-6.11 step 1: the field titles start with a capital letter.
+    assert fields == {"From": "@agent-vtpm-hogan-1", "Blocking": "yes",
+                      "Where": "#50, hogan",
+                      "Answer": "go / not now — 👍 = yes · 👎 = no · or reply in this thread"}
     assert box["color"] == "#d24b4e"
     assert out["ask"] == ASK and asks.open_asks(BOT) == [ASK]
 
@@ -294,9 +295,9 @@ async def test_a_decision_comes_with_context_recommendation_and_wording(monkeypa
         decision="Install 02dadca on hogan now; VM 399 stays up.")
     fields = [(f["title"], f["value"]) for f in c.posted[0]["props"]["attachments"][0]["fields"]]
     titles = [t for t, _ in fields]
-    assert titles == ["from", "blocking", "where", "context", "recommendation", "decision", "answer"]
-    assert dict(fields)["decision"] == "Install 02dadca on hogan now; VM 399 stays up."
-    assert dict(fields)["answer"].startswith("👍 = yes to the decision")
+    assert titles == ["From", "Blocking", "Where", "Context", "Recommendation", "Decision", "Answer"]
+    assert dict(fields)["Decision"] == "Install 02dadca on hogan now; VM 399 stays up."
+    assert dict(fields)["Answer"].startswith("👍 = yes to the decision")
 
 
 @pytest.mark.asyncio
@@ -309,7 +310,7 @@ async def test_only_the_first_sentence_is_bold(monkeypatch):
         context="Open only 1.1.")
     assert c.posted[0]["message"].endswith("— **Merge #62 `reload` (new VMs within 5 s).**")
     fields = dict((f["title"], f["value"]) for f in c.posted[0]["props"]["attachments"][0]["fields"])
-    assert fields["context"] == "Ready now: review passed. Open only 1.1."
+    assert fields["Context"] == "Ready now: review passed. Open only 1.1."
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,8 @@ before 0.5.0 are described in the git history.
 - **A compact HELLO**
   ([RT-6.14 step 1](docs/arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
   `announce` writes three lines instead of seven, without naming the agent
-  (Mattermost shows the author): `HELLO · **<task>**`, then project, branch or
+  (Mattermost shows the author): ``` `HELLO` · **<task>** ```, a blank line,
+  then project, branch or
   PR, model and role (project and branch in backticks when they are one plain
   word, a link as given), then `for … · trusts … · can: …`. The card in
   `props.agent_card` is unchanged. A HELLO without props is read in both
@@ -26,13 +27,27 @@ before 0.5.0 are described in the git history.
   The crown holder's server checks it when the crown passes and once after it
   starts; an old bus part (`· 👑 @<agent> since <HH:MM>`) is replaced once.
   The 👑 on posts and in the custom status stay.
+- **A status post's word in monospace**
+  ([RT-6.14 step 2](docs/arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
+  When a post starts (after an optional 👑) with a bus word in capitals,
+  `post_message`, `reply_in_thread`, `announce` and the server's own `BYE`
+  write it in backticks, ``` 👑 `IDLE` · <gist> ```, and put a blank line
+  after the headline when more lines follow. Agents write as before. Every
+  reader of the first word (props, sign-off and listen gates, the Stop and
+  compaction hooks, task titles, digests, the shell client) takes both forms,
+  so older posts keep working.
+- **An ask's callout titles are capitalised**
+  ([RT-6.11 step 1](docs/arc42/06-runtime-view.md#611-asking-a-human)):
+  `From`, `Blocking`, `Where`, `Context`, `Recommendation`, `Decision`,
+  `Answer`. Nothing reads them back by title.
 
 ### Fixed
 
 - **A coordinator's compaction handoff names its HELLO thread**
   ([RT-6.7 step 1](docs/arc42/06-runtime-view.md#67-handoff-state-after-compaction)).
   The compaction hook and `GET /v1/handoff` looked for a post starting with
-  `HELLO` and missed one starting with `👑 HELLO`.
+  `HELLO` and missed one starting with `👑 HELLO`. A coordinator's `👑 BYE`
+  now also ends the listen window in the Stop hook.
 
 ## 0.65.3
 

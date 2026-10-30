@@ -840,8 +840,9 @@ async def announce(
     )
     _done_typing()
     stats.set_user(me.id)
-    stats.record("post", chars=sum(len(x) + 1 for x in lines))
-    post = await client.post(lease.with_crown(_unbroadcast("\n".join(lines))[0], me.id),
+    text = a2a.styled("\n".join(lines))  # `HELLO`, a blank line, the two lines
+    stats.record("post", chars=len(text))
+    post = await client.post(lease.with_crown(_unbroadcast(text)[0], me.id),
                              props=a2a.props("HELLO", card=card))
     out = await slim.post(client, post)
     warning = await _foreign_coordinator(client, me.id)
@@ -954,6 +955,7 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
     guest = await _guest_target(client, channel_id, root_id)
     if not guest and a2a.word(message) == "BYE":
         message = ownpost.with_guest_threads(message, uid)  # RT-6.22
+    message = a2a.styled(message)  # `IDLE` and a blank line after it (RT-6.14 step 2)
     stats.record("post", chars=len(message))
     here = await lease.crown_here(client, uid, channel_id, root_id)
     try:
@@ -1002,6 +1004,7 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
     message, removed = await _unmention(client, message)
     uid = await _my_id(client)
     guest = await _guest_target(client, channel_id, root_id)
+    message = a2a.styled(message)  # `IDLE` and a blank line after it (RT-6.14 step 2)
     stats.record("post", chars=len(message))
     here = await lease.crown_here(client, uid, channel_id, root_id)
     try:
@@ -1122,16 +1125,16 @@ async def ask_human(
         context = f"{rest} {context}"
     text = lease.with_crown(f"🙋 @{who} — **{head}**", me.id)
     fields = [
-        ("from", f"@{me.username}", True),
-        ("blocking", "yes" if blocking else "no", True),
-        ("where", _one_line(where) or "–", False),
+        ("From", f"@{me.username}", True),
+        ("Blocking", "yes" if blocking else "no", True),
+        ("Where", _one_line(where) or "–", False),
     ]
-    for title, value in (("context", context), ("recommendation", recommendation),
-                         ("decision", decision)):
+    for title, value in (("Context", context), ("Recommendation", recommendation),
+                         ("Decision", decision)):
         if value.strip():
             fields.append((title, " ".join(value.split()), False))
     yes = "👍 = yes to the decision" if decision.strip() else "👍 = yes"
-    fields.append(("answer", (f"{_one_line(answers)} — " if answers else "")
+    fields.append(("Answer", (f"{_one_line(answers)} — " if answers else "")
                    + f"{yes} · 👎 = no · or reply in this thread", False))
     props = (attachment_props(fields, fallback=f"{who}: {_one_line(need)}", urgent=blocking)
              | (a2a.props(kind=a2a.ASK) or {}))

@@ -86,6 +86,25 @@ def word(message: str) -> str | None:
     return m[1] if m and m[1] in WORDS else None
 
 
+# A status post's bus word at its very start, after an optional 👑, plain or
+# already in backticks (RT-6.14 step 2).
+_STATUS = re.compile(r"^(👑\s*)?(`?)([A-Z]{2,11})(`?)(?![A-Za-z])")
+
+
+def styled(message: str) -> str:
+    """A status post as the server writes it (RT-6.14 step 2): its bus word
+    in backticks, and a blank line after the headline when more lines
+    follow. Any other text stays as it is; a styled one too."""
+    m = _STATUS.match(message or "")
+    if not m or m[3] not in WORDS or m[2] != m[4]:
+        return message
+    out = message if m[2] else f"{m[1] or ''}`{m[3]}`{message[m.end():]}"
+    head, sep, rest = out.partition("\n")
+    if sep and rest.strip() and rest.split("\n", 1)[0].strip():
+        out = f"{head}\n\n{rest}"
+    return out
+
+
 def lead(message: str, kind: str = "") -> str:
     """The message with `kind` as its first word (RT-6.14): props come from the
     text, so both say the same. A text that starts with it stays as it is;
@@ -266,9 +285,11 @@ def card(
             "meta": {k: v for k, v in meta.items() if v}}
 
 
-# The HELLO announce writes (RT-6.14 step 1): `HELLO · **<task>**`, then
-# project · branch · model · role, then `for <who> · trusts <names> · can: <caps>`.
-_HELLO_HEAD = re.compile(r"\bHELLO\s+·\s+(.*)$")
+# The HELLO announce writes (RT-6.14 step 1): `` `HELLO` · **<task>** ``, a
+# blank line, project · branch · model · role, then
+# `for <who> · trusts <names> · can: <caps>` (before the backticks and the
+# blank line came in, the same three lines without them).
+_HELLO_HEAD = re.compile(r"\bHELLO`?\s+·\s+(.*)$")
 _HELLO_WHO = re.compile(r"^for\s+(.*?)\s+·\s+trusts\s+(.*?)\s+·\s+can:\s*(.*)$")
 # Before 0.65.4: `HELLO @<name>`, then one `key: value` line per field.
 _HELLO_FIELDS = re.compile(r"^(task|model|capabilities|role):\s*(.*)$")
@@ -300,7 +321,7 @@ def card_of(post: Post, name: str = "") -> dict[str, Any] | None:
     message = post.message
     if word(message) != "HELLO":
         return None
-    lines = [x.strip() for x in message.splitlines()]
+    lines = [x.strip() for x in message.splitlines() if x.strip()]  # blank lines aside
     compact = _compact_hello(lines)
     fields: dict[str, str] = compact or {}
     for line in [] if compact else lines[1:]:

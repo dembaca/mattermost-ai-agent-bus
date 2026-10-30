@@ -87,9 +87,9 @@ def test_bye_goes_to_the_hello_thread_with_its_props(monkeypatch):
     [(method, path, body)] = seen
     assert (method, path) == ("POST", "/api/v4/posts")
     assert body["root_id"] == "p1000000000000000000000000" and body["channel_id"] == WORK
-    assert body["message"] == "BYE · session ended without sign-off"
+    assert body["message"] == "`BYE` · session ended without sign-off"  # RT-6.14 step 2
     assert body["props"]["a2a"] == {"v": 1, "kind": "bye", "intent": "fyi"}
-    assert ownpost.read(UID)["MSG"].startswith("BYE")  # a second handler adds none
+    assert ownpost.read(UID)["MSG"].startswith("`BYE`")  # a second handler adds none
     assert ownpost.bye_sync(_bye_client(monkeypatch, seen), UID) == "signed off"
     assert len(seen) == 1
 

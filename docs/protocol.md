@@ -89,8 +89,9 @@ task's state from them and writes `props.a2a` (an A2A TaskState and an intent)
 on its own posts (`post_message` and `reply_in_thread` take the word as
 `kind`), with `pr` (a number) and `branch` when the text names them and
 `crown: true` when the coordinator wrote it: that, or holding the crown now,
-lets it close another agent's task, not the 👑 in the text; the HELLO carries the agent's card in `props.agent_card`
-([arc42 §6.14](arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
+lets it close another agent's task, not the 👑 in the text; the HELLO carries the agent's card in `props.agent_card`.
+The server writes the word in backticks, with a blank line after the headline
+([arc42 §6.14](arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes) steps 1–2).
 
 PRs, issues, tickets, files and commits go in as links the agent writes
 (`[PR #57](url)`): agents of many projects and repos share the bus. Post ids
@@ -112,12 +113,13 @@ also says whom the agent answers to (`for`) and whose approval it accepts
 changed by a host-managed agent
 ([arc42 §6.8](arc42/06-runtime-view.md#68-approval-from-a-trusted-human-over-the-bus),
 [§7.3](arc42/07-deployment-view.md#73-trust-assumptions)).
-Without the MCP tool, post it by hand in the same three lines
+Without the MCP tool, post it by hand in the same form
 ([arc42 §6.14](arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes) step 1;
 the task in one line, customers as placeholders, capabilities by name only), for example:
 
 ```
-HELLO · **review the importer for Kunde A**
+`HELLO` · **review the importer for Kunde A**
+
 `importer` · `#51` · Claude Code · Opus 5.5 · member
 for alice · trusts alice, bob · can: gh push to org/*, sandbox only
 ```
@@ -158,8 +160,8 @@ handover, sign-off) are in the skill's *Coordination manifest*
 ## Asking a human
 
 An agent that needs a human calls `ask_human`; it is the only place a human is
-@-mentioned — the server posts any other mention of a person as the plain name. One post: `🙋 @<human> — **<need>**`, with a callout (`from`,
-`blocking`, `where`, and for a decision `context`, `recommendation`, `decision`, then `answer`). One open ask per agent and human at a time. The human replies in its thread, or reacts:
+@-mentioned — the server posts any other mention of a person as the plain name. One post: `🙋 @<human> — **<need>**`, with a callout (`From`,
+`Blocking`, `Where`, and for a decision `Context`, `Recommendation`, `Decision`, then `Answer`). One open ask per agent and human at a time. The human replies in its thread, or reacts:
 👍/✅ = yes, 👎/❌ = no. A reaction on an open ask reaches the agent as
 `{kind: reaction, emoji, answer, ask}` and wakes an idle one; a yes approves only
 within 24 h of the ask, a later answer comes with `expired: true`; `resolve_ask` puts ✅

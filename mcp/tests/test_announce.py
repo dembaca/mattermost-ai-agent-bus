@@ -24,8 +24,9 @@ def clean(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_announce_writes_the_fixed_format(monkeypatch):
-    """RT-6.14 step 1: three lines, no self-mention (Mattermost shows the
-    author); a plain project and branch in backticks."""
+    """RT-6.14 steps 1-2: the headline with `HELLO` in backticks, a blank
+    line, two lines; no self-mention (Mattermost shows the author); a plain
+    project and branch in backticks."""
     c = _Client({"h" * 26: "dembaca", "k" * 26: "kollegin"})
     monkeypatch.setattr(server, "_get_client", lambda: c)
     await server.announce(project="vtpm-mds", task="Koordination,\n hogan-Verifikation",
@@ -34,7 +35,8 @@ async def test_announce_writes_the_fixed_format(monkeypatch):
     message, root = c.posted[0]["message"], c.posted[0]["root_id"]
     assert root is None
     assert message.splitlines() == [
-        "HELLO · **Koordination, hogan-Verifikation**",
+        "`HELLO` · **Koordination, hogan-Verifikation**",
+        "",
         "`vtpm-mds` · `#51` · Claude Code · Opus 5.5 · coordinator",
         "for dembaca · trusts dembaca, kollegin · can: Proxmox-Stack, VM 399",  # RT-6.11: no mentions
     ]
@@ -48,9 +50,9 @@ async def test_announce_writes_a_link_branch_as_given(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: c)
     link = "[PR #134](https://example.org/o/r/pull/134)"
     await server.announce(project="mattermost ai bus", task="review", model="Opus", branch=link)
-    assert c.posted[0]["message"].splitlines()[1] == f"mattermost ai bus · {link} · Opus · member"
+    assert c.posted[0]["message"].splitlines()[2] == f"mattermost ai bus · {link} · Opus · member"
     await server.announce(project="bus", task="review", model="Opus", branch="https://x.example/pr/1")
-    assert c.posted[1]["message"].splitlines()[1] == "`bus` · https://x.example/pr/1 · Opus · member"
+    assert c.posted[1]["message"].splitlines()[2] == "`bus` · https://x.example/pr/1 · Opus · member"
     card = a2a.card_of(post_of({"message": c.posted[0]["message"]}), "agent-vtpm-hogan-1")
     assert card["meta"]["branch"] == link and card["meta"]["project"] == "mattermost ai bus"
 
@@ -63,7 +65,7 @@ async def test_announce_never_notifies_everyone(monkeypatch):
     await server.announce(project="vtpm-mds", task="tell @channel about the freeze",
                           model="Claude Code · Opus 5.5")
     lines = c.posted[0]["message"].splitlines()
-    assert lines[0] == "HELLO · **tell channel about the freeze**"
+    assert lines[0] == "`HELLO` · **tell channel about the freeze**"
 
 
 @pytest.mark.asyncio
@@ -92,6 +94,17 @@ async def test_announce_stores_the_card_in_props(monkeypatch):
     assert crowned["name"] == "" and crowned["description"] == "hogan"
 
 
+def test_the_three_lines_without_backticks_or_blank_line_give_the_card():
+    """RT-6.14 step 1: a HELLO written by hand without the backticks and the
+    blank line gives the same card."""
+    plain = "HELLO · **hogan**\n`vtpm-mds` · #51 · Opus · coordinator\nfor dembaca · trusts – · can: VM 399"
+    card = a2a.card_of(post_of({"message": plain}), "agent-x")
+    assert card["name"] == "agent-x" and card["description"] == "hogan"
+    assert card["meta"] == {"project": "vtpm-mds", "branch": "#51", "model": "Opus",
+                            "role": "coordinator", "kind": "session", "for": "dembaca"}
+    assert card == a2a.card_of(post_of({"message": a2a.styled(plain)}), "agent-x")
+
+
 def test_a_hello_before_0_65_4_still_gives_its_card():
     """RT-6.14 step 1: the seven lines older versions wrote (no props) are
     still read, the name from `HELLO @<name>`."""
@@ -116,7 +129,7 @@ async def test_announce_without_trust_and_autonomous(monkeypatch):
     monkeypatch.setenv("MM_AGENT_KIND", "autonomous")
     await server.announce(project="infra", task="pending", model="Hermes")
     lines = c.posted[0]["message"].splitlines()
-    assert lines == ["HELLO · **pending**", "`infra` · `–` · Hermes · member",
+    assert lines == ["`HELLO` · **pending**", "", "`infra` · `–` · Hermes · member",
                      "for ops-team (autonomous) · trusts – · can: –"]
     card = a2a.card_of(post_of({"message": c.posted[0]["message"]}), "agent-vtpm-hogan-1")
     assert card["meta"] == {"project": "infra", "model": "Hermes", "role": "member",
