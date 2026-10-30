@@ -153,6 +153,27 @@ def read_links(post: dict[str, Any], post_url: str) -> dict[str, Any]:
     return post
 
 
+# RT-6.15 step 2: another agent's ask is read for its headline, at most
+# ASK_READS requests per post, each id once per process (the newest ASK_HEADS
+# remembered, misses too).
+ASK_READS = 5
+ASK_HEADS = 500
+_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+
+
+def ask_headline(post: Mapping[str, Any]) -> str:
+    """An ask post's headline, its first bold text (`👑 🙋 @<human> — **<need>**`);
+    '' for a post that is no ask: props a2a kind `ask`, or `🙋 @` at the start
+    after an optional 👑 (RT-6.15 step 2)."""
+    props = post.get("props")
+    note = props.get("a2a") if isinstance(props, Mapping) else None
+    message = str(post.get("message") or "")
+    asked = (isinstance(note, Mapping) and note.get("kind") == a2a.ASK) \
+        or message.lstrip().removeprefix("👑").lstrip().startswith("🙋 @")
+    bold = _BOLD.search(message) if asked else None
+    return bold[1].strip() if bold else ""
+
+
 def attachment_texts(props: Mapping[str, Any], edit: Callable[[str], str]) -> dict[str, Any]:
     """props with `edit` applied to what a human reads in its message
     attachments: pretext, text and the fields' values (RT-6.15). Titles and
@@ -378,6 +399,8 @@ class MattermostAdapter:
     _usernames: dict[str, str] = field(default_factory=dict, repr=False, init=False)
     # post id -> (its channel, its root): a post never moves.
     _roots: dict[str, tuple[str, str]] = field(default_factory=dict, repr=False, init=False)
+    # ask id -> its headline, '' for no ask or not readable (RT-6.15 step 2).
+    _ask_heads: dict[str, str] = field(default_factory=dict, repr=False, init=False)
     _bots: set[str] = field(default_factory=set, repr=False, init=False)
     _is_human: dict[str, bool] = field(default_factory=dict, repr=False, init=False)
     # user id -> (when read, its bot description; None: not readable), ADR-003.
@@ -1136,23 +1159,57 @@ class MattermostAdapter:
             root_id = mm_id(of_root or root_id, "post")
             channel_id = channel_id or in_channel or None
         cid = mm_id(channel_id or await self.get_channel_id(), "channel")
-        # RT-6.15: post ids as permalinks labelled `Post` (step 2), an own ask's
-        # by its headline (asks-<uid>.env, no request), odd links written out.
+        # RT-6.15: post ids as permalinks labelled `Post` (step 2), an ask's by
+        # its headline: an own ask's from asks-<uid>.env without a request,
+        # another's read from its post (_ask_headlines); odd links written out.
         # The same for an attachment's text (an ask's card), so no caller forgets it.
+        base = self.permalink_base
+        wanted = links.asks_in(message, post_url=base)
+        if props:
+            def collect(text: str) -> str:
+                wanted.extend(links.asks_in(text, post_url=base))
+                return text
+            attachment_texts(props, collect)
+        own = asks.titles(self.bot_id) if wanted and self.bot_id else {}
+        heads = await self._ask_headlines([p for p in dict.fromkeys(wanted) if p not in own])
+
         def ask_title(pid: str) -> str:
-            uid = self.bot_id
-            return asks.titles(uid).get(pid, "") if uid else ""
-        message = links.send(message, post_url=self.permalink_base, ask_title=ask_title)
+            return own.get(pid) or heads.get(pid, "")
+        message = links.send(message, post_url=base, ask_title=ask_title)
         body: dict[str, Any] = {"channel_id": cid, "message": message}
         if root_id:
             body["root_id"] = root_id
         if props:
             body["props"] = attachment_texts(
-                props, lambda s: links.send(s, post_url=self.permalink_base, ask_title=ask_title))
+                props, lambda s: links.send(s, post_url=base, ask_title=ask_title))
         post = post_of(read_links(await self._api("POST", "/api/v4/posts", json=body),
                                   self.permalink_base))
         await self._remember(cid, post)
         return post
+
+    async def _ask_headlines(self, ids: list[str]) -> dict[str, str]:
+        """Other agents' asks by their headline (RT-6.15 step 2): each post read
+        once per process, at most ASK_READS reads per call. Fail open: a post
+        that is no ask or cannot be read gives '', its label stays `Input`."""
+        out: dict[str, str] = {}
+        reads = 0
+        for pid in ids:
+            hit = self._ask_heads.get(pid)
+            if hit is None:
+                if reads >= ASK_READS:
+                    continue
+                reads += 1
+                try:
+                    data = await self._api("GET", f"/api/v4/posts/{pid}")
+                    hit = ask_headline(read_links(data, self.permalink_base)) \
+                        if isinstance(data, dict) else ""
+                except Exception:  # noqa: BLE001 — a label never fails the post
+                    hit = ""
+                if len(self._ask_heads) >= ASK_HEADS:
+                    del self._ask_heads[next(iter(self._ask_heads))]
+                self._ask_heads[pid] = hit
+            out[pid] = hit
+        return out
 
     async def _root(self, post_id: str) -> tuple[str, str]:
         """A post's channel and thread root ('' for a root), cached."""

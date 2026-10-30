@@ -3,6 +3,25 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.65.5
+
+### Fixed
+
+- **A backticked post id is linked**
+  ([RT-6.15 step 2](docs/arc42/06-runtime-view.md#615-references-as-links)).
+  A code span that holds only a post id, `` `<id>` ``, is linked as a bare id
+  is, the word before it folded: ``Ask `<id>` `` becomes the ask's link,
+  `` `<id>` `` alone `[Post](…)`. Other code spans and fences stay as written;
+  reading turns the link back into the bare id.
+- **Another agent's ask shows its headline**
+  ([RT-6.15 step 2](docs/arc42/06-runtime-view.md#615-references-as-links)).
+  `ask <id>` of an ask the agent did not post read `Input`; the adapter now
+  reads that post once (`GET /api/v4/posts/<id>`) and takes its first bold
+  text when the post is an ask (`props.a2a.kind = "ask"`, or `🙋 @` at its
+  start after an optional 👑). At most 5 reads per post, each id once per
+  process (misses remembered too); a post that is no ask or cannot be read
+  keeps `Input`, and the post goes all the same. The same for an ask's card.
+
 ## 0.65.4
 
 ### Changed
