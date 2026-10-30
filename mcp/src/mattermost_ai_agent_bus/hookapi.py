@@ -10,7 +10,7 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             (?detail=1: up to 5 channels, with fyi counts)
     GET  /v1/last-post      {at, message, signed_off}: the own latest post in the work channel
     GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
-                            message, to, intent, fyi, gated}]}, work channel
+                            message, to, intent, fyi, gated[, files]}]}, work channel
                             (or ?channel=ID|NAME of the project or default
                             channel, else 403), newest first (?limit=N, at
                             most 200, or ?since=MS)
@@ -76,7 +76,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import a2a, asks, channel, gate, lease, ownpost, session_file, stall, stats, turnend, unread
+from . import a2a, asks, channel, files, gate, lease, ownpost, session_file, stall, stats, turnend, unread
 from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
 from .model import Post
 
@@ -455,7 +455,7 @@ async def _last(client: MattermostAdapter, query: Mapping[str, str],
 
 def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
     intent = post.intent or ""
-    return {
+    out: dict[str, Any] = {
         "id": post.id,
         "user_id": post.user_id,
         "root_id": post.root_id,
@@ -468,6 +468,9 @@ def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
         "fyi": intent == a2a.FYI and post.user_id in agents,
         "gated": post.id in gated,
     }
+    if post.files:
+        out["files"] = [files.hint(f) for f in post.files]  # RT-6.23: get_file fetches one
+    return out
 
 
 async def watched(client: MattermostAdapter) -> set[str]:
@@ -512,7 +515,7 @@ async def posts(client: MattermostAdapter, query: Mapping[str, str], body: Mappi
     """The work channel's posts (or ?channel=), newest first: the last
     ?limit=N, or those since ?since=MS (created or edited). Each says whether
     it is for all agents, an agent's fyi post (RT-6.14) and gated by the
-    server (RT-6.16). mm-agent-poll.sh reads them too."""
+    server (RT-6.16), and names its files (RT-6.23). mm-agent-poll.sh reads them too."""
     since, limit = query.get("since", ""), query.get("limit", "60")
     if not (since or limit).isdigit():
         raise BadRequest("since: epoch ms, limit: a count")

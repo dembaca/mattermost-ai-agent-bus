@@ -1,11 +1,12 @@
 """RT-6.23: files a post carries, named in slim posts and pushes, fetched with get_file."""
 
 import json
+import time
 
 import pytest
 from mcp.server.mcpserver import Image
 
-from mattermost_ai_agent_bus import channel, files, server, slim
+from mattermost_ai_agent_bus import channel, files, server, slim, turnend
 from mattermost_ai_agent_bus.client import Refused, file_of, post_of
 from mattermost_ai_agent_bus.model import FileInfo
 
@@ -63,6 +64,25 @@ def test_a_push_names_the_files_as_one_attribute():
                                                   {"id": TXT, "name": "log.txt"}]}}
     assert channel.notification(item)["meta"]["files"] == f"{IMG} shot.png; {TXT} log.txt"
     assert "files" not in channel.notification({"kind": "mention", "post": {"id": "p1"}})["meta"]
+
+
+def test_a_digest_line_names_the_files_after_its_cut_text():
+    """RT-6.23 step 1, RT-6.12 step 3: a digest line ends with the post's files,
+    after the text's 300-character cut, so they are never cut off."""
+    items = [{"post": {"id": "p1", "message": "a" * 400, "files": [{"id": IMG, "name": "shot.png"},
+                                                                    {"id": TXT}]}},
+             {"post": {"id": "p2", "message": "nothing attached"}}]
+    lines = channel.digest(items, time.time())["content"].splitlines()
+    assert lines[1].endswith(": " + "a" * 300 + f" · files: {IMG} shot.png; {TXT}")
+    assert lines[2].endswith("): nothing attached")
+
+
+def test_the_compaction_handoff_names_the_files():
+    """RT-6.23, RT-6.7: an own post's files follow its cut text in the handoff."""
+    me = "m" * 26
+    text = turnend.handoff([{"user_id": me, "message": "b" * 700, "create_at": 1000,
+                             "files": [{"id": IMG, "name": "shot.png"}]}], me)
+    assert "] " + "b" * 600 + f" · files: {IMG} shot.png\n" in text
 
 
 @pytest.mark.asyncio

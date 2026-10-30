@@ -17,6 +17,8 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from . import files
+
 # Drain rounds per turn before a counter wait_for_events cannot clear counts
 # as stale (MAX_DRAIN in the Stop hook).
 MAX_DRAIN = 3
@@ -193,7 +195,10 @@ def handoff(posts: Iterable[Mapping[str, Any]], me: str) -> str:
     lines = []
     for p in own[:3]:
         at = time.strftime("%Y-%m-%d %H:%M", time.localtime(int(p.get("create_at") or 0) / 1000))
-        lines.append(f"- [{at}] " + str(p.get("message") or "").replace("\n", " ")[:600])
+        line = f"- [{at}] " + str(p.get("message") or "").replace("\n", " ")[:600]
+        if attached := files.attribute(p.get("files")):
+            line += f" · files: {attached}"  # RT-6.23
+        lines.append(line)
     hello = next((p.get("id") for p in own
                   if not p.get("root_id") and str(p.get("message") or "").startswith("HELLO")), None)
     return ("Your conversation was just compacted. Your own latest posts on the Mattermost agent bus "

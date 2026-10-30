@@ -29,6 +29,19 @@ def test_compaction_hands_back_the_own_latest_posts(mm, run):
     assert f"root {hello}" in c and "wait_for_events(timeout_sec=1)" in c
 
 
+def test_compaction_names_the_files_of_an_own_post(mm, run):
+    """RT-6.7, RT-6.23 step 1: an own post's files follow its text as a push
+    names them, so get_file can fetch one after the compaction."""
+    fid = "f" * 26
+    mm.own_post("RESULT · see the screenshot", 5000)
+    mm.posts[0] |= {"file_ids": [fid], "metadata": {"files": [{"id": fid, "name": "shot.png",
+                                                               "extension": "png"}]}}
+    mm.own_post("IDLE · nothing attached", 6000)
+    lines = [l for l in context(run(COMPACT)).splitlines() if l.startswith("- [")]
+    assert lines[1].endswith(f"] RESULT · see the screenshot · files: {fid} shot.png")
+    assert lines[0].endswith("] IDLE · nothing attached")
+
+
 def test_nothing_to_hand_back_without_own_posts(mm, run):
     """RT-6.7 error handling: no own posts, no bus → no output, the session goes on."""
     assert run(COMPACT).stdout == ""

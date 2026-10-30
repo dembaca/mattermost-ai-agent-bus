@@ -343,6 +343,34 @@ async def test_one_question_per_ask(monkeypatch):
     assert len(c.posted) == 1
 
 
+def test_only_a_question_mark_that_ends_a_sentence_counts():
+    """RT-6.11 step 1: two real questions still count two; a quoted example,
+    a URL's query string and a code span hold no question of the ask's own."""
+    q = server._questions
+    assert q("Merge #62 now? Keep VM 399?") == 2
+    assert q("1. Merge #62 now? 2. Keep VM 399? 3. Who reviews #63?") == 3
+    assert q('The link reads "🙋 Merge PR #1?" now. Keep it?') == 1
+    assert q("„Merge PR #1?“ und «Deploy?» stehen dort. Passt das?") == 1
+    assert q("Isn't the headline 'Merge PR #1?' too short? Don't you think so") == 1
+    assert q("The log is at https://ci.example/run?id=7&x=y. Rerun it?") == 1
+    assert q("CI failed at https://ci.example/run?id=7? Rerun it?") == 2  # its own ? ends a sentence
+    assert q("`git log --format=%s?` shows it. Push now?") == 1
+    assert q("```\nwhy?\n```\nRun it?") == 1
+    assert q("(Merge now?) Or wait?") == 2
+
+
+@pytest.mark.asyncio
+async def test_a_quoted_question_is_no_second_question(monkeypatch):
+    """RT-6.11 step 1: an ask whose context quotes an example headline, a link
+    with a query string or a code span with "?" is posted."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(
+        need="Shorten the ask link line?",
+        context='It reads "🙋 Merge PR #1?" now (https://mm.example/pl/x?a=b, `ask?`).'))
+    assert out["ask"] and len(c.posted) == 1
+
+
 @pytest.mark.asyncio
 async def test_an_answer_more_than_24_hours_after_the_ask_comes_expired(monkeypatch):
     """RT-6.11 step 5: a yes approves only within 24 h of the ask; a later

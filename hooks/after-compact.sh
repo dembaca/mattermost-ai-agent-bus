@@ -22,12 +22,16 @@ export MM_BUS_DEADLINE
 mm_bus_me || exit 0
 mm_bus GET '/v1/posts?limit=200' || exit 0
 
-# Own posts, newest first: the last three, each cut to 600 characters.
+# Own posts, newest first: the last three, each cut to 600 characters, then
+# their files as a channel push names them (RT-6.23).
 context="$(jq -r --arg me "$MM_BOT_USER_ID" '
   [.posts[] | select(.user_id == $me and (.type // "") == "")] as $own
   | if ($own | length) == 0 then empty else
       ($own[:3] | map("- [\(.create_at / 1000 | floor | strflocaltime("%Y-%m-%d %H:%M"))] "
-                      + (.message | gsub("\n"; " ") | .[:600])) | join("\n")) as $posts
+                      + (.message | gsub("\n"; " ") | .[:600])
+                      + (if (.files // []) == [] then "" else " · files: "
+                         + ([.files[] | [.id, (.name // empty)] | join(" ")] | join("; ")) end))
+                | join("\n")) as $posts
       | ([$own[] | select((.root_id // "") == "" and (.message | startswith("HELLO")))][0].id // null) as $hello
       | "Your conversation was just compacted. Your own latest posts on the Mattermost agent bus "
         + "(work channel), newest first, are your handoff state:\n" + $posts
