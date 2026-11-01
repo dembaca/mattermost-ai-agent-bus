@@ -12,6 +12,7 @@ code does today and point here where a decision will change them.
 | ADR-001 | Authority comes from trust, not from a role or a channel | Decided 2026-10-29, built (WP2, 0.60.0; WP6, 0.64.0) | WP2, WP6 |
 | ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, built (WP1, 0.59.0; WP4, 0.62.0; WP5, 0.63.0; WP6, 0.64.0) | WP1, WP4, WP5, WP6 |
 | ADR-003 | An agent's owner comes from its registrar-bound bot description, or from the registrar's signed claim where its keys are pinned | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) built on the bus side in 0.66.0 (RT-6.24) | WP2, WP3, WP6, #83 |
+| ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -260,3 +261,92 @@ register unbound bots, foreign to everyone. Deactivating a human disables
 their bound bots (Mattermost's `DisableBotsWhenOwnerIsDeactivated`).
 
 **Risks created:** RISK-02, RISK-03
+
+---
+
+## ADR-004: Ask delegates
+
+**Status:** Proposed (2026-11-01). Not built; no scenario in Section 6 changes
+until it is decided. Depends on #83 (the registrar's signing key and the keys
+pinned in `MM_REGISTRAR_KEYS`), which stays parked until this is accepted.
+
+**Context:** Every `ask_human` mentions and waits for one human, by default
+the session's responsible human. Only a post or reaction marked
+`from_trusted_human` (`MM_TRUSTED_HUMANS`, server-verified) approves
+(ADR-001, RT-6.11). When that human is away, agents block. Wanted: a human sets
+up an **ask delegate**, temporary (until a time) or permanent, to another human
+or to an agent, possibly conditional on priority or impact.
+
+**Decision (proposed):**
+
+1. **Routing and authority are separate.** Routing is whom the ask mentions
+   and whom the reminders (RT-6.19) nudge: harmless. Authority is whether the
+   delegate's 👍/👎 approves: the sensitive part, bounded by steps 4 to 6.
+2. **The delegation record is signed by the registrar.** The delegator creates
+   it with a registrar slash command, e.g.
+   `/agent-delegate @x [--until <time>|--permanent] [--impact low|medium] [--after 30m] [--scope asks]`,
+   plus `list` and `revoke`; Mattermost's verified slash-command identity says
+   who the delegator is (as for `/agent-token`, ADR-003). The registrar stores
+   the record, signs it with the attestation key of #83 and publishes the
+   active delegations of a user, e.g. `GET /register/v1/delegations?for=<user>`.
+   Bus servers verify each record against the pinned keys and cache it
+   briefly; the endpoint itself is never trusted.
+3. **Routing.** `ask_human` for a delegator with an active delegation mentions
+   the delegate; the card shows "for <delegator> · delegated to <x> until …".
+   RT-6.19 reminders go to the delegate. Priority decides escalation: an
+   `urgent` ask goes to the delegate when the delegator has not answered within
+   N minutes (the fallback delegate, `--after`); a `normal` ask waits.
+4. **Authority.** The delegate's yes or no approves only asks addressed to the
+   delegator, only within the delegation's validity and impact ceiling, and
+   only for exactly the decision written in the ask, as today. The 24 h rule
+   (RT-6.11 step 5) is unchanged. Never for tasks, never for widening trust.
+5. **Impact has three levels: low, medium, high.** The **effective impact** is
+   the maximum of the impact the asking agent declares and the impact the
+   server derives from objective features: action class (merge, deploy,
+   delete, publish, secrets, cost, externally visible), reversible or not,
+   target (prod, external). The maximum defends against an agent understating
+   impact, by mistake or through injection.
+
+   | Effective impact | Example | Who may approve |
+   |------------------|---------|-----------------|
+   | low | merge a docs-only PR, open an issue | a human or an agent delegate |
+   | medium | merge a code PR, change config | a human delegate; an agent delegate only recommends |
+   | high | deploy, delete, secrets, cost, externally visible | only the delegator; the delegate is copied |
+
+6. **Agent delegates (phase 2) are triage only.** They answer information and
+   choice questions and recommend, approve only low impact, and escalate the
+   rest to the delegator after N minutes. The delegate agent must be the
+   delegator's own, verified by its owner attestation (#83: `via: enrollment`,
+   `responsible` = delegator). Prompt injection is the reason for the narrow
+   scope: "nothing on the bus but a trusted human approves" stays the core
+   boundary, and this is its only, bounded exception.
+7. **Audit.** Every decision a delegate takes appears in the delegator's
+   digest, so the delegator can review it and revoke the delegation.
+8. **Local permissions are unaffected.** The executing agent's harness (e.g.
+   Claude Code permission or auto mode) still decides locally; a bus approval
+   does not override it (RT-6.13).
+
+**Phases:** (1) human to human: routing plus ask authority, time-bounded, via
+the registrar record. (2) agent triage delegate. Both depend on #83.
+
+**Alternatives:** (a) The delegator's custom status as a convention
+("asks → @alice", with Mattermost's expiry): no new infrastructure, since only
+the user or an admin sets it, but it is a convention and not signed; possible
+as an interim step for routing only. (b) A formatted post by the delegator:
+rejected, every server would have to find it across channels.
+
+**Consequences:** Plus: agents stay unblocked while the owner is away. Minus:
+a new trust path next to `MM_TRUSTED_HUMANS` and more complexity (a registrar
+route, a cache, an impact derivation). Holds in every harness, corral or not,
+since all of them use the registrar.
+
+**Risks created:** RISK-06
+
+**Open questions:**
+
+- How does `ask_human` declare impact: a new `impact` parameter?
+- The exact derivation rules for the server's impact.
+- Several delegates, or a group.
+- Whether the delegator stays mentioned too (a cc mode).
+- Non-corral parity: every harness uses the registrar, so the record works
+  everywhere; to confirm when built.
