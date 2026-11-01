@@ -11,12 +11,15 @@ own attributes) goes into a subclass in the test.
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from mattermost_ai_agent_bus import owners
 from mattermost_ai_agent_bus.client import post_of, reaction_of
 from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, Post, Reaction,
                                            Thread, UnreadChannel)
+
+if TYPE_CHECKING:
+    from mattermost_ai_agent_bus.port import ChatPort
 
 BOT = "u" * 26
 WORK = "c" * 26
@@ -31,8 +34,10 @@ class FakeChat:
     username; agents: the user ids that are agents; trusted: user id ->
     username of the trusted humans; descriptions: user id -> bot description
     (missing: not readable, ADR-003); native_owners: user id -> username of
-    the bot's native owner (missing: not readable, WP3); channel: every
-    channel's name.
+    the bot's native owner (missing: not readable, WP3); attestations: user
+    id -> the attestation its account carries (RT-6.24); channel: every
+    channel's name. props: the own account's props as publish_attestation
+    keeps them; published: what it wrote.
     members, presence: the accounts in every channel with their custom
     status, and who is online (the lease's roster); status: the own custom
     status written last; header: the channel header. bots: the bot accounts
@@ -49,7 +54,8 @@ class FakeChat:
                  names: Mapping[str, str] | None = None, agents: Collection[str] = (),
                  trusted: Mapping[str, str] | None = None,
                  descriptions: Mapping[str, str] | None = None,
-                 native_owners: Mapping[str, str] | None = None, channel: str = "agents",
+                 native_owners: Mapping[str, str] | None = None,
+                 attestations: Mapping[str, str] | None = None, channel: str = "agents",
                  channels: Iterable[UnreadChannel] = (), post_id: str = "new") -> None:
         self.me = Me(id=uid, username=username, raw={"id": uid, "username": username})
         self.created = created
@@ -62,6 +68,9 @@ class FakeChat:
         self.trusted = dict(trusted or {})
         self.descriptions = dict(descriptions or {})
         self.native_owners = dict(native_owners or {})
+        self.attestations = dict(attestations or {})
+        self.props: dict[str, str] = {}
+        self.published: list[str] = []
         self.channel = channel
         self.channels = list(channels)
         self.post_id = post_id
@@ -116,8 +125,17 @@ class FakeChat:
         return self.descriptions.get(user_id)
 
     async def agent_owner(self, user_id: str) -> str | None:
-        """The adapter's rule (owners.decide) on `native_owners` and `descriptions`."""
-        return owners.decide(self.native_owners.get(user_id), self.descriptions.get(user_id), user_id)
+        """The adapter's rule (owners.decide) on `native_owners`, `descriptions`
+        and a valid attestation in `attestations` (RT-6.24)."""
+        claim = await owners.attested(cast("ChatPort", self), user_id)
+        return owners.decide(self.native_owners.get(user_id), self.descriptions.get(user_id),
+                             user_id, claim)
+
+    async def agent_attestation(self, user_id: str) -> str | None:
+        """`attestations`; '' for a bot with a readable description and none."""
+        if user_id in self.attestations:
+            return self.attestations[user_id]
+        return "" if user_id in self.descriptions else None
 
     async def member_channels(self) -> list[UnreadChannel]:
         return list(self.channels)
@@ -150,6 +168,14 @@ class FakeChat:
                        "expires_at": expires_at}
         self.members = [ChannelUser(m.id, m.username, m.create_at, custom_status=self.status)
                         if m.id == self.me.id else m for m in self.members]
+
+    async def publish_attestation(self, token: str) -> bool:
+        """Recorded in `published`; the account's props (`props`) keep the rest."""
+        if self.props.get("agent_attestation") == token:
+            return False
+        self.props = {**self.props, "agent_attestation": token}
+        self.published.append(token)
+        return True
 
     async def clear_custom_status(self) -> None:
         self.status = None

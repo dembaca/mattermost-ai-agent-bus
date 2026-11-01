@@ -312,6 +312,8 @@ def write(info: SessionInfo, team: str, channel: str, project: str = "") -> Path
         f"MM_TEAM={team}",
         f"MM_CHANNEL={channel}",
         *([f"MM_PROJECT_CHANNEL={project}"] if project else []),
+        # The registrar's signed owner claim (RT-6.24): not secret, kept for adopt.
+        *([f"MM_BOT_ATTESTATION={info.attestation}"] if info.attestation else []),
         f"MM_SESSION_PID={os.getppid()}",
     ]
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

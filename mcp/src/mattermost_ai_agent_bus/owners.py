@@ -15,6 +15,18 @@ otherwise every agent is a peer, as before. An agent whose owner and
 description cannot be read counts as a peer, with a log line: like the gate,
 this fails open. One without an owner is foreign (``unbound`` too), and so is
 a cut list (``+N``).
+
+With registrar keys pinned (``MM_REGISTRAR_KEYS``) an agent whose account
+carries a valid attestation (RT-6.24: a pinned key signed it, for this bot id
+and username, not expired) takes its owner and trusted list from it instead
+of the description; where the two disagree the attestation wins, logged.
+``via: enrollment`` (the registrar checked the owner) counts as signed:
+neither a description nor a native owner changes it. ``via: secret`` is only
+the caller's claim, and its owner counts the same as the description's
+``for @…`` does: a native owner that disagrees makes a foreign agent. A
+``trusted_cut`` counts as a cut list. An invalid, expired or unpinned
+attestation falls back to the description, logged once per agent; without
+pinned keys nothing changes.
 """
 
 from __future__ import annotations
@@ -24,7 +36,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from . import profile
+from . import attest, profile
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -39,6 +51,7 @@ class Owner:
     owner: str  # lower case; '' when the description names none
     trusts: frozenset[str]
     cut: bool  # the registrar wrote only part of the trusted list (+N)
+    attested: bool = False  # owner and trusts come from a valid attestation (RT-6.24)
 
     def circle(self) -> set[str]:
         """Everyone the agent obeys: its owner and its trusted humans."""
@@ -55,7 +68,8 @@ def is_peer(agent: Owner, mine: set[str]) -> bool:
     return bool(agent.owner) and not agent.cut and agent.circle() <= mine
 
 
-def decide(native: str | None, description: str | None, user_id: str = "") -> str | None:
+def decide(native: str | None, description: str | None, user_id: str = "",
+           claim: attest.Claim | None = None) -> str | None:
     """The agent's owner, lower case, from its native owner (`native`: the
     username the chat system keeps as the bot's owner; None when unreadable or
     not a human) and its description (ADR-003, WP3); '' for none, None when
@@ -64,7 +78,22 @@ def decide(native: str | None, description: str | None, user_id: str = "") -> st
     The registrar's own account is never a human owner: it owns every bot it
     did not bind, so an ``unbound`` description, and one the registrar wrote
     without ``for @``, name no owner whatever `native` says. A native owner
-    that disagrees with ``for @`` makes no owner either (foreign), logged."""
+    that disagrees with ``for @`` makes no owner either (foreign), logged.
+
+    A valid attestation (`claim`, RT-6.24 step 5) replaces the description.
+    ``via: enrollment`` names the owner the registrar checked: it stands,
+    whatever `native` says. ``via: secret`` is only the caller's claim: its
+    owner counts the same as the description's ``for @…`` does, so a native
+    owner that disagrees makes no owner (foreign)."""
+    if claim is not None:
+        owner = claim.responsible
+        if claim.via == attest.ENROLLMENT or not owner or native is None:
+            return owner
+        if owner != native.lower():
+            log.warning("agent %s: native owner @%s but its attestation (via secret) claims "
+                        "@%s: foreign", user_id, native.lower(), owner)
+            return ""
+        return owner
     if native is None and description is None:
         return None
     claimed = profile.owner(description)
@@ -80,17 +109,62 @@ def decide(native: str | None, description: str | None, user_id: str = "") -> st
     return native
 
 
+# (agent, what was logged): an attestation's fate is logged once per agent.
+_noted: set[tuple[str, str]] = set()
+
+
+def _note(user_id: str, what: str, *args: object) -> None:
+    if (user_id, what) not in _noted:
+        _noted.add((user_id, what))
+        log.warning("agent %s: " + what, user_id, *args)
+
+
+async def attested(client: ChatPort, user_id: str) -> attest.Claim | None:
+    """The agent's valid attestation from its account (RT-6.24 step 5), None
+    without pinned keys, without one, or when it does not hold (the reason
+    logged once per agent). Never fails."""
+    keys = attest.pinned()
+    if not keys:
+        return None
+    try:
+        token = await client.agent_attestation(user_id)
+        if not token:
+            return None
+        name = (await client.usernames({user_id})).get(user_id, "")
+        description = await client.bot_description(user_id)
+    except Exception as exc:  # noqa: BLE001 — unreadable: the description decides
+        log.info("attestation of %s not readable: %s", user_id, exc)
+        return None
+    claim, why = attest.verify(token, keys, bot_id=user_id, username=name)
+    if claim is None:
+        _note(user_id, "its attestation is %s: its profile decides", why)
+        return None
+    if description is not None and (
+            profile.owner(description) != claim.responsible
+            or profile.listed(description) != set(claim.trusted)):
+        _note(user_id, "its attestation (for @%s, trusts %s) and its description disagree: "
+              "the attestation counts", claim.responsible or "-",
+              ", ".join(claim.trusted) or "-")
+    return claim
+
+
 async def read(client: ChatPort, user_id: str) -> Owner | None:
-    """The bot's owner (``agent_owner``) and trusted list (its description);
-    None when neither can be read."""
+    """The bot's owner (``agent_owner``) and trusted list: from its valid
+    attestation (RT-6.24), else from its description; None when neither can
+    be read."""
     try:
         description = await client.bot_description(user_id)
         owner = await client.agent_owner(user_id)
+        claim = await attested(client, user_id)
     except Exception as exc:  # noqa: BLE001 — unreadable
         log.info("owner of %s not readable: %s", user_id, exc)
         return None
     if owner is None:
         return None
+    if claim is not None:
+        # A cut list (trusted_cut) is foreign, as a description's +N is.
+        return Owner(owner=owner, trusts=frozenset(claim.trusted), cut=claim.trusted_cut > 0,
+                     attested=True)
     return Owner(owner=owner, trusts=frozenset(profile.listed(description)),
                  cut=profile.cut(description))
 

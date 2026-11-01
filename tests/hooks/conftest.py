@@ -68,6 +68,8 @@ class FakeMattermost:
     register_reply: dict | None = None  # the registrar's answer instead of a bot
     register_error: tuple[int, str] | None = None  # the registrar's refusal: status, plain text
     missing: set[str] = field(default_factory=set)  # channel names answered with 404
+    user_props: dict | None = None  # the bot's user props (custom status, attestation; RT-6.24)
+    registrar_keys: dict | None = None  # GET /register/v1/keys (RT-6.24); None: 404
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -132,9 +134,13 @@ def _handler(fake: FakeMattermost):
             if p == f"/api/v4/bots/{ME}":  # the registrar's admin owns the bot
                 return self._send({"message": "no permission"}, 403)
             if p == f"/api/v4/users/{ME}":
+                props = {"props": fake.user_props} if fake.user_props is not None else {}
                 if fake.bot_description is None:
-                    return self._send({"id": ME, "is_bot": True})
-                return self._send({"id": ME, "is_bot": True, "bot_description": fake.bot_description})
+                    return self._send({"id": ME, "is_bot": True, **props})
+                return self._send({"id": ME, "is_bot": True, "bot_description": fake.bot_description,
+                                   **props})
+            if p == "/register/v1/keys" and fake.registrar_keys is not None:
+                return self._send(fake.registrar_keys)
             if p.startswith("/api/v4/teams/name/"):
                 return self._send({"id": TEAM})
             if p.startswith(f"/api/v4/teams/{TEAM}/channels/name/"):

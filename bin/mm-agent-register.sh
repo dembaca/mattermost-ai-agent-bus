@@ -60,6 +60,13 @@ BOT_TOKEN="$(field bot_token)"
 USER_ID="$(field user_id)"
 URL="$(field url)"
 URL="${URL:-$CHAT_URL}"
+# The registrar's signed owner claim (RT-6.24), when it sends one. Not secret,
+# but never printed: kept only in the shape of a compact JWS, for the MCP server.
+ATTESTATION="$(field attestation)"
+if [[ -n "$ATTESTATION" ]] && ! mm_attestation_shape "$ATTESTATION"; then
+  echo "mm-bus: WARNING: the registrar's attestation is malformed: ignored (RT-6.24)" >&2
+  ATTESTATION=""
+fi
 
 if [[ -z "$BOT_TOKEN" || -z "$USER_NAME" ]]; then
   # The registrar's own words only, never the body; an HTTP error curl has
@@ -78,6 +85,11 @@ MM_AGENT_PREFIX="$(MM_AGENT_PREFIX='' mm_agent_prefix)"
 export MM_AGENT_PREFIX
 export MM_BOT_USER_ID="$USER_ID"
 export MATTERMOST_URL="$URL"
+if [[ -n "$ATTESTATION" ]]; then
+  export MM_BOT_ATTESTATION="$ATTESTATION"
+else
+  unset MM_BOT_ATTESTATION
+fi
 # Not exported: nothing this script starts needs the token in its environment
 # (curl gets it on stdin), and on the host none may have it (arc42 §7.3). The
 # session file and the export lines below read the variables.

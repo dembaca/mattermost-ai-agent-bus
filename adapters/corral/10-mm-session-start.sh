@@ -221,6 +221,9 @@ export MM_AGENT_SESSION_FILE
 # pass through to corral's banner untouched. Every helper gets its credential
 # on fd 3 (mm_with_secret, mm_with_token), never in its environment or argv
 # (arc42 §7.3); the token comes back as a plain assignment, not exported.
+# Only this registration's attestation reaches the host process (RT-6.24):
+# the export lines carry one when the registrar sent it.
+unset MM_BOT_ATTESTATION
 if ! exports="$(mm_with_secret "$BIN/mm-agent-register.sh" --exports "$NAME" "$DISPLAY")"; then
   log "registration failed — continuing without a bot"
   exit 0

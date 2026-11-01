@@ -99,6 +99,12 @@ class ChatPort(Protocol):
         when neither can be read. owners.decide has the rule."""
         ...
 
+    async def agent_attestation(self, user_id: str) -> str | None:
+        """The registrar's signed owner claim the bot published on its account
+        (RT-6.24), read where its description is read; '' when it carries
+        none, None when it cannot be read. owners.attested checks it."""
+        ...
+
     # --- channel membership, status and presence -----------------------------
     async def member_channels(self) -> list[UnreadChannel]: ...
 
@@ -115,6 +121,12 @@ class ChatPort(Protocol):
     async def set_custom_status(self, emoji: str, text: str, expires_at: str) -> None: ...
 
     async def clear_custom_status(self) -> None: ...
+
+    async def publish_attestation(self, token: str) -> bool:
+        """Put this bot's attestation on its own account (RT-6.24 step 3),
+        keeping whatever else the account carries (its custom status); False
+        when it is there already. The caller holds lease.status_lock()."""
+        ...
 
     # --- posting and replying ------------------------------------------------
     async def post(self, message: str, *, channel_id: str | None = None,

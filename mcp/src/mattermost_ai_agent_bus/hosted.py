@@ -440,7 +440,7 @@ async def services(key: str, client: Any) -> AsyncIterator[str]:
     (RT-6.17, RT-6.6), with the ask reminders and the stall check (RT-6.19):
     the hooks call before any relay connects and after one closed. Yields the
     hook API's endpoint."""
-    from . import hookapi, lease, stall
+    from . import attest, hookapi, lease, stall
 
     async def get_client() -> Any:
         return client
@@ -448,10 +448,14 @@ async def services(key: str, client: Any) -> AsyncIterator[str]:
     api = hookapi.HookAPI(get_client, key=key)
     await api.start(write_file=False)  # the sandbox has it in its environment
     task = asyncio.create_task(lease.heartbeat(get_client, stall.watch))
+    # The attestation preStart passed on (MM_BOT_ATTESTATION): checked and
+    # published on the bot's account (RT-6.24 steps 1–3).
+    attested = asyncio.create_task(attest.start(client))
     try:
         yield api.endpoint
     finally:
         task.cancel()
+        attested.cancel()
         await api.close()
 
 

@@ -20,8 +20,8 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import (
-    a2a, asks, channel, files, gate, hookapi, lease, overhead, owners, ownpost, permission, profile, session_file, slim,
-    stall, stats, tasks,
+    a2a, asks, attest, channel, files, gate, hookapi, lease, overhead, owners, ownpost, permission, profile,
+    session_file, slim, stall, stats, tasks,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
 from .model import Post
@@ -103,13 +103,24 @@ async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
     # The session's heartbeat: renews its status lease and the crown (RT-6.6),
     # reminds of open asks and, with the crown, looks for a stall (RT-6.19).
     task = asyncio.create_task(lease.heartbeat(_bus_client, stall.watch))
+    # A bot handed in by the host: check and publish its attestation (RT-6.24).
+    attested = asyncio.create_task(_attest_start())
     api = await _start_hook_api()
     try:
         yield {}
     finally:
         task.cancel()
+        attested.cancel()
         if api is not None:
             await api.close()
+
+
+async def _attest_start() -> None:
+    """RT-6.24 steps 1–3 for a bot this server was handed (a token in its
+    environment); session_start does it for one it registers. Never raises."""
+    client = await _bus_client()
+    if client is not None and client.token:
+        await attest.start(client)
 
 
 _hook_api: hookapi.HookAPI | None = None
@@ -359,7 +370,9 @@ async def _owners_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, di
             if agent is not None:
                 out[r.username] = {"owner": agent.owner or None,
                                    "trusts": sorted(agent.trusts) or None,
-                                   "foreign": r.user_id in found or None}
+                                   "foreign": r.user_id in found or None,
+                                   # owner and trusts from its attestation (RT-6.24)
+                                   "attested": agent.attested or None}
     except Exception as exc:  # noqa: BLE001 — the roster without owners
         log.info("roster without owners: %s", exc)
     return out
@@ -501,6 +514,7 @@ async def session_start(
     global _inbox
     _inbox = None  # reset inbox for new identity
     setup = await client.finish_session_setup()
+    await attest.start(client)  # RT-6.24: publish the attestation, if any
     out: dict[str, Any] = {
         "name": info.name,
         "username": info.username,
@@ -569,10 +583,13 @@ async def bus_info() -> str:
             except Exception:  # noqa: BLE001 — diagnostic only
                 name = None
         humans.append({"id": uid, "username": name})
-    # My bot registered with the shared secret: no owner split (RT-6.16 step 1).
-    unbound = (profile.unbound_warning(me.username)
-               if profile.unbound(await client.bot_description(me.id)) else "")
-    warnings = [w for w in (unbound, _hook_warning().get("warning", "")) if w]
+    # My own attestation (RT-6.24 step 2): a valid one replaces the profile
+    # read-back; else my bot registered with the shared secret has no owner
+    # split (RT-6.16 step 1).
+    own = attest.check_own(os.environ.get(attest.ENV, ""), bot_id=me.id, username=me.username)
+    unbound = (profile.unbound_warning(me.username) if own.status != attest.VALID
+               and profile.unbound(await client.bot_description(me.id)) else "")
+    warnings = [w for w in (unbound, *own.warnings, _hook_warning().get("warning", "")) if w]
     return _out("bus_info", {
         "version": VERSION,
         "on_bus": True,
@@ -581,6 +598,7 @@ async def bus_info() -> str:
                         or next((h["username"] for h in humans if h["username"]), None)),
         "kind": "autonomous" if os.environ.get("MM_AGENT_KIND") == "autonomous" else "session",
         "trusted_humans": {"humans": humans, "source": client.trusted_source},
+        "attestation": own.label,
         "work_channel": client.work_channel_name,
         # RT-6.22: where the agent lives, where it is a guest, the lobby.
         "home": client.work_channel_name,
@@ -887,13 +905,16 @@ async def announce(
         f"{_code(_one_line(project))} · {_code(_one_line(branch))} · {_one_line(model) or '–'} · {role}",
         f"for {who} · trusts {', '.join(trusted) or '–'} · can: {_one_line(capabilities) or '–'}",
     ]
-    # The same as a card in the post's props, for the server's roster (RT-6.14).
+    # The same as a card in the post's props, for the server's roster (RT-6.14),
+    # with the registrar's attestation for whoever reads the card (RT-6.24).
+    signed = os.environ.get(attest.ENV, "")
+    own = attest.check_own(signed, bot_id=me.id, username=me.username)
     card = a2a.card(
         name=me.username, task=_one_line(task), version=VERSION,
         capabilities=_one_line(capabilities), project=_one_line(project),
         branch=_one_line(branch), model=_one_line(model), role=role,
         kind="autonomous" if autonomous else "session", responsible=responsible,
-        trusted=trusted, push=PUSH, relay=RELAY,
+        trusted=trusted, push=PUSH, relay=RELAY, attestation=signed if own.publish else "",
     )
     _done_typing()
     stats.set_user(me.id)
