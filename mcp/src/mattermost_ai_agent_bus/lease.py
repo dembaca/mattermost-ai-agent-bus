@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import channel, session_file
-from .model import RosterEntry
+from .model import ChannelUser, RosterEntry
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -347,6 +347,22 @@ def _expired(value: Any, now: datetime) -> bool:
     return at is None or at <= now
 
 
+def live(custom: Mapping[str, Any], now: datetime | None = None) -> bool:
+    """Whether a custom status is a live lease (RT-6.1): an emoji, a duration
+    and an expiry still ahead. One without an expiry predates the lease (or
+    was set by hand) and proves nothing about a live session."""
+    return (bool(custom.get("emoji")) and bool(custom.get("duration"))
+            and not _expired(custom.get("expires_at"), now or datetime.now(timezone.utc)))
+
+
+def live_home(user: ChannelUser) -> str | None:
+    """RT-6.21: the home a live agent's status names ('' when it names none,
+    an older plugin); None when its status is no live lease."""
+    if not live(user.custom_status):
+        return None
+    return home_of(str(user.custom_status.get("text") or "")) or ""
+
+
 async def _rows(client: ChatPort, channel_id: str) -> list[dict[str, Any]]:
     """The bus's bots in a channel (the registrar's prefix), oldest first, with
     what the lease rules need: id, username, create_at, presence, emoji, text,
@@ -368,14 +384,14 @@ async def _rows(client: ChatPort, channel_id: str) -> list[dict[str, Any]]:
     for u in users:
         custom = u.custom_status
         emoji = str(custom.get("emoji") or "")
-        live = bool(emoji) and bool(custom.get("duration")) and not _expired(custom.get("expires_at"), now)
+        on = live(custom, now)
         presence = status.get(u.id) or "offline"
-        reachable = presence != "offline" and live and emoji != "zzz"
+        reachable = presence != "offline" and on and emoji != "zzz"
         until = _at(custom.get("expires_at")) if custom.get("duration") else None
         text = str(custom.get("text") or "")
         rows.append({"id": u.id, "username": u.username,
                      "create_at": u.create_at, "presence": presence,
-                     "emoji": emoji, "text": text, "home": home_of(text), "live": live,
+                     "emoji": emoji, "text": text, "home": home_of(text), "live": on,
                      "until_ms": int(until.timestamp() * 1000) if until else 0,
                      "reachable": reachable, "crown": reachable and emoji == "crown"})
     return rows

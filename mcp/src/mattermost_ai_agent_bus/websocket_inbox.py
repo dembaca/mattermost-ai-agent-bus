@@ -31,6 +31,9 @@ class ClassifiedEvent:
     gated: str = ""
     # RT-6.21: the departed agents it mentions, for the agent that answers.
     departed: str = ""
+    # RT-6.21: the live agents it mentions that are not in its channel,
+    # `<agent> (~<home>)`, for the agent that answers; its task (RT-6.5).
+    not_here: str = ""
     # RT-6.22: the post is in a guest channel (not the home, not the lobby).
     guest: bool = False
     # RT-6.22 step 3: the post is in the lobby (MM_CHANNEL), which is not the home.
@@ -499,9 +502,10 @@ class WebSocketInbox:
         await self.view(cid)
 
     async def _departed(self, event: ClassifiedEvent) -> None:
-        """RT-6.21: a mention of an agent that is gone. The one server that
-        answers (the coordinator's) marks the event, which wakes its agent,
-        and answers in the thread. Any error leaves the post as it was."""
+        """RT-6.21: a mention of an agent that is gone or not in the channel.
+        The one server that answers (the coordinator's) marks the event, which
+        wakes its agent, and answers in the thread. Any error leaves the post
+        as it was."""
         me, post = self._bot_user_id, event.post
         try:
             found, tell = await departed.check(self.client, post, me, self._bot_username)
@@ -510,7 +514,8 @@ class WebSocketInbox:
             return
         if not found:
             return
-        event.departed = ", ".join(d.username for d in found)
+        event.departed = ", ".join(d.username for d in found if isinstance(d, departed.Departure))
+        event.not_here = departed.not_here(found)
         if tell:
             task = asyncio.create_task(departed.tell(self.client, post, me, tell))
             self._gate_tasks.add(task)

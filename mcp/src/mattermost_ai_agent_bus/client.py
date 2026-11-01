@@ -295,6 +295,9 @@ TEAM_DEFAULT_CHANNELS = frozenset({"town-square", "off-topic"})
 # How long the guest channels (memberships) are kept before they are read
 # again; a WebSocket membership event forgets them at once (RT-6.22).
 GUEST_TTL_SEC = 60.0
+# How long an agent found by its name, and whether it is in a channel, is kept
+# (RT-6.21): mentioned again within that, an agent not here costs no read.
+PEER_TTL_SEC = 60.0
 
 
 def _trusted_names() -> list[str]:
@@ -411,6 +414,12 @@ class MattermostAdapter:
         default_factory=dict, repr=False, init=False)
     # user id -> (when read, its owner as agent_owner gives it), ADR-003, WP3.
     _owners: dict[str, tuple[float, str | None]] = field(
+        default_factory=dict, repr=False, init=False)
+    # RT-6.21: lower-case username -> (when read, its bot account; None: none),
+    # and (channel id, user id) -> (when read, a member).
+    _named: dict[str, tuple[float, ChannelUser | None]] = field(
+        default_factory=dict, repr=False, init=False)
+    _membership: dict[tuple[str, str], tuple[float, bool]] = field(
         default_factory=dict, repr=False, init=False)
     session: SessionInfo | None = field(default=None, repr=False, init=False)
     _trusted: dict[str, str] | None = field(default=None, repr=False, init=False)
@@ -1067,6 +1076,24 @@ class MattermostAdapter:
         prefix = session_file.agent_prefix()
         return {i for i, n in names.items() if i in self._bots and n.startswith(prefix)}
 
+    async def bots_named(self, usernames: set[str]) -> dict[str, ChannelUser]:
+        """The bot accounts among these usernames, by lower-case username,
+        with their custom status (RT-6.21); people, unknown, deleted and
+        invalid names are left out. One request for the names not read in the
+        last PEER_TTL_SEC, none for the rest."""
+        now = time.monotonic()
+        names = {n.lower() for n in usernames if _NAME.fullmatch(n) and ".." not in n}
+        missing = sorted(n for n in names
+                         if n not in self._named or now - self._named[n][0] >= PEER_TTL_SEC)
+        if missing:
+            found = await self._api("POST", "/api/v4/users/usernames", json=missing) or []
+            for n in missing:
+                self._named[n] = (now, None)
+            for u in found:
+                if isinstance(u, Mapping) and u.get("is_bot") and not u.get("delete_at"):
+                    self._named[str(u.get("username") or "").lower()] = (now, channel_user_of(u))
+        return {n: user for n in names if (user := self._named.get(n, (0.0, None))[1]) is not None}
+
     async def direct_channel_with_bot(self, username: str) -> str:
         """The DM channel id between this bot and another bot. Refuses people
         (they are asked with ask_human) and unknown names."""
@@ -1295,6 +1322,24 @@ class MattermostAdapter:
                                params={"in_channel": mm_id(channel_id, "channel"),
                                        "per_page": 200}) or []
         return [channel_user_of(u) for u in rows if isinstance(u, Mapping)]
+
+    async def is_member(self, channel_id: str, user_id: str) -> bool:
+        """Whether the account is a member of the channel (RT-6.21): its
+        channel member, none on a 404. Kept PEER_TTL_SEC."""
+        key, now = (channel_id, user_id), time.monotonic()
+        hit = self._membership.get(key)
+        if hit and now - hit[0] < PEER_TTL_SEC:
+            return hit[1]
+        try:
+            await self._api("GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}"
+                                   f"/members/{mm_id(user_id, 'user')}")
+            member = True
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 404:
+                raise
+            member = False
+        self._membership[key] = (now, member)
+        return member
 
     async def presences(self, user_ids: list[str]) -> dict[str, str]:
         """{user_id: online | away | dnd | offline}, in one request."""

@@ -1,18 +1,22 @@
-"""Departed agents (RT-6.21 in docs/arc42/06-runtime-view.md).
+"""Departed agents and agents not here (RT-6.21 in docs/arc42/06-runtime-view.md).
 
-A post in the work channel that @-mentions an agent which is gone reaches
-nobody. One server answers it in the thread, without the model: the
-coordinator's (a live 👑 here), else, with no crown anywhere, the server of
-the oldest reachable agent, which the lease hands the crown to next (RT-6.6).
-The answer says since when the agent is gone and links its BYE (its handoff)
-or its last post; the event wakes the answering agent, which routes the work.
+A post in the work channel that @-mentions an agent which is gone, or a live
+one that is no member of the channel, reaches nobody. One server answers it in
+the thread, without the model: the coordinator's (a live 👑 here), else, with
+no crown anywhere, the server of the oldest reachable agent, which the lease
+hands the crown to next (RT-6.6). For a gone agent the answer says since when
+and links its BYE (its handoff) or its last post; for one not here, that it
+is not in this channel and where its home is. The event wakes the answering
+agent, which routes or forwards the work.
 
 Gone: its status lease ran out (no live custom status), or it is no member of
 the work channel any more while its HELLO is still there. A BYE alone is not
 (it may mean "task finished"); for a gone agent whose latest post in its newest
 HELLO thread is a BYE, that BYE gives the time and the handoff link. 💤 idle
-and 👂 listening run on a live lease: not gone. Each thread is told once per agent (gate-<uid>.env,
-DEPARTED=<root_id>:<name>).
+and 👂 listening run on a live lease: not gone. Not here: a bot account by
+that name on a live lease that is no member of the channel, read only for the
+names neither in the channel's roster nor gone. Each thread is told once per
+agent (gate-<uid>.env, DEPARTED=<root_id>:<name>).
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from . import a2a, gate, lease, session_file
 from .model import Post
@@ -42,6 +46,17 @@ class Departure:
     since_ms: int  # 0: unknown
     bye: bool  # else the lease ran out
     post_id: str  # its BYE, else its last post; '' when none is in reach
+
+
+@dataclass(frozen=True)
+class Elsewhere:
+    """A live agent that is no member of the channel the post is in."""
+
+    username: str
+    home: str  # the home its status names; '' unknown
+
+
+Absent = Departure | Elsewhere
 
 
 def mentioned(message: str, me: str) -> list[str]:
@@ -84,10 +99,18 @@ async def _authors(client: ChatPort, posts: list[Post]) -> dict[str, str]:
         return {}
 
 
-async def gone(client: ChatPort, names: list[str]) -> list[Departure]:
-    """Which of the named agents are gone, with since when and the post to link."""
+async def _members(client: ChatPort, channel_id: str) -> dict[str, dict[str, Any]]:
+    """The channel's agents by lower-case name, with their lease (lease._rows)."""
+    return {str(r["username"]).lower(): r for r in await lease._rows(client, channel_id)}
+
+
+async def gone(client: ChatPort, names: list[str],
+               rows: dict[str, dict[str, Any]] | None = None) -> list[Departure]:
+    """Which of the named agents are gone, with since when and the post to link.
+    rows: the work channel's agents (_members) when read already."""
     cid = await client.work_channel_id()
-    rows = {str(r["username"]).lower(): r for r in await lease._rows(client, cid)}
+    if rows is None:
+        rows = await _members(client, cid)
     posts = [p for p in await client.channel_posts(cid, per_page=RECENT)
              if not p.type and not p.delete_at]  # newest first
     hellos = [p for p in posts if not p.root_id and a2a.word(p.message) == "HELLO"]
@@ -113,46 +136,88 @@ async def gone(client: ChatPort, names: list[str]) -> list[Departure]:
     return out
 
 
+async def elsewhere(client: ChatPort, channel_id: str, names: list[str]) -> list[Elsewhere]:
+    """Of the named agents, none in the channel's roster nor gone, the live
+    ones that are no member of it (RT-6.21 step 3): a bot account by that
+    name whose status is a live lease. One read for all names, one per live
+    one for its membership (both cached by the adapter); a person or a name
+    nobody has is left to Mattermost. [] when they cannot be read."""
+    if not names:
+        return []
+    try:
+        bots = await client.bots_named(set(names))
+        out = []
+        for name in names:
+            user = bots.get(name)
+            home = lease.live_home(user) if user is not None else None
+            if user is None or home is None or await client.is_member(channel_id, user.id):
+                continue
+            out.append(Elsewhere(name, home))
+        return out
+    except Exception as exc:  # noqa: BLE001 — fail open: the gone ones still get their answer
+        log.info("departed: agents not here not read: %s", exc)
+        return []
+
+
+def not_here(found: list[Absent]) -> str:
+    """The event's `not_here`: `<agent> (~<home>)`, comma-separated."""
+    return ", ".join(f"{d.username} (~{d.home})" if d.home else d.username
+                     for d in found if isinstance(d, Elsewhere))
+
+
 def _when(ms: int) -> str:
     at = time.gmtime(ms / 1000)
     same_day = time.strftime("%Y-%m-%d", at) == time.strftime("%Y-%m-%d", time.gmtime())
     return time.strftime("%H:%M UTC" if same_day else "%Y-%m-%d %H:%M UTC", at)
 
 
-def reply_text(found: list[Departure], permalink_base: str) -> str:
-    lines = []
+def reply_text(found: list[Absent], permalink_base: str, channel: str = "") -> str:
+    """One sentence per agent (RT-6.21 step 4): the gone ones and "I route
+    this instead.", then the ones not in `channel`."""
+    lines, away = [], []
+    where = f"~{channel}" if channel else "this channel"
     for d in found:
+        if isinstance(d, Elsewhere):
+            home = f" (home ~{d.home})" if d.home else ""
+            away.append(f"{d.username} is not in {where}{home}: add it to the channel, or I forward it.")
+            continue
         since = f" since {_when(d.since_ms)}" if d.since_ms else ""
         why = "BYE" if d.bye else "its lease ran out"
         link = (f", see its {'handoff' if d.bye else 'last post'}: {permalink_base}{d.post_id}"
                 if d.post_id else "")
         lines.append(f"{d.username} is gone{since} ({why}){link}.")
-    return " ".join(lines) + " I route this instead."
+    if lines:
+        lines.append("I route this instead.")
+    return " ".join(lines + away)
 
 
 async def check(client: ChatPort, post: Post, uid: str,
-                name: str) -> tuple[list[Departure], list[Departure]]:
-    """The departed agents a work-channel post mentions, and of those the ones
-    this server has to tell its thread about (claimed in gate-<uid>.env).
-    Both empty when another server answers."""
+                name: str) -> tuple[list[Absent], list[Absent]]:
+    """The agents a work-channel post mentions that are gone or not here, and
+    of those the ones this server has to tell its thread about (claimed in
+    gate-<uid>.env). Both empty when another server answers."""
     names = mentioned(post.message, name)
     if not names or post.type or not await answers(client, uid, name):
         return [], []
-    if post.channel_id != await client.work_channel_id():
+    cid = await client.work_channel_id()
+    if post.channel_id != cid:
         return [], []
-    found = await gone(client, names)
+    rows = await _members(client, cid)
+    found: list[Absent] = list(await gone(client, names, rows))
+    known = set(rows) | {d.username for d in found}
+    found += await elsewhere(client, cid, [n for n in names if n not in known])
     root = post.thread
     return found, [d for d in found if gate.first_reply(uid, f"{root}:{d.username}", "DEPARTED")]
 
 
 async def tell(client: ChatPort, post: Post, uid: str,
-               found: list[Departure]) -> None:
+               found: list[Absent]) -> None:
     """Answer in the post's thread; when that fails, the next mention may try again."""
     root = post.thread
     try:
-        text = lease.with_crown(reply_text(found, client.permalink_base), uid)
+        text = lease.with_crown(reply_text(found, client.permalink_base, client.work_channel_name), uid)
         await client.post(text, channel_id=post.channel_id or None, root_id=root)
     except Exception as exc:  # noqa: BLE001 — the wake-up stands all the same
-        log.info("no answer on departed agents in thread %s: %s", root, exc)
+        log.info("no answer on departed or absent agents in thread %s: %s", root, exc)
         for d in found:
             gate.forget_reply(uid, f"{root}:{d.username}", "DEPARTED")

@@ -35,7 +35,8 @@ class FakeChat:
     channel's name.
     members, presence: the accounts in every channel with their custom
     status, and who is online (the lease's roster); status: the own custom
-    status written last; header: the channel header.
+    status written last; header: the channel header. bots: the bot accounts
+    by lower-case username (RT-6.21), in the channel or not.
     """
 
     token: str | None = "t"
@@ -66,6 +67,7 @@ class FakeChat:
         self.post_id = post_id
         self.members: list[ChannelUser] = []
         self.presence: dict[str, str] = {}
+        self.bots: dict[str, ChannelUser] = {}
         self.status: dict[str, str] | None = None
         self.header = ""
         self.dms: set[str] = set()
@@ -128,6 +130,13 @@ class FakeChat:
 
     async def channel_users(self, channel_id: str) -> list[ChannelUser]:
         return list(self.members)
+
+    async def bots_named(self, usernames: set[str]) -> dict[str, ChannelUser]:
+        return {n.lower(): self.bots[n.lower()] for n in usernames if n.lower() in self.bots}
+
+    async def is_member(self, channel_id: str, user_id: str) -> bool:
+        """Every channel has the accounts in `members`."""
+        return any(m.id == user_id for m in self.members)
 
     async def presences(self, user_ids: list[str]) -> dict[str, str]:
         return {i: self.presence[i] for i in user_ids if i in self.presence}

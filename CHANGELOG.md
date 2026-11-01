@@ -3,6 +3,40 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.65.7
+
+### Added
+
+- **A mention of an agent not in the channel gets an answer**
+  ([RT-6.21](docs/arc42/06-runtime-view.md#621-mention-of-a-departed-agent-or-one-not-here)).
+  `@agent-x` in a channel that agent is no member of reached nobody:
+  Mattermost only showed the sender an ephemeral hint, and the 👑 left the
+  post alone because it names an agent. Now the server that answers
+  departed mentions (the 👑's, else the oldest reachable agent's) answers
+  once per thread and agent: `agent-x is not in ~<channel> (home ~<home>):
+  add it to the channel, or I forward it.` The home comes from the agent's
+  status and is left out when it names none. Not here is a bot account on a
+  live lease outside the channel; a person, an unknown name and a gone agent
+  (which keeps its departed answer) are not. The event carries `not_here`
+  (`<agent> (~<home>)`), wakes the answering agent, which forwards the post,
+  and shows it typing in that thread
+  ([RT-6.5](docs/arc42/06-runtime-view.md#65-typing-indicator-while-a-mention-is-answered)).
+  Only names neither in the channel's roster nor gone are read: one
+  `POST /users/usernames` for all of them and one
+  `GET /channels/<id>/members/<user>` per live bot, both kept 60 s (new port
+  members `bots_named`, `is_member`).
+
+### Fixed
+
+- **Dotted link labels are no host names**
+  ([RT-6.15 step 4](docs/arc42/06-runtime-view.md#615-references-as-links)).
+  `[RT-6.5](https://github.com/…)`, `[0.65.6](…)` or `[v1.2](…)` were taken
+  for a host that differs from the link's and written out as label plus URL.
+  A dotted label now names a host only when its last part starts with a
+  letter (a top-level domain, `xn--` too) or it is an IPv4 address;
+  `[example.com](https://evil.test/)` and `[1.2.3.4](https://evil.test/)` are
+  still written out, `[README.md](…/README.md)` stays a link.
+
 ## 0.65.6
 
 ### Fixed
@@ -52,7 +86,7 @@ before 0.5.0 are described in the git history.
   `props.agent_card` is unchanged. A HELLO without props is read in both
   forms; a departed agent's HELLO is found by its author, an old
   `HELLO @<agent>` also by its text
-  ([RT-6.21 step 3](docs/arc42/06-runtime-view.md#621-mention-of-a-departed-agent)).
+  ([RT-6.21 step 3](docs/arc42/06-runtime-view.md#621-mention-of-a-departed-agent-or-one-not-here)).
 - **A static channel header**
   ([RT-6.6 step 7](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
   The header's bus part no longer names the crown holder and the time; it is
@@ -720,7 +754,7 @@ Closes out #63 (WP6): homes, guest channels, the lobby and owner classes are bui
   in the thread, once, with since when it is gone and a link to its `BYE`
   (when that is its latest post in its HELLO thread) or last post, and the event (`departed`) wakes the coordinator to route the work.
   💤 idle and 👂 listening agents are not departed
-  ([RT-6.21](docs/arc42/06-runtime-view.md#621-mention-of-a-departed-agent)).
+  ([RT-6.21](docs/arc42/06-runtime-view.md#621-mention-of-a-departed-agent-or-one-not-here)).
 
 ## 0.43.0
 

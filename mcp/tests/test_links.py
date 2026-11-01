@@ -106,6 +106,32 @@ def test_odd_bare_urls_show_their_real_host():
         "https://xn--gthub-n2e.com/o/r and <https://github.com/x>"
 
 
+@pytest.mark.parametrize("link", [
+    "[RT-6.5](https://github.com/o/r/blob/main/docs/arc42/06-runtime-view.md#65-typing-indicator)",
+    "[0.65.6](https://github.com/o/r/releases/tag/latest)",
+    "[v1.2](https://h.example/changes)",
+    "[README.md](https://gitlab.example/g/r/-/blob/main/README.md)",
+])
+def test_dotted_labels_without_a_top_level_domain_stay_links(link):
+    """RT-6.15 step 4: a dotted label names a host only when its last part
+    starts with a letter (a top-level domain) or it is an IPv4 address; a
+    scenario id or a version is none. `README.md` stays where the link ends in it."""
+    assert send(link) == link
+    assert read(link) == link
+
+
+@pytest.mark.parametrize("link,shown", [
+    ("[example.com](https://evil.test/)", "example.com (https://evil.test/)"),
+    ("[1.2.3.4](https://evil.test/)", "1.2.3.4 (https://evil.test/)"),
+    ("[xn--p1ai.xn--p1ai](https://evil.test/)", "xn--p1ai.xn--p1ai (https://evil.test/)"),
+])
+def test_host_and_address_labels_elsewhere_are_still_written_out(link, shown):
+    """RT-6.15 step 4: a host name or an IPv4 address as label, the link going
+    elsewhere: written out as before."""
+    assert send(link) == shown
+    assert read(link) == shown
+
+
 def test_inline_code_in_a_label_does_not_hide_the_link():
     """RT-6.15: a label in backticks is still checked."""
     assert send("[`github.com/o/r`](https://evil.example)") == \

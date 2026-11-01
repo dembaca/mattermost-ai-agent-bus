@@ -1,31 +1,45 @@
-"""RT-6.21: a mention of a departed agent is answered once, by the coordinator's server."""
+"""RT-6.21: a mention of a departed agent, or of a live one not in the
+channel, is answered once, by the coordinator's server."""
 
 import asyncio
 import json
 import time
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
+from fakes import WORK, FakeChat
 from mattermost_ai_agent_bus import channel, departed, gate, server, session_file
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
+from mattermost_ai_agent_bus.model import ChannelUser
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
 
 ME, OLD, IDLE, WORKER, HUMAN = "m" * 26, "o" * 26, "i" * 26, "w" * 26, "h" * 26
+FAR, BOB = "x" * 26, "y" * 26
 PROJ, HELLO, BYE, LAST = "p" * 26, "e" * 26, "b" * 26, "l" * 26
 BASE = "https://chat.example/team/pl/"
 
 
-def _status(emoji, minutes):
+def _status(emoji, minutes, text=""):
     at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-    return {"customStatus": json.dumps({"emoji": emoji, "text": "", "duration": "date_and_time",
+    return {"customStatus": json.dumps({"emoji": emoji, "text": text, "duration": "date_and_time",
                                         "expires_at": at.isoformat()})}
+
+
+class _FakeWs:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, raw):
+        self.sent.append(json.loads(raw))
 
 
 class Bus:
     """The inbox of agent-me against a fake Mattermost: agent-old said BYE
     and has no status left,
-    agent-idle is 💤 on a live lease, agent-w works."""
+    agent-idle is 💤 on a live lease, agent-w works. Not in the channel:
+    agent-far, live with its home ~bgl-infra, and agent-bob, a person."""
 
     def __init__(self, monkeypatch):
         self.client = MattermostAdapter(base_url="https://chat.example", token="bot", team_name="team",
@@ -38,6 +52,12 @@ class Bus:
             IDLE: {"id": IDLE, "username": "agent-idle", "create_at": 2, "props": _status("zzz", 10)},
             WORKER: {"id": WORKER, "username": "agent-w", "create_at": 4, "props": _status("hammer_and_wrench", 10)},
         }
+        self.others = {
+            FAR: {"id": FAR, "username": "agent-far", "create_at": 5, "is_bot": True,
+                  "props": _status("hammer_and_wrench", 10, "on #12 · ~bgl-infra")},
+            BOB: {"id": BOB, "username": "agent-bob", "create_at": 6, "props": {}},
+        }
+        self.calls = []
         now = int(time.time() * 1000)
         self.posts = [  # newest first
             {"id": LAST, "user_id": IDLE, "root_id": "", "message": "IDLE · waiting", "create_at": now - 5000},
@@ -46,6 +66,17 @@ class Bus:
         ]
 
         async def api(method, path, json=None, params=None, **_):
+            self.calls.append(path)
+            if path == "/api/v4/users/usernames":  # members or not; is_bot as Mattermost has it
+                every = list(self.users.values()) + list(self.others.values())
+                return [dict(u, is_bot=u.get("is_bot", u["id"] != BOB), delete_at=0)
+                        for u in every if u["username"] in json]
+            if path.startswith(f"/api/v4/channels/{PROJ}/members/"):
+                if path.rsplit("/", 1)[1] in self.users:
+                    return {"channel_id": PROJ, "user_id": path.rsplit("/", 1)[1]}
+                request = httpx.Request(method, "https://chat.example" + path)
+                raise httpx.HTTPStatusError("404", request=request,
+                                            response=httpx.Response(404, request=request))
             if path == "/api/v4/users":
                 return [dict(u, delete_at=0) for u in self.users.values()]
             if path == "/api/v4/users/status/ids":
@@ -222,3 +253,124 @@ async def test_a_failed_answer_is_tried_again(bus):
     bus.fail = False
     await bus.arrive("r" * 26, "@agent-old?", root="q" * 26)
     assert len(bus.posted) == 1
+
+
+# --- not here: a live agent that is no member of the channel ----------------------------
+
+MEMBERS = f"/api/v4/channels/{PROJ}/members/"
+NAMED = "/api/v4/users/usernames"
+
+
+@pytest.mark.asyncio
+async def test_a_live_agent_not_in_the_channel_is_told_with_its_home(bus):
+    """RT-6.21 steps 3–5: a live agent that is no member of the channel gets
+    one answer in the thread, with the home its status names; the event wakes
+    the coordinator with `not_here`. It costs one read by name and one of
+    its membership."""
+    _crown()
+    e = await bus.arrive("q" * 26, "@agent-far wäre das")
+    assert e.not_here == "agent-far (~bgl-infra)" and not e.departed
+    [reply] = bus.posted
+    assert reply["root_id"] == "q" * 26
+    assert reply["message"] == ("👑 agent-far is not in ~proj (home ~bgl-infra): "
+                                "add it to the channel, or I forward it.")
+    assert bus.calls.count(NAMED) == 1 and bus.calls.count(MEMBERS + FAR) == 1
+    [item] = await server._event_items([e])
+    assert item["not_here"] == "agent-far (~bgl-infra)" and "departed" not in item
+    assert channel.wakes(item, coordinator=True, in_my_thread=False)
+    assert channel.notification(item)["meta"]["not_here"] == "agent-far (~bgl-infra)"
+
+
+@pytest.mark.asyncio
+async def test_not_here_is_told_once_per_thread(bus):
+    """RT-6.21 step 4: once per thread and agent, the record departed uses;
+    mentioned again within a minute, the adapter reads nothing again."""
+    _crown()
+    await bus.arrive("q" * 26, "@agent-far?")
+    e = await bus.arrive("r" * 26, "@agent-far again?", root="q" * 26)
+    assert e.not_here and len(bus.posted) == 1
+    assert bus.calls.count(NAMED) == 1 and bus.calls.count(MEMBERS + FAR) == 1
+    await bus.arrive("s" * 26, "@agent-far?")
+    assert len(bus.posted) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["agent-w", "agent-idle"])
+async def test_a_member_gets_no_answer_and_costs_no_read(bus, name):
+    """RT-6.21 step 3: a name in the channel's roster is here: no lookup by
+    name, no membership read, no answer."""
+    _crown()
+    e = await bus.arrive("q" * 26, f"@{name} status?")
+    assert not e.not_here and not e.departed and bus.posted == []
+    assert NAMED not in bus.calls and not any(c.startswith(MEMBERS) for c in bus.calls)
+
+
+@pytest.mark.asyncio
+async def test_a_person_not_in_the_channel_is_left_to_mattermost(bus):
+    """RT-6.21 step 3: a person outside the channel, even with the agents'
+    prefix, gets no answer; a name without the prefix is not even read."""
+    _crown()
+    e = await bus.arrive("q" * 26, "@agent-bob and @dembaca, see this")
+    assert not e.not_here and not e.departed and bus.posted == []
+    assert not any(c.startswith(MEMBERS) for c in bus.calls)
+
+
+@pytest.mark.asyncio
+async def test_gone_keeps_its_answer_beside_one_not_here(bus):
+    """RT-6.21 step 3: a name is gone or not here, never both. A gone agent
+    keeps the departed text, also one that left the channel and lives on
+    elsewhere; one answer holds both."""
+    _crown()
+    bus.others[OLD] = dict(bus.users.pop(OLD), is_bot=True,
+                           props=_status("hammer_and_wrench", 10, "x · ~other"))
+    e = await bus.arrive("q" * 26, "@agent-old and @agent-far?")
+    assert e.departed == "agent-old" and e.not_here == "agent-far (~bgl-infra)"
+    [reply] = bus.posted
+    assert reply["message"].startswith("👑 agent-old is gone since ")
+    assert reply["message"].endswith(
+        f"(BYE), see its handoff: {BASE}{BYE}. I route this instead. "
+        "agent-far is not in ~proj (home ~bgl-infra): add it to the channel, or I forward it.")
+    assert MEMBERS + OLD not in bus.calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gated", ["", "untrusted"])
+async def test_the_answering_crown_types_in_the_thread(bus, monkeypatch, gated):
+    """RT-6.21 step 5, RT-6.5: the post is now the coordinator's task, so it
+    shows typing in that thread, as for a human's plain post; a gated post
+    is no task."""
+    _crown()
+    ws = _FakeWs()
+    bus.inbox._ws = ws
+    monkeypatch.setattr(server, "_get_inbox", lambda: bus.inbox)
+    e = await bus.arrive("r" * 26, "@agent-far wäre das", root="q" * 26)
+    e.gated = gated
+    await server._typing_for_task([e], await server._event_items([e]))
+    await asyncio.sleep(0)
+    bus.inbox.stop_typing()
+    typing = [m["data"] for m in ws.sent if m["action"] == "user_typing"]
+    assert typing[:2] == ([] if gated else [{"channel_id": PROJ, "parent_id": "q" * 26},
+                                            {"channel_id": PROJ, "parent_id": ""}])
+
+
+@pytest.mark.asyncio
+async def test_not_here_takes_a_live_lease_and_no_membership():
+    """RT-6.21 step 3, through the port: a live bot outside the channel is not
+    here, the home left out when its status names none; a member (also one
+    beyond the roster's reach) or one without a live lease is not."""
+    def user(minutes):
+        at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+        return ChannelUser(id=FAR, username="agent-far", custom_status={
+            "emoji": "hammer_and_wrench", "text": "on #12", "duration": "date_and_time",
+            "expires_at": at.isoformat()})
+
+    client = FakeChat()
+    client.bots = {"agent-far": user(10)}
+    found = await departed.elsewhere(client, WORK, ["agent-far"])
+    assert found == [departed.Elsewhere("agent-far", "")]
+    assert departed.reply_text(found, "", client.work_channel_name) == (
+        "agent-far is not in ~agents: add it to the channel, or I forward it.")
+    client.members = [client.bots["agent-far"]]
+    assert await departed.elsewhere(client, WORK, ["agent-far"]) == []
+    client.members, client.bots = [], {"agent-far": user(-1)}
+    assert await departed.elsewhere(client, WORK, ["agent-far"]) == []
