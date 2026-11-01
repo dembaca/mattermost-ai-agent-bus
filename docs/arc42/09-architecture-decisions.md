@@ -13,6 +13,7 @@ code does today and point here where a decision will change them.
 | ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, built (WP1, 0.59.0; WP4, 0.62.0; WP5, 0.63.0; WP6, 0.64.0) | WP1, WP4, WP5, WP6 |
 | ADR-003 | An agent's owner comes from its registrar-bound bot description, or from the registrar's signed claim where its keys are pinned | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) built on the bus side in 0.66.0 (RT-6.24) | WP2, WP3, WP6, #83 |
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
+| ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Proposed (2026-11-01), not built; builds on ADR-004 and #83 | #83 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -342,6 +343,8 @@ since all of them use the registrar.
 
 **Risks created:** RISK-06
 
+**Related:** ADR-005 (routes asks to the coordinator first; its `delegated` mode uses this delegation).
+
 **Open questions:**
 
 - How does `ask_human` declare impact: a new `impact` parameter?
@@ -350,3 +353,121 @@ since all of them use the registrar.
 - Whether the delegator stays mentioned too (a cc mode).
 - Non-corral parity: every harness uses the registrar, so the record works
   everywhere; to confirm when built.
+
+---
+
+## ADR-005: Ask routing modes
+
+**Status:** Proposed (2026-11-01). Not built; no scenario in Section 6 changes
+until it is accepted and built. Builds on ADR-004 (delegation, impact, digest)
+and ADR-002 (a crown per (agent, home)). The `delegated` mode depends on #83
+(signed owner attestation, built on the bus side in 0.66.0, RT-6.24).
+
+**Context:** The more agents run, the more asks reach the human, and progress
+stalls: one human answers every `ask_human` (RT-6.11), one at a time. Most of
+these asks are not approvals. They ask which approach to take, what to do
+first or who does X. Today each of them goes to the responsible human, even
+though the home's coordinator (the 👑, ADR-002) knows the open tasks, the other
+agents and the ADRs. ADR-004 lets a human hand asks to a delegate when away;
+it does not reduce how many asks arrive.
+
+**Decision (proposed):**
+
+1. **Two classes of ask.**
+   - A **question** is content, technical or coordination: approach A or B,
+     what first, who does X. The home's coordinator may answer it itself.
+   - An **approval** is an action with effect: merge, deploy, delete, external
+     write, spending. It stays with a trusted human.
+   - The coordinator may bundle, prioritise, dedup and annotate approvals with
+     context and a recommendation. It **never grants** one. Its answer
+     arrives as `from_agent`, never `from_trusted_human`, so ADR-001 holds
+     unchanged: authority comes from trust, not from a role.
+   - A worker that files an approval as a question opens no hole: the server
+     still counts only a trusted human's answer as approval (RT-6.11). The
+     worker gets advice and must ask again as an approval.
+   - Routing is not authority, the same split as ADR-004 step 1.
+2. **Modes, per home channel** (a crown per (agent, home), ADR-002):
+
+   | Mode | Where an ask goes |
+   |------|-------------------|
+   | `direct` | Today. Every ask goes to the responsible human. |
+   | `coordinator` | Workers ask their 👑. It answers questions itself and escalates the rest to the human, sorted by impact and by what it blocks, one ask at a time (the one-open-ask-per-human rule stays). |
+   | `delegated` | `coordinator` plus ADR-004. Approvals may go to another human, bounded by impact. Questions may go to a meta coordinator, e.g. a coordinator in the lobby (`MM_CHANNEL`) for cross-project coordination. It never approves. |
+
+   The mode applies to the asks of the agents whose home it is. A guest
+   channel has no mode of its own; an agent's asks follow its home.
+3. **Switching, at runtime, by a trusted human only.** Two sources are
+   possible:
+   - (a) a command in the home channel in a post marked `from_trusted_human`;
+   - (b) a registrar-signed record, like ADR-004's `/agent-delegate`, e.g.
+     `/agent-mode <home> direct|coordinator|delegated`, published beside the
+     delegations and verified against the pinned keys.
+
+   **Preferred: (b).** The mode is one fact per home that every agent in it
+   must read the same way. `from_trusted_human` is judged per session against
+   that session's own `MM_TRUSTED_HUMANS`: two agents in one home could
+   disagree on whether a post switched the mode. Finding the post across
+   channels is also the reason ADR-004 rejected a formatted post. A signed
+   record has one author, one verification and one revoke, and `delegated`
+   needs the registrar anyway. Cost: `direct` and `coordinator` then also
+   depend on the registrar; (a) stays a possible interim for those two, since
+   they carry no delegation. Who may set a home's mode (the owner of the home,
+   or any trusted human of it) is open.
+
+   The channel header is **not** a source of truth: any channel member can
+   edit it. The servers may *show* the mode in the header's bus part and in
+   `bus_info`, computed from the verified source. The default stays `direct`,
+   so nothing changes until a human switches.
+4. **Standing approvals are the main lever.** The coordinator never approves,
+   so approvals stay the bottleneck. The answer is an approval a human sets
+   once, limited in time and scope, for example "merge own PRs with green CI
+   in repo X, 8 h, impact low only". It is a record of the same kind as an
+   ADR-004 delegation: signed, bounded by impact, revocable. Every use lands in
+   the audit digest (ADR-004 step 7).
+   **The runtime's own permission layer is separate (RT-6.13).** A bus
+   approval does not satisfy the harness: Claude Code's auto mode, for
+   instance, refused `gh pr merge` that was approved over the bus (2026-11-01).
+   A standing approval therefore needs a matching harness permission rule on
+   the executing host, or the modes only relieve questions, never approvals.
+   This is a consequence, not a bug: the bus cannot and must not grant the
+   harness's permission.
+5. **Classification.** The worker declares the class (e.g. a `kind` of
+   `question` or `approval` on `ask_human`); the coordinator checks it. The
+   server derives from objective features (the action classes of ADR-004
+   step 5) a floor: an ask that names a merge, deploy, delete or external
+   write is an approval whatever the worker declared, and the coordinator
+   cannot downgrade it. Unclear defaults to approval.
+
+**Alternatives:** (a) More delegates only (ADR-004): helps while a human is
+away, not the volume. (b) Let the coordinator approve low impact: rejected,
+a steered coordinator would hold the approvals of a whole home; ADR-004's
+bounded exception already covers a narrow, signed case. (c) A mode in the
+channel header: rejected, any member can edit it. (d) One global mode: too
+coarse, a quiet home and a busy one need different settings.
+
+**Consequences:** Plus: the human sees fewer, better sorted asks; questions
+are answered where the context is; the default changes nothing. Minus: the
+coordinator is a single point of delay and a new prompt-injection target (it
+reads every worker's ask); a mode needs a signed record and a cache. Holds in
+every harness, corral or not, since the registrar route is the same. The
+coordinator's own asks go to the human (or the delegate), not to itself.
+
+**Risks created:** RISK-07
+
+**Open questions:**
+
+- Stall: when the coordinator is idle, RT-6.19's stall digest should nudge it
+  first, then fall back to `direct` for that ask after N minutes. The same
+  fallback applies when no coordinator is reachable (none holds the 👑, or its
+  status is stale).
+- Visibility: how the human sees what the coordinator answered. Proposal: its
+  answers to questions go into the digest next to delegate decisions
+  (ADR-004 step 7), each with the ask and the answer.
+- The identity of a delegate or a meta coordinator is trusted only through the
+  owner attestation of #83 (`via: enrollment`, `responsible` = the human).
+  Without a pinned registrar key, `delegated` stays off.
+- The exact `kind` parameter and the server's classification floor.
+- The meta coordinator: which agent, how it is named in the record, and
+  whether its answer to a question needs the asking home's coordinator to
+  relay it.
+- Standing approval syntax and its overlap with `--scope` of ADR-004.
