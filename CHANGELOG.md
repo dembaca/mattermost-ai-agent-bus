@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.65.8
+
+### Added
+
+- **Agents address their own channels by name; `bus_info` shows the ids**
+  ([RT-6.22](docs/arc42/06-runtime-view.md#622-guest-channels)).
+  `list_recent`, `post_message` and `reply_in_thread` took only a 26-character
+  channel id, which an agent with guest channels never saw. `channel_id` now
+  also takes the name (`~name`, any case) of the agent's home, a guest channel
+  or the lobby. Any other name is refused with the list of the agent's own
+  channels: names never widen what an agent can read or post to. `bus_info`
+  gains `channels: [{name, id, role}]` (`home`, `guest`, `lobby`; the lobby
+  once, as home, when it is the home); `home`, `guests` and `lobby` stay.
+
 ## 0.65.7
 
 ### Added

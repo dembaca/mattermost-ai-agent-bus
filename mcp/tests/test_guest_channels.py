@@ -475,3 +475,62 @@ async def test_the_lobby_as_home_behaves_as_before(chat):
     assert [(e.kind, e.lobby) for e in events] == [("watched_channel", False)]
     item = {"kind": "watched_channel", channel.CHANNEL_ID: WORK, "post": {"message": "lunch"}}
     assert channel.wakes(item, coordinator=True, in_my_thread=False, routes={WORK})
+
+
+# --- channels by name (RT-6.22 step 4) --------------------------------------------------
+
+async def _own(chat, monkeypatch):
+    monkeypatch.setattr(server, "_get_client", lambda: chat)
+    monkeypatch.setattr(server, "_inbox", None)
+    chat.work_channel_name = "agents"
+    chat.lobby = LOBBY
+    chat.channel_name = "lobby"
+
+    async def work():
+        return WORK
+    chat.work_channel_id = work
+
+    async def recent(channel_id=None, **kw):
+        chat.read = channel_id
+        return []
+    chat.list_recent = recent
+
+
+@pytest.mark.parametrize("given,cid", [
+    ("agents", WORK), ("~Agents", WORK), ("guest-a", GUEST), ("~GUEST-A", GUEST),
+    ("lobby", LOBBY), ("~lobby", LOBBY), (GUEST, GUEST)])
+async def test_tools_take_own_channel_names_or_ids(chat, monkeypatch, given, cid):
+    await _own(chat, monkeypatch)
+    await server.list_recent(channel_id=given)
+    assert chat.read == cid
+    await server.post_message("STATUS · x", channel_id=given)
+    assert chat.posted[-1]["channel_id"] == cid
+    await server.reply_in_thread("r" * 26, "STATUS · y", channel_id=given)
+    assert chat.posted[-1]["channel_id"] == cid
+
+
+async def test_a_foreign_channel_name_is_refused_with_the_own_ones(chat, monkeypatch):
+    await _own(chat, monkeypatch)
+    want = 'unknown channel "foo": yours are agents (home), guest-a (guest), lobby (lobby)'
+    n = len(chat.posted)
+    for out in (await server.list_recent(channel_id="~foo"),
+                await server.post_message("STATUS · x", channel_id="foo"),
+                await server.reply_in_thread("r" * 26, "STATUS · y", channel_id="foo")):
+        assert json.loads(out)["refused"] == want
+    assert len(chat.posted) == n and not hasattr(chat, "read")
+
+
+async def test_bus_info_lists_channels_with_ids_and_roles(chat, monkeypatch):
+    await _own(chat, monkeypatch)
+    info = json.loads(await server.bus_info())
+    assert info["channels"] == [{"name": "agents", "id": WORK, "role": "home"},
+                                {"name": "guest-a", "id": GUEST, "role": "guest"},
+                                {"name": "lobby", "id": LOBBY, "role": "lobby"}]
+    assert info["home"] == "agents" and info["guests"] == ["guest-a"]
+
+
+async def test_a_lobby_that_is_the_home_is_listed_once(chat, monkeypatch):
+    await _own(chat, monkeypatch)
+    chat.lobby = WORK
+    info = json.loads(await server.bus_info())
+    assert [(c["name"], c["role"]) for c in info["channels"]] == [("agents", "home"), ("guest-a", "guest")]
