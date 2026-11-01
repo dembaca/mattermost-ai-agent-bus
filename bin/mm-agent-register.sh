@@ -48,7 +48,8 @@ RESP="$(mm_json_post "$REG_URL" "$MM_REG_SECRET" \
        --arg k "$KIND" --argjson t "$(mm_trusted_names | jq -R . | jq -sc .)" '
      {name:$n, display_name:$d, kind:$k}
      + (if $r != "" then {responsible:$r} else {} end)
-     + (if ($t | length) > 0 then {trusted:$t} else {} end)')")"
+     + (if ($t | length) > 0 then {trusted:$t} else {} end)')" \
+  "register failed")"
 
 # The answer holds the bot token: to jq through a pipe from the builtin printf,
 # never a here-string (bash up to 5.0, macOS's 3.2 among them, writes those to a
@@ -62,7 +63,7 @@ URL="${URL:-$CHAT_URL}"
 
 if [[ -z "$BOT_TOKEN" || -z "$USER_NAME" ]]; then
   # The registrar's own words only, never the body; an HTTP error curl has
-  # reported already (mm_json_post fails on one).
+  # reported already (mm_json_post fails on one and says why).
   why="$(printf '%s' "$RESP" | jq -r '(.message // .error // empty) | tostring' 2>/dev/null |
          head -c 200 | tr -cd '[:print:]')" || why=""
   echo "register failed: the registrar's answer has no bot_token or username${why:+ (${why})}" >&2

@@ -66,6 +66,7 @@ class FakeMattermost:
     bot_description: str | None = None  # the bot's profile; None: not in its user object
     prefix: str = "agent-"  # the registrar's BOT_USERNAME_PREFIX (arc42 §7.1)
     register_reply: dict | None = None  # the registrar's answer instead of a bot
+    register_error: tuple[int, str] | None = None  # the registrar's refusal: status, plain text
     missing: set[str] = field(default_factory=set)  # channel names answered with 404
     url: str = ""
 
@@ -186,6 +187,14 @@ def _handler(fake: FakeMattermost):
             if (p.startswith("/register/v1/agents/") and self.command == "DELETE"
                     and self.headers.get("Authorization") != "Bearer bot-token-for-tests"):
                 return self._send({"message": "unauthorized"}, 401)
+            if p == "/register/v1/agents" and self.command == "POST" and fake.register_error:
+                code, text = fake.register_error
+                b = text.encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                return self.wfile.write(b)
             if p == "/register/v1/agents" and self.command == "POST" and fake.register_reply:
                 return self._send(fake.register_reply)
             if p == "/register/v1/agents" and self.command == "POST":
