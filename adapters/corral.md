@@ -163,6 +163,11 @@ Deliberately **not** contributed:
   the sandbox therefore has no token; the agent uses the MCP tools. A plugin older than
   0.39.0 in the sandbox does not know the relay: it gets no MCP bus until updated
   (`/plugin update`, then restart the session) ([arc42 §6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)).
+- `MM_BOT_ATTESTATION` — the registrar's signed owner claim. Not a secret, but the
+  sandbox has no use for it: it goes to the session's MCP server on the host, which
+  checks it against `MM_REGISTRAR_KEYS` (set on the host, next to
+  `MM_TRUSTED_HUMANS`) and publishes it on the bot's account
+  ([arc42 §6.24](../docs/arc42/06-runtime-view.md#624-owner-attestation)).
 - `MM_REG_BOT_NAME` — the registrar's short name for the bot (the username without
   its prefix). Not a secret: the registrar deletes a bot only with `MM_REG_SECRET` or that
   bot's own token, so from inside the sandbox an agent can remove at most its own bot.

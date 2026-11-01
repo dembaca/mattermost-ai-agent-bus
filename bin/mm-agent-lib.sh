@@ -340,7 +340,7 @@ mm_load_env_file() {
     local key="${line%%=*}"
     local val="${line#*=}"
     case "$key" in
-      MM_CHAT_URL|MM_REG_BOT_NAME|MM_BOT_USERNAME|MM_AGENT_PREFIX|MM_BOT_USER_ID|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_TEAM|MM_CHANNEL|MM_PROJECT_CHANNEL)
+      MM_CHAT_URL|MM_REG_BOT_NAME|MM_BOT_USERNAME|MM_AGENT_PREFIX|MM_BOT_USER_ID|MM_BOT_ATTESTATION|MM_BOT_TOKEN|MATTERMOST_URL|MATTERMOST_TOKEN|MM_TEAM|MM_CHANNEL|MM_PROJECT_CHANNEL)
         export "$key=$val"
         ;;
     esac
@@ -741,6 +741,14 @@ export MATTERMOST_URL=$(printf '%q' "${MATTERMOST_URL:-${MM_CHAT_URL:-}}")
 ${x:+$x }MATTERMOST_TOKEN=$(printf '%q' "${MATTERMOST_TOKEN:-${MM_BOT_TOKEN:-}}")
 export MM_AGENT_SESSION_FILE=$(printf '%q' "$(mm_session_file)")
 EOF
+  # The registrar's signed owner claim (RT-6.24), only when it sent one.
+  [[ -z "${MM_BOT_ATTESTATION:-}" ]] || printf 'export MM_BOT_ATTESTATION=%q\n' "$MM_BOT_ATTESTATION"
+}
+
+# A registrar attestation has the shape of a compact JWS: three base64url
+# segments, at most 8192 characters (RT-6.24; the MCP server checks the rest).
+mm_attestation_shape() {
+  [[ ${#1} -le 8192 && "$1" =~ ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$ ]]
 }
 
 mm_write_session_file() {
@@ -755,6 +763,7 @@ MM_REG_BOT_NAME=${MM_REG_BOT_NAME:-}
 MM_BOT_USERNAME=${MM_BOT_USERNAME:-}
 MM_AGENT_PREFIX=$(mm_agent_prefix)
 MM_BOT_USER_ID=${MM_BOT_USER_ID:-}
+${MM_BOT_ATTESTATION:+MM_BOT_ATTESTATION=${MM_BOT_ATTESTATION}}
 MM_BOT_TOKEN=${MM_BOT_TOKEN:-}
 MATTERMOST_URL=${MATTERMOST_URL:-${MM_CHAT_URL:-}}
 MATTERMOST_TOKEN=${MATTERMOST_TOKEN:-${MM_BOT_TOKEN:-}}

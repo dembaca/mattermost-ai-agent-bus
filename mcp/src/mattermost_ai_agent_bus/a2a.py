@@ -5,7 +5,8 @@ identity is a subset of an A2A AgentCard, a task's state an A2A TaskState.
 Both live in Mattermost post props, which only the MCP server writes and
 reads; slim posts never carry them, so no model reads them unasked.
 
-    props.agent_card  on the HELLO post (announce)
+    props.agent_card  on the HELLO post (announce); its `attestation` is the
+                      registrar's signed owner claim (RT-6.24)
     props.a2a         {"v": 1, "kind": <word>?, "state": <TaskState>?,
                        "intent": "action" | "reply" | "fyi"?, "to": "all"?,
                        "pr": <number>?, "branch": <name>?, "crown": true?}
@@ -273,8 +274,10 @@ def card(
     trusted: list[str] | None = None,
     push: bool = False,
     relay: bool = False,
+    attestation: str = "",
 ) -> dict[str, Any]:
-    """The agent's card: A2A field names where A2A has them, the rest in meta."""
+    """The agent's card: A2A field names where A2A has them, the rest in meta;
+    `attestation`, the registrar's signed owner claim, beside them (RT-6.24)."""
     caps: dict[str, Any] = {"pushNotifications": push}
     if relay:
         caps["extensions"] = [{"uri": "urn:mm-agent-bus:permission-relay"}]
@@ -282,7 +285,8 @@ def card(
             "kind": kind, "for": responsible or "", "trusts": trusted or []}
     return {"v": V, "name": name, "description": task, "version": version,
             "skills": skills(capabilities), "capabilities": caps,
-            "meta": {k: v for k, v in meta.items() if v}}
+            "meta": {k: v for k, v in meta.items() if v},
+            **({"attestation": attestation} if attestation else {})}
 
 
 # The HELLO announce writes (RT-6.14 step 1): `` `HELLO` · **<task>** ``, a

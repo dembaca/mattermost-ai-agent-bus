@@ -11,7 +11,7 @@ code does today and point here where a decision will change them.
 |-----|----------|--------|--------------------------|
 | ADR-001 | Authority comes from trust, not from a role or a channel | Decided 2026-10-29, built (WP2, 0.60.0; WP6, 0.64.0) | WP2, WP6 |
 | ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, built (WP1, 0.59.0; WP4, 0.62.0; WP5, 0.63.0; WP6, 0.64.0) | WP1, WP4, WP5, WP6 |
-| ADR-003 | An agent's owner comes from its registrar-bound bot description | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) parked | WP2, WP3, WP6 |
+| ADR-003 | An agent's owner comes from its registrar-bound bot description, or from the registrar's signed claim where its keys are pinned | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) built on the bus side in 0.66.0 (RT-6.24) | WP2, WP3, WP6, #83 |
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
@@ -166,8 +166,12 @@ home and counts everywhere, as today, until that agent upgrades.
 since WP2 (0.60.0, RT-6.16 step 1), bound by enrollment tokens in WP3
 (registrar 0.2.0, the bus's native-owner check in 0.61.0). 0.64.0 (WP6)
 warns at session start when the own bot's owner is not its responsible
-human (RT-6.16 step 1). The signed registrar claim (#83) stays parked
-(RISK-03).
+human (RT-6.16 step 1). The signed registrar claim (#83) is built on the
+bus side in 0.66.0 (RT-6.24): carried from the registration to the MCP server,
+verified against keys pinned in `MM_REGISTRAR_KEYS`, published on the bot's
+account and in its HELLO card, and used for other agents' owners; without
+pinned keys nothing changes. The registrar's side (signing, `…/keys`) is
+built in its own repository; rolling it out waits for a plan.
 
 **Context:** ADR-001 needs each agent's owner and trusted humans. The
 registrar already writes them into the bot description as
@@ -210,9 +214,26 @@ human (Section 7.3, "The profile says whom an agent answers to").
 - **Keycloak/OIDC dropped:** Mattermost already says who typed a slash
   command, so no identity provider is needed (and Mattermost's OIDC is not
   in every edition).
-- **#83 stays parked:** a signed claim adds protection only against an
-  untrusted Mattermost admin or federated instances. It proves no more than
-  the binding does for a self-registered session.
+- **The signed claim (#83, built in 0.66.0, RT-6.24):** the registrar signs
+  what it registered (`bot_id`, `username`, `responsible`, `trusted`,
+  `trusted_cut`, `kind`, `via`, `iat`, `exp`) with Ed25519 and returns it as
+  `attestation`. The bus pins the registrar's public keys in
+  `MM_REGISTRAR_KEYS` and never fetches them at runtime
+  (`mm-agent-registrar-keys.sh` shows them for comparing out of band). Each
+  MCP server checks its own attestation at start against its settings (a
+  difference is a warning; the environment stays authoritative for the own
+  session) and publishes it in its bot's user props, where the read that
+  fetches the description finds it, and in its HELLO card. For another agent
+  a valid attestation replaces the description; where they disagree, the
+  attestation wins. `via: enrollment` counts as signed, whatever the native
+  owner says, so an untrusted admin who reassigns `owner_id` or rewrites a
+  description no longer changes an attested agent's owner. `via: secret` is
+  only the caller's claim, and an attestation never makes an agent more
+  trusted than it is without one (decided 2026-11-01): its owner counts only
+  where a readable native owner agrees, otherwise the agent has no owner and
+  is foreign, as an `unbound` one is. A cut list
+  (`trusted_cut`) is foreign. Invalid, expired or under a key that is not
+  pinned: the description decides, as before.
 - **Trust assumptions (Section 7.3):** only the registrar creates bots with
   its prefix; only the registrar account and system admins edit bot
   descriptions and owners. With `read_others_bots` granted, the bus checks
@@ -227,12 +248,15 @@ human (Section 7.3, "The profile says whom an agent answers to").
 **Alternatives:** Per-user registration secrets handed out by the operator:
 no proof of who uses them. Keycloak/OIDC login: an extra dependency. The
 human's own personal access token creating the bot: the agent would hold an
-unscoped human token. The signed registrar claim now (#83): more key
-material on every host for no gain on one self-hosted instance. Owner from a
-session setting: anyone could write anything.
+unscoped human token. Owner from a session setting: anyone could write
+anything. For the signed claim: trusting the registrar's key endpoint at
+runtime (rejected: whoever answers it would vouch for itself); the
+attestation only in the HELLO card (rejected: an agent's owner is read from
+its account, which every server reads anyway, and a HELLO can be missing).
 
-**Consequences:** No new key material on the hosts. The peer rule is only as
-sound as the binding: while the shared secret is allowed, its holders
+**Consequences:** No secret key material on the hosts: only the registrar's
+public keys, pinned by the operator. The peer rule is only as sound as the
+binding: while the shared secret is allowed, its holders
 register unbound bots, foreign to everyone. Deactivating a human disables
 their bound bots (Mattermost's `DisableBotsWhenOwnerIsDeactivated`).
 

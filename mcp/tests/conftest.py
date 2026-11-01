@@ -18,6 +18,8 @@ _BUS_ENV = (
     "MM_BOT_USERNAME",
     "MM_AGENT_PREFIX",
     "MM_BOT_USER_ID",
+    "MM_BOT_ATTESTATION",
+    "MM_REGISTRAR_KEYS",
     "MM_TEAM",
     "MM_TEAM_ID",
     "MM_CHANNEL",
@@ -42,6 +44,11 @@ def _isolate_bus_env(monkeypatch, tmp_path):
     from mattermost_ai_agent_bus import session_file
 
     monkeypatch.setattr(session_file, "_hosted_dir", None)
+    # What the attestation code remembers per process (RT-6.24).
+    from mattermost_ai_agent_bus import attest, owners
+
+    attest._started.clear()
+    owners._noted.clear()
     yield
     # monkeypatch restores the real environment itself; session_start also writes
     # into os.environ, so make sure nothing leaks into the next test.

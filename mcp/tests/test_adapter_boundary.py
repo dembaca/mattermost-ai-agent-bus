@@ -28,7 +28,7 @@ ALLOWED = {
 CARRIERS = {
     "props", "a2a", "agent_card", "attachments", "from_webhook",
     "last_viewed_at", "last_post_at", "msg_count", "mention_count", "total_msg_count",
-    "bot_description",
+    "bot_description", "agent_attestation",
 }
 # Roster keys, only as a read (x["crown"], x.get("crown")): a bus value may be
 # named the same. A reaction's emoji is a bus value; the status emoji's word
@@ -51,7 +51,7 @@ POST_KEYS_ALLOWED = {
 
 # Modules that reach the chat through port.ChatPort only, never client.py.
 PORT_MODULES = {"gate.py", "lease.py", "slim.py", "files.py", "departed.py", "remind.py", "stall.py",
-                "ownpost.py", "stats.py", "unread.py"}
+                "ownpost.py", "stats.py", "unread.py", "attest.py"}
 
 
 def _key(node: ast.AST) -> str | None:

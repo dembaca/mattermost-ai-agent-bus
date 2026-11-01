@@ -18,7 +18,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import a2a, asks, links, owners, ownpost, profile, session_file, stats, watermark
+from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, stats, watermark
 from .model import Channel, ChannelUser, FileInfo, Me, Post, Reaction, Thread, UnreadChannel
 
 if TYPE_CHECKING:
@@ -229,6 +229,10 @@ _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 
 # A bot description (its owner and trusted list, ADR-003) is read again after this.
 DESCRIPTION_TTL_SEC = 600.0
+# The bot's own user prop that carries the registrar's attestation (RT-6.24).
+ATTESTATION_PROP = "agent_attestation"
+# Three base64url segments, as the registrar sends it (attest.py checks the rest).
+_ATTESTATION_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 _ID = re.compile(r"[a-z0-9]{26}")
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 
@@ -363,6 +367,8 @@ class SessionInfo:
     username: str
     user_id: str
     bot_token: str
+    # The registrar's signed owner claim (RT-6.24); '' when it sent none.
+    attestation: str = ""
 
     @property
     def prefix(self) -> str:
@@ -415,6 +421,9 @@ class MattermostAdapter:
     # user id -> (when read, its owner as agent_owner gives it), ADR-003, WP3.
     _owners: dict[str, tuple[float, str | None]] = field(
         default_factory=dict, repr=False, init=False)
+    # user id -> the attestation its user props carry ('' none), read with
+    # its description (RT-6.24); missing: its user object was not read.
+    _attestations: dict[str, str] = field(default_factory=dict, repr=False, init=False)
     # RT-6.21: lower-case username -> (when read, its bot account; None: none),
     # and (channel id, user id) -> (when read, a member).
     _named: dict[str, tuple[float, ChannelUser | None]] = field(
@@ -570,12 +579,15 @@ class MattermostAdapter:
         )
         resp.raise_for_status()
         data = resp.json()
+        signed = data.get("attestation")
         info = SessionInfo(
             url=(data.get("url") or self.base_url).rstrip("/"),
             name=name,
             username=data["username"],
             user_id=data["user_id"],
             bot_token=data["bot_token"],
+            attestation=(signed if isinstance(signed, str) and len(signed) <= attest.MAX_LEN
+                         and _ATTESTATION_RE.fullmatch(signed) else ""),
         )
         self._take(info)
         self.profile_warning = await self._profile_warning(info, fields.get("trusted", []))
@@ -586,8 +598,12 @@ class MattermostAdapter:
         (RT-6.8), is the bot bound to an owner (RT-6.16 step 1), and is that
         owner the responsible human (agent_owner, ADR-003)? '' when all hold,
         or when it cannot be read; never fails. Only a warning: nothing else
-        changes."""
-        texts: list[str] = []
+        changes. A valid attestation replaces this read-back: its claims are
+        compared instead (RT-6.24 step 2); an invalid one is warned about."""
+        own = attest.check_own(info.attestation, bot_id=info.user_id, username=info.username)
+        if own.status == attest.VALID:
+            return "; ".join(own.warnings)
+        texts: list[str] = list(own.warnings)
         mismatch = profile.owner_warning(info.username, await self.agent_owner(info.user_id) or "",
                                          responsible_human())
         if mismatch:
@@ -616,7 +632,10 @@ class MattermostAdapter:
                                    else DESCRIPTION_TTL_SEC / 10):
             return hit[1]
         description = await self.bot_description(user_id)
-        owner = owners.decide(await self._native_owner(user_id), description, user_id)
+        claim = await owners.attested(self, user_id)
+        native = (None if claim is not None and claim.via == attest.ENROLLMENT
+                  else await self._native_owner(user_id))
+        owner = owners.decide(native, description, user_id, claim)
         self._owners[user_id] = (now, owner)
         return owner
 
@@ -652,12 +671,15 @@ class MattermostAdapter:
             mm_id(user_id, "user")
         except InvalidId:
             return None
+        self._attestations.pop(user_id, None)
         for path, key in ((f"/api/v4/users/{user_id}", "bot_description"),
                           (f"/api/v4/bots/{user_id}", "description")):
             try:
                 data = await self._api("GET", path)
             except Exception:  # noqa: BLE001 — not readable: try the next
                 continue
+            if isinstance(data, dict) and path.startswith("/api/v4/users/"):
+                self._read_account(user_id, data)
             if isinstance(data, dict) and isinstance(data.get(key), str):
                 description = data[key]
                 break
@@ -667,10 +689,46 @@ class MattermostAdapter:
         self._descriptions[user_id] = (now, description)
         return description
 
+    def _read_account(self, user_id: str, user: Mapping[str, Any]) -> None:
+        """What a bot's user object says besides its description: its
+        username and the attestation in its props (RT-6.24 step 5)."""
+        if isinstance(user.get("username"), str):
+            self._usernames[user_id] = user["username"]
+        props = user.get("props")
+        signed = props.get(ATTESTATION_PROP) if isinstance(props, Mapping) else None
+        self._attestations[user_id] = signed if isinstance(signed, str) else ""
+
+    async def agent_attestation(self, user_id: str) -> str | None:
+        """The registrar's attestation the bot put into its own user props
+        (RT-6.24 step 5), read with its description and cached alike; '' when
+        it carries none, None when its user object cannot be read."""
+        await self.bot_description(user_id)
+        return self._attestations.get(user_id)
+
+    async def publish_attestation(self, token: str) -> bool:
+        """Put this bot's attestation into its own user props (RT-6.24 step 3).
+        Mattermost's user patch replaces the whole props map, so the props as
+        they are now are read first and sent back with it: the custom status
+        (the lease, lease.py) is one of them, and the caller holds the lease's
+        lock. False when the props carry it already."""
+        me = await self.get_me()
+        uid = mm_id(me.id, "user")
+        user = await self._api("GET", f"/api/v4/users/{uid}")
+        current = user.get("props") if isinstance(user, dict) else None
+        props = dict(current) if isinstance(current, Mapping) else {}
+        if props.get(ATTESTATION_PROP) == token:
+            return False
+        props[ATTESTATION_PROP] = token
+        await self._api("PUT", f"/api/v4/users/{uid}/patch", json={"props": props})
+        self._descriptions.pop(uid, None)
+        self._owners.pop(uid, None)
+        return True
+
     def _take(self, info: SessionInfo) -> None:
         """Make ``info`` this process's bot and hand it to the hooks."""
         self._descriptions.clear()
         self._owners.clear()
+        self._attestations.clear()
         self.base_url = info.url
         self.token = info.bot_token
         self.session = info
@@ -687,6 +745,10 @@ class MattermostAdapter:
         os.environ["MM_BOT_USER_ID"] = info.user_id
         os.environ["MM_BOT_TOKEN"] = info.bot_token
         os.environ["MATTERMOST_TOKEN"] = info.bot_token
+        if info.attestation:  # RT-6.24: the server checks and publishes it
+            os.environ[attest.ENV] = info.attestation
+        else:
+            os.environ.pop(attest.ENV, None)
         self.session_file_status: dict[str, Any]
         try:
             path = session_file.write(info, self.team_name, self.channel_name,
@@ -728,7 +790,8 @@ class MattermostAdapter:
         info = SessionInfo(url=url, name=data["MM_REG_BOT_NAME"],
                            username=data.get("MM_BOT_USERNAME", ""),
                            user_id=data.get("MM_BOT_USER_ID", ""),
-                           bot_token=data["MM_BOT_TOKEN"])
+                           bot_token=data["MM_BOT_TOKEN"],
+                           attestation=data.get(attest.ENV, ""))
         self._take(info)  # rewrites the file: MM_SESSION_PID is this server's parent now
         self.adopted = True
         return info
