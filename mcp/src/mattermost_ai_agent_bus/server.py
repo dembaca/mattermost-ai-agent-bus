@@ -21,7 +21,7 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import (
     a2a, asks, attest, channel, files, gate, hookapi, lease, overhead, owners, ownpost, permission, profile,
-    session_file, slim, stall, stats, tasks,
+    session_file, slim, stall, stats, tasks, unread,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
 from .model import Post
@@ -303,6 +303,14 @@ def _stall_waits() -> bool:
 
 
 stall.sink, stall.waiting = _stall_event, _stall_waits
+
+
+def _inbox_edits() -> list[unread.Pending]:
+    """The queued edits that made a post name this agent (RT-6.12 step 3), for the hooks' count."""
+    return _inbox.edits() if _inbox is not None else []
+
+
+hookapi.edits = _inbox_edits
 
 
 async def _my_id(client: MattermostAdapter) -> str:

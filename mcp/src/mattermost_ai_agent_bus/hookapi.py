@@ -480,14 +480,32 @@ async def watched(client: MattermostAdapter) -> set[str]:
     return await watched_channel_ids(client)
 
 
+def _no_edits() -> list[unread.Pending]:
+    return []
+
+
+# Set by server.py: the edits that made a post name this agent, still queued in
+# the inbox (WebSocketInbox.edits, RT-6.12 step 3). Their posts are behind the
+# read watermark, which unread.channels reads from.
+edits: Callable[[], list[unread.Pending]] = _no_edits
+
+
 async def counted(client: MattermostAdapter) -> list[unread.Pending]:
     """What waits for the agent (RT-6.2 step 1): in a guest channel only a
-    mention or a reply in its own thread there (RT-6.22)."""
+    mention or a reply in its own thread there (RT-6.22); and the queued edits
+    that made a post name it (RT-6.12 step 3), each post once."""
     guests = await guest_ids(client)
     if not guests:
-        return await unread.channels(client, await watched(client))
-    return await unread.channels(client, await watched(client), guests=guests,
-                                 threads=ownpost.guest_threads(await _uid(client)))
+        rows = await unread.channels(client, await watched(client))
+    else:
+        rows = await unread.channels(client, await watched(client), guests=guests,
+                                     threads=ownpost.guest_threads(await _uid(client)))
+    have = {p.id for row in rows for p in row.posts}
+    for row in edits():
+        posts = [p for p in row.posts if p.id not in have]
+        if posts:
+            rows.append(unread.Pending(row.channel, len(posts), posts))
+    return rows
 
 
 async def _channel(client: MattermostAdapter, chan: str) -> str:

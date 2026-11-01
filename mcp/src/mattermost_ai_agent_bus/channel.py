@@ -295,6 +295,8 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
         meta["expired"] = "true"  # RT-6.11: too late to approve
     if attached := files.attribute(post.get("files")):
         meta["files"] = attached  # RT-6.23: get_file(<id>) fetches one
+    if post.get("edited"):
+        meta["edited"] = "true"  # RT-6.12 step 3: the text is the edited one
     # RT-6.12 step 3: the body cut at slim.BODY_MAX, the rest via get_thread.
     # A reaction's id names no post; its text is an emoji.
     pid = "" if item.get("kind") == "reaction" else str(post.get("id") or "")

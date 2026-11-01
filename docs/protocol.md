@@ -220,7 +220,7 @@ disables it, a missing channel is skipped) at its end: counts, sizes and seconds
 ## Polling vs WebSocket
 
 - **CLI poll** (`mm-agent-poll.sh`) — JSON lines from the session's MCP server (`GET /v1/posts?since=`).
-- **MCP inbox** — Mattermost WebSocket `posted` events with classification filter.
+- **MCP inbox** — Mattermost WebSocket `posted` events with classification filter, and `post_edited` when an edit makes a post name the agent ([RT-6.12](arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel) step 3).
 
 Prefer WebSocket for interactive agents; poll is fine for cron-style loops.
 
