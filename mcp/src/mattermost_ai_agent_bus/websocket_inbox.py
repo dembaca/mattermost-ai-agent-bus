@@ -16,7 +16,7 @@ from websockets.asyncio.client import connect as ws_connect
 from . import a2a, asks, departed, gate, lease, ownpost, unread, watermark
 from .client import (MattermostAdapter, guest_ids, lobby_ids, post_of, reaction_of, read_links,
                      watched_channel_ids, with_links, ws_url_from_http)
-from .model import Channel, Post, Reaction
+from .model import Channel, Post, Reaction, UnreadChannel
 
 log = logging.getLogger(__name__)
 
@@ -38,11 +38,21 @@ class ClassifiedEvent:
     guest: bool = False
     # RT-6.22 step 3: the post is in the lobby (MM_CHANNEL), which is not the home.
     lobby: bool = False
+    # RT-6.12 step 3: a post_edited that made the post name this bot. Its post
+    # is behind the read watermark: it neither holds the mark nor waits by it;
+    # the hooks' count adds it (edits()).
+    edited: bool = False
 
 
 # WebSocket events that change the bot's channels (RT-6.22): the watched and
 # guest channels are read again when they name the bot.
 MEMBERSHIP = ("user_added", "user_removed")
+
+# RT-6.12 step 3: Mattermost sends an edit as post_edited (same id, edit_at
+# set). It wakes the bot only when it made the post a mention or DM to it,
+# once per post, and only within a day of the post.
+EDITED = "post_edited"
+ADDRESSED = ("mention", "dm")
 
 
 def classify_post(
@@ -77,6 +87,12 @@ def classify_post(
     return None
 
 
+def _channel_type(event: ClassifiedEvent) -> str:
+    """D, G, O or P, as the WebSocket or the channel read named it; O for neither."""
+    data = (event.raw or {}).get("data") or {}
+    return (event.channel.type if event.channel else "") or data.get("channel_type") or "O"
+
+
 @dataclass
 class WebSocketInbox:
     client: MattermostAdapter
@@ -105,6 +121,10 @@ class WebSocketInbox:
     # Post ids already queued. Backfill and the live stream overlap around the
     # moment the socket opens, so without this a message can be delivered twice.
     _seen_ids: set[str] = field(default_factory=set, repr=False, init=False)
+    # Post ids queued as a mention or DM (RT-6.12 step 3): an edit of one wakes
+    # nobody again, a typo fix included. In memory: a new server knows none,
+    # so an edit wakes only for a post less than a day old (unread.DAY_MS).
+    _addressed: set[str] = field(default_factory=set, repr=False, init=False)
     # The queue read of the wait_for_events call in progress. A runtime that
     # moved an earlier call to the background (Claude Code does after ~120 s)
     # leaves it pending; the newest call takes over, so a forgotten listener
@@ -247,6 +267,8 @@ class WebSocketInbox:
                 if post.id in self._seen_ids:
                     continue
                 self._seen_ids.add(post.id)
+                if kind in ADDRESSED:
+                    self._addressed.add(post.id)
                 event = ClassifiedEvent(kind=kind, post=post,
                                         guest=post.channel_id in self.guest_channel_ids,
                                         lobby=post.channel_id in self.lobby_channel_ids)
@@ -325,52 +347,8 @@ class WebSocketInbox:
                 if msg.get("event") in MEMBERSHIP:
                     await self._on_membership(msg)
                     continue
-                if msg.get("event") != "posted":
-                    continue
-                data = msg.get("data") or {}
-                post_raw = data.get("post")
-                if isinstance(post_raw, str):
-                    try:
-                        found = json.loads(post_raw)
-                    except json.JSONDecodeError:
-                        continue
-                elif isinstance(post_raw, dict):
-                    found = post_raw
-                else:
-                    continue
-                if not isinstance(found, dict) or not found:
-                    continue
-                # RT-6.15: the bus's permalinks as bare ids, odd links written out.
-                post = post_of(read_links(found, getattr(self.client, "permalink_base", "")))
-                channel_type = data.get("channel_type")
-                channel = None
-                cid = post.channel_id
-                if cid and not channel_type:
-                    try:
-                        channel = await self._channel(cid)
-                        channel_type = channel.type or None
-                    except Exception:  # noqa: BLE001
-                        channel = None
-                kind = classify_post(
-                    post,
-                    bot_user_id=self._bot_user_id,
-                    bot_username=self._bot_username,
-                    channel_type=channel_type,
-                    watched_channel_ids=self.watched_channel_ids,
-                )
-                if not kind or await self._drop(post, kind):
-                    continue
-                pid = post.id
-                if pid:
-                    if pid in self._seen_ids:
-                        continue
-                    self._seen_ids.add(pid)
-                event = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=msg,
-                                        guest=cid in self.guest_channel_ids,
-                                        lobby=cid in self.lobby_channel_ids)
-                await self._gate(event, channel_type)
-                await self._departed(event)
-                await self._put(event)
+                if msg.get("event") in ("posted", EDITED):
+                    await self._on_post(msg)
         except asyncio.CancelledError:
             # close() cancels us and owns the socket from here on.
             raise
@@ -382,6 +360,71 @@ class WebSocketInbox:
         # the agent goes deaf with no error anywhere.
         self._ws = None
         self._reader = None
+
+    async def _on_post(self, msg: dict[str, Any]) -> None:
+        """A post from the stream, new (`posted`) or edited (`post_edited`):
+        classified, dropped (RT-6.22), gated (RT-6.16) and queued alike."""
+        data = msg.get("data") or {}
+        post_raw = data.get("post")
+        if isinstance(post_raw, str):
+            try:
+                found = json.loads(post_raw)
+            except json.JSONDecodeError:
+                return
+        elif isinstance(post_raw, dict):
+            found = post_raw
+        else:
+            return
+        if not isinstance(found, dict) or not found:
+            return
+        # RT-6.15: the bus's permalinks as bare ids, odd links written out.
+        post = post_of(read_links(found, getattr(self.client, "permalink_base", "")))
+        edited = msg.get("event") == EDITED
+        if edited and not self._edit_may_wake(post):
+            return
+        channel_type = data.get("channel_type")
+        channel = None
+        cid = post.channel_id
+        if cid and not channel_type:
+            try:
+                channel = await self._channel(cid)
+                channel_type = channel.type or None
+            except Exception:  # noqa: BLE001
+                channel = None
+        kind = classify_post(
+            post,
+            bot_user_id=self._bot_user_id,
+            bot_username=self._bot_username,
+            channel_type=channel_type,
+            watched_channel_ids=self.watched_channel_ids,
+        )
+        if not kind or await self._drop(post, kind):
+            return
+        pid = post.id
+        if edited:
+            # RT-6.12 step 3: an edit that leaves the post a channel post wakes
+            # nobody; one queued as a channel post before may still wake.
+            if kind not in ADDRESSED:
+                return
+        elif pid and pid in self._seen_ids:
+            return
+        if pid:
+            self._seen_ids.add(pid)
+            if kind in ADDRESSED:
+                self._addressed.add(pid)
+        event = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=msg, edited=edited,
+                                guest=cid in self.guest_channel_ids,
+                                lobby=cid in self.lobby_channel_ids)
+        await self._gate(event, channel_type)
+        await self._departed(event)
+        await self._put(event)
+
+    def _edit_may_wake(self, post: Post) -> bool:
+        """RT-6.12 step 3: an edit wakes at most once per post, never for one
+        already queued as a mention or DM, and only within a day of the post:
+        a new server remembers none of them."""
+        return bool(post.id and post.edit_at and post.id not in self._addressed
+                    and post.create_at > time.time() * 1000 - unread.DAY_MS)
 
     async def _on_reaction_event(self, msg: dict[str, Any]) -> None:
         raw = (msg.get("data") or {}).get("reaction")
@@ -541,11 +584,24 @@ class WebSocketInbox:
         return any(e.post.channel_id == channel_id and not e.gated
                    for e in list(self._queue._queue))  # type: ignore[attr-defined]  # see waits()
 
+    def edits(self) -> list[unread.Pending]:
+        """The queued edits that made a post name this bot (RT-6.12 step 3),
+        not gated, per channel. Their posts are behind the read watermark the
+        count reads from (RT-6.2 step 1), so the hooks' count adds them
+        (hookapi.counted): the Stop hook drains them, the listener wakes."""
+        found: dict[str, list[ClassifiedEvent]] = {}
+        for e in list(self._queue._queue):  # type: ignore[attr-defined]  # see waits()
+            if e.edited and not e.gated:
+                found.setdefault(e.post.channel_id, []).append(e)
+        return [unread.Pending(UnreadChannel(cid, _channel_type(events[0])), len(events),
+                               [e.post for e in events]) for cid, events in found.items()]
+
     def _first_waiting(self, channel_id: str) -> int | None:
         """create_at of the oldest post of the channel that waits in the queue
         unhandled (not gated), None for none."""
         ats = [e.post.create_at for e in list(self._queue._queue)  # type: ignore[attr-defined]
-               if e.post.channel_id == channel_id and not e.gated and e.kind != "reaction"]
+               if e.post.channel_id == channel_id and not e.gated and e.kind != "reaction"
+               and not e.edited]
         return min(ats) if ats else None
 
     def handled(self, post: Post) -> None:
@@ -577,9 +633,11 @@ class WebSocketInbox:
     async def _put(self, event: ClassifiedEvent) -> None:
         """Queue an event. A post queued behind the read watermark (it was on
         its way while the bot posted there) holds the mark back: it counts as
-        pending until it is handed over (RT-6.2)."""
+        pending until it is handed over (RT-6.2). An edit (RT-6.12 step 3)
+        holds nothing: its post is behind the mark, and pulling the mark back
+        would count again what was handed over after it."""
         post = event.post
-        if not event.gated and event.kind != "reaction" and post.channel_id:
+        if not event.gated and not event.edited and event.kind != "reaction" and post.channel_id:
             try:
                 watermark.hold(self._bot_user_id, post.channel_id, post.create_at)
             except Exception as exc:  # noqa: BLE001

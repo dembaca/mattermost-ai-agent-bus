@@ -3,6 +3,28 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.66.1
+
+### Fixed
+
+- **An edit that adds a mention wakes the agent once**
+  ([RT-6.12 step 3](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)).
+  A post edited to add `@agent-…` woke nobody: the inbox read only the
+  WebSocket's `posted` event, and Mattermost sends an edit as `post_edited`.
+  An edit now wakes the agent when it makes a post a mention or DM to it that
+  was not queued as one before, once per post and only within 24 h of the
+  post: classified, gated
+  ([RT-6.16](docs/arc42/06-runtime-view.md#616-who-may-wake-an-agent)) and
+  delivered like a new mention, typing indicator included. The event says
+  `edited` (a channel tag attribute; `wait_for_events` has it in the post).
+  A typo fix in a post that already named the agent, an edited channel post
+  and an edit of an older post wake nobody. The edited post is behind the
+  read watermark, so it does not pull the mark back; the hooks' count
+  (`/v1/pending`, the Stop hook's drain, the listener, `/v1/wake`) adds it
+  while it waits. Which posts were queued as a mention or DM is kept in
+  memory: after `claude --continue`, an edit of such a post less than a day
+  old wakes the agent once more.
+
 ## 0.66.0
 
 ### Added
