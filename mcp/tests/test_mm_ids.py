@@ -58,7 +58,7 @@ async def test_the_client_refuses_before_any_request(bad):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bad", BAD[:4])
+@pytest.mark.parametrize("bad", [b for b in BAD[:4] if b != "abc"])  # "abc" is a name (RT-6.22)
 async def test_the_tools_refuse_a_bad_id(bad, monkeypatch):
     seen: list[str] = []
     monkeypatch.setattr(server, "_get_client", lambda: _client(seen))

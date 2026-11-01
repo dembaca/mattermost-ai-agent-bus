@@ -537,7 +537,7 @@ async def session_end(name: str = "") -> str:
 @mcp.tool()
 async def bus_info() -> str:
     """This bus session at a glance: plugin/MCP version, bot, responsible and
-    trusted humans, channels (home, guests, lobby; RT-6.22); update names a newer installed plugin, which
+    trusted humans, channels (home, guests, lobby, with ids in `channels`; RT-6.22); update names a newer installed plugin, which
     takes a restart (quit, then `claude --continue`).
 
     responsible names who answers for you and kind is "session" or
@@ -586,6 +586,7 @@ async def bus_info() -> str:
         "home": client.work_channel_name,
         "guests": await _guest_names(client),
         "lobby": getattr(client, "channel_name", ""),
+        "channels": await _own_channels(client),
         **({"guests_not_joined": failed}
            if (failed := getattr(client, "guest_join_failures", None)) else {}),
         "crown": lease.crown_held(me.id),
@@ -605,6 +606,62 @@ async def _guest_names(client: MattermostAdapter) -> list[str]:
         except Exception:  # noqa: BLE001 — diagnostic only
             names.append(cid)
     return sorted(names)
+
+
+async def _own_channels(client: MattermostAdapter) -> list[dict[str, str]]:
+    """The agent's own channels with their ids (RT-6.22 step 4): the home, the
+    guests, the lobby (once, as the home, when it is the same). Names and ids
+    come from the cached lookups (channel names, GUEST_TTL_SEC guest list)."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(name: str, cid: str, role: str) -> None:
+        if cid and cid not in seen:
+            seen.add(cid)
+            out.append({"name": name, "id": cid, "role": role})
+
+    for role, name, getter in (
+            ("home", getattr(client, "work_channel_name", ""), getattr(client, "work_channel_id", None)),
+            ("lobby", getattr(client, "channel_name", ""), getattr(client, "lobby_channel_id", None))):
+        if getter is None:
+            continue
+        try:
+            add(name, await getter(), role)
+        except Exception as exc:  # noqa: BLE001 — not resolvable: left out
+            log.debug("own channel %s: %s", role, exc)
+    for cid in await guest_ids(client):
+        try:
+            name = (await client.get_channel(cid)).name or cid
+        except Exception:  # noqa: BLE001 — an unreadable one by its id
+            name = cid
+        add(name, cid, "guest")
+    order = {"home": 0, "guest": 1, "lobby": 2}
+    return sorted(out, key=lambda c: (order[c["role"]], c["name"]))
+
+
+async def _channel_arg(client: MattermostAdapter, value: str) -> tuple[str, str]:
+    """(id, '') for a channel_id argument that is an id or the name (`~name`,
+    any case) of one of the agent's own channels, else ('', why) (RT-6.22
+    step 4). Only the agent's own channels resolve: a name never widens
+    what it can read or post to."""
+    value = value.strip()
+    if not value:
+        return "", ""
+    try:
+        mm_id(value, "channel")
+        return value, ""
+    except InvalidId:
+        pass
+    try:
+        want = mm_name(value.lstrip("~"), "channel").lower()
+    except InvalidId as exc:  # neither an id nor a safe name: nothing is sent
+        return "", str(exc)
+    own = await _own_channels(client)
+    for c in own:
+        if c["name"].lower() == want:
+            return c["id"], ""
+    yours = ", ".join(f"{c['name']} ({c['role']})" for c in own)
+    return "", f'unknown channel "{value.lstrip("~")}": yours are {yours}'
 
 
 async def _guest_target(client: MattermostAdapter, channel_id: str, root_id: str) -> str:
@@ -885,7 +942,9 @@ async def post_message(
 ) -> str:
     """Create a post, in your home (first MM_PROJECT_CHANNEL entry, else MM_CHANNEL) when channel_id and channel are empty.
 
-    channel: a channel's name instead of channel_id; a public one is joined
+    channel_id: the id, or the ~name of your home, a guest channel or the lobby
+
+    channel: any team channel's name instead of channel_id; a public one is joined
     and becomes a guest channel (RT-6.22): there only a mention or a reply in
     your thread wakes you. Tasks, HELLO and BYE stay in your home.
 
@@ -924,9 +983,12 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refusal(str(exc), kinds=True)
-    if bad := _bad_id(channel=channel_id, post=root_id):
+    if bad := _bad_id(post=root_id):
         return _refusal(bad)
     client = client or _get_client()
+    channel_id, bad = await _channel_arg(client, channel_id)
+    if bad:
+        return _refusal(bad)
     if channel_name.strip() and not channel_id and not to.strip():
         try:
             channel_id = await _join_by_name(client, channel_name)
@@ -983,6 +1045,8 @@ async def reply_in_thread(
 
     to="all" and kind as for post_message. While you hold the coordinator
     crown a reply in your home or a DM starts with 👑.
+
+    channel_id: the id, or the ~name of your home, a guest channel or the lobby
     """
     return _out("reply_in_thread", await reply_as_bot(None, root_id, message, channel_id, to, kind))
 
@@ -995,9 +1059,12 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refusal(str(exc), kinds=True)
-    if bad := _bad_id(post=root_id or "-", channel=channel_id):
+    if bad := _bad_id(post=root_id or "-"):
         return _refusal(bad)
     client = client or _get_client()
+    channel_id, bad = await _channel_arg(client, channel_id)
+    if bad:
+        return _refusal(bad)
     everyone = to.strip().lower() == a2a.ALL
     if to.strip() and not everyone:
         return _refusal('to must be "all" or empty: a reply stays in its thread')
@@ -1275,10 +1342,13 @@ async def list_recent(
 
     Slim posts {id, root_id, channel, author, at, message, replies, files}, system
     messages ("… added to the channel") left out; raw=true for everything.
+
+    channel_id: the id, or the ~name of your home, a guest channel or the lobby
     """
-    if bad := _bad_id(channel=channel_id):
-        return _refused("list_recent", bad)
     client = _get_client()
+    channel_id, bad = await _channel_arg(client, channel_id)
+    if bad:
+        return _refused("list_recent", bad)
     posts = await client.list_recent(
         channel_id=channel_id or None,
         per_page=per_page,
