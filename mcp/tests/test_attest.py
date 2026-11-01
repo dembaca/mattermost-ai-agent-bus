@@ -37,9 +37,12 @@ VBOT, VNAME = "abcdefghijklmnopqrstuvwxyz", "agent-test-abc123"
 
 @pytest.fixture(autouse=True)
 def _own_config(monkeypatch):
-    """The session's own settings come from each test, never from the shell."""
+    """The session's own settings and the keys of its files come from each
+    test, never from the shell: a Claude Code session's id or workspace
+    decides which session file is read (RT-6.10, RT-6.17 step 2)."""
     for name in ("MM_RESPONSIBLE_HUMAN", "MM_TRUSTED_HUMANS", "MM_TRUSTED_HUMAN_USER_IDS",
-                 "MM_OWNER", "MM_OWNER_USER_ID", "MM_AGENT_KIND"):
+                 "MM_OWNER", "MM_OWNER_USER_ID", "MM_AGENT_KIND", "MM_CHANNEL_PUSH",
+                 "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_PROJECT_DIR", "CLAUDECODE"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -349,12 +352,23 @@ async def test_session_start_takes_the_attestation_and_compares_it(monkeypatch):
     assert "lacks 1 of 1 trusted names" in c2.profile_warning
 
 
-def test_adopt_takes_the_attestation_from_the_session_file(monkeypatch):
+@pytest.mark.parametrize("keyed", ["session id", "workspace"])
+def test_adopt_takes_the_attestation_from_the_session_file(monkeypatch, tmp_path, keyed):
+    """RT-6.10 steps 5 and 7: `claude --continue` (same session id), or the
+    workspace's next server after one ended with the bot kept."""
+    if keyed == "session id":
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "attest-test-session")
+    else:
+        workspace = tmp_path / "work"
+        workspace.mkdir()
+        monkeypatch.setenv("MM_WORKSPACE", str(workspace))
     tok = _mine()
     session_file.write(SessionInfo(url="https://mm.example", name="proj", username="agent-me",
                                    user_id=SELF, bot_token="t", attestation=tok), "team", "agents")
     stored = session_file.parse(session_file.session_file_path())[attest.ENV]
     assert _digest(stored) == _digest(tok)
+    if keyed == "workspace":
+        assert session_file.mark_ended("t")  # the server ended and kept its bot
 
     c = MattermostAdapter(base_url="https://mm.example")
     monkeypatch.setattr(httpx.Client, "get", lambda self, url, headers: httpx.Response(200))
