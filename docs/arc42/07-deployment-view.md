@@ -24,7 +24,7 @@ fail-open process next to the agent realises `#reliable`.
 | Developer host | macOS / Linux, outside the sandbox | Runs corral and its host hooks; holds gopass | 1 per developer |
 | corral sandbox | Process sandbox (seatbelt / equivalent) | Runs the agent runtime with a private `$HOME`, no `/tmp`, no secret | 1 per session |
 | Mattermost server | Remote, HTTPS | Channels, posts, presence, WebSocket | Shared by all agents |
-| Registrar | Remote, HTTPS (`…/register/v1/agents`) | Creates and deletes `agent-*` bots | Shared |
+| Registrar | Remote, HTTPS (`…/register/v1/agents`, `…/register/v1/keys`) | Creates and deletes `agent-*` bots; signs whom each answers to (the attestation) and lists its public keys (RT-6.24) | Shared |
 
 **Bot username prefix.** The registrar names each bot `<prefix><name>`, the prefix
 from its `BOT_USERNAME_PREFIX` (default `agent-`); `agent-*` in these docs stands
@@ -35,6 +35,17 @@ registrar returns minus the name it sent. A host-managed sandbox never sees that
 name, so the host session hooks hand the prefix in as `MM_AGENT_PREFIX`; the session
 files carry it for the MCP server and the shell CLI. With neither, `agent-`. It is
 derived, not a setting.
+
+**Registrar keys (RT-6.24).** `MM_REGISTRAR_KEYS` pins the registrar's public
+keys: base64url raw Ed25519 keys, comma-separated, each one's kid derived from it.
+It is a setting like `MM_TRUSTED_HUMANS`: in a corral session in the host's
+environment (the host process gets it in its start line, RT-6.18), elsewhere in
+the MCP server's environment. `bin/mm-agent-registrar-keys.sh` shows what the
+registrar lists at `…/register/v1/keys`, with the kids checked; the operator
+compares the values with the registrar's operator out of band and sets the variable
+by hand. The bus never reads that endpoint at runtime. To rotate, pin the old and
+the new key together until no attestation of the old one is younger than its `exp`.
+Without the setting nothing is verified and the bus behaves as before 0.66.0.
 
 ### Software-to-Infrastructure Mapping
 
@@ -144,5 +155,6 @@ The bus treats a trusted human's Mattermost account like the session's terminal 
 | A session's token ends with the session | `postEnd` runs, or the host process's watchdog sees corral gone (every 5 s) | corral SIGKILLed and the watchdog not running, or a reboot: an orphan holds the token until the next `preStart` stops it, or the bot stays until `mm-agent-sweep.sh` removes it |
 | The sandbox reaches the host process on loopback | corral's network mode is `net: open`, its only one today | A corral that cuts the sandbox off from `127.0.0.1` leaves the relay and the hooks without the server: the session has no bus (fail closed), never a token |
 | Only the registrar creates bots with its prefix (ADR-003, relied on since 0.60.0) | Users may not create bot accounts in Mattermost, or the prefix is reserved for the registrar | A bot with the prefix made by someone else counts as a bus agent and can carry any description, owner included |
-| Only the registrar account and system admins edit bot descriptions and owners (ADR-003, relied on since 0.60.0) | No other account may manage bots (the registrar's setup, step 5) | Whoever can edit a description can name any trusted list, and any owner while the native owner is not read; with `read_others_bots` a `for @` that disagrees with `owner_id` makes a foreign agent, so only someone who can also reassign the bot (an admin) names another owner (RISK-03, Section 11) |
+| Only the registrar account and system admins edit bot descriptions and owners (ADR-003, relied on since 0.60.0) | No other account may manage bots (the registrar's setup, step 5) | Whoever can edit a description can name any trusted list, and any owner while the native owner is not read; with `read_others_bots` a `for @` that disagrees with `owner_id` makes a foreign agent, so only someone who can also reassign the bot (an admin) names another owner (RISK-03, Section 11). With the registrar's keys pinned, an agent with a valid attestation is judged by it: neither a description nor `owner_id` changes its owner or trusted list (RT-6.24) |
+| The registrar's signature says whom an agent answers to (RT-6.24, since 0.66.0) | The registrar keeps its signing key to itself, every host pinned keys it compared out of band (`MM_REGISTRAR_KEYS`, Section 7.1), and the registrar binds owners with enrollment tokens (`via: enrollment`) | A leaked signing key signs any owner for any bot until every host unpins it. A key pinned without comparing trusts whoever answered `…/register/v1/keys`. `via: secret` is only the caller's claim: its owner counts as a description's `for @` does, so while the shared secret is allowed and the native owner is not readable, its holders claim any owner, as with a registrar before 0.2.0 (RISK-02); `ALLOW_SHARED_SECRET=false`, or `read_others_bots`, closes that. An attestation counts until its `exp`, which the registrar chooses, whatever changes in Mattermost meanwhile. It is public on the bot's account: a copy on another bot fails its `bot_id` and `username`. A host without pinned keys judges by the profile, as before |
 | Everyone who can post in the channel may steer the agents | One human per channel, or only people you would let type into the session; with trusted humans configured, the wake gate holds it for the workers (RT-6.16) | Without trusted humans, any channel member wakes an agent with a mention, and the agent reads the text. With them, a post by anyone else wakes no worker and is no task, but the coordinator still reads it. An agent of another owner, or one that trusts a human this session does not, is foreign: its request is no task (ADR-001), so it cannot relay such a human's request. A peer that was itself injected still can pass a request on as its own (RISK-01); and with the MCP server down nothing is gated. Only approvals are verified by the server; that the rest of a post is data is a rule for the agent, not a technical barrier |

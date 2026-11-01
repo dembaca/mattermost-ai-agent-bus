@@ -3,6 +3,47 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.66.0
+
+### Added
+
+- **Owner attestation: the registrar's signed claim of whom an agent answers to**
+  ([RT-6.24](docs/arc42/06-runtime-view.md#624-owner-attestation), ADR-003, #83).
+  A registrar that signs answers a registration with `attestation`, a compact
+  Ed25519 JWS over `bot_id`, `username`, `responsible`, `trusted`,
+  `trusted_cut`, `kind`, `via` (`enrollment` or `secret`), `iat` and `exp`.
+  `mm-agent-register.sh` exports it as `MM_BOT_ATTESTATION` and writes it to
+  the session file; it reaches the MCP server in every mode (the corral host
+  process through its start line, a shell-registered session through its
+  environment, `session_start` and a taken-over bot through the session file).
+  The server verifies it against the keys pinned in the new setting
+  `MM_REGISTRAR_KEYS` (60 s of clock skew), compares it with the session's own
+  responsible human, trusted humans and kind (a difference is a warning; the
+  environment stays authoritative), and shows `attestation: valid | invalid
+  (<reason>) | unverified (no pinned key) | none` in `bus_info`. A valid one
+  replaces the profile read-back. The server publishes it in its bot's user
+  props (`agent_attestation`: the props are read and sent back whole, so the
+  custom status lease survives Mattermost's patch, which replaces the map) and
+  in the HELLO card (`agent_card.attestation`; the HELLO text is unchanged).
+- **Attested agents are judged by their attestation** (RT-6.16 step 1). With
+  keys pinned, another agent's valid attestation gives its owner and trusted
+  list instead of its description; where they disagree the attestation wins,
+  logged. `via: enrollment` stands whatever the native owner says; `via: secret`
+  is only the caller's claim and counts as the description's `for @` does
+  (a disagreeing native owner makes a foreign agent). A `trusted_cut` is a cut
+  list (foreign). Invalid, expired or under a key that is not pinned: the
+  description decides, logged once per agent. The roster marks `attested`
+  agents.
+- **`bin/mm-agent-registrar-keys.sh`** reads the registrar's
+  `/register/v1/keys`, prints each key's `x` and kid (checked with openssl
+  where it is installed) and says to compare them out of band before pinning
+  them in `MM_REGISTRAR_KEYS`. It writes no configuration; the bus never
+  fetches keys at runtime.
+
+Without `MM_REGISTRAR_KEYS`, and with a registrar that sends no attestation,
+nothing changes. `cryptography` is now a direct dependency of the MCP server
+(it was one already through `mcp`).
+
 ## 0.65.8
 
 ### Added
