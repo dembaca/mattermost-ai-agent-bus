@@ -207,11 +207,36 @@ mm_curl_auth() {
   printf 'Authorization: Bearer %s\n' "$tok" | curl -H @- "$@"
 }
 
+# POST a JSON body with the bearer token; a success answer goes to stdout.
+# On an HTTP error (>= 400) nothing goes to stdout: stderr gets one line,
+# "<label>: HTTP <code>: <reason>" (label: the 4th argument), and the return
+# code is 22 as curl's -f has it. The reason is the registrar's own plain text
+# or its JSON .message/.error, printable characters, cut to 200. A success body
+# is never printed or kept (it holds a bot token, arc42 §7.3); an error body
+# only when it does not hold the bearer token (a proxy echoing headers).
+#   RESP="$(mm_json_post "$url" "$secret" "$json" "register failed")"
 mm_json_post() {
-  local url="$1" tok="$2" body="$3"
-  mm_curl_auth "$tok" -fsS -X POST "$url" \
+  local url="$1" tok="$2" body="$3" label="${4:-request failed}"
+  local resp code out why
+  resp="$(mm_curl_auth "$tok" -sS -w $'\n%{http_code}' -X POST "$url" \
     -H "Content-Type: application/json" \
-    -d "$body"
+    -d "$body")" || return $?
+  code="${resp##*$'\n'}"
+  out="${resp%$'\n'*}"
+  [[ "$code" =~ ^[0-9]{3}$ ]] || { echo "$label: no HTTP status in the answer" >&2; return 1; }
+  if [[ "$code" -lt 400 ]]; then
+    printf '%s' "$out"
+    return 0
+  fi
+  why="$(printf '%s' "$out" | jq -r '(.message // .error // empty) | tostring' 2>/dev/null || true)"
+  [[ -n "$why" ]] || why="$out"
+  if [[ -n "$tok" && ( "$out" == *"$tok"* || "$why" == *"$tok"* ) ]]; then
+    echo "$label: HTTP $code (the answer is not shown: it holds the secret)" >&2
+    return 22
+  fi
+  why="$(printf '%s' "$why" | head -c 200 | tr -cd '[:print:]')" || why=""
+  echo "$label: HTTP $code${why:+: $why}" >&2
+  return 22
 }
 
 # Mattermost API v4 call with the bot token.

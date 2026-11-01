@@ -43,7 +43,7 @@ no test.
 
 | Step | Failure | System Response |
 |------|---------|----------------|
-| 3 | Registrar unreachable or rejects | Banner warning, session continues without a bot (hook is `optional: true`) |
+| 3 | Registrar unreachable or rejects | Banner warning, session continues without a bot (hook is `optional: true`). A refusal names the registrar's own reason: `register failed: HTTP 403: <reason>` (plain text or JSON `.message`/`.error`, printable, 200 characters; withheld if it holds the secret) |
 | 5 | The MCP server cannot start on the host | No token reaches the sandbox: the bot is unregistered again and the session runs without the bus, the banner and the agent's note saying why (RT-6.18) |
 | 3 | No bus settings reached the session (no hook, no env) | `bus_info` answers `on_bus: false` with the reason instead of failing; the other bus tools fail |
 | 4 | Channel missing or not joinable | Bot is unregistered again, session file removed; channels are never created |

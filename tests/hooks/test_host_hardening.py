@@ -193,6 +193,39 @@ def test_register_failure_shows_the_registrar_message_not_its_answer(mm, run):
     assert "leaked-token-x" not in r.stderr + r.stdout
 
 
+def test_register_refusal_names_the_registrars_reason(mm, run):
+    """RT-6.1 step 3: an HTTP error shows the registrar's words, with the status."""
+    reason = "forbidden: the token's 3 bots are registered; unregister one first"
+    mm.register_error = (403, reason)
+    r = run("bin/mm-agent-register.sh", "--exports", "xyz", MM_BOT_TOKEN=None, MM_REG_SECRET="s3cret-reg")
+    assert r.code != 0
+    assert f"register failed: HTTP 403: {reason}" in r.stderr
+    assert r.stdout == ""
+
+
+def test_register_refusal_in_json_uses_its_message(mm, run):
+    """RT-6.1 step 3."""
+    mm.register_error = (429, json.dumps({"message": "rate limit"}))
+    r = run("bin/mm-agent-register.sh", "--exports", "xyz", MM_BOT_TOKEN=None, MM_REG_SECRET="s3cret-reg")
+    assert r.code != 0 and "register failed: HTTP 429: rate limit" in r.stderr
+
+
+def test_register_refusal_echoing_the_secret_is_not_shown(mm, run):
+    """RT-6.1 step 3: a refusal body that holds the secret is not printed."""
+    mm.register_error = (403, "forbidden; got Authorization: Bearer s3cret-reg")
+    r = run("bin/mm-agent-register.sh", "--exports", "xyz", MM_BOT_TOKEN=None, MM_REG_SECRET="s3cret-reg")
+    assert r.code != 0 and "HTTP 403" in r.stderr
+    assert "s3cret-reg" not in r.stderr + r.stdout
+
+
+def test_register_success_prints_no_token_but_the_exports(mm, run):
+    """RT-6.1 step 3: the success body is never shown; only the export lines carry the token."""
+    r = run("bin/mm-agent-register.sh", "--exports", "xyz", MM_BOT_TOKEN=None, MM_REG_SECRET="s")
+    assert r.code == 0
+    assert "bot-token-for-tests" not in r.stderr
+    assert "register failed" not in r.stderr
+
+
 # --- 6. a FIFO does not stall preStart ----------------------------------------
 
 def test_a_fifo_in_a_corral_home_does_not_stall_prestart(mm, run, tmp_path):

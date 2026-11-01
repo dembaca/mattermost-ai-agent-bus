@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.65.6
+
+### Fixed
+
+- **A refused registration says why**
+  ([RT-6.1 step 3](docs/arc42/06-runtime-view.md#61-host-managed-session-lifecycle)).
+  `curl -f` threw the registrar's answer away, so the corral banner showed only
+  `curl: (22) ... 403`. `mm_json_post` now reads the HTTP status; on an error
+  `bin/mm-agent-register.sh` prints `register failed: HTTP 403: <reason>` (the
+  registrar's plain text, or its JSON `message`/`error`; printable, 200
+  characters). A success body, which holds the bot token, is still never
+  printed; an error body that holds the registration secret is withheld.
+
 ## 0.65.5
 
 ### Fixed
