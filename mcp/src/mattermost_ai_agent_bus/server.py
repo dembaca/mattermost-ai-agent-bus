@@ -1306,7 +1306,9 @@ async def wait_for_events(
     action (see the skill). gated: from someone not trusted, it woke nobody
     and is no task (RT-6.16); it comes last. expired: an answer to your ask
     more than 24 h after it, which approves nothing (RT-6.11). departed: mentioned
-    agents that are gone, your server told the thread: route it (RT-6.21). Mentions and DMs come first; when more than
+    agents that are gone, your server told the thread: route it; not_here:
+    live agents not in that channel, `name (~home)`, told too: forward it to
+    them (RT-6.21). Mentions and DMs come first; when more than
     max_events were waiting, a last item {kind: more_pending, count} says so —
     call again to collect them. A delivered mention or DM, a trusted human's
     yes/no on your open ask, and holding the crown a human's plain post,
@@ -1374,9 +1376,11 @@ async def _typing_for_task(events: list[Any], items: list[dict[str, Any]]) -> No
     """RT-6.5: a human's plain post wakes only the 👑, as its task (RT-6.16),
     so it shows typing in that post's thread like a mention, from
     wait_for_events and the channel push alike; so does a trusted human's
-    👍/👎 on an open ask, in the ask's thread (RT-6.11). A delivered mention
-    or DM started it in the inbox already and keeps it; a gated, digest-only
-    or fyi post, an expired answer and anyone else's reaction promise nothing."""
+    👍/👎 on an open ask, in the ask's thread (RT-6.11), and a mention of an
+    agent not in the channel that this server answered (`not_here`, RT-6.21).
+    A delivered mention or DM started it in the inbox already and keeps it; a
+    gated, digest-only or fyi post, an expired answer and anyone else's
+    reaction promise nothing."""
     if any(e.kind in ("mention", "dm") and not e.gated for e in events):
         return
     answer = next((e for e, i in zip(events, items, strict=False) if _ask_answer(e, i)), None)
@@ -1391,13 +1395,16 @@ async def _typing_for_task(events: list[Any], items: list[dict[str, Any]]) -> No
             return
         _get_inbox().start_typing(cid, ask)
         return
-    task = next((e for e, i in zip(events, items, strict=False) if _human_task(e, i)), None)
+    task = next((e for e, i in zip(events, items, strict=False)
+                 if _human_task(e, i) or (i.get("not_here") and not e.gated)), None)
     if task is None:
         return
-    client = _get_client()
-    uid = await _my_id(client)
-    if await lease.coordinates_in(client, uid, task.post.channel_id):
-        _get_inbox().start_typing(task.post.channel_id, task.post.thread)
+    if not task.not_here:  # not_here: only the answering server has it
+        client = _get_client()
+        uid = await _my_id(client)
+        if not await lease.coordinates_in(client, uid, task.post.channel_id):
+            return
+    _get_inbox().start_typing(task.post.channel_id, task.post.thread)
 
 
 async def _roots_from_trusted(client: MattermostAdapter, roots: set[str],
@@ -1466,6 +1473,8 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
             item["gated"] = e.gated
         if e.departed:
             item["departed"] = e.departed  # RT-6.21: gone; this agent routes it
+        if e.not_here:
+            item["not_here"] = e.not_here  # RT-6.21: live elsewhere; this agent forwards it
         if e.guest:
             item["guest"] = True  # RT-6.22: a guest channel, not the home
         if e.lobby:

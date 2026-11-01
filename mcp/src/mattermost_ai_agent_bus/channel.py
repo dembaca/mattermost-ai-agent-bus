@@ -193,7 +193,7 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
     and only in a channel of `routes` (its home: lease.routes, ADR-002);
     routes None, or an item without its channel: anywhere.
     a post the inbox gated wakes nobody here (RT-6.16), a mention of a
-    departed agent the one that answers it (RT-6.21). An agent's fyi post
+    departed agent or one not here the one that answers it (RT-6.21). An agent's fyi post
     (RT-6.14) wakes only whom it names and the author of its thread's root,
     who waits for it; the coordinator and others in the thread get it in the
     digest. In a guest channel (item guest, RT-6.22) only a mention, a DM, a
@@ -208,7 +208,7 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
             return True
         return in_my_thread and (my_root or item.get("intent") != a2a.FYI)
     if (item.get("kind") in ("mention", "dm", "reaction", "stall") or item.get("to") == a2a.ALL
-            or item.get("departed")
+            or item.get("departed") or item.get("not_here")
             or broadcast(str((item.get("post") or {}).get("message", "")))):
         return True
     where = str(item.get(CHANNEL_ID) or "")
@@ -282,7 +282,7 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
     meta["from_trusted_human"] = "true" if item.get("from_trusted_human") else "false"
     meta["from_agent"] = "true" if item.get("from_agent") else "false"
     for key in ("trusted_human", "ask", "emoji", "answer", "to", "intent", "departed",
-                "owner", "root_from_trusted_human"):
+                "not_here", "owner", "root_from_trusted_human"):
         if item.get(key):
             meta[key] = str(item[key])
     if item.get("guest"):

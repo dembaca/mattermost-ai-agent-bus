@@ -77,6 +77,12 @@ class ChatPort(Protocol):
 
     async def agents(self, user_ids: set[str]) -> set[str]: ...
 
+    async def bots_named(self, usernames: set[str]) -> dict[str, ChannelUser]:
+        """The bot accounts among these usernames, by lower-case username,
+        with their custom status (RT-6.21); people, unknown and deleted
+        accounts are left out."""
+        ...
+
     async def trusted_humans(self) -> dict[str, str]: ...
 
     async def bot_description(self, user_id: str) -> str | None:
@@ -97,6 +103,10 @@ class ChatPort(Protocol):
     async def member_channels(self) -> list[UnreadChannel]: ...
 
     async def channel_users(self, channel_id: str) -> list[ChannelUser]: ...
+
+    async def is_member(self, channel_id: str, user_id: str) -> bool:
+        """Whether the account is a member of the channel (RT-6.21)."""
+        ...
 
     async def presences(self, user_ids: list[str]) -> dict[str, str]: ...
 

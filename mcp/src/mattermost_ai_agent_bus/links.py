@@ -58,7 +58,10 @@ HEADLINE = 60
 _ID = re.compile(_POST_ID)
 _HIDDEN = re.compile("[\u00ad\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 _ADDRESS = re.compile(r"://|^www\.|^[\w-]+(?:\.[\w-]+)+/", re.I)
-_NAME = re.compile(r"[\w-]+(?:\.[\w-]+)+")
+# A label that names a host (RT-6.15 step 4): dotted, its last part a
+# top-level domain (starts with a letter, `xn--` too), or an IPv4 address.
+# `RT-6.5`, `0.65.6` and `v1.2` name none.
+_NAME = re.compile(r"[\w-]+(?:\.[\w-]+)*\.[^\W\d_][\w-]*|\d{1,3}(?:\.\d{1,3}){3}")
 _SAFE = "/?#[]@!$&'()*+,;=:%~"
 
 
