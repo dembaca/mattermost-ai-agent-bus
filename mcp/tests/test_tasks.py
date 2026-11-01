@@ -434,7 +434,9 @@ def test_static_budget():
     two new actions only. SKILL.md and its files have their budgets above; the
     per-turn text, the MCP instructions, has its own budget below."""
     skill = _SKILL
-    assert len((skill / "coordinator.md").read_text()) <= 5_600  # + RT-6.16: posts not trusted; + RT-6.19: stall; + RT-6.21: departed, not here; + RT-6.6: crown per home
+    # + RT-6.16: posts not trusted; + RT-6.19: stall; + RT-6.21: departed, not here;
+    # + RT-6.6: crown per home; + RT-6.25: questions to the 👑, escalated, never approved
+    assert len((skill / "coordinator.md").read_text()) <= 5_950
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
     assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90
 

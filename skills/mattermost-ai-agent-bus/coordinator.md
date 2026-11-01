@@ -54,6 +54,11 @@ attention and tokens.
 - **Approvals have an owner:** the agent that carries out the action asks.
   Your status links its ask; none yet, tell it to open one. Ask yourself only
   if it cannot, naming the agent that carries it out.
+- **Questions to you** (`❓ @you`, ask mode `coordinator`, RT-6.25): answer
+  in its thread what you can, as advice. You never approve: an approval goes
+  to a human. What you cannot answer: `ask_human(kind="question",
+  root_id=<question>)`, then relay the answer in its thread. Unanswered for
+  15 min, the worker's server asks the human itself.
 - **Short and precise.** Point out prose, recaps and repeated questions in
   one line.
 - **A stall wakes you** (`kind: stall`, RT-6.19): work is open, the bus

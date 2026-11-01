@@ -230,13 +230,19 @@ def open_asks(posts: Sequence[Post], names: Mapping[str, str],
         if p.kind != a2a.ASK:
             continue
         msg = p.message
-        human = re.search(r"🙋\s*@([\w.-]*\w)", msg)
+        # ❓ @<agent>: a question to the home's 👑 (RT-6.25), which answers it.
+        human = re.search(r"(🙋|❓)\s*@([\w.-]*\w)", msg)
+        question = human is not None and human[1] == "❓"
         need = re.search(r"\*\*(.+?)\*\*", msg)
-        if (ask_answered(p, order, p.reactions, names, human[1] if human else "", trusted)
-                or resolved(p.reactions, names, foreign)):
+        if (ask_answered(p, order, p.reactions, names, human[2] if human else "", trusted)
+                or resolved(p.reactions, names, foreign)
+                # A trusted human's reply answers a question to the 👑 as well.
+                or (question and any(q.thread == p.id and q.create_at > p.create_at
+                                     and not q.delete_at and q.user_id in trusted for q in order))):
             continue
         row = {"ask": p.id, "by": names.get(p.user_id, ""),
-               "human": human[1] if human else None,
+               "human": human[2] if human else None,
+               "question": question,
                "need": _first_line(need[1] if need else msg, TITLE),
                "at": _when(p.create_at)}
         out.append({k: v for k, v in row.items() if v})

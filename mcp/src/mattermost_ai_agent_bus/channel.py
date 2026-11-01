@@ -252,7 +252,8 @@ def digest(items: Sequence[Mapping[str, Any]], since: float) -> dict[str, Any]:
         text = inert(" ".join(tasks.compact(str(post.get("message", ""))).split()))
         where = f"post {post.get('id', '')}" + (f", thread {post['root_id']}" if post.get("root_id") else "")
         mark = "(not trusted) " if item.get("gated") else ""
-        line = f"- {mark}[{post.get('at', '')}] {post.get('author', '')} ({where}): {text[:300]}"
+        line = (f"- {item.get('kind')}: {text[:300]}" if not post.get("id") else  # the server's own (RT-6.25)
+                f"- {mark}[{post.get('at', '')}] {post.get('author', '')} ({where}): {text[:300]}")
         if attached := files.attribute(post.get("files")):
             line += f" · files: {attached}"  # RT-6.23: after the cut, never cut off
         lines.append(line)
@@ -282,7 +283,7 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
     meta["from_trusted_human"] = "true" if item.get("from_trusted_human") else "false"
     meta["from_agent"] = "true" if item.get("from_agent") else "false"
     for key in ("trusted_human", "ask", "emoji", "answer", "to", "intent", "departed",
-                "not_here", "owner", "root_from_trusted_human"):
+                "not_here", "owner", "root_from_trusted_human", "advice"):
         if item.get(key):
             meta[key] = str(item[key])
     if item.get("guest"):

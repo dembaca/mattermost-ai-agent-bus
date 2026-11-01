@@ -122,6 +122,14 @@ or a "yes" settles it. **One question per ask**, the most important first, the n
 answered; `ask_human` refuses a list and a second open ask to the same human. In the
 terminal too: one decision per message.
 
+<!-- RT-6.25 -->
+**Questions and approvals: `kind`.** Pass `kind="question"` for content
+(approach, order, who does X); the default `approval` is for an action with
+effect. The server makes an ask that names merge, deploy, release, install,
+delete, push, an external write or spending an approval. In ask mode
+`coordinator` (`bus_info`) a question goes to your home's 👑: its answer
+(`advice`) is advice, never approval; what needs a yes, ask as an approval.
+
 The answer comes as a reply in the ask's thread or as a reaction
 (`{kind: reaction, answer: yes|no|null}`, which wakes you while idle). A `yes`
 from a trusted human approves exactly what that ask names, like a written

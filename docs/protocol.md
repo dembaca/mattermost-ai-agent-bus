@@ -172,6 +172,13 @@ asking agent's server reminds the human in the ask's thread, and the
 coordinator's server wakes it with `{kind: stall}` when open work sits quiet
 ([arc42 §6.19](arc42/06-runtime-view.md#619-stall-noticed-asks-reminded)).
 
+An ask is a `question` or an `approval` (`kind`, default approval; the server
+makes one that names an action with effect an approval). A trusted human's
+top-level post `ask-mode coordinator` (or `ask-mode direct`) in a home sends
+the agents' questions there to its 👑 first, posted as `❓ @<👑> — **<need>**`;
+its answer is advice, approvals still go to the human
+([arc42 §6.25](arc42/06-runtime-view.md#625-ask-routing-modes)).
+
 ## Inbox classification
 
 The MCP `wait_for_events` tool (and `classify_post`) marks a post as relevant when:

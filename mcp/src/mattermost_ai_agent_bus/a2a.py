@@ -60,7 +60,9 @@ REMINDER = "reminder"
 # humans read as `🙋 <headline>` linked (RT-6.15 step 2): a pointer to the ask,
 # never an ask itself (RT-6.11 step 1, RT-6.19).
 ASK_LINK = "ask_link"
-_OWN = (ASK, PERMISSION, REMINDER, ASK_LINK)
+# The 👑's acknowledgement of an ask mode switch (RT-6.25 step 2): fyi.
+ASK_MODE = "ask_mode"
+_OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE)
 # A link line without props (before 0.64.4, `🙋 asked <ask id>`): the ask's id
 # bare, or as the permalink the server writes (RT-6.15).
 _ASK_LINK = re.compile(r"🙋\s*asked\s+(?:[a-z0-9]{26}|\[[^\]]*\]\([^)\s]*/[a-z0-9]{26}\))\s*")
@@ -136,7 +138,7 @@ def state(kind: str | None) -> str | None:
 def intent(kind: str | None) -> str | None:
     if kind in (ASK, PERMISSION):
         return REPLY
-    if kind == REMINDER:
+    if kind in (REMINDER, ASK_MODE):
         return FYI
     return WORDS.get((kind or "").upper(), _NONE)[2]
 

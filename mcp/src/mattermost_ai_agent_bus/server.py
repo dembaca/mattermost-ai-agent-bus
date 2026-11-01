@@ -20,12 +20,12 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import (
-    a2a, asks, attest, channel, files, gate, hookapi, lease, overhead, owners, ownpost, permission, profile,
+    a2a, askroute, asks, attest, channel, files, gate, hookapi, lease, overhead, owners, ownpost, permission, profile,
     session_file, slim, stall, stats, tasks, unread,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
 from .model import Post
-from .websocket_inbox import WebSocketInbox
+from .websocket_inbox import OWN_EVENTS, WebSocketInbox
 
 log = logging.getLogger(__name__)
 
@@ -560,7 +560,7 @@ async def session_end(name: str = "") -> str:
 async def bus_info() -> str:
     """This bus session at a glance: plugin/MCP version, bot, responsible and
     trusted humans, channels (home, guests, lobby, with ids in `channels`; RT-6.22); update names a newer installed plugin, which
-    takes a restart (quit, then `claude --continue`).
+    takes a restart (quit, then `claude --continue`). ask_mode: RT-6.25.
 
     responsible names who answers for you and kind is "session" or
     "autonomous" — announce puts both into your HELLO (for / trusts). trusted_humans says
@@ -616,6 +616,8 @@ async def bus_info() -> str:
         **({"guests_not_joined": failed}
            if (failed := getattr(client, "guest_join_failures", None)) else {}),
         "crown": lease.crown_held(me.id),
+        # RT-6.25: direct or coordinator, from MM_ASK_ROUTE ("env") or the switching post.
+        "ask_mode": dict(zip(("mode", "source"), await askroute.mode(client, me.id), strict=True)),
         "permission_relay": RELAY,
         **({"update": {"installed": newer, "how": "quit, then claude --continue"}}
            if (newer := _newer_installed()) else {}),
@@ -1158,6 +1160,7 @@ async def ask_human(
     answers: str = "",
     human: str = "",
     root_id: str = "",
+    kind: str = "approval",
 ) -> str:
     """Ask a human for something — the only way to @-mention one (RT-6.11).
 
@@ -1187,6 +1190,11 @@ async def ask_human(
     then the server reminds the human in its thread (RT-6.19). When it is
     settled, call resolve_ask. Mention humans nowhere else; elsewhere write
     their name without @.
+
+    kind: question (approach, order, who does X) or approval (default); naming
+    a merge, deploy, release, install, delete, push, external write or spending
+    makes it an approval. In ask mode coordinator a question goes to your 👑,
+    whose answer is advice (RT-6.25).
     """
     _done_typing()
     if bad := _bad_id(post=root_id):
@@ -1201,13 +1209,19 @@ async def ask_human(
     who = human.strip().lstrip("@") or responsible
     if not who:
         return _refused("ask_human", "no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
-    pending = asks.open_to(me.id, who)
+    # RT-6.25: the server's floor decides the class, then the mode whom it goes to.
+    effective, floored = askroute.classify(kind, need, decision, answers)
+    route = await _ask_route(client, me, effective)
+    coord = route.pop("to", "")
+    target = coord or who
+    pending = asks.open_to(me.id, target)
     if pending:
-        # The human answers one question at a time, each in a word (RT-6.11).
-        hint = (f"{who} still has your ask {pending[0]} open: wait for the answer, "
+        # The human answers one question at a time, each in a word (RT-6.11);
+        # the 👑 too (RT-6.25 step 3).
+        hint = (f"{target} still has your ask {pending[0]} open: wait for the answer, "
                 "or resolve_ask it if it is obsolete, then ask the next one")
         if asks.expired(me.id, pending[0]):
-            hint = (f"your ask {pending[0]} to {who} is more than 24 h old, a yes to it "
+            hint = (f"your ask {pending[0]} to {target} is more than 24 h old, a yes to it "
                     "approves nothing: resolve_ask it, then ask again")
         return _out("ask_human", {"posted": False, "open_ask": pending[0], "hint": hint})
     if _questions(f"{need} {context}") > 1:
@@ -1219,8 +1233,53 @@ async def ask_human(
     head, rest = _headline(need)
     if rest:
         context = f"{rest} {context}"
-    text = lease.with_crown(f"🙋 @{who} — **{head}**", me.id)
-    fields = [
+    out = await _post_ask(client, me, to=target, head=head, need=need, context=context,
+                          recommendation=recommendation, decision=decision, where=where,
+                          blocking=blocking, answers=answers, root_id=root_id,
+                          human=who if coord else "")
+    out["kind"] = effective
+    if effective != kind.strip().lower():
+        out["kind_declared"] = kind
+    if floored:
+        out["floor"] = floored  # an action with effect: an approval, for a human
+    out |= route
+    if coord:
+        out["advice"] = (f"the 👑's answer is advice, never approval; none in "
+                         f"{askroute.wait_sec() // 60} min: your server asks {who}")
+    return _out("ask_human", _with_unmentioned(out, everyone))
+
+
+async def _ask_route(client: MattermostAdapter, me: Any, kind: str) -> dict[str, Any]:
+    """RT-6.25: where an ask of this class goes. {"to": <the 👑>} for a
+    question in ask mode coordinator from an agent without the crown while a
+    👑 is reachable; else the human. ask_mode, route and route_note only in
+    ask mode coordinator. An inbox that is not connected saw no switch: the
+    home is read again."""
+    connected = _inbox is not None and _inbox.client is client and _inbox.connected
+    mode, _ = await askroute.mode(client, me.id, reread=not connected)
+    if mode != askroute.COORDINATOR:
+        return {}
+    out = {"ask_mode": mode, "route": "human"}
+    if kind != askroute.QUESTION:
+        return out  # approvals always go to the human
+    if lease.crown_held(me.id):
+        return out | {"route_note": "you hold the crown: your asks go to the human"}
+    coord = await askroute.coordinator(client, me.username)
+    if not coord:
+        return out | {"route_note": "no 👑 reachable in your home: asked the human at once"}
+    return out | {"route": "coordinator", "to": coord}
+
+
+async def _post_ask(client: MattermostAdapter, me: Any, *, to: str, head: str, need: str,
+                    context: str, recommendation: str, decision: str, where: str,
+                    blocking: bool, answers: str, root_id: str, human: str = "") -> dict[str, Any]:
+    """Post and record an ask to `to` (RT-6.11 step 1); with human, a
+    question to the 👑 `to` that falls back to that human (RT-6.25 step 3)."""
+    text = lease.with_crown(f"{'❓' if human else '🙋'} @{to} — **{head}**", me.id)
+    fields = [("For", f"👑 {to}: a question for the coordinator, not for a human; asked of "
+                      f"{human} if unanswered for {askroute.wait_sec() // 60} min", False)
+              ] if human else []
+    fields += [
         ("From", f"@{me.username}", True),
         ("Blocking", "yes" if blocking else "no", True),
         ("Where", _one_line(where) or "–", False),
@@ -1231,14 +1290,15 @@ async def ask_human(
             fields.append((title, " ".join(value.split()), False))
     yes = "👍 = yes to the decision" if decision.strip() else "👍 = yes"
     fields.append(("Answer", (f"{_one_line(answers)} — " if answers else "")
-                   + f"{yes} · 👎 = no · or reply in this thread", False))
-    props = (attachment_props(fields, fallback=f"{who}: {_one_line(need)}", urgent=blocking)
+                   + ("reply in this thread · the 👑's answer is advice, never approval" if human
+                      else f"{yes} · 👎 = no · or reply in this thread"), False))
+    props = (attachment_props(fields, fallback=f"{to}: {_one_line(need)}", urgent=blocking)
              | (a2a.props(kind=a2a.ASK) or {}))
     stats.record("post", chars=len(text))
     # Always top-level, its thread its own: only a reply there answers it, not
     # a later post in a shared thread; too late after 24 h (RT-6.11).
     post = await client.post(text, props=props)
-    asks.add(me.id, post.id, who, post.id, title=head)
+    asks.add(me.id, post.id, to, post.id, title=head, question=human, blocking=blocking)
     stats.record("ask", id=post.id)  # RT-6.9
     out = await slim.post(client, post)
     out["ask"] = post.id
@@ -1257,7 +1317,37 @@ async def ask_human(
             await _as_guest(client, me.id, await _guest_target(client, "", root_id), linked)
         except Refused as exc:
             out["link_refused"] = str(exc)
-    return _out("ask_human", _with_unmentioned(out, everyone))
+    return out
+
+
+async def _ask_fallback(_port: Any, question: str, human: str, coord: str) -> str:
+    """RT-6.25 step 6: the 👑 left the question unanswered: ask the human
+    once, linked both ways; close the question (✅) and tell the agent. The
+    new ask's id; raises when it could not be posted (the next tick tries)."""
+    client = _get_client()
+    me = await client.get_me()
+    title = asks.titles(me.id).get(question) or "A question for the coordinator"
+    wait = askroute.wait_sec() // 60
+    out = await _post_ask(
+        client, me, to=human, head=title, need=title,
+        context=(f"Asked the 👑 {coord} first (ask mode coordinator): no answer within "
+                 f"{wait} min. The question has it in full."),
+        recommendation="", decision="", where=f"ask {question}",
+        blocking=asks.questions(me.id).get(question, "").endswith(" 1"),
+        answers="", root_id=question)
+    asks.resolve(me.id, question)
+    try:
+        await client.add_reaction(question, "white_check_mark")
+        _get_inbox().notify(askroute.KIND, (
+            f"No answer from the 👑 {coord} to your question {question} within {wait} min: "
+            f"your server asked {human} instead (ask {out['ask']}) and closed the question. "
+            "Their answer comes as usual; a late answer of the 👑 is advice."))
+    except Exception as exc:  # noqa: BLE001 — the human is asked all the same
+        log.info("question %s: %s", question, exc)
+    return str(out["ask"])
+
+
+askroute.fallback = _ask_fallback
 
 
 @mcp.tool()
@@ -1407,7 +1497,8 @@ async def wait_for_events(
     more than 24 h after it, which approves nothing (RT-6.11). departed: mentioned
     agents that are gone, your server told the thread: route it; not_here:
     live agents not in that channel, `name (~home)`, told too: forward it to
-    them (RT-6.21). Mentions and DMs come first; when more than
+    them (RT-6.21). advice: the 👑's answer to your question (RT-6.25).
+    Mentions and DMs come first; when more than
     max_events were waiting, a last item {kind: more_pending, count} says so —
     call again to collect them. A delivered mention or DM, a trusted human's
     yes/no on your open ask, and holding the crown a human's plain post,
@@ -1525,7 +1616,7 @@ async def _roots_from_trusted(client: MattermostAdapter, roots: set[str],
 
 async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, Any]]:
     client = _get_client()
-    posts = [e.post for e in events if e.kind != stall.KIND]
+    posts = [e.post for e in events if e.kind not in OWN_EVENTS]
     trusted = await client.trusted_humans() if posts else {}
     agents: set[str] = set()
     try:
@@ -1536,7 +1627,7 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
     foreign = await owners.foreign(client, agents) if trusted else {}
     roots = await _roots_from_trusted(
         client, {e.post.root_id for e in events
-                 if e.kind != stall.KIND and e.post.user_id in foreign and e.post.root_id},
+                 if e.kind not in OWN_EVENTS and e.post.user_id in foreign and e.post.root_id},
         trusted)
     lean = iter([] if raw or not posts else await slim.posts(client, posts))
     uid = ""
@@ -1545,10 +1636,11 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
             uid = (await client.get_me()).id
         except Exception as exc:  # noqa: BLE001 — unknown: no answer marked expired
             log.info("could not read the bot's id: %s", exc)
+    questions = asks.questions(uid) if uid else {}
     payload = []
     for e in events:
-        if e.kind == stall.KIND:
-            # The server's own event (RT-6.19): no author, the digest as text.
+        if e.kind in OWN_EVENTS:
+            # The server's own event (RT-6.19, RT-6.25): no author, its text.
             payload.append({"kind": e.kind, "from_trusted_human": False, "from_agent": False,
                             "post": {"message": e.post.message}})
             continue
@@ -1592,6 +1684,10 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         # more than 24 h after it approves nothing; the agent asks again. Others
         # approve nothing anyway: no flag on every late post in the thread.
         root = e.post.root_id
+        # RT-6.25 step 4: an agent's answer to my question to the 👑 (a reply,
+        # a reaction): advice, never approval (from_agent, as any agent's).
+        if uid and root and cls in gate.AGENTS and root in questions:
+            item["advice"] = root
         if uid and root and cls == gate.TRUSTED and asks.expired(
                 uid, root, e.post.create_at / 1000, thread=e.kind != "reaction"):
             item["expired"] = True

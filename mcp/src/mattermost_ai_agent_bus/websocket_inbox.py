@@ -13,7 +13,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import a2a, asks, departed, gate, lease, ownpost, unread, watermark
+from . import a2a, askroute, asks, departed, gate, lease, ownpost, unread, watermark
 from .client import (MattermostAdapter, guest_ids, lobby_ids, post_of, reaction_of, read_links,
                      watched_channel_ids, with_links, ws_url_from_http)
 from .model import Channel, Post, Reaction, UnreadChannel
@@ -21,9 +21,14 @@ from .model import Channel, Post, Reaction, UnreadChannel
 log = logging.getLogger(__name__)
 
 
+# Events the server raises itself, with no post behind them: a stall (RT-6.19),
+# a question passed on to the human (RT-6.25 step 6).
+OWN_EVENTS = ("stall", askroute.KIND)
+
+
 @dataclass
 class ClassifiedEvent:
-    kind: str  # mention | dm | watched_channel | reaction (to an open ask) | stall (RT-6.19)
+    kind: str  # mention | dm | watched_channel | reaction (to an open ask) | OWN_EVENTS
     post: Post
     channel: Channel | None = None
     raw: dict[str, Any] | None = None
@@ -207,6 +212,22 @@ class WebSocketInbox:
         """Not for this agent where it is a guest or in the lobby (RT-6.22)."""
         return self._guest_drop(post, kind) or await self._lobby_drop(post, kind)
 
+    async def _ask_mode(self, post: Post) -> bool:
+        """RT-6.25 step 2: a trusted human's `ask-mode …` post in the home is
+        the server's (kept, and acknowledged by the 👑's), for no agent's
+        model: handled here. Anyone else's is a post like any other."""
+        if not await askroute.observe(self.client, post, self._bot_user_id):
+            return False
+        if post.id:
+            self._seen_ids.add(post.id)
+        self.handled(post)
+        return True
+
+    @property
+    def connected(self) -> bool:
+        """Whether the socket is open, so a post now reaches this inbox."""
+        return self._ws is not None
+
     async def _channel(self, channel_id: str) -> Channel:
         if channel_id not in self._channel_cache:
             self._channel_cache[channel_id] = await self.client.get_channel(channel_id)
@@ -264,7 +285,7 @@ class WebSocketInbox:
                 )
                 if not kind or await self._drop(post, kind):
                     continue
-                if post.id in self._seen_ids:
+                if post.id in self._seen_ids or await self._ask_mode(post):
                     continue
                 self._seen_ids.add(post.id)
                 if kind in ADDRESSED:
@@ -401,6 +422,8 @@ class WebSocketInbox:
         if not kind or await self._drop(post, kind):
             return
         pid = post.id
+        if not edited and await self._ask_mode(post):
+            return
         if edited:
             # RT-6.12 step 3: an edit that leaves the post a channel post wakes
             # nobody; one queued as a channel post before may still wake.
@@ -710,7 +733,7 @@ class WebSocketInbox:
         hook and the listener then leaves out. Mattermost's display is cleaned
         up too, for its UI (view)."""
         for event in sorted(events, key=lambda e: e.post.create_at):
-            if event.kind not in ("reaction", "stall"):
+            if event.kind != "reaction" and event.kind not in OWN_EVENTS:
                 self.handled(event.post)
         for cid in dict.fromkeys(e.post.channel_id for e in events):
             await self.view(cid)

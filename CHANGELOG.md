@@ -3,6 +3,37 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.67.0
+
+### Added
+
+- **Ask routing modes: questions to the coordinator first, approvals to a human**
+  ([RT-6.25](docs/arc42/06-runtime-view.md#625-ask-routing-modes), ADR-005
+  phase 1). `ask_human` takes `kind`: `question` (approach, order, who does X)
+  or `approval` (an action with effect), default `approval`. The server's
+  floor makes an ask an approval whatever was declared when it names a merge,
+  deploy, release or tag, install, delete or remove, push, an external write
+  (issue, PR, ticket, mail, a message outside the bus) or spending; the result
+  says so (`kind_declared`, `floor`). Each home has an ask mode: `direct` (as
+  before, the default) or `coordinator`. The default comes from
+  `MM_ASK_ROUTE`; a trusted human switches a home with a top-level post there,
+  `ask-mode coordinator` or `ask-mode direct`. Nobody else's post switches
+  anything, and an agent's never does. Every server that sees the switch keeps
+  it in `askmode-<uid>.env`; one without it reads the home's newest posts once.
+  The 👑 acknowledges a switch once in its thread; `bus_info` shows `ask_mode`
+  and its source. In `coordinator`, a question of an agent that does not hold
+  its home's crown goes to the 👑, posted as `❓ @<👑> — **<need>**` and marked
+  as not for a human; the worker gets the answer as `from_agent` with
+  `advice`, never as approval. The 👑 answers it or escalates it with its own
+  `ask_human(root_id=…)`. With no 👑 reachable the question goes to the human
+  at once; unanswered for `MM_ASK_ROUTE_WAIT_MIN` minutes (default 15), the
+  worker's server asks the human once, linked to the question, closes the
+  question and tells the agent (`{kind: ask_route}`). The stall check wakes the
+  👑 for an open question. Approvals, the 👑's own asks and every ask in
+  `direct` go to the human as before. Not in this phase: a signed
+  `/agent-mode` record, `delegated` with ADR-004, standing approvals, the
+  coordinator's answers in the digest.
+
 ## 0.66.1
 
 ### Fixed
