@@ -283,9 +283,9 @@ def own_config(environ: Mapping[str, str] | None = None) -> tuple[str, list[str]
 def secret_warning(bot: str, owner: str) -> str:
     """The own bot's attestation says `via: secret` (RT-6.24 step 2)."""
     return (f"@{bot} was registered with the shared secret (attestation via secret): its owner "
-            f"{'@' + owner if owner else '(none)'} is only claimed and counts as a profile's "
-            f"`for @` does; for a bound bot put an enrollment token (/agent-token create) into "
-            f"MM_REG_SECRET")
+            f"{'@' + owner if owner else '(none)'} is only claimed: other agents count it only "
+            f"where Mattermost's native owner agrees, else they treat @{bot} as foreign; for a "
+            f"bound bot put an enrollment token (/agent-token create) into MM_REG_SECRET")
 
 
 def _compare(bot: str, claim: Claim, environ: Mapping[str, str] | None) -> list[str]:

@@ -222,6 +222,7 @@ def test_own_mismatch_warns_and_the_env_stays():
     assert "(+1 cut): other owners' agents treat @agent-test-abc123 as foreign" in cut
     secret = " | ".join(_own(token(via="secret")).warnings)
     assert "registered with the shared secret (attestation via secret)" in secret
+    assert "only where Mattermost's native owner agrees" in secret
     placeholder = {"MM_TRUSTED_HUMANS": "${MM_TRUSTED_HUMANS}", "MM_RESPONSIBLE_HUMAN": "alice"}
     assert attest.own_config(placeholder) == ("alice", [], "session")
 
@@ -451,16 +452,29 @@ async def test_a_valid_attestation_wins_over_the_description(pinned, caplog):
     assert await owners.foreign(_chat(), {AGENT}) == {AGENT: "carol"}
 
 
-async def test_enrollment_stands_against_the_native_owner_secret_does_not(pinned):
-    """`via: enrollment` is signed and checked: a reassigned owner_id does not
-    change it. `via: secret` counts as the description's `for @` does: a native
-    owner that disagrees makes a foreign agent; without one it counts."""
+async def test_enrollment_stands_against_the_native_owner(pinned):
+    """`via: enrollment` is signed and checked: a reassigned owner_id does not change it."""
     assert (await owners.read(_chat(_theirs(), native="carol"), AGENT)).owner == "alice"
-    secret = _theirs(via="secret")
-    assert (await owners.read(_chat(secret, native="agent-registrar"), AGENT)).owner == ""
-    assert await owners.foreign(_chat(secret, native="agent-registrar"), {AGENT}) == {AGENT: ""}
-    assert (await owners.read(_chat(secret, native="alice"), AGENT)).owner == "alice"
-    assert (await owners.read(_chat(secret, description="unbound · claims @alice"), AGENT)).owner == "alice"
+    assert await owners.foreign(_chat(_theirs(), native="carol"), {AGENT}) == {}
+
+
+@pytest.mark.parametrize("native", [None, "agent-registrar", "carol"])
+async def test_a_secret_claim_is_foreign_without_an_agreeing_native_owner(pinned, native):
+    """`via: secret` never makes an agent more trusted than without it: no
+    native owner, or one that disagrees, gives no owner (foreign, as unbound);
+    its trusted list is still read for display."""
+    for description in ("unbound · claims @alice", CAROLS):
+        chat = _chat(_theirs(via="secret"), description=description, native=native)
+        agent = await owners.read(chat, AGENT)
+        assert agent.owner == "" and agent.attested and agent.trusts == {"alice", "bob"}
+        assert not owners.is_peer(agent, {"alice", "bob"})
+        assert await owners.foreign(chat, {AGENT}) == {AGENT: ""}
+
+
+async def test_a_secret_claim_is_a_peer_only_when_the_native_owner_agrees(pinned):
+    chat = _chat(_theirs(via="secret"), description="unbound · claims @alice", native="alice")
+    assert (await owners.read(chat, AGENT)).owner == "alice"
+    assert await owners.foreign(chat, {AGENT}) == {}
 
 
 async def test_a_cut_trusted_list_is_foreign(pinned):

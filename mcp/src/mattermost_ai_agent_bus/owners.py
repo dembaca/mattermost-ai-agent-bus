@@ -22,11 +22,11 @@ and username, not expired) takes its owner and trusted list from it instead
 of the description; where the two disagree the attestation wins, logged.
 ``via: enrollment`` (the registrar checked the owner) counts as signed:
 neither a description nor a native owner changes it. ``via: secret`` is only
-the caller's claim, and its owner counts the same as the description's
-``for @…`` does: a native owner that disagrees makes a foreign agent. A
-``trusted_cut`` counts as a cut list. An invalid, expired or unpinned
-attestation falls back to the description, logged once per agent; without
-pinned keys nothing changes.
+the caller's claim and never makes an agent more trusted than it is without
+it: its owner counts only where a readable native owner agrees, else the
+agent has none (foreign, as an ``unbound`` one is). A ``trusted_cut`` counts
+as a cut list. An invalid, expired or unpinned attestation falls back to the
+description, logged once per agent; without pinned keys nothing changes.
 """
 
 from __future__ import annotations
@@ -82,16 +82,17 @@ def decide(native: str | None, description: str | None, user_id: str = "",
 
     A valid attestation (`claim`, RT-6.24 step 5) replaces the description.
     ``via: enrollment`` names the owner the registrar checked: it stands,
-    whatever `native` says. ``via: secret`` is only the caller's claim: its
-    owner counts the same as the description's ``for @…`` does, so a native
-    owner that disagrees makes no owner (foreign)."""
+    whatever `native` says. ``via: secret`` is only the caller's claim and
+    never makes an agent more trusted than without it: its owner counts only
+    where a readable native owner agrees; else no owner (foreign)."""
     if claim is not None:
         owner = claim.responsible
-        if claim.via == attest.ENROLLMENT or not owner or native is None:
+        if claim.via == attest.ENROLLMENT or not owner:
             return owner
-        if owner != native.lower():
-            log.warning("agent %s: native owner @%s but its attestation (via secret) claims "
-                        "@%s: foreign", user_id, native.lower(), owner)
+        # via secret: only a readable native owner that agrees makes it count.
+        if native is None or owner != native.lower():
+            log.info("agent %s: its attestation (via secret) claims @%s, native owner %s: "
+                     "no owner (foreign)", user_id, owner, f"@{native.lower()}" if native else "unread")
             return ""
         return owner
     if native is None and description is None:

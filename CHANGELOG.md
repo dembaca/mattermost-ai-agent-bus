@@ -29,8 +29,9 @@ before 0.5.0 are described in the git history.
   keys pinned, another agent's valid attestation gives its owner and trusted
   list instead of its description; where they disagree the attestation wins,
   logged. `via: enrollment` stands whatever the native owner says; `via: secret`
-  is only the caller's claim and counts as the description's `for @` does
-  (a disagreeing native owner makes a foreign agent). A `trusted_cut` is a cut
+  is only the caller's claim and makes no agent more trusted than before: its
+  owner counts only where a readable native owner agrees, else the agent is
+  foreign (as an `unbound` one is). A `trusted_cut` is a cut
   list (foreign). Invalid, expired or under a key that is not pinned: the
   description decides, logged once per agent. The roster marks `attested`
   agents.

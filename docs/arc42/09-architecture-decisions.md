@@ -227,8 +227,10 @@ human (Section 7.3, "The profile says whom an agent answers to").
   attestation wins. `via: enrollment` counts as signed, whatever the native
   owner says, so an untrusted admin who reassigns `owner_id` or rewrites a
   description no longer changes an attested agent's owner. `via: secret` is
-  only the caller's claim: its owner counts the same as the description's
-  `for @…` does, cross-checked with a readable native owner. A cut list
+  only the caller's claim, and an attestation never makes an agent more
+  trusted than it is without one (decided 2026-11-01): its owner counts only
+  where a readable native owner agrees, otherwise the agent has no owner and
+  is foreign, as an `unbound` one is. A cut list
   (`trusted_cut`) is foreign. Invalid, expired or under a key that is not
   pinned: the description decides, as before.
 - **Trust assumptions (Section 7.3):** only the registrar creates bots with
