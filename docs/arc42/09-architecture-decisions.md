@@ -13,7 +13,7 @@ code does today and point here where a decision will change them.
 | ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, built (WP1, 0.59.0; WP4, 0.62.0; WP5, 0.63.0; WP6, 0.64.0) | WP1, WP4, WP5, WP6 |
 | ADR-003 | An agent's owner comes from its registrar-bound bot description, or from the registrar's signed claim where its keys are pinned | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) built on the bus side in 0.66.0 (RT-6.24) | WP2, WP3, WP6, #83 |
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
-| ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phases 2–4 open (signed `/agent-mode`, `delegated` with ADR-004, standing approvals) | #83 |
+| ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -359,11 +359,14 @@ since all of them use the registrar.
 ## ADR-005: Ask routing modes
 
 **Status:** Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and
-`coordinator`, switched by a command in the home; phases 2–4 open (signed
-`/agent-mode`, `delegated` with ADR-004, standing approvals). Phase 1 is
+`coordinator`, switched by a command in the home; phase 2 built (0.68.0):
+source (b) of step 3, the registrar's signed `/agent-mode` record; phases 3–4
+open (`delegated` with ADR-004, standing approvals). Phase 1 is
 RT-6.25: the `kind` of an ask and the server's floor (step 5), the two modes
 (step 2), switched by source (a) of step 3 as the interim it names, with the
 mode kept per server; the fallback to `direct` of the open question on stall.
+Phase 2 is RT-6.25 step 8: with the registrar's keys pinned the signed record
+is the only source, and (a) switches nothing; without pinned keys (a) holds.
 Builds on ADR-004 (delegation, impact, digest) and ADR-002 (a crown per
 (agent, home)). The `delegated` mode depends on #83 (signed owner attestation,
 built on the bus side in 0.66.0, RT-6.24).
@@ -416,8 +419,12 @@ it does not reduce how many asks arrive.
    record has one author, one verification and one revoke, and `delegated`
    needs the registrar anyway. Cost: `direct` and `coordinator` then also
    depend on the registrar; (a) stays a possible interim for those two, since
-   they carry no delegation. Who may set a home's mode (the owner of the home,
-   or any trusted human of it) is open.
+   they carry no delegation. Who may set a home's mode, settled with phase 2
+   (0.68.0): the registrar accepts `/agent-mode` only from a member of that
+   team channel and signs who set it (`set_by_id`); each server counts the
+   record only when `set_by_id` is one of its own trusted humans, so the
+   signature proves who set it and authority still comes from trust
+   (ADR-001).
 
    The channel header is **not** a source of truth: any channel member can
    edit it. The servers may *show* the mode in the header's bus part and in

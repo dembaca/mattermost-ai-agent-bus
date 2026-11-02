@@ -177,7 +177,11 @@ makes one that names an action with effect an approval). A trusted human's
 top-level post `ask-mode coordinator` (or `ask-mode direct`) in a home sends
 the agents' questions there to its 👑 first, posted as `❓ @<👑> — **<need>**`;
 its answer is advice, approvals still go to the human
-([arc42 §6.25](arc42/06-runtime-view.md#625-ask-routing-modes)).
+([arc42 §6.25](arc42/06-runtime-view.md#625-ask-routing-modes)). With the
+registrar's keys pinned the mode comes only from the registrar's signed record
+instead: a human types `/agent-mode coordinator` (or `direct`) in the home, and
+each server reads `GET <registrar>/register/v1/modes/<channel id>`
+([arc42 §6.25 step 8](arc42/06-runtime-view.md#625-ask-routing-modes)).
 
 ## Inbox classification
 

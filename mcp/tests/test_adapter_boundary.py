@@ -47,6 +47,7 @@ POST_KEYS_ALLOWED = {
     "overhead.py": "Claude Code transcript entries, no posts",
     "websocket_inbox.py": "the WebSocket envelope and reaction JSON; posts go through client.post_of",
     "turnend.py": "the hook API's post items (hookapi._slim, GET /v1/posts), bus output",
+    "attest.py": "the claims of the registrar's signed ask-mode record (RT-6.25 step 8), no post",
 }
 
 # Modules that reach the chat through port.ChatPort only, never client.py.

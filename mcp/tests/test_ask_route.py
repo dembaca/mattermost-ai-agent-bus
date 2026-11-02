@@ -260,9 +260,11 @@ async def test_bus_info_shows_the_mode_and_its_source(monkeypatch):
     monkeypatch.setattr(server, "_guest_names", none)
     monkeypatch.setattr(server, "_own_channels", none)
     monkeypatch.setattr(server, "_newer_installed", lambda: None)
-    assert json.loads(await server.bus_info())["ask_mode"] == {"mode": "direct", "source": "env"}
+    assert json.loads(await server.bus_info())["ask_mode"] == {"mode": "direct", "source": "env",
+                                                                "signed": False}
     await askroute.observe(c, _switch(), BOT)
-    assert json.loads(await server.bus_info())["ask_mode"] == {"mode": "coordinator", "source": SWITCH}
+    assert json.loads(await server.bus_info())["ask_mode"] == {"mode": "coordinator",
+                                                                "source": SWITCH, "signed": False}
 
 
 # --- steps 3 and 5: whom an ask goes to ---------------------------------------------------
