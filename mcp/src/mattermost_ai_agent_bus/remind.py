@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import a2a, asks, lease, session_file, stats, tasks
+from . import a2a, askroute, asks, lease, session_file, stats, tasks
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -139,7 +139,11 @@ async def tick(client: ChatPort, uid: str, now: float | None = None) -> float | 
     if lock is None:
         return None  # another server of this bot is sending: look at the next tick
     try:
-        return await _tick(client, uid, now)
+        # RT-6.25 step 6: a question the 👑 left unanswered goes to the human,
+        # under the same lock, so two servers of one bot do not both ask.
+        routed = await askroute.tick(client, uid, now)
+        due = await _tick(client, uid, now)
+        return min((d for d in (routed, due) if d is not None), default=None)
     finally:
         os.close(lock)
 

@@ -51,7 +51,7 @@ POST_KEYS_ALLOWED = {
 
 # Modules that reach the chat through port.ChatPort only, never client.py.
 PORT_MODULES = {"gate.py", "lease.py", "slim.py", "files.py", "departed.py", "remind.py", "stall.py",
-                "ownpost.py", "stats.py", "unread.py", "attest.py"}
+                "ownpost.py", "stats.py", "unread.py", "attest.py", "askroute.py"}
 
 
 def _key(node: ast.AST) -> str | None:

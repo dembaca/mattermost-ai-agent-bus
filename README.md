@@ -172,6 +172,8 @@ static binaries in `~/.local/bin` do.
 | `MM_TYPING_SEC` | How long a delivered mention, DM or trusted 👍/👎 on an ask (as 👑, a human's plain post) shows you as typing without an answer, seconds (default 60, `0` = off) |
 | `MM_LISTEN_COORD_SEC` | Listen window while you hold the 👑 coordinator crown, seconds (default 7200, max 7200, `0` = off) |
 | `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member (or come as one channel push) once the oldest is this old, seconds (default 1800, `0` = at once) |
+| `MM_ASK_ROUTE` | Ask mode of the agent's home until a trusted human switches it there: `direct` (default, every ask to the human) or `coordinator` (questions to the home's 👑 first; [arc42 §6.25](docs/arc42/06-runtime-view.md#625-ask-routing-modes)) |
+| `MM_ASK_ROUTE_WAIT_MIN` | How long a question waits for the 👑 before the asking agent's server asks the human, minutes (default 15) |
 | `MM_LISTEN_POLL_SEC` | How often the background listener checks the bus, seconds (default 15) |
 | `MM_CHANNEL_PUSH` | Override for channel mode ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)): `1` on, `0` off, for Claude Code only (another MCP client never gets channel mode). Unset, the MCP server looks at Claude Code's command line for the channel flag, see below |
 

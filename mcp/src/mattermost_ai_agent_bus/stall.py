@@ -19,7 +19,7 @@ still on the roster (the crown holder's own too) is listed but is no reason to
 wake it: that agent's remind.py nudges the human, the coordinator would find
 nothing to do, so a stall whose only items they are wakes nobody (RT-6.19
 step 2). An ask expired, or whose agent left (no reminders any more), still
-wakes it, and so does any other item. Then the server wakes its agent with an event
+wakes it, and so does any other item: a question to the 👑 (RT-6.25) too. Then the server wakes its agent with an event
 `{kind: "stall"}` whose text lists the items: what, who is next, the last
 activity. The event goes into the inbox queue, so it reaches the agent like
 any event: pushed as a channel tag (RT-6.12), from wait_for_events, and the
@@ -154,6 +154,11 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
         reminded = bool(by) and (by == me or by in reachable)
         if asked and now_ms - asked >= asks.APPROVAL_SEC * 1000:
             what, nxt = "ask expired", f"{by or '–'}: resolve it, open a new ask"
+        elif a.get("question"):
+            # RT-6.25 step 7: a question to the 👑 wakes it; its human is
+            # asked by the asking agent's server once the wait is over.
+            what, nxt = "question", f"{a.get('human', '–')} (👑: answer it, or ask the human)"
+            reminded = False
         elif reminded:
             what, nxt = "ask", f"{a.get('human', '–')} (human; reminded automatically)"
         else:

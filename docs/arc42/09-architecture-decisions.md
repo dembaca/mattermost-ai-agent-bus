@@ -13,7 +13,7 @@ code does today and point here where a decision will change them.
 | ADR-002 | One home per agent; guests only talk; a crown per (agent, home); `MM_CHANNEL` is the lobby | Decided 2026-10-29, built (WP1, 0.59.0; WP4, 0.62.0; WP5, 0.63.0; WP6, 0.64.0) | WP1, WP4, WP5, WP6 |
 | ADR-003 | An agent's owner comes from its registrar-bound bot description, or from the registrar's signed claim where its keys are pinned | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) built on the bus side in 0.66.0 (RT-6.24) | WP2, WP3, WP6, #83 |
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
-| ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Proposed (2026-11-01), not built; builds on ADR-004 and #83 | #83 |
+| ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phases 2–4 open (signed `/agent-mode`, `delegated` with ADR-004, standing approvals) | #83 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -358,10 +358,15 @@ since all of them use the registrar.
 
 ## ADR-005: Ask routing modes
 
-**Status:** Proposed (2026-11-01). Not built; no scenario in Section 6 changes
-until it is accepted and built. Builds on ADR-004 (delegation, impact, digest)
-and ADR-002 (a crown per (agent, home)). The `delegated` mode depends on #83
-(signed owner attestation, built on the bus side in 0.66.0, RT-6.24).
+**Status:** Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and
+`coordinator`, switched by a command in the home; phases 2–4 open (signed
+`/agent-mode`, `delegated` with ADR-004, standing approvals). Phase 1 is
+RT-6.25: the `kind` of an ask and the server's floor (step 5), the two modes
+(step 2), switched by source (a) of step 3 as the interim it names, with the
+mode kept per server; the fallback to `direct` of the open question on stall.
+Builds on ADR-004 (delegation, impact, digest) and ADR-002 (a crown per
+(agent, home)). The `delegated` mode depends on #83 (signed owner attestation,
+built on the bus side in 0.66.0, RT-6.24).
 
 **Context:** The more agents run, the more asks reach the human, and progress
 stalls: one human answers every `ask_human` (RT-6.11), one at a time. Most of
@@ -371,7 +376,7 @@ though the home's coordinator (the 👑, ADR-002) knows the open tasks, the othe
 agents and the ADRs. ADR-004 lets a human hand asks to a delegate when away;
 it does not reduce how many asks arrive.
 
-**Decision (proposed):**
+**Decision:**
 
 1. **Two classes of ask.**
    - A **question** is content, technical or coordination: approach A or B,
@@ -456,17 +461,18 @@ coordinator's own asks go to the human (or the delegate), not to itself.
 
 **Open questions:**
 
-- Stall: when the coordinator is idle, RT-6.19's stall digest should nudge it
-  first, then fall back to `direct` for that ask after N minutes. The same
-  fallback applies when no coordinator is reachable (none holds the 👑, or its
-  status is stale).
+- Stall: settled in phase 1 (RT-6.25 steps 5–7): the stall digest nudges the
+  coordinator first, the asking agent's server asks the human once after
+  `MM_ASK_ROUTE_WAIT_MIN`, and no reachable 👑 means the human at once.
 - Visibility: how the human sees what the coordinator answered. Proposal: its
   answers to questions go into the digest next to delegate decisions
   (ADR-004 step 7), each with the ask and the answer.
 - The identity of a delegate or a meta coordinator is trusted only through the
   owner attestation of #83 (`via: enrollment`, `responsible` = the human).
   Without a pinned registrar key, `delegated` stays off.
-- The exact `kind` parameter and the server's classification floor.
+- The exact `kind` parameter and the server's classification floor: settled
+  in phase 1 (`kind`, `askroute.FLOOR`, RT-6.25 step 1); its overlap with
+  ADR-004's derived impact stays open.
 - The meta coordinator: which agent, how it is named in the record, and
   whether its answer to a question needs the asking home's coordinator to
   relay it.
