@@ -335,20 +335,31 @@ async def _posted(client: MattermostAdapter, post: Post) -> None:
 
 
 
-async def _work_posts(client: MattermostAdapter) -> tuple[list[Post], dict[str, str]]:
-    """The work channel's posts of the task window, and the names of their
-    authors and of those who reacted (an agent's ✅ closes an ask)."""
-    posts = await client.posts_after(tasks.since_ms())
+async def _work_posts(client: MattermostAdapter, channel_id: str = "",
+                      known: dict[str, str] | None = None) -> tuple[list[Post], dict[str, str]]:
+    """The work channel's (or channel_id's) posts of the task window, and the
+    names of their authors and of those who reacted (an agent's ✅ closes an
+    ask). `known`: names looked up before, which it adds to and does not ask
+    for again (RT-6.14 step 9)."""
+    if channel_id:
+        posts = await client.posts_after(tasks.since_ms(), channel_id=channel_id)
+    else:
+        posts = await client.posts_after(tasks.since_ms())
     reactors = {r.user_id for p in posts for r in p.reactions}
-    names = await client.usernames(({p.user_id for p in posts} | reactors) - {""})
-    return posts, names
+    ids = ({p.user_id for p in posts} | reactors) - {""}
+    if known is None:
+        return posts, await client.usernames(ids)
+    if missing := ids - known.keys():
+        known.update(await client.usernames(missing))
+    return posts, {i: known[i] for i in ids if i in known}
 
 
-async def _tasks(client: MattermostAdapter, posts: list[Post],
-                 names: dict[str, str]) -> list[dict[str, Any]]:
+async def _tasks(client: MattermostAdapter, posts: list[Post], names: dict[str, str],
+                 crown: set[str] | None = None) -> list[dict[str, Any]]:
     """The task rows; with trusted humans configured, a TASK root by anyone
     but them and the peer agents is no task (RT-6.16, ADR-001). Unsure: all
-    roots count."""
+    roots count. `crown`: who may close any task, when not the home's
+    roster (another channel's crown holder, RT-6.14 step 9)."""
     untrusted: set[str] = set()
     try:
         if await client.trusted_humans():
@@ -358,9 +369,10 @@ async def _tasks(client: MattermostAdapter, posts: list[Post],
                          if c in (gate.OTHER, gate.FOREIGN)}
     except Exception as exc:  # noqa: BLE001
         log.info("task rows without the trust check: %s", exc)
-    coordinators: set[str] = set()
+    coordinators: set[str] = set(crown or ())
     try:  # who may close any task: the crown holder (RT-6.14 step 3)
-        coordinators = {r.username for r in await lease.roster(client) if r.coordinator}
+        if crown is None:
+            coordinators = {r.username for r in await lease.roster(client) if r.coordinator}
     except Exception as exc:  # noqa: BLE001
         log.info("task rows without the roster: %s", exc)
     return tasks.build(posts, names, untrusted=untrusted, coordinators=coordinators)
@@ -384,6 +396,56 @@ async def _owners_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, di
     except Exception as exc:  # noqa: BLE001 — the roster without owners
         log.info("roster without owners: %s", exc)
     return out
+
+
+def _why(exc: BaseException) -> str:
+    """An error in a few words: Mattermost's reason without the URL."""
+    return (str(exc).split(" for url ")[0] or type(exc).__name__)[:120]
+
+
+async def _overview(client: MattermostAdapter, action: str) -> dict[str, Any]:
+    """coordinator(action, scope="all"), RT-6.14 step 9: per channel the bot
+    is in (home, guests, lobby: _own_channels, RT-6.22 step 4) its crown and
+    its tasks and asks, or its roster, as for the home; for tasks also each
+    human's open asks across them, oldest first. A channel that cannot be
+    read is an error row, the others still come back. Reads only."""
+    trusted: dict[str, str] = {}
+    if action == "tasks":
+        try:
+            trusted = await client.trusted_humans()
+        except Exception as exc:  # noqa: BLE001
+            log.info("asks without the trusted humans: %s", exc)
+    known: dict[str, str] = {}
+    rows: list[dict[str, Any]] = []
+    queue: list[tuple[int, str, dict[str, Any]]] = []
+    for ch in await _own_channels(client):
+        try:
+            agents = await lease.roster_in(client, ch["id"], ch["name"])
+            crown = lease.crown_in(agents)
+            posts, names = await _work_posts(client, ch["id"], known)
+            row: dict[str, Any] = {"channel": ch["name"], "role": ch["role"], "crown": crown or None}
+            if action == "roster":
+                row["roster"] = tasks.roster(agents, posts, names, await _owners_of(client, agents))
+            else:
+                # A foreign agent's ✅ keeps an ask open (RT-6.11, ADR-001).
+                foreign = (await owners.foreign(client, tasks.ask_closers(posts))) if trusted else {}
+                row["tasks"] = await _tasks(client, posts, names, {crown} - {""})
+                row["asks"] = tasks.open_asks(posts, names, trusted, set(foreign))
+                at = {p.id: p.create_at for p in posts}
+                queue += [(at.get(a["ask"], 0), ch["name"], a) for a in row["asks"]]
+        except Exception as exc:  # noqa: BLE001 — that channel as an error row
+            log.info("overview of ~%s: %s", ch["name"], exc)
+            row = {"channel": ch["name"], "role": ch["role"], "error": _why(exc)}
+        rows.append(row)
+    if action == "roster":
+        return {"channels": rows}
+    by_human: dict[str, list[dict[str, Any]]] = {}
+    for _, name, a in sorted(queue, key=lambda q: q[0]):
+        if not a.get("question"):  # a question to a 👑 is no human's (RT-6.25)
+            by_human.setdefault(a.get("human") or "(none)", []).append(
+                {"ask": a["ask"], "channel": name,
+                 **{k: v for k, v in a.items() if k not in ("ask", "human")}})
+    return {"channels": rows, "asks_by_human": by_human}
 
 
 async def _note_client(ctx: Any, call_next: Any) -> Any:
@@ -1374,17 +1436,28 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
 
 
 @mcp.tool()
-async def coordinator(action: str = "who") -> str:
+async def coordinator(action: str = "who", scope: str = "home") -> str:
     """The coordinator role, held as a 👑 status lease (RT-6.6).
 
     action: "who" (current coordinator), "take" (on your ACK to a HANDOVER;
     waits until the holder releases or its lease runs out), "release" (right
     after the agent you handed over to ACKed), "tasks" (open tasks and asks)
-    or "roster" (reachable agents), one row each (RT-6.14). Without a crown
-    anywhere, the oldest reachable agent takes it on its own; a 💤
-    coordinator loses it when its lease runs out. Holding it, read
+    or "roster" (reachable agents), one row each (RT-6.14). scope="all":
+    both per channel you are in, with its crown, and asks per human.
+    Without a crown anywhere, the oldest reachable agent takes it on its
+    own; a 💤 coordinator loses it when its lease runs out. Holding it, read
     coordinator.md next to the skill.
     """
+    if scope not in ("home", "all"):
+        return _refused("coordinator", 'scope must be "home" or "all"')
+    if scope == "all":
+        if action not in ("tasks", "roster"):
+            return _refused("coordinator", 'scope "all" is for "tasks" and "roster" only')
+        try:
+            return _out("coordinator", await _overview(_get_client(), action))
+        except Exception as exc:  # noqa: BLE001 — the channel list unreadable: no overview
+            log.info("overview: %s", exc)
+            return _refused("coordinator", f"cannot list your channels: {_why(exc)}")
     if action in ("tasks", "roster"):
         client = _get_client()
         posts, names = await _work_posts(client)

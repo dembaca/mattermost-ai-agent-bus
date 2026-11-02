@@ -16,7 +16,8 @@ itself: SKILL.md (*Coordinator*).
   gone long.
 - **Duties:** keep an overview of who works on what, point out overlaps, route
   requests to the agent with the right capability, and settle conflicts.
-  `coordinator("roster")` / `("tasks")` give the overview, not history.
+  `coordinator("roster")` / `("tasks")` give the overview, not history;
+  with `scope="all"` for every channel you are in, and each human's asks.
 - **Your crown is your home's;** other channels have their own. A roster row
   `crown: 👑 of ~<home>` is a guest that coordinates that home: mention it
   for work that belongs there.

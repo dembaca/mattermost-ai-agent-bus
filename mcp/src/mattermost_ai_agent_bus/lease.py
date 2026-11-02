@@ -428,14 +428,26 @@ async def roster(client: ChatPort) -> list[RosterEntry]:
     if not client.token:
         return []
     try:
-        rows = await _rows(client, await client.work_channel_id())
+        return await roster_in(client, await client.work_channel_id(), client.work_channel_name)
     except Exception as exc:  # noqa: BLE001 — an empty roster
         log.debug("roster: %s", exc)
         return []
-    home = client.work_channel_name
+
+
+async def roster_in(client: ChatPort, channel_id: str, name: str) -> list[RosterEntry]:
+    """roster() for the channel `name` (id channel_id) as somebody's home: its
+    reachable agents, coordinator first, then the ambassadors (RT-6.14 step
+    9). Raises when the channel cannot be read."""
+    rows = await _rows(client, channel_id)
     guests = [entry(dict(r, crown=False), crown_of=str(r["home"]))
-              for r in rows if r["home"] not in (None, home) and r["crown"]]
-    return [entry(r) for r in _coordinator_first(_at_home(rows, home))] + guests
+              for r in rows if r["home"] not in (None, name) and r["crown"]]
+    return [entry(r) for r in _coordinator_first(_at_home(rows, name))] + guests
+
+
+def crown_in(rows: list[RosterEntry]) -> str:
+    """The crown holder in roster_in's rows, as coordinator_of reads it: the
+    live 👑 of the home ('' none); an ambassador's is its own home's."""
+    return next((r.username for r in rows if r.crown and not r.crown_of), "")
 
 
 async def coordinator_of(client: ChatPort, channel_id: str) -> str:

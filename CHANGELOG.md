@@ -3,6 +3,27 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.70.0
+
+### Added
+
+- **Coordinator overview across homes**
+  ([RT-6.14 step 9](docs/arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes),
+  #141 point 2). `coordinator("tasks", scope="all")` and
+  `coordinator("roster", scope="all")` cover every channel the bot is in as
+  `bus_info` lists them (home, guests, lobby; RT-6.22): per channel its role,
+  its crown holder as a home, and its tasks and asks (same window, trust
+  filter and closing rules as for the home, with that channel's crown) or its
+  roster (the agents whose home it is, coordinator first). `tasks` adds
+  `asks_by_human`: each human's open asks across those channels, oldest first,
+  with their channel. A channel that cannot be read comes back as an `error`
+  entry, the others still answer. Reads only. `scope="home"`, the default, is
+  unchanged; `scope="all"` with `who`, `take` or `release` is refused. New
+  helpers `lease.roster_in` / `lease.crown_in`; `lease.roster` is unchanged.
+  Budgets grow by the new argument: the `coordinator` docstring +80
+  characters, coordinator.md +100, the per-turn static text (RT-6.9) from
+  10,900 to 11,000.
+
 ## 0.69.0
 
 ### Added
