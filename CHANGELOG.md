@@ -3,6 +3,49 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.69.0
+
+### Added
+
+- **corral keeps its bot across `claude --continue`**
+  ([RT-6.18 steps 9–10](docs/arc42/06-runtime-view.md#618-keyless-host-managed-session),
+  RT-6.1 step 7). A corral session with Claude Code (`CORRAL_AGENT=claude`) that
+  ended by itself (not `CORRAL_AGENT_EXIT=aborted`) no longer loses its bot:
+  `postEnd` sends the host process SIGUSR1 instead of SIGTERM, which only sets
+  the bot offline (no `BYE`, no stats post, no unregister) and leaves its state
+  directory, and marks the session file kept (`MM_SERVER_ENDED`,
+  `MM_KEPT_WORKDIR` and `MM_KEPT_CLAUDE_SID`, both sha1 keys). Only when the host
+  process saw a Claude session: at its first relay handshake it writes the
+  session id's key to `hosted/<session>/claude-sid.env`. The next `preStart`
+  reads corral's command line (`ps -o args=` of its parent, the words after
+  `--`): `--continue`/`-c` takes over the kept bot of the same workdir that ended
+  last, `--resume <id>`/`-r <id>` the one kept for that session — same name,
+  threads, DMs, asks, read watermark and counters (the state directory is
+  renamed), no registration, no welcome-DM baseline; the banner says
+  `took over <name>`. Anything else — a plain start, the picker,
+  `--fork-session`, another agent, a command line that cannot be read —
+  registers a new bot as before. The claim is one rename, so of two starts only
+  one gets the bot; a rejected token (`401`) means a new bot. The host process
+  learns the kept session's key (`MM_BUS_KEPT_SID`) and logs a resume of
+  another conversation; the bot stays and is kept under the relay's session.
+  The token stays in the host state directory (0600) and reaches the host
+  process on stdin only, as before.
+- **Kept corral bots are reaped** after `MM_SESSION_KEEP_SEC` (24 h) from their
+  end mark, with their own token, by every `preStart` and by
+  `mm-agent-sweep.sh` (`KEPT` until then), through one lib function
+  (`mm_unregister_session_file`); a claim left by a start that died goes back
+  under its name.
+
+### Changed
+
+- **Both corral hooks refuse a state directory a sandbox can write**
+  (`XDG_STATE_HOME` in a workdir, a corral home or corral's temporary
+  directories): `preStart` contributes only `MM_BUS_UNAVAILABLE`, `postEnd`
+  runs nothing. A kept token lives up to a day longer than its session.
+- The sweep counts a kept bot's grace period from its `MM_SERVER_ENDED` mark
+  where there is one (also for `mcp-*.env` of RT-6.10 step 7), else from the
+  file's mtime as before.
+
 ## 0.68.0
 
 ### Added

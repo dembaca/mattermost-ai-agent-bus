@@ -1980,6 +1980,20 @@ def _fixed() -> overhead.Fixed:
                           skill_chars)
 
 
+def _keep_on_exit() -> None:
+    """The host process's exit when corral's postEnd keeps the bot for
+    `claude --continue` (RT-6.18 step 9): offline only. No BYE, no stats
+    post (the counter file carries over), no unregister; nothing runs the
+    exit work afterwards."""
+    global _exit_handled
+    if _hook_api is not None:
+        _hook_api.remove_file()
+    if _exit_handled or _client is None:
+        return
+    _exit_handled = True
+    log.info("exit: %s", _client.keep_sync())
+
+
 def _cleanup_on_exit() -> None:
     """Unregister the session bot when the process ends."""
     global _exit_handled

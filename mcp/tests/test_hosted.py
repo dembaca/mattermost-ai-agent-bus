@@ -3,6 +3,7 @@ in the sandbox (docs/arc42/06-runtime-view.md)."""
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -378,7 +379,7 @@ async def test_hook_api_with_the_session_key_and_no_file(tmp_path):
 def test_watchdog_ends_the_session_with_exit_work(tmp_path, monkeypatch):
     """RT-6.18 step 8: corral gone → exit work, readiness file and state dir removed."""
     work = []
-    monkeypatch.setattr(hosted, "exit_work", work.append)
+    monkeypatch.setattr(hosted, "exit_work", lambda c, keep=False: work.append(c))
     d = session_file.use_hosted_dir(tmp_path / "hosted" / "s")
     checks = iter([True, False])
     why = hosted.serve_host(hosted.Host(KEY, serve=_echo, client="c"), ready_file=tmp_path / "r.json",
@@ -388,22 +389,100 @@ def test_watchdog_ends_the_session_with_exit_work(tmp_path, monkeypatch):
 
 
 def test_sigterm_ends_the_session_with_exit_work(tmp_path, monkeypatch):
-    """RT-6.18 step 7: postEnd's SIGTERM → exit work (here SIGUSR1 stands in)."""
+    """RT-6.18 step 7: postEnd's SIGTERM → exit work (here SIGUSR2 stands in)."""
     work = []
-    monkeypatch.setattr(hosted, "exit_work", work.append)
+    monkeypatch.setattr(hosted, "exit_work", lambda c, keep=False: work.append((c, keep)))
     ready = tmp_path / "r.json"
+    _signal_when_ready(ready, signal.SIGUSR2)
+    why = hosted.serve_host(hosted.Host(KEY, serve=_echo), ready_file=ready, with_services=False,
+                            signals=(signal.SIGUSR2,))
+    assert why == "signal SIGUSR2" and work == [(None, False)]
 
+
+def _signal_when_ready(ready: Path, sig: signal.Signals) -> None:
     def kill_when_ready():
         for _ in range(500):
             if ready.exists():
-                os.kill(os.getpid(), signal.SIGUSR1)
+                os.kill(os.getpid(), sig)
                 return
             time.sleep(0.01)
 
     threading.Thread(target=kill_when_ready, daemon=True).start()
-    why = hosted.serve_host(hosted.Host(KEY, serve=_echo), ready_file=ready, with_services=False,
-                            signals=(signal.SIGUSR1,))
-    assert why == "signal SIGUSR1" and work == [None]
+
+
+def test_sigusr1_keeps_the_bot_and_the_state_dir(tmp_path, monkeypatch):
+    """RT-6.18 step 9: postEnd keeps the bot for `claude --continue` with
+    SIGUSR1 → the keep exit work (offline only), the readiness file goes, the
+    state directory stays for the session that takes the bot over (step 10)."""
+    work = []
+    monkeypatch.setattr(hosted, "exit_work", lambda c, keep=False: work.append((c, keep)))
+    d = session_file.use_hosted_dir(tmp_path / "hosted" / "s")
+    (d / "asks-x.env").write_text("kept\n")
+    ready = tmp_path / "r.json"
+    _signal_when_ready(ready, signal.SIGUSR1)
+    why = hosted.serve_host(hosted.Host(KEY, serve=_echo, client="c"), ready_file=ready,
+                            with_services=False, signals=(signal.SIGUSR2,))
+    assert why == "keep: signal SIGUSR1" and work == [("c", True)]
+    assert not ready.exists() and (d / "asks-x.env").read_text() == "kept\n"
+
+
+def test_keep_exit_sets_offline_only(monkeypatch):
+    """RT-6.18 step 9: the keep exit work — no BYE, no stats, no unregister,
+    no state removed; only the bot's status goes offline, and nothing runs
+    the full exit work afterwards."""
+    from mattermost_ai_agent_bus import server
+    from mattermost_ai_agent_bus.client import MattermostAdapter
+
+    seen = []
+
+    def handler(req):
+        seen.append((req.method, req.url.path))
+        return httpx.Response(200, json={})
+
+    real = httpx.Client
+    monkeypatch.setattr("mattermost_ai_agent_bus.client.httpx.Client",
+                        lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setenv("MM_BOT_USER_ID", "u" * 26)
+    c = MattermostAdapter(base_url="https://mm.example", token="bot-tok",
+                          register_url="https://mm.example/register/v1/agents")
+    monkeypatch.setattr(server, "_client", None)
+    monkeypatch.setattr(server, "_exit_handled", False)
+    hosted.exit_work(c, keep=True)
+    assert seen == [("PUT", f"/api/v4/users/{'u' * 26}/status")]
+    assert c.token is None
+    server._cleanup_on_exit()  # the process's atexit: nothing more
+    assert seen == [("PUT", f"/api/v4/users/{'u' * 26}/status")]
+
+
+def test_handshake_notes_the_claude_session_for_postend(tmp_path, monkeypatch, caplog):
+    """RT-6.18 steps 9–10: the first handshake writes the key of the relay's
+    Claude session to claude-sid.env in the state directory (postEnd keeps the
+    bot only then). A bot taken over for another session (MM_BUS_KEPT_SID)
+    stays this session's: the mismatch is logged, the file names the relay's."""
+    d = session_file.use_hosted_dir(tmp_path / "hosted" / "s")
+    monkeypatch.setenv(hosted.KEPT_SID_ENV, hosted.sid_key("cc-old"))
+    host = hosted.Host(KEY, serve=_echo, apply=lambda s: None)
+    with caplog.at_level("INFO"):
+        host._load({"CLAUDE_CODE_SESSION_ID": "cc-new"})
+        host._load({"CLAUDE_CODE_SESSION_ID": "cc-other"})  # later relays keep the first's
+    assert (d / hosted.CLAUDE_SID_FILE).read_text() == f"MM_CLAUDE_SID={hosted.sid_key('cc-new')}\n"
+    assert (d / hosted.CLAUDE_SID_FILE).stat().st_mode & 0o777 == 0o600
+    assert "took over a bot kept for Claude session" in caplog.text
+    assert hosted.sid_key("cc-new") == hashlib.sha1(b"cc-new").hexdigest()[:16]
+
+    caplog.clear()
+    monkeypatch.setenv(hosted.KEPT_SID_ENV, hosted.sid_key("cc-same"))
+    with caplog.at_level("INFO"):
+        hosted.note_claude_session({"CLAUDE_CODE_SESSION_ID": "cc-same"})
+    assert "took over the bot kept for this Claude session" in caplog.text
+
+
+def test_no_claude_session_no_note(tmp_path):
+    """RT-6.18 step 9: a relay without a Claude session id (another agent)
+    leaves no claude-sid.env, so postEnd unregisters as before."""
+    d = session_file.use_hosted_dir(tmp_path / "hosted" / "s")
+    hosted.Host(KEY, serve=_echo, apply=lambda s: None)._load({"cwd": "/x"})
+    assert not (d / hosted.CLAUDE_SID_FILE).exists()
 
 
 def test_exit_work_runs_the_servers_cleanup(monkeypatch):

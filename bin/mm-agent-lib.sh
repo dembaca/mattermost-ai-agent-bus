@@ -772,3 +772,174 @@ MM_CHANNEL=${MM_CHANNEL:-}
 ${MM_PROJECT_CHANNEL:+MM_PROJECT_CHANNEL=${MM_PROJECT_CHANNEL}}
 EOF
 }
+
+# --- corral sessions kept for `claude --continue` (RT-6.18 steps 9–10) ---------
+# postEnd keeps the bot of a Claude session that may be resumed: its session
+# file stays in the host state dir, marked MM_SERVER_ENDED=<epoch s>,
+# MM_KEPT_WORKDIR=<key of the real workdir> and MM_KEPT_CLAUDE_SID=<key of the
+# Claude session id>, and its state directory hosted/<session>/ stays with it.
+# Only keys (sha1, 16 hex digits): the workdir and the session id are never
+# used as paths on the host.
+
+# The grace period of a kept bot: MM_SESSION_KEEP_SEC, default 24 h.
+mm_keep_sec() {
+  local k="${MM_SESSION_KEEP_SEC:-86400}"
+  [[ "$k" =~ ^[0-9]+$ ]] || k=86400
+  printf '%s' "$k"
+}
+
+# sha1 of a string, the first 16 hex digits (session_file.py keys the same way).
+mm_key16() { printf '%s' "$1" | { sha1sum 2>/dev/null || shasum; } | cut -c1-16; }
+
+# The key of a workdir: its real path, else the path as given.
+mm_workdir_key() {
+  local real
+  [[ -n "${1:-}" ]] || return 1
+  real="$(cd -P "$1" 2>/dev/null && pwd -P)" || real="$1"
+  mm_key16 "$real"
+}
+
+# When a kept corral session ended (epoch s). Only a file with both marks is
+# one; anything else fails.
+mm_kept_ended() {
+  local ended
+  [[ -f "$1" && ! -L "$1" ]] || return 1
+  ended="$(sed -n 's/^MM_SERVER_ENDED=//p' "$1" | head -n1)"
+  [[ "$ended" =~ ^[0-9]+$ ]] && grep -Eq '^MM_KEPT_WORKDIR=[0-9a-f]{16}$' "$1" || return 1
+  printf '%s' "$ended"
+}
+
+# How corral started the agent, best effort (RT-6.18 step 10): corral's own
+# command line (its pid is the hook's parent), the words after its first
+# `--`, which corral passes to the agent. Prints `continue` (-c, --continue)
+# or `resume <id>` (-r <id>, --resume <id>, --resume=<id>); nothing for a
+# plain start, the resume picker (no id), --fork-session, or more than one of
+# them. Fails when the command line cannot be read. corral does not document
+# its command line for hooks; a CORRAL_AGENT_ARGS of its own would replace this.
+mm_corral_resume() {
+  local line t mode="" id="" after=0 want=0 n=0 idre='^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+  local -a words
+  [[ "${1:-}" =~ ^[0-9]+$ ]] || return 1
+  line="$(ps -ww -o args= -p "$1" 2>/dev/null)" && [[ -n "$line" ]] || return 1
+  read -r -a words <<<"$line"
+  for t in "${words[@]}"; do
+    if (( ! after )); then
+      [[ "$t" != -- ]] || after=1
+      continue
+    fi
+    if (( want )); then
+      want=0
+      [[ "$t" =~ $idre ]] || return 0      # --resume without an id: the picker
+      mode=resume id="$t" n=$((n + 1))
+      continue
+    fi
+    case "$t" in
+      -c|--continue) mode=continue n=$((n + 1)) ;;
+      -r|--resume) want=1 ;;
+      --resume=*)
+        t="${t#--resume=}"
+        [[ "$t" =~ $idre ]] || return 0
+        mode=resume id="$t" n=$((n + 1)) ;;
+      --fork-session) return 0 ;;
+    esac
+  done
+  (( ! want && n == 1 )) || return 0
+  if [[ "$mode" == resume ]]; then printf 'resume %s' "$id"; else printf 'continue'; fi
+}
+
+# The kept session a start may take over (RT-6.18 step 10), of this workdir
+# (key $2): with `continue` the one that ended last, with `resume` the one
+# kept for that Claude session (key $4). Prints its file.
+mm_kept_candidate() {
+  local dir="$1" wkey="$2" mode="$3" skey="${4:-}" f ended best="" best_at=-1
+  for f in "$dir"/*.env; do
+    ended="$(mm_kept_ended "$f")" || continue
+    [[ "$(sed -n 's/^MM_KEPT_WORKDIR=//p' "$f" | head -n1)" == "$wkey" ]] || continue
+    if [[ "$mode" == resume ]]; then
+      [[ -n "$skey" && "$(sed -n 's/^MM_KEPT_CLAUDE_SID=//p' "$f" | head -n1)" == "$skey" ]] || continue
+    fi
+    if (( ended > best_at )); then best="$f" best_at="$ended"; fi
+  done
+  [[ -n "$best" ]] || return 1
+  printf '%s' "$best"
+}
+
+# Unregister the bot of a session file with the file's own token, which the
+# registrar always accepts for it; when Mattermost rejects that token too
+# (401), the bot is gone already. Either way the file goes, and with it the
+# session's host state directory (hosted/<file name>/). Returns 0 unregistered,
+# 2 gone already, 1 failed (the reason on stdout). The file is loaded in a
+# subshell, so one bot's values never reach the next. Needs BIN.
+mm_unregister_session_file() {
+  local f="$1" name="$2" err rc d
+  # shellcheck disable=SC2030,SC2031
+  if err="$( (
+      export MM_AGENT_SESSION_FILE="$f"
+      mm_load_session_file || exit 1
+      export -n MM_BOT_TOKEN MATTERMOST_TOKEN
+      mm_with_token "$BIN/mm-agent-unregister.sh" "$name" 2>&1 >/dev/null
+     ) )"; then
+    rc=0
+  elif [[ "$( (
+      export MM_AGENT_SESSION_FILE="$f"
+      mm_load_session_file >/dev/null 2>&1 || exit 0
+      export -n MM_BOT_TOKEN MATTERMOST_TOKEN
+      mm_api GET "/api/v4/users/me" >/dev/null 2>&1 || exit 0
+      printf '%s' "$MM_API_STATUS"
+     ) )" == "401" ]]; then
+    rc=2
+  else
+    printf '%s' "${err:-no reason given}"
+    return 1
+  fi
+  rm -f "$f"
+  d="$(dirname "$f")/hosted/$(basename "$f" .env)"
+  if [[ -d "$d" && ! -L "$d" ]]; then rm -rf "$d"; fi
+  return "$rc"
+}
+
+# A claim whose start died (.<session>.env.taken-<pid>, RT-6.18 step 10)
+# goes back under its name, a kept session again: reaped in time, never lost.
+mm_restore_claims() {
+  local dir="$1" f pid orig uid
+  for f in "$dir"/.*.env.taken-*; do
+    [[ -f "$f" && ! -L "$f" ]] || continue
+    pid="${f##*.taken-}"
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    ! kill -0 "$pid" 2>/dev/null || continue
+    # It got as far as this session's file: the bot is in use, the claim is
+    # only a copy and must never be reaped as kept.
+    uid="$(sed -n 's/^MM_BOT_USER_ID=//p' "$f" | head -n1)"
+    if [[ "$uid" =~ ^[a-z0-9]{26}$ ]] && grep -qx "MM_BOT_USER_ID=${uid}" "$dir"/*.env 2>/dev/null; then
+      rm -f "$f"
+      continue
+    fi
+    orig="${f%.taken-*}"
+    orig="${dir}/${orig##*/.}"
+    if [[ ! -e "$orig" ]]; then mv "$f" "$orig" 2>/dev/null || true; fi
+  done
+}
+
+# Reap what kept corral sessions left in a state dir (RT-6.18 step 10): claims
+# of dead starts go back (mm_restore_claims); a kept bot whose grace period is
+# over is unregistered with its own token, its file and state directory
+# removed. Notes on stderr. mm-agent-sweep.sh does the same per file.
+mm_reap_kept() {
+  local dir="$1" keep now f ended name why rc
+  keep="$(mm_keep_sec)"
+  now="$(date +%s)"
+  mm_restore_claims "$dir"
+  for f in "$dir"/*.env; do
+    ended="$(mm_kept_ended "$f")" || continue
+    (( now - ended >= keep )) || continue
+    name="$(sed -n 's/^MM_REG_BOT_NAME=//p' "$f" | head -n1)"
+    [[ -n "$name" ]] || continue
+    rc=0
+    why="$(mm_unregister_session_file "$f" "$name")" || rc=$?
+    case "$rc" in
+      0) echo "mm-bus: unregistered ${name}, kept for claude --continue since $(( (now - ended) / 3600 )) h" >&2 ;;
+      2) echo "mm-bus: ${name}, kept for claude --continue, is gone already; removed its file" >&2 ;;
+      *) echo "mm-bus: WARNING: could not unregister ${name}, kept past its grace period: ${why}" >&2 ;;
+    esac
+  done
+}

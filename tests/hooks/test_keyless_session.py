@@ -9,6 +9,7 @@ there. Uses the real host process from mcp/.venv, so it runs under
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import select
@@ -16,6 +17,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import threading
 import time
 
 import pytest
@@ -145,9 +147,13 @@ def test_no_credential_in_any_process_environment_or_argv(mm, run, tmp_path, sec
     — jq, curl, od, the helper scripts and what they start — gets neither the
     bot token, the registration secret nor the key in its environment or argv;
     the helpers read credentials from fd 3. Also the host process's initial
-    environment, read the way another sandbox would, holds none of them."""
+    environment, read the way another sandbox would, holds none of them. The
+    same for a bot kept and taken over (steps 9–10): postEnd keeps it, a start
+    with --continue takes it over, a plain end unregisters it."""
     secret = "test-secret"
-    extra = {"gopass": f"#!/bin/sh\nprintf '%s\\n' '{secret}'\n"}
+    argf = tmp_path / "corral-args"
+    argf.write_text("corral run --\n")
+    extra = {"gopass": f"#!/bin/sh\nprintf '%s\\n' '{secret}'\n", "ps": _ps_script(argf)}
     path, dump = _shims(tmp_path, extra)
     env = {**HOST, "PATH": path}
     if secret_from == "gopass":
@@ -168,14 +174,37 @@ def test_no_credential_in_any_process_environment_or_argv(mm, run, tmp_path, sec
     r = run(STOP, CORRAL_SESSION_ID=sid, **env)
     assert r.code == 0, r.stderr
     assert any(m == "DELETE" and p.startswith("/register/v1/agents/") for m, p, _ in mm.writes)
+
+    work = tmp_path / "work"
+    work.mkdir()
+    corral = {"CORRAL_AGENT": "claude", "CORRAL_WORKDIR": str(work)}
+    out, pid = _start(run, f"{sid}-k", **env, **corral)
+    keys = [key, out["env"]["MM_BUS_KEY"]]
+    _handshake(out, "cc-1")
+    r = run(STOP, CORRAL_SESSION_ID=f"{sid}-k", **env, **corral)
+    assert r.code == 0 and "kept " in r.stderr, r.stderr
+    assert _wait_gone(pid)
+    argf.write_text("corral run -- --continue\n")
+    out, pid = _start(run, f"{sid}-t", **env, **corral)
+    keys.append(out["env"]["MM_BUS_KEY"])
+    assert out["status"][0].startswith("took over ")
+    procargs = _initial_env(pid)
+    if procargs is not None:
+        for v in (TOKEN, *keys, secret):
+            assert v.encode() not in procargs
+    r = run(STOP, CORRAL_SESSION_ID=f"{sid}-t", **env)
+    assert r.code == 0, r.stderr
+    assert "== ps -ww -o args= -p " in dump.read_text()  # the takeover read corral's argv, wrapped
+
     text = dump.read_text()
-    for v in (TOKEN, key, secret):
+    for v in (TOKEN, *keys, secret):
         assert v not in text
     assert "Bearer" not in text
     for f in tmp_path.rglob("*"):
         if f.is_file() and not f.is_relative_to(run.state_dir) and f.parent.name != "fake-bin":
             assert TOKEN not in f.read_text(errors="replace"), f
-    assert TOKEN not in (run.state_dir / f"{sid}.host.log").read_text()
+    for s in (sid, f"{sid}-k", f"{sid}-t"):
+        assert TOKEN not in (run.state_dir / f"{s}.host.log").read_text()
 
 
 def test_planted_modules_in_the_workdir_never_run_on_the_host(mm, run, tmp_path):
@@ -419,3 +448,291 @@ def test_prestart_sweeps_what_ended_sessions_left(mm, run):
     finally:
         if orphan.poll() is None:
             orphan.kill()
+
+
+# --- kept for `claude --continue` (RT-6.18 steps 9–10, RT-6.1 step 7) ----------
+
+LSTART = "Mon Nov  2 10:00:00 2026"
+
+
+def _fake_ps(tmp_path, args: str | None = "corral run --") -> str:
+    """PATH with a `ps` that tells corral's command line (`-o args=`) from a
+    file the test changes, and one fixed start time (`-o lstart=`), so these
+    tests need no real ps (a sandbox denies it). args=None: unreadable."""
+    d = tmp_path / "fake-ps"
+    d.mkdir(exist_ok=True)
+    argf = tmp_path / "corral-args"
+    if args is None:
+        argf.unlink(missing_ok=True)
+    else:
+        argf.write_text(args + "\n")
+    (d / "ps").write_text(_ps_script(argf))
+    (d / "ps").chmod(0o755)
+    return f"{d}{os.pathsep}{os.environ['PATH']}"
+
+
+def _ps_script(argf) -> str:
+    return (f'#!/bin/sh\ncase "$*" in\n*args=*) exec cat "{argf}" 2>/dev/null ;;\n'
+            f'*lstart=*) echo "{LSTART}" ;;\n*) exit 1 ;;\nesac\n')
+
+
+def _key(value: str) -> str:
+    return hashlib.sha1(value.encode()).hexdigest()[:16]
+
+
+def _handshake(out: dict, claude_sid: str) -> None:
+    """A relay's first line, as the plugin's entry point in the sandbox sends it."""
+    port = int(out["env"]["MM_BUS_MCP_ENDPOINT"].removeprefix("tcp://127.0.0.1:"))
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as s:
+        s.sendall(json.dumps({"key": out["env"]["MM_BUS_KEY"],
+                              "session": {"CLAUDE_CODE_SESSION_ID": claude_sid}}).encode() + b"\n")
+        assert json.loads(s.makefile().readline()) == {"ok": True}
+
+
+def _kept(run, sid: str, *, name: str, workdir, claude_sid: str, ended_ago: float = 60,
+          token: str = TOKEN, attestation: str = ""):
+    """A session file postEnd kept (step 9), with its state directory."""
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    f = run.state_dir / f"{sid}.env"
+    f.write_text(
+        f"MM_REG_BOT_NAME={name}\nMM_BOT_USERNAME=agent-{name}\n"
+        f"MM_AGENT_PREFIX=agent-\nMM_BOT_USER_ID={ME}\n"
+        + (f"MM_BOT_ATTESTATION={attestation}\n" if attestation else "")
+        + f"MM_BOT_TOKEN={token}\nMATTERMOST_TOKEN={token}\nMM_TEAM=team\nMM_CHANNEL=agents\n"
+        f"MM_SERVER_ENDED={int(time.time() - ended_ago)}\n"
+        f"MM_KEPT_WORKDIR={_key(os.path.realpath(workdir))}\nMM_KEPT_CLAUDE_SID={_key(claude_sid)}\n")
+    f.chmod(0o600)
+    d = run.state_dir / "hosted" / sid
+    d.mkdir(parents=True, mode=0o700)
+    (d / "asks-x.env").write_text(f"kept {sid}\n")
+    return f
+
+
+def _registrations(mm) -> int:
+    return sum(1 for m, p, _ in mm.writes if m == "POST" and p == "/register/v1/agents")
+
+
+def _deletes(mm) -> list[str]:
+    return [p for m, p, _ in mm.writes if m == "DELETE" and p.startswith("/register/")]
+
+
+@pytest.mark.parametrize("args, want", [
+    ("corral run --", ""),
+    ("corral run -- --continue", "continue"),
+    ("corral run -- -c --model opus", "continue"),
+    ("corral run -- --resume 4f1c-9a", "resume 4f1c-9a"),
+    ("corral run -- -r 4f1c-9a", "resume 4f1c-9a"),
+    ("corral run -- --resume=4f1c-9a", "resume 4f1c-9a"),
+    ("corral run -- --resume", ""),                    # the picker
+    ("corral run -- --resume --model opus", ""),       # the picker
+    ("corral run -- --continue --fork-session", ""),   # a new session id
+    ("corral run -- -c -r 4f1c-9a", ""),               # unclear
+    ("corral -c run", ""),                             # corral's own flags, not the agent's
+    (None, "unreadable"),
+])
+def test_corrals_command_line_tells_continue_and_resume(tmp_path, args, want):
+    """RT-6.18 step 10: the agent's flags are the words after corral's first
+    `--`; anything unclear means a fresh registration, unreadable too."""
+    r = subprocess.run(
+        ["bash", "-c", 'source "$1" && { mm_corral_resume 4242 || echo unreadable; }', "_",
+         str(ROOT / "bin" / "mm-agent-lib.sh")],
+        env={"PATH": _fake_ps(tmp_path, args), "HOME": str(tmp_path)},
+        capture_output=True, text=True, timeout=30)
+    assert r.stdout.strip() == want, r.stderr
+
+
+def test_postend_keeps_the_bot_and_continue_takes_it_over(mm, run, tmp_path):
+    """RT-6.18 steps 9–10, RT-6.1 step 7: a Claude Code session that ended by
+    itself keeps its bot — SIGUSR1 to the host process (offline only), no
+    unregister, the session file marked, the state directory kept. The next
+    start in the workdir with --continue takes it over: same name, no
+    registration, the state directory renamed, the Claude session handed to
+    the host process. A later end without Claude unregisters as before."""
+    work = tmp_path / "work"
+    work.mkdir()
+    corral = {"CORRAL_AGENT": "claude", "CORRAL_WORKDIR": str(work)}
+    out, pid = _start(run, "sess-a", PATH=_fake_ps(tmp_path), **corral)
+    assert "registered agent-" in out["status"][0]
+    _handshake(out, "cc-1")
+    hosted = run.state_dir / "hosted" / "sess-a"
+    assert (hosted / "claude-sid.env").read_text() == f"MM_CLAUDE_SID={_key('cc-1')}\n"
+
+    name = _field(run.state_dir / "sess-a.env", "MM_REG_BOT_NAME")
+    r = run(STOP, CORRAL_SESSION_ID="sess-a", PATH=_fake_ps(tmp_path), **corral, **END)
+    assert r.code == 0, r.stderr
+    assert f"kept {name} for claude --continue" in r.stderr
+    assert _wait_gone(pid)
+    assert not _deletes(mm)
+    assert ("PUT", f"/api/v4/users/{ME}/status") in [(m, p) for m, p, _ in mm.writes]
+    f = run.state_dir / "sess-a.env"
+    assert (f.stat().st_mode & 0o777) == 0o600
+    assert _field(f, "MM_KEPT_WORKDIR") == _key(os.path.realpath(work))
+    assert _field(f, "MM_KEPT_CLAUDE_SID") == _key("cc-1")
+    assert int(_field(f, "MM_SERVER_ENDED")) <= time.time()
+    assert not _field(f, "MM_BUS_HOST_PID") and not _field(f, "MM_SESSION_PID")
+    assert not (run.state_dir / "sess-a.host.json").exists()
+    assert hosted.is_dir()
+    (hosted / "marker").write_text("from sess-a\n")
+
+    out2, pid2 = _start(run, "sess-b", PATH=_fake_ps(tmp_path, "corral run -- --continue"), **corral)
+    assert out2["status"][0].startswith(f"took over {out['env']['MM_BOT_USERNAME']}, ")
+    assert out2["env"]["MM_BOT_USERNAME"] == out["env"]["MM_BOT_USERNAME"]
+    assert "kept this bot from the session you resumed" in out2["agentNotes"][0]
+    assert TOKEN not in json.dumps(out2)
+    assert _registrations(mm) == 1
+    assert not f.exists() and not hosted.exists()
+    assert (run.state_dir / "hosted" / "sess-b" / "marker").read_text() == "from sess-a\n"
+    f2 = run.state_dir / "sess-b.env"
+    assert _field(f2, "MM_BUS_HOST_PID") == str(pid2) and not _field(f2, "MM_SERVER_ENDED")
+    assert _field(f2, "MM_REG_BOT_NAME") == name and _field(f2, "MM_SESSION_PID")
+    assert not list(run.state_dir.glob(".*taken*"))
+    _handshake(out2, "cc-1")
+    assert "took over the bot kept for this Claude session" in (
+        run.state_dir / "sess-b.host.log").read_text()
+
+    r = run(STOP, CORRAL_SESSION_ID="sess-b", PATH=_fake_ps(tmp_path), **END)
+    assert r.code == 0, r.stderr
+    assert _wait_gone(pid2)
+    assert f"/register/v1/agents/{name}" in _deletes(mm)
+    assert not f2.exists() and not (run.state_dir / "hosted" / "sess-b").exists()
+
+
+@pytest.mark.parametrize("case", ["aborted", "other-agent", "no-claude-session"])
+def test_postend_unregisters_when_the_session_cannot_be_resumed(mm, run, tmp_path, case):
+    """RT-6.18 step 9 / RT-6.1 step 7: an aborted launch, another agent, or a
+    host process that never saw a Claude session (no claude-sid.env): the bot
+    is unregistered and everything goes, as before."""
+    work = tmp_path / "work"
+    work.mkdir()
+    corral = {"CORRAL_AGENT": "pi" if case == "other-agent" else "claude",
+              "CORRAL_WORKDIR": str(work)}
+    out, pid = _start(run, "sess-n", PATH=_fake_ps(tmp_path), **corral)
+    if case != "no-claude-session":
+        _handshake(out, "cc-1")
+    if case == "aborted":
+        corral["CORRAL_AGENT_EXIT"] = "aborted"
+    r = run(STOP, CORRAL_SESSION_ID="sess-n", PATH=_fake_ps(tmp_path), **corral, **END)
+    assert r.code == 0, r.stderr
+    assert "kept" not in r.stderr
+    assert _wait_gone(pid)
+    assert "/register/v1/agents/test" in _deletes(mm)
+    assert not (run.state_dir / "sess-n.env").exists()
+    assert not (run.state_dir / "hosted" / "sess-n").exists()
+
+
+def test_resume_takes_over_the_bot_of_that_session(mm, run, tmp_path):
+    """RT-6.18 step 10: --resume <id> takes the bot kept for that Claude
+    session in this workdir, not the newest one, nor one of another workdir;
+    its token and attestation reach the host process on stdin only, with the
+    kept session's key."""
+    work = tmp_path / "work"
+    work.mkdir()
+    _kept(run, "old-x", name="mac-proj-x", workdir=work, claude_sid="cc-x", ended_ago=3600,
+          attestation="aaa.bbb.ccc")
+    _kept(run, "old-y", name="mac-proj-y", workdir=work, claude_sid="cc-y", ended_ago=60)
+    _kept(run, "old-z", name="mac-proj-z", workdir=tmp_path, claude_sid="cc-x", ended_ago=10)
+    rec = tmp_path / "rec"
+    tree = _tree(tmp_path, f'#!/bin/sh\ncat >"{rec}.stdin"\nexit 1\n')
+    r = run(str(tree / START), CORRAL_SESSION_ID="sess-r", CORRAL_AGENT="claude",
+            CORRAL_WORKDIR=str(work), PATH=_fake_ps(tmp_path, "corral run -- --resume cc-x"), **HOST)
+    assert r.code == 0, r.stderr
+    assert "taking over agent-mac-proj-x, kept for claude resume" in r.stderr
+    start = json.loads(rec.with_suffix(".stdin").read_text())
+    assert start["env"]["MM_BOT_TOKEN"] == TOKEN
+    assert start["env"]["MM_BOT_ATTESTATION"] == "aaa.bbb.ccc"
+    assert start["env"]["MM_BUS_KEPT_SID"] == _key("cc-x")
+    assert start["env"]["MM_BOT_USERNAME"] == "agent-mac-proj-x"
+    assert _registrations(mm) == 0
+    assert not (run.state_dir / "old-x.env").exists()
+    assert (run.state_dir / "old-y.env").exists() and (run.state_dir / "old-z.env").exists()
+    # The host process did not come up: fail closed, the taken-over bot goes.
+    assert "/register/v1/agents/mac-proj-x" in _deletes(mm)
+
+
+@pytest.mark.parametrize("args", ["corral run --", "corral run -- --resume", None])
+def test_without_continue_or_resume_a_new_bot_is_registered(mm, run, tmp_path, args):
+    """RT-6.18 step 10: a plain start, the resume picker or a command line that
+    cannot be read register a new bot; a kept one stays for its session."""
+    work = tmp_path / "work"
+    work.mkdir()
+    kept = _kept(run, "old-k", name="mac-proj-k", workdir=work, claude_sid="cc-k")
+    out, _ = _start(run, "sess-f", CORRAL_AGENT="claude", CORRAL_WORKDIR=str(work),
+                    PATH=_fake_ps(tmp_path, args))
+    assert out["status"][0].startswith("registered ")
+    assert _registrations(mm) == 1
+    assert kept.exists() and (run.state_dir / "hosted" / "old-k").is_dir()
+
+
+def test_a_rejected_kept_token_means_a_new_bot(mm, run, tmp_path):
+    """RT-6.18 step 10, error handling: the kept bot's token is rejected (401):
+    the bot is gone, its file and state directory go, a new one registers."""
+    work = tmp_path / "work"
+    work.mkdir()
+    kept = _kept(run, "old-g", name="mac-proj-g", workdir=work, claude_sid="cc-g",
+                 token="revoked-token")
+    out, _ = _start(run, "sess-g", CORRAL_AGENT="claude", CORRAL_WORKDIR=str(work),
+                    PATH=_fake_ps(tmp_path, "corral run -- --continue"))
+    assert out["status"][0].startswith("registered ")
+    assert _registrations(mm) == 1
+    assert not kept.exists() and not (run.state_dir / "hosted" / "old-g").exists()
+    assert not list(run.state_dir.glob(".*taken*"))
+
+
+def test_two_starts_at_once_only_one_takes_the_kept_bot(mm, run, tmp_path):
+    """RT-6.18 step 10, error handling: the claim is one rename; of two starts
+    with --continue at once, one takes the bot over, the other registers."""
+    work = tmp_path / "work"
+    work.mkdir()
+    _kept(run, "old-c", name="mac-proj-c", workdir=work, claude_sid="cc-c")
+    path = _fake_ps(tmp_path, "corral run -- --continue")
+    results = {}
+
+    def start(sid):
+        results[sid] = run(START, CORRAL_SESSION_ID=sid, CORRAL_AGENT="claude",
+                           CORRAL_WORKDIR=str(work), PATH=path, **HOST)
+
+    threads = [threading.Thread(target=start, args=(sid,)) for sid in ("sess-c1", "sess-c2")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for r in results.values():
+        assert r.code == 0, r.stderr
+    statuses = sorted(json.loads(r.stdout)["status"][0].split(",")[0] for r in results.values())
+    assert statuses[0].startswith("registered agent-")
+    assert statuses[1] == "took over agent-mac-proj-c"
+    assert _registrations(mm) == 1
+    assert not (run.state_dir / "old-c.env").exists()
+    assert not list(run.state_dir.glob(".*taken*"))
+
+
+def test_prestart_reaps_kept_bots_past_their_grace(mm, run, tmp_path):
+    """RT-6.18 step 10 / RT-6.1 step 7: a kept bot whose session did not
+    resume within MM_SESSION_KEEP_SEC is unregistered with its own token by
+    the next start, its file and state directory removed; one within the
+    grace period stays."""
+    work = tmp_path / "work"
+    work.mkdir()
+    old = _kept(run, "old-r", name="mac-proj-r", workdir=work, claude_sid="cc-r",
+                ended_ago=2 * 86400)
+    fresh = _kept(run, "old-s", name="mac-proj-s", workdir=work, claude_sid="cc-s")
+    _start(run, "sess-r")
+    assert "/register/v1/agents/mac-proj-r" in _deletes(mm)
+    assert not old.exists() and not (run.state_dir / "hosted" / "old-r").exists()
+    assert fresh.exists() and (run.state_dir / "hosted" / "old-s").is_dir()
+
+
+def test_a_state_dir_a_sandbox_can_write_is_refused(mm, run, tmp_path):
+    """RT-6.18 step 9, security: the session files hold the token, a kept one
+    for up to a day: both hooks refuse a state directory in the workdir."""
+    work = tmp_path / "work"
+    (work / "state").mkdir(parents=True)
+    r = run(START, CORRAL_SESSION_ID="sess-w", CORRAL_WORKDIR=str(work),
+            XDG_STATE_HOME=str(work / "state"), **HOST)
+    out = json.loads(r.stdout)
+    assert set(out["env"]) == {"MM_BUS_UNAVAILABLE"}
+    assert "state directory" in out["env"]["MM_BUS_UNAVAILABLE"]
+    assert _registrations(mm) == 0
+    r = run(STOP, CORRAL_SESSION_ID="sess-w", CORRAL_WORKDIR=str(work),
+            XDG_STATE_HOME=str(work / "state"), **END)
+    assert r.code == 0 and "state directory" in r.stderr
