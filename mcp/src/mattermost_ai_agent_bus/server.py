@@ -616,8 +616,9 @@ async def bus_info() -> str:
         **({"guests_not_joined": failed}
            if (failed := getattr(client, "guest_join_failures", None)) else {}),
         "crown": lease.crown_held(me.id),
-        # RT-6.25: direct or coordinator, from MM_ASK_ROUTE ("env") or the switching post.
-        "ask_mode": dict(zip(("mode", "source"), await askroute.mode(client, me.id), strict=True)),
+        # RT-6.25: direct or coordinator, from MM_ASK_ROUTE ("env"), the switching post,
+        # or the registrar's signed record ("registrar", with set_by; step 8).
+        "ask_mode": await askroute.info(client, me.id),
         "permission_relay": RELAY,
         **({"update": {"installed": newer, "how": "quit, then claude --continue"}}
            if (newer := _newer_installed()) else {}),

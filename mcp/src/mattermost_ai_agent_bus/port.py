@@ -122,6 +122,13 @@ class ChatPort(Protocol):
 
     async def clear_custom_status(self) -> None: ...
 
+    async def ask_mode_record(self, channel_id: str) -> str | None:
+        """The registrar's signed ask-mode record of a home (RT-6.25 step 8),
+        unverified (attest.verify_mode checks it): the compact JWS, None when
+        no mode is set there. Raises on any other failure. The one registrar
+        read on the port: it is about a chat channel, and the tests fake it."""
+        ...
+
     async def publish_attestation(self, token: str) -> bool:
         """Put this bot's attestation on its own account (RT-6.24 step 3),
         keeping whatever else the account carries (its custom status); False

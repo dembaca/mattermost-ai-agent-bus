@@ -3,6 +3,42 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.68.0
+
+### Added
+
+- **Ask mode from the registrar's signed `/agent-mode`**
+  ([RT-6.25 step 8](docs/arc42/06-runtime-view.md#625-ask-routing-modes),
+  ADR-005 phase 2). With the registrar's keys pinned (`MM_REGISTRAR_KEYS`)
+  a home's ask mode comes only from the record the registrar signs when a
+  member of the channel types `/agent-mode direct|coordinator` there (registrar
+  0.5.0). Each server reads `GET <registrar>/register/v1/modes/<channel id>`
+  (from `MM_REGISTER_URL`, else `MM_CHAT_URL`; no Authorization header, 5 s,
+  at most 8 KiB) at its first look at the mode and then every 120 s on the
+  heartbeat, verifies it (`attest.verify_mode`: type `mm-agent-mode+jwt`, a
+  pinned kid, this home, `direct` or `coordinator`) and counts it only when
+  `set_by_id` is one of its own trusted humans and `set_at_ms` is newer than
+  the record it keeps. The crown holder that keeps a new record posts one
+  line in the home (`… set by <human> with /agent-mode (signed by the
+  registrar)`). A trusted human's `ask-mode …` post then switches nothing: it
+  goes to no model, and the 👑's server answers it once with the
+  `/agent-mode` hint. A failed read, 404, an invalid record or `delegated`
+  keep what is kept. `bus_info.ask_mode` adds `source: registrar` with
+  `set_by`, and `signed`. Without pinned keys nothing is read from the
+  registrar and phase 1 holds unchanged: inert until the #83 rollout pins the
+  keys. Interop vector shared with the registrar (seed 0x00..0x1f, sha256
+  prefix `8663e8575e142e7c`).
+
+### Fixed
+
+- **A switch posted while no server held the home's crown is acknowledged**
+  ([RT-6.25 step 2](docs/arc42/06-runtime-view.md#625-ask-routing-modes)).
+  Only a server holding the crown at the moment it kept a switch confirmed
+  it, so a switch posted between a holder's restart and the next crowning
+  was never acknowledged. The crown holder now confirms a kept mode that has
+  no confirmation yet on its heartbeat, once (`CONFIRMED=1` in
+  `askmode-<uid>.env`; a thread with the reply gets none).
+
 ## 0.67.0
 
 ### Added

@@ -129,6 +129,8 @@ effect. The server makes an ask that names merge, deploy, release, install,
 delete, push, an external write or spending an approval. In ask mode
 `coordinator` (`bus_info`) a question goes to your home's 👑: its answer
 (`advice`) is advice, never approval; what needs a yes, ask as an approval.
+A human sets it: `ask-mode coordinator` in the home; once the registrar's
+keys are pinned only `/agent-mode coordinator` (`signed: true`).
 
 The answer comes as a reply in the ask's thread or as a reaction
 (`{kind: reaction, answer: yes|no|null}`, which wakes you while idle). A `yes`

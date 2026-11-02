@@ -85,6 +85,9 @@ class FakeChat:
         # RT-6.23: file id -> its info, and its content and preview.
         self.files: dict[str, FileInfo] = {}
         self.contents: dict[tuple[str, bool], bytes] = {}
+        # RT-6.25 step 8: the registrar's ask-mode record per home, and each read.
+        self.mode_records: dict[str, str | BaseException] = {}
+        self.fetched: list[str] = []
 
     def _posts(self) -> list[Post]:
         return [p if isinstance(p, Post) else post_of(p) for p in self.posts]
@@ -168,6 +171,15 @@ class FakeChat:
                        "expires_at": expires_at}
         self.members = [ChannelUser(m.id, m.username, m.create_at, custom_status=self.status)
                         if m.id == self.me.id else m for m in self.members]
+
+    async def ask_mode_record(self, channel_id: str) -> str | None:
+        """`mode_records[channel_id]` (RT-6.25 step 8): a JWS, or an exception
+        it raises; None (404) for a home without one. Counted in `fetched`."""
+        self.fetched.append(channel_id)
+        got = self.mode_records.get(channel_id)
+        if isinstance(got, BaseException):
+            raise got
+        return got
 
     async def publish_attestation(self, token: str) -> bool:
         """Recorded in `published`; the account's props (`props`) keep the rest."""

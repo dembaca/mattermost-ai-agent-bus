@@ -35,10 +35,10 @@ import logging
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -47,9 +47,14 @@ if TYPE_CHECKING:
     from .port import ChatPort
 
 log = logging.getLogger(__name__)
+_T = TypeVar("_T")
 
 ALG = "EdDSA"
 TYP = "mm-agent-attestation+jwt"
+# The registrar's signed ask mode of a home (RT-6.25 step 8, ADR-005 phase 2)
+# and the modes such a record may name here.
+MODE_TYP = "mm-agent-mode+jwt"
+MODE_MODES = ("direct", "coordinator")
 ENV = "MM_BOT_ATTESTATION"
 KEYS_ENV = "MM_REGISTRAR_KEYS"
 ENROLLMENT, SECRET = "enrollment", "secret"
@@ -63,6 +68,7 @@ _SEGMENT = re.compile(r"[A-Za-z0-9_-]+")
 # A plugin manifest's unexpanded ${VAR} is no value (client.env).
 _PLACEHOLDER = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 _HANDLE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+_ID = re.compile(r"[a-z0-9]{26}")  # a Mattermost id
 
 # The status words bus_info shows (RT-6.24 step 2).
 VALID, INVALID, UNVERIFIED, NONE = "valid", "invalid", "unverified", "none"
@@ -196,6 +202,24 @@ def verify(token: object, keys: Mapping[str, Ed25519PublicKey], *, bot_id: str, 
 
 def _verify(token: object, keys: Mapping[str, Ed25519PublicKey], *, bot_id: str, username: str,
             now: float) -> tuple[Claim | None, str]:
+    claim, why = _verify_jws(token, keys, typ=TYP, now=now,
+                             parse=lambda payload, kid: _claim(payload, kid) or "bad claims")
+    if claim is None:
+        return None, why
+    if claim.bot_id != bot_id:
+        return None, "bot_id mismatch"
+    if claim.username != username:
+        return None, "username mismatch"
+    return claim, ""
+
+
+def _verify_jws(token: object, keys: Mapping[str, Ed25519PublicKey], *, typ: str, now: float,
+                parse: Callable[[Mapping[str, Any], str], _T | str]) -> tuple[_T | None, str]:
+    """The checks every registrar-signed compact JWS of type `typ` gets: its
+    shape, the header (EdDSA, `typ`, no `crit`, a pinned kid), the Ed25519
+    signature, a JSON payload without duplicate keys whose iat and exp are
+    ints with exp > iat, `parse` (the typed claims, or why not), and iat/exp
+    against now with SKEW_SEC. (claims, '') or (None, why)."""
     if not keys:
         return None, "no pinned key"
     if not isinstance(token, str) or not token or len(token) > MAX_LEN:
@@ -208,7 +232,7 @@ def _verify(token: object, keys: Mapping[str, Ed25519PublicKey], *, bot_id: str,
         return None, "malformed"
     if header.get("alg") != ALG:
         return None, "wrong alg"
-    if header.get("typ") != TYP:
+    if header.get("typ") != typ:
         return None, "wrong typ"
     if "crit" in header:
         return None, "unknown critical header"
@@ -224,18 +248,69 @@ def _verify(token: object, keys: Mapping[str, Ed25519PublicKey], *, bot_id: str,
     except InvalidSignature:
         return None, "bad signature"
     payload = _json(parts[1])
-    claim = _claim(payload, kid) if payload is not None else None
-    if claim is None:
+    if payload is None:
         return None, "bad claims"
-    if claim.exp + SKEW_SEC <= now:
+    iat, exp = _int(payload.get("iat")), _int(payload.get("exp"))
+    if iat is None or exp is None or exp <= iat:
+        return None, "bad claims"
+    claims = parse(payload, kid)
+    if isinstance(claims, str):
+        return None, claims
+    if exp + SKEW_SEC <= now:
         return None, "expired"
-    if claim.iat - SKEW_SEC > now:
+    if iat - SKEW_SEC > now:
         return None, "issued in the future"
-    if claim.bot_id != bot_id:
-        return None, "bot_id mismatch"
-    if claim.username != username:
-        return None, "username mismatch"
-    return claim, ""
+    return claims, ""
+
+
+# --- the ask mode of a home (RT-6.25 step 8, ADR-005 phase 2) ------------------
+
+@dataclass(frozen=True)
+class ModeRecord:
+    """A verified ask-mode record: the mode a human set for a home with the
+    registrar's `/agent-mode`, and who set it (name lower case)."""
+
+    channel_id: str
+    mode: str
+    set_by: str
+    set_by_id: str
+    set_at_ms: int  # when the human set it, unix ms
+    iat: int
+    exp: int
+    kid: str
+
+
+def _mode_record(payload: Mapping[str, Any], kid: str) -> ModeRecord | str:
+    """The record's claims, typed; why not when one is missing or malformed."""
+    channel_id, set_by_id = payload.get("channel_id"), payload.get("set_by_id")
+    mode, set_by = payload.get("mode"), _handle(payload.get("set_by"))
+    set_at = _int(payload.get("set_at_ms"))
+    if not (isinstance(channel_id, str) and _ID.fullmatch(channel_id)
+            and isinstance(set_by_id, str) and _ID.fullmatch(set_by_id)
+            and isinstance(mode, str) and set_by is not None and set_at is not None and set_at > 0):
+        return "bad claims"
+    if mode not in MODE_MODES:
+        return "unsupported mode"
+    return ModeRecord(channel_id=channel_id, mode=mode, set_by=set_by, set_by_id=set_by_id,
+                      set_at_ms=set_at, iat=payload["iat"], exp=payload["exp"], kid=kid)
+
+
+def verify_mode(token: object, keys: Mapping[str, Ed25519PublicKey], *, channel_id: str,
+                now: float | None = None) -> tuple[ModeRecord | None, str]:
+    """The registrar's ask-mode record for the home `channel_id` when it is
+    sound (RT-6.25 step 8): a pinned key signed it, EdDSA and the mode type
+    (an attestation is refused here, a record by verify), not expired, issued
+    not later than now (both with SKEW_SEC), for this home, and a mode the bus
+    has (`delegated` is not built). Else (None, why). Never raises."""
+    try:
+        record, why = _verify_jws(token, keys, typ=MODE_TYP,
+                                  now=time.time() if now is None else now, parse=_mode_record)
+    except Exception as exc:  # noqa: BLE001 — strict: malformed is invalid, never an error
+        log.debug("ask mode record not verified: %s", type(exc).__name__)
+        return None, "malformed"
+    if record is not None and record.channel_id != channel_id:
+        return None, "channel_id mismatch"
+    return record, why
 
 
 def _unverified_payload(token: str) -> dict[str, Any] | None:

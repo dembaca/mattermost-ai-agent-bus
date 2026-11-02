@@ -32,6 +32,8 @@ def post(pid, message, user=OTHER, at=1000, root="", props=None, type_=""):
 
 @pytest.fixture
 async def api():
+    # Keyed by id(client): a client of an earlier test may leave its id to a new one.
+    hookapi._own_cache.clear()
     made = []
 
     async def serve(client):

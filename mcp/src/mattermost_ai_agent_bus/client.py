@@ -231,6 +231,8 @@ _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 DESCRIPTION_TTL_SEC = 600.0
 # The bot's own user prop that carries the registrar's attestation (RT-6.24).
 ATTESTATION_PROP = "agent_attestation"
+# The most the registrar's answer with a home's ask-mode record may hold (RT-6.25 step 8).
+MODE_RECORD_MAX = 8192
 # Three base64url segments, as the registrar sends it (attest.py checks the rest).
 _ATTESTATION_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 _ID = re.compile(r"[a-z0-9]{26}")
@@ -704,6 +706,36 @@ class MattermostAdapter:
         it carries none, None when its user object cannot be read."""
         await self.bot_description(user_id)
         return self._attestations.get(user_id)
+
+    def modes_url(self, channel_id: str) -> str:
+        """Where the registrar publishes a home's ask mode (RT-6.25 step 8),
+        found like bin/mm-agent-registrar-keys.sh finds its keys: from
+        MM_REGISTER_URL `/agents` → `/modes/<id>`, else MM_CHAT_URL +
+        `/register/v1/modes/<id>`."""
+        reg = (self.register_url or f"{self.base_url}/register/v1/agents").rstrip("/")
+        root = reg.removesuffix("/agents")
+        return f"{root}/modes/{mm_id(channel_id, 'channel')}"
+
+    async def ask_mode_record(self, channel_id: str) -> str | None:
+        """The registrar's signed ask-mode record of a home (RT-6.25 step 8):
+        `GET …/modes/<id>` → `{"record": "<JWS>"}`, None on 404. No
+        Authorization header (the bot's token never goes there), 5 s, at
+        most MODE_RECORD_MAX bytes; anything else raises."""
+        out = bytearray()
+        async with self._http().stream("GET", self.modes_url(channel_id), timeout=5.0,
+                                       headers={"Accept": "application/json"}) as resp:
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            async for chunk in resp.aiter_bytes():
+                out += chunk
+                if len(out) > MODE_RECORD_MAX:
+                    raise ValueError(f"ask mode record over {MODE_RECORD_MAX} bytes")
+        data = json.loads(out.decode("utf-8"))
+        record = data.get("record") if isinstance(data, dict) else None
+        if not isinstance(record, str) or not record:
+            raise ValueError("the registrar's answer holds no record")
+        return record
 
     async def publish_attestation(self, token: str) -> bool:
         """Put this bot's attestation into its own user props (RT-6.24 step 3).
