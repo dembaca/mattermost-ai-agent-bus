@@ -8,7 +8,9 @@
 # A bot an agent registered itself (mcp-*.env) outlives its process for
 # `claude --continue` or its workspace's next server; it counts as abandoned
 # only once its file is untouched for MM_SESSION_KEEP_SEC (default 24 h).
-# --force includes it sooner.
+# So does a corral session's bot that postEnd kept for `claude --continue`
+# (RT-6.18 step 9): its file carries MM_SERVER_ENDED, and the grace period
+# counts from that mark. --force includes them sooner.
 #
 # A session file exists for the whole run of a session, so it is NOT evidence
 # that a bot is abandoned. Each file records MM_SESSION_PID, the supervising
@@ -60,7 +62,7 @@ for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
     --force) FORCE=1 ;;
-    -h|--help) sed -n '2,39p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -70,8 +72,7 @@ removed=0
 kept=0
 skipped=0
 ACTIVE_NAMES=()
-KEEP_SEC="${MM_SESSION_KEEP_SEC:-86400}"
-[[ "$KEEP_SEC" =~ ^[0-9]+$ ]] || KEEP_SEC=86400
+KEEP_SEC="$(mm_keep_sec)"
 
 note() { echo "$*" >&2; }
 
@@ -111,6 +112,9 @@ if [[ -z "${MM_AGENT_PREFIX:-}" && -z "${MM_REG_BOT_NAME:-}" ]]; then
 fi
 
 # --- 1. session files --------------------------------------------------------
+# A corral start that died while taking a kept bot over left its claim: back
+# under its name first, so it is seen below (RT-6.18 step 10).
+[[ "$APPLY" -eq 0 ]] || mm_restore_claims "$STATE_DIR"
 shopt -s nullglob
 for f in "$STATE_DIR"/*.env; do
   not_a_session "$f" && continue
@@ -124,8 +128,11 @@ for f in "$STATE_DIR"/*.env; do
   # A server without a session id that ended marked its file and kept the bot
   # for the workspace's next server (RT-6.10): its harness (MM_SESSION_PID)
   # may live on, so only the grace period below counts.
+  # So does a corral session's bot that postEnd kept for `claude --continue`
+  # (RT-6.18 step 9).
   ended=0
-  if [[ -n "$(field "$f" MM_SERVER_ENDED)" ]]; then
+  ended_at="$(field "$f" MM_SERVER_ENDED)"
+  if [[ -n "$ended_at" ]]; then
     pid="" hpid="" ended=1
   fi
   if [[ "$FORCE" -eq 0 ]] && ! is_live "$pid" && is_live "$hpid"; then
@@ -147,10 +154,15 @@ for f in "$STATE_DIR"/*.env; do
     skipped=$((skipped + 1))
     continue
   fi
-  # An MCP-registered bot is kept for `claude --continue` (RT-6.10) until its
-  # file has been untouched for the grace period; the server's exit touches it.
-  if [[ "$FORCE" -eq 0 && "$(basename "$f")" == mcp-* ]]; then
-    age=$(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") ))
+  # A kept bot (an MCP-registered one, RT-6.10, or a corral session's,
+  # RT-6.18 step 9) waits out the grace period: counted from its end mark,
+  # else from the file's mtime, which the MCP server's exit touches.
+  if [[ "$FORCE" -eq 0 && ( "$ended" -eq 1 || "$(basename "$f")" == mcp-* ) ]]; then
+    if [[ "$ended_at" =~ ^[0-9]+$ ]]; then
+      age=$(( $(date +%s) - ended_at ))
+    else
+      age=$(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") ))
+    fi
     if (( age < KEEP_SEC )); then
       note "KEPT    ${name} (ended $((age / 3600)) h ago, kept for a restart until $((KEEP_SEC / 3600)) h) — use --force to include"
       ACTIVE_NAMES+=("$name")
@@ -163,31 +175,20 @@ for f in "$STATE_DIR"/*.env; do
     echo "would unregister ${name}  (from $(basename "$f"))"
     continue
   fi
-  # Each subshell loads one bot's session file, so it cannot leak into the next.
-  # shellcheck disable=SC2030,SC2031
-  if err="$( (
-      export MM_AGENT_SESSION_FILE="$f"
-      mm_load_session_file || exit 1
-      export -n MM_BOT_TOKEN MATTERMOST_TOKEN
-      mm_with_token "$BIN/mm-agent-unregister.sh" "$name" 2>&1 >/dev/null
-     ) )"; then
+  # With the file's own token; the same as preStart's reaping of kept bots
+  # (mm_unregister_session_file in mm-agent-lib.sh).
+  rc=0
+  err="$(mm_unregister_session_file "$f" "$name")" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
     note "unregistered ${name}"
-    rm -f "$f"
     removed=$((removed + 1))
-  elif [[ "$( (
-      export MM_AGENT_SESSION_FILE="$f"
-      mm_load_session_file >/dev/null 2>&1 || exit 0
-      export -n MM_BOT_TOKEN MATTERMOST_TOKEN
-      mm_api GET "/api/v4/users/me" >/dev/null 2>&1 || exit 0
-      printf '%s' "$MM_API_STATUS"
-     ) )" == "401" ]]; then
+  elif [[ "$rc" -eq 2 ]]; then
     # The bot's own token is rejected: the bot is gone already (its teardown
     # deleted it, or the server revoked the token). Only the file is left.
     note "gone    ${name} (its token is no longer accepted) — removed $(basename "$f")"
-    rm -f "$f"
     removed=$((removed + 1))
   else
-    note "FAILED ${name}: ${err:-no reason given} — keeping $(basename "$f")"
+    note "FAILED ${name}: ${err} — keeping $(basename "$f")"
     kept=$((kept + 1))
   fi
 done
@@ -290,6 +291,8 @@ done
 for d in "$STATE_DIR"/hosted/*; do
   [[ -d "$d" && ! -L "$d" ]] || continue
   [[ -f "$STATE_DIR/$(basename "$d").env" ]] && continue
+  # A start is taking the kept bot over (RT-6.18 step 10): the directory is its.
+  compgen -G "$STATE_DIR/.$(basename "$d").env.taken-*" >/dev/null && continue
   [[ -n "$(find "$d" -maxdepth 0 -mmin +60 2>/dev/null)" ]] || continue
   hostfiles=$((hostfiles + 1))
   [[ "$APPLY" -eq 1 ]] && rm -rf "$d"

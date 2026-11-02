@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# corral preStart hook: register an ephemeral Mattermost bot for this session,
-# start the session's MCP server on the host and hand the sandbox its endpoints.
+# corral preStart hook: register an ephemeral Mattermost bot for this session —
+# or, for `claude --continue` / `--resume <id>`, take over the one postEnd kept
+# — start the session's MCP server on the host and hand the sandbox its
+# endpoints.
 #
 # Runs on the HOST, outside the sandbox. That is the whole point: MM_REG_SECRET
 # and the bot token stay here (RT-6.18). The sandbox gets the bot's names, the
@@ -209,12 +211,156 @@ DISPLAY="Claude Code · ${PROJECT_RAW} @ ${host_raw%%.*}"
 # Host files are named by SESSION_KEY: corral's session id when it is a safe
 # file name, else this hook's pid.
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
+# The session files hold the bot's token, a kept one for up to a day after its
+# session (RT-6.18 step 9): never in a directory a sandbox can change.
+shopt -s nocasematch
+if sandbox_can_write "$STATE_DIR"; then
+  shopt -u nocasematch
+  no_bus "the state directory ${STATE_DIR} is one a sandbox can change — set XDG_STATE_HOME to a directory outside the corral homes and workdirs"
+fi
+shopt -u nocasematch
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 SESSION_KEY="${CORRAL_SESSION_ID:-$$}"
 [[ "$SESSION_KEY" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || SESSION_KEY="$$"
 MM_AGENT_SESSION_FILE="${STATE_DIR}/${SESSION_KEY}.env"
 export MM_AGENT_SESSION_FILE
+# The host process's own state directory, chosen here: never one the sandbox
+# names (RT-6.18 step 1).
+HOSTED_DIR="${STATE_DIR}/hosted/${SESSION_KEY}"
+mkdir -p "$STATE_DIR/hosted"
+chmod 700 "$STATE_DIR/hosted"
+
+# ps prints a start time with padding; one form for comparing.
+proc_start() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed -e 's/^ //' -e 's/ $//'; }
+
+# A host process outlives its session only when corral was killed (no postEnd)
+# and its own watchdog failed too. Stop it; its exit work unregisters the bot.
+# Pid reuse: only a process that started when the one recorded did. Then the
+# files of ended sessions: readiness files, logs after a day, state directories
+# after an hour (their process removes them itself; these are a crash's). A
+# kept session's (RT-6.18 step 9) has its session file, or a claim on it.
+sweep_host_processes() {
+  local f base hpid hstart cpid d
+  shopt -s nullglob
+  for f in "$STATE_DIR"/*.env; do
+    [[ "$f" != "$MM_AGENT_SESSION_FILE" ]] || continue
+    hpid="$(sed -n 's/^MM_BUS_HOST_PID=//p' "$f" | head -n1)"
+    [[ "$hpid" =~ ^[0-9]+$ ]] || continue
+    cpid="$(sed -n 's/^MM_SESSION_PID=//p' "$f" | head -n1)"
+    if [[ "$cpid" =~ ^[0-9]+$ ]] && kill -0 "$cpid" 2>/dev/null; then continue; fi
+    hstart="$(sed -n 's/^MM_BUS_HOST_START=//p' "$f" | head -n1)"
+    if [[ -n "$hstart" ]] && kill -0 "$hpid" 2>/dev/null && [[ "$(proc_start "$hpid")" == "$hstart" ]]; then
+      kill -TERM "$hpid" 2>/dev/null && log "stopped the MCP server of ended session $(basename "$f" .env) (pid ${hpid})"
+    fi
+  done
+  for f in "$STATE_DIR"/*.host.json "$STATE_DIR"/*.host.log; do
+    base="${f%.host.*}"
+    [[ -f "${base}.env" ]] && continue
+    if [[ "$f" == *.json ]] || [[ -n "$(find "$f" -mmin +1440 2>/dev/null)" ]]; then rm -f "$f"; fi
+  done
+  for d in "$STATE_DIR"/hosted/*; do
+    [[ -d "$d" && ! -L "$d" ]] || continue
+    [[ -f "$STATE_DIR/$(basename "$d").env" ]] && continue
+    compgen -G "$STATE_DIR/.$(basename "$d").env.taken-*" >/dev/null && continue
+    [[ -n "$(find "$d" -maxdepth 0 -mmin +60 2>/dev/null)" ]] && rm -rf "$d"
+  done
+  shopt -u nullglob
+}
+
+sweep_host_processes
+# Kept bots past MM_SESSION_KEEP_SEC go, with their own token (RT-6.18 step 10).
+mm_reap_kept "$STATE_DIR"
+
+# --- take over a kept bot (RT-6.18 step 10) -----------------------------------
+# A Claude Code start with --continue or --resume <id> takes over the bot
+# postEnd kept (step 9) for this workdir: same name, threads, DMs and state
+# directory, no registration. Which way corral started the agent only corral's
+# own command line tells (mm_corral_resume); when it cannot be read, or names
+# neither, the start registers a new bot as before — never by the workdir
+# alone. Only an ended, kept file is a candidate, so a session that still runs
+# never loses its bot. The claim is one rename: of two starts, the one that
+# loses it registers. The token stays in this shell, unexported.
+TAKEN="" KEPT_SID=""
+take_over() {
+  local how wkey cand old claim line key val tmp from
+  [[ "${CORRAL_AGENT:-}" == claude ]] || return 1
+  if ! how="$(mm_corral_resume "$PPID")"; then
+    log "could not read corral's command line — registering a new bot (a resumed session gets one, too)"
+    return 1
+  fi
+  [[ -n "$how" ]] || return 1
+  wkey="$(mm_workdir_key "${CORRAL_WORKDIR:-}")" || return 1
+  if [[ "$how" == continue ]]; then
+    cand="$(mm_kept_candidate "$STATE_DIR" "$wkey" continue)" || {
+      log "no bot kept in this workdir to continue with — registering a new one"; return 1; }
+  else
+    KEPT_SID="$(mm_key16 "${how#resume }")"
+    cand="$(mm_kept_candidate "$STATE_DIR" "$wkey" resume "$KEPT_SID")" || {
+      log "no bot kept for that session in this workdir — registering a new one"; return 1; }
+  fi
+  old="$(basename "$cand" .env)"
+  claim="${STATE_DIR}/.${old}.env.taken-$$"
+  if ! mv "$cand" "$claim" 2>/dev/null; then
+    log "another start took the kept bot over first — registering a new one"
+    return 1
+  fi
+  [[ "$how" != continue ]] || KEPT_SID="$(sed -n 's/^MM_KEPT_CLAUDE_SID=//p' "$claim" | head -n1)"
+  # The bot's identity only: channels and settings are this start's own.
+  MM_BOT_TOKEN="" MM_BOT_ATTESTATION="" MM_REG_BOT_NAME="" MM_BOT_USERNAME="" MM_BOT_USER_ID="" kept_prefix=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%=*}" val="${line#*=}"
+    case "$key" in
+      MM_BOT_TOKEN|MM_BOT_ATTESTATION|MM_REG_BOT_NAME|MM_BOT_USERNAME|MM_BOT_USER_ID) printf -v "$key" '%s' "$val" ;;
+      MM_AGENT_PREFIX) kept_prefix="$val" ;;
+    esac
+  done <"$claim"
+  export -n MM_BOT_TOKEN MATTERMOST_TOKEN
+  if [[ -z "$MM_BOT_TOKEN" || -z "$MM_REG_BOT_NAME" || ! "$MM_BOT_USER_ID" =~ ^[a-z0-9]{26}$ ]]; then
+    log "the kept bot's file is incomplete — registering a new bot"
+    mv "$claim" "$cand" 2>/dev/null || true
+    MM_BOT_TOKEN="" KEPT_SID=""
+    return 1
+  fi
+  # Its token still accepted? A 401 means the bot is gone; unreachable now
+  # means most likely still good (as RT-6.10 step 5).
+  if mm_api GET "/api/v4/users/me" && [[ "$MM_API_STATUS" == 401 ]]; then
+    log "the kept bot ${MM_REG_BOT_NAME} is gone (its token is rejected) — registering a new one"
+    rm -f "$claim"
+    from="${STATE_DIR}/hosted/${old}"
+    if [[ -d "$from" && ! -L "$from" ]]; then rm -rf "$from"; fi
+    MM_BOT_TOKEN="" KEPT_SID=""
+    return 1
+  fi
+  # Its state directory (asks, read watermark, crown lease, threads,
+  # counters) becomes this session's: a real directory of this user only.
+  from="${STATE_DIR}/hosted/${old}"
+  if [[ -d "$from" && ! -L "$from" ]]; then
+    if [[ -e "$HOSTED_DIR" || -L "$HOSTED_DIR" ]]; then rm -rf "$HOSTED_DIR"; fi
+    mv "$from" "$HOSTED_DIR" 2>/dev/null ||
+      log "WARNING: could not move the kept bot's state directory; it starts with an empty one"
+  fi
+  # This session's file, 0600, without the marks and the old session's
+  # process; then the claim goes.
+  if ! tmp="$(umask 077 && mktemp "${STATE_DIR}/.${SESSION_KEY}.env.XXXXXX")" ||
+     ! grep -Ev '^(MM_BUS_HOST_[A-Z_]*|MM_SESSION_PID|MM_SERVER_ENDED|MM_KEPT_[A-Z_]*)=' "$claim" >"$tmp" ||
+     ! mv -f "$tmp" "$MM_AGENT_SESSION_FILE"; then
+    [[ -z "${tmp:-}" ]] || rm -f "$tmp"
+    log "could not write the session file — leaving the kept bot as it was, registering a new one"
+    mv "$claim" "$cand" 2>/dev/null || true
+    MM_BOT_TOKEN="" KEPT_SID=""
+    return 1
+  fi
+  rm -f "$claim"
+  [[ -z "$kept_prefix" ]] || MM_AGENT_PREFIX="$kept_prefix"
+  export MM_REG_BOT_NAME MM_BOT_USERNAME MM_BOT_USER_ID MM_AGENT_PREFIX
+  # The registrar's signed claim is no secret (RT-6.24): it goes to the host
+  # process with the bus settings, as after a registration.
+  if [[ -n "$MM_BOT_ATTESTATION" ]]; then export MM_BOT_ATTESTATION; else unset MM_BOT_ATTESTATION; fi
+  NAME="$MM_REG_BOT_NAME"
+  TAKEN="$MM_BOT_USERNAME"
+  log "taking over ${MM_BOT_USERNAME}, kept for claude ${how%% *}"
+}
 
 # --- register ----------------------------------------------------------------
 # Capture the lines from stdout; the script's own diagnostics are on stderr and
@@ -223,19 +369,24 @@ export MM_AGENT_SESSION_FILE
 # (arc42 §7.3); the token comes back as a plain assignment, not exported.
 # Only this registration's attestation reaches the host process (RT-6.24):
 # the export lines carry one when the registrar sent it.
-unset MM_BOT_ATTESTATION
-if ! exports="$(mm_with_secret "$BIN/mm-agent-register.sh" --exports "$NAME" "$DISPLAY")"; then
-  log "registration failed — continuing without a bot"
-  exit 0
-fi
-eval "$exports"
-export -n MM_BOT_TOKEN MATTERMOST_TOKEN
+if take_over; then
+  REGISTERED=1
+else
+  KEPT_SID=""
+  unset MM_BOT_ATTESTATION
+  if ! exports="$(mm_with_secret "$BIN/mm-agent-register.sh" --exports "$NAME" "$DISPLAY")"; then
+    log "registration failed — continuing without a bot"
+    exit 0
+  fi
+  eval "$exports"
+  export -n MM_BOT_TOKEN MATTERMOST_TOKEN
 
-if [[ -z "${MM_BOT_TOKEN:-}" ]]; then
-  log "registrar returned no token — continuing without a bot"
-  exit 0
+  if [[ -z "${MM_BOT_TOKEN:-}" ]]; then
+    log "registrar returned no token — continuing without a bot"
+    exit 0
+  fi
+  REGISTERED=1
 fi
-REGISTERED=1
 
 # --- channels ----------------------------------------------------------------
 # From here on a failure must not leak the bot account we just created.
@@ -258,8 +409,9 @@ printf 'MM_SESSION_PID=%s\n' "$PPID" >>"$MM_AGENT_SESSION_FILE"
 # Start from an empty inbox in Mattermost's UI. A fresh bot is not born with
 # one: Mattermost posts a welcome DM *as the bot* to whoever created it, and the
 # bot's own post counts as unread for the bot. The bus never counts it (its
-# read watermark leaves own posts out, RT-6.2); this clears the display.
-mm_with_token "$BIN/mm-agent-unread.sh" baseline || true
+# read watermark leaves own posts out, RT-6.2); this clears the display. A
+# taken-over bot keeps what arrived while it was kept: it is not fresh.
+[[ -n "$TAKEN" ]] || mm_with_token "$BIN/mm-agent-unread.sh" baseline || true
 
 # Show up as present from the first moment. Without this a fresh bot sits at
 # whatever Mattermost infers from (non-existent) activity, which reads as
@@ -304,6 +456,7 @@ trusted_shown="none (set MM_TRUSTED_HUMANS)"
 # host owns. The prefix
 # goes along instead (MM_AGENT_PREFIX, arc42 §7.1): the sandbox cannot derive it.
 note="You are @${MM_BOT_USERNAME} on the Mattermost agent bus."
+[[ -z "$TAKEN" ]] || note+=" The host kept this bot from the session you resumed: same name, threads and DMs."
 # Home, guests, lobby (ADR-002, RT-6.22): the first MM_PROJECT_CHANNEL entry is
 # the home, the others are guest channels.
 HOME_CH="$(mm_home_channel)"
@@ -381,50 +534,9 @@ ENV_JSON="$(jq -nc \
 # all, never the token — the bot is unregistered again and the banner says why.
 HOST_READY="${STATE_DIR}/${SESSION_KEY}.host.json"
 HOST_LOG="${STATE_DIR}/${SESSION_KEY}.host.log"
-# The process's own state directory, chosen here: never one the sandbox names.
-HOSTED_DIR="${STATE_DIR}/hosted/${SESSION_KEY}"
-
-# ps prints a start time with padding; one form for comparing.
-proc_start() { ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | sed -e 's/^ //' -e 's/ $//'; }
-
-# A host process outlives its session only when corral was killed (no postEnd)
-# and its own watchdog failed too. Stop it; its exit work unregisters the bot.
-# Pid reuse: only a process that started when the one recorded did. Then the
-# files of ended sessions: readiness files, logs after a day, state directories
-# after an hour (their process removes them itself; these are a crash's).
-sweep_host_processes() {
-  local f base hpid hstart cpid d
-  shopt -s nullglob
-  for f in "$STATE_DIR"/*.env; do
-    [[ "$f" != "$MM_AGENT_SESSION_FILE" ]] || continue
-    hpid="$(sed -n 's/^MM_BUS_HOST_PID=//p' "$f" | head -n1)"
-    [[ "$hpid" =~ ^[0-9]+$ ]] || continue
-    cpid="$(sed -n 's/^MM_SESSION_PID=//p' "$f" | head -n1)"
-    if [[ "$cpid" =~ ^[0-9]+$ ]] && kill -0 "$cpid" 2>/dev/null; then continue; fi
-    hstart="$(sed -n 's/^MM_BUS_HOST_START=//p' "$f" | head -n1)"
-    if [[ -n "$hstart" ]] && kill -0 "$hpid" 2>/dev/null && [[ "$(proc_start "$hpid")" == "$hstart" ]]; then
-      kill -TERM "$hpid" 2>/dev/null && log "stopped the MCP server of ended session $(basename "$f" .env) (pid ${hpid})"
-    fi
-  done
-  for f in "$STATE_DIR"/*.host.json "$STATE_DIR"/*.host.log; do
-    base="${f%.host.*}"
-    [[ -f "${base}.env" ]] && continue
-    if [[ "$f" == *.json ]] || [[ -n "$(find "$f" -mmin +1440 2>/dev/null)" ]]; then rm -f "$f"; fi
-  done
-  for d in "$STATE_DIR"/hosted/*; do
-    [[ -d "$d" && ! -L "$d" ]] || continue
-    [[ -f "$STATE_DIR/$(basename "$d").env" ]] && continue
-    [[ -n "$(find "$d" -maxdepth 0 -mmin +60 2>/dev/null)" ]] && rm -rf "$d"
-  done
-  shopt -u nullglob
-}
-
-sweep_host_processes
 
 BUS_KEY="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
 [[ ${#BUS_KEY} -eq 64 ]] || no_bus "no random key for the session (od /dev/urandom failed)"
-mkdir -p "$STATE_DIR/hosted"
-chmod 700 "$STATE_DIR/hosted"
 
 # The host process starts isolated: `python -I` (no working directory, no
 # PYTHON* variables, no user site on its path), from the host tree, with an
@@ -438,13 +550,16 @@ for v in USER LOGNAME LANG LC_ALL LC_CTYPE TMPDIR; do
   if [[ -n "${!v:-}" ]]; then host_env+=("${v}=${!v}"); fi
 done
 HOST_PID="" HOST_PORT="" HOST_HOOK=""
-if jq -nc --rawfile key /dev/fd/4 --rawfile tok /dev/fd/5 --argjson base "$ENV_JSON" '
+# A taken-over bot's host process also learns the Claude session it was kept
+# for (MM_BUS_KEPT_SID, a key), to log a resume of another one (step 10).
+if jq -nc --rawfile key /dev/fd/4 --rawfile tok /dev/fd/5 --argjson base "$ENV_JSON" --arg kept "$KEPT_SID" '
      {key: $key,
       env: ((env | with_entries(select(.key | test(
               "^(MM|MATTERMOST)_[A-Z0-9_]+$|^(CORRAL_WORKDIR|CORRAL_SESSION_ID|TZ|SSL_CERT_FILE|SSL_CERT_DIR)$|^(HTTPS?|NO|ALL)_PROXY$|^(https?|no|all)_proxy$")))
              | del(.MM_REG_SECRET, .MM_REG_SECRET_GOPASS, .MM_AGENT_SESSION_FILE,
-                   .MM_REG_BOT_NAME, .MM_BUS_KEY, .MATTERMOST_TOKEN))
-            + $base + {MM_BOT_TOKEN: $tok})}' \
+                   .MM_REG_BOT_NAME, .MM_BUS_KEY, .MATTERMOST_TOKEN, .MM_BUS_KEPT_SID))
+            + $base + {MM_BOT_TOKEN: $tok}
+            + (if $kept != "" then {MM_BUS_KEPT_SID: $kept} else {} end))}' \
        4< <(printf '%s' "$BUS_KEY") 5< <(printf '%s' "$MM_BOT_TOKEN") |
     (cd "$ROOT/mcp" && exec env -i "${host_env[@]}" "$HOST_PY" -I -m mattermost_ai_agent_bus --host \
       --ready-file "$HOST_READY" --state-dir "$HOSTED_DIR" --log-file "$HOST_LOG" --watch-pid "$PPID") \
@@ -466,7 +581,7 @@ jq -nc \
   --arg mcp "tcp://127.0.0.1:${HOST_PORT}" \
   --arg hook "$HOST_HOOK" \
   --arg note "$note" \
-  --arg status "registered ${MM_BOT_USERNAME}, home #${HOME_CH}${GUESTS_SHOWN:+, guests ${GUESTS_SHOWN}}${MM_PROJECT_CHANNEL:+, lobby #${MM_CHANNEL:-}}, ${RESPONSIBLE:+for @${RESPONSIBLE}, }trusted ${trusted_shown}; token stays on the host" \
+  --arg status "${TAKEN:+took over }${TAKEN:-registered ${MM_BOT_USERNAME}}, home #${HOME_CH}${GUESTS_SHOWN:+, guests ${GUESTS_SHOWN}}${MM_PROJECT_CHANNEL:+, lobby #${MM_CHANNEL:-}}, ${RESPONSIBLE:+for @${RESPONSIBLE}, }trusted ${trusted_shown}; token stays on the host" \
   '{
      corralContributionVersion: 1,
      env: ($env + {MM_BUS_ENDPOINT: $hook, MM_BUS_MCP_ENDPOINT: $mcp, MM_BUS_KEY: $key}),

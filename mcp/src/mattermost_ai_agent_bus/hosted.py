@@ -25,7 +25,9 @@ answers ``{"ok": true}`` or ``{"ok": false, "error": …}``. A closed relay
 connection does not end the session: an MCP reconnect may follow. SIGTERM
 (corral's postEnd) or the watchdog finding corral gone does; then the server
 does its exit work (BYE, stats, offline, unregister) and the state directory
-goes.
+goes. SIGUSR1 (postEnd keeping the bot for `claude --continue`, RT-6.18 step
+9) ends it with the bot offline only: no BYE, no stats, no unregister, and the
+state directory stays for the session that takes the bot over (step 10).
 
 Without the relay environment the entry point is the plain stdio server.
 """
@@ -34,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -90,6 +93,12 @@ _HOST_ENV_DENY = frozenset({
 })
 _TOKEN_ENV = ("MM_BOT_TOKEN", "MATTERMOST_TOKEN")
 MAX_VALUE = 8192
+# The Claude session this process serves, as a hash, in its state directory:
+# postEnd keeps the bot only for a session that may be resumed (RT-6.18 step 9).
+CLAUDE_SID_FILE = "claude-sid.env"
+# The Claude session a taken-over bot was kept for, from preStart (step 10).
+KEPT_SID_ENV = "MM_BUS_KEPT_SID"
+KEEP_PREFIX = "keep: "
 
 Serve = Callable[[Any, Any], Awaitable[None]]
 
@@ -257,6 +266,35 @@ def apply_session(values: Mapping[str, str], *,
         env["CLAUDE_PROJECT_DIR"] = os.path.normpath(project)
 
 
+def sid_key(sid: str) -> str:
+    """sha1 of a Claude session id, 16 hex digits: the key of RT-6.10 step 2."""
+    return hashlib.sha1(sid.encode()).hexdigest()[:16]
+
+
+def note_claude_session(values: Mapping[str, str], *,
+                        environ: Mapping[str, str] | None = None) -> None:
+    """At the first handshake (RT-6.18 steps 9–10): the hash of the relay's
+    Claude session id goes to CLAUDE_SID_FILE in the state directory, the only
+    sign for postEnd that the bot may be kept. A bot taken over for another
+    session (MM_BUS_KEPT_SID) stays this session's: the mismatch is logged and
+    the file names the relay's session, so the bot is kept under it at the end."""
+    env = os.environ if environ is None else environ
+    sid = values.get("CLAUDE_CODE_SESSION_ID", "")
+    if not session_file.hosted() or not sid:
+        return
+    key = sid_key(sid)
+    kept = env.get(KEPT_SID_ENV, "")
+    if kept and kept != key:
+        log.warning("took over a bot kept for Claude session %s, but this one is %s: "
+                    "it stays this session's bot", kept, key)
+    elif kept:
+        log.info("took over the bot kept for this Claude session (%s)", key)
+    try:
+        session_file.write_private(session_file.state_dir() / CLAUDE_SID_FILE, f"MM_CLAUDE_SID={key}\n")
+    except OSError as exc:
+        log.warning("could not note the Claude session: %s", exc)
+
+
 @asynccontextmanager
 async def byte_transport(receive: BufferedByteReceiveStream, send: Any) -> AsyncIterator[tuple[Any, Any]]:
     """MCP message streams over a byte stream: newline-delimited JSON-RPC, as stdio."""
@@ -337,6 +375,7 @@ class Host:
         if self.session is None:
             self._apply(session)
             self.session = session
+            note_claude_session(session)
         elif session != self.session:
             log.info("relay: its session values differ from the first relay's; the first stay")
         if self._serve is None:
@@ -461,9 +500,11 @@ async def services(key: str, client: Any) -> AsyncIterator[str]:
 
 async def run_host(host: Host, *, ready_file: Path, key: str = "", with_services: bool = True,
                    watch: Callable[[], bool] | None = None, interval: float = WATCH_SEC,
-                   signals: tuple[signal.Signals, ...] = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)) -> str:
+                   signals: tuple[signal.Signals, ...] = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT),
+                   keep_signals: tuple[signal.Signals, ...] = (signal.SIGUSR1,)) -> str:
     """Serve relay connections and the hook API until a signal or the watchdog
-    ends the session. Returns why it ended."""
+    ends the session. Returns why it ended; KEEP_PREFIX first when postEnd
+    keeps the bot (a keep signal, RT-6.18 step 9)."""
     stop = anyio.Event()
     why = ["stopped"]
 
@@ -473,9 +514,10 @@ async def run_host(host: Host, *, ready_file: Path, key: str = "", with_services
             stop.set()
 
     async def on_signals() -> None:
-        with anyio.open_signal_receiver(*signals) as received:
+        with anyio.open_signal_receiver(*signals, *keep_signals) as received:
             async for num in received:
-                end(f"signal {signal.Signals(num).name}")
+                name = signal.Signals(num).name
+                end(f"{KEEP_PREFIX}signal {name}" if num in keep_signals else f"signal {name}")
                 return
 
     async def watchdog() -> None:
@@ -492,7 +534,7 @@ async def run_host(host: Host, *, ready_file: Path, key: str = "", with_services
         hook = await stack.enter_async_context(services(key, host.client)) if with_services else ""
         async with listener, anyio.create_task_group() as tg:
             tg.start_soon(listener.serve, host.handle)
-            if signals:
+            if signals or keep_signals:
                 tg.start_soon(on_signals)
             if watch is not None:
                 tg.start_soon(watchdog)
@@ -503,35 +545,44 @@ async def run_host(host: Host, *, ready_file: Path, key: str = "", with_services
     return why[0]
 
 
-def exit_work(client: Any) -> None:
+def exit_work(client: Any, keep: bool = False) -> None:
     """BYE, stats, offline, unregister: when the session ends, never when a
-    relay disconnects; also when no relay ever connected."""
+    relay disconnects; also when no relay ever connected. With keep (postEnd
+    keeps the bot, RT-6.18 step 9) offline only."""
     if client is None:
         return
     from . import server
 
     if server._client is None:
         server._client = client
-    server._cleanup_on_exit()
+    if keep:
+        server._keep_on_exit()
+    else:
+        server._cleanup_on_exit()
 
 
 def serve_host(host: Host, *, ready_file: Path, key: str = "", with_services: bool = True,
                watch: Callable[[], bool] | None = None, interval: float = WATCH_SEC,
-               signals: tuple[signal.Signals, ...] = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)) -> str:
+               signals: tuple[signal.Signals, ...] = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT),
+               keep_signals: tuple[signal.Signals, ...] = (signal.SIGUSR1,)) -> str:
     """run_host, then the exit work; the readiness file and the session's
-    state directory go with the process."""
+    state directory go with the process, unless postEnd keeps the bot: then
+    the state directory stays for the session that takes it over (RT-6.18
+    steps 9–10)."""
     why = "failed"
     try:
         why = anyio.run(lambda: run_host(host, ready_file=ready_file, key=key,
                                          with_services=with_services, watch=watch,
-                                         interval=interval, signals=signals))
+                                         interval=interval, signals=signals,
+                                         keep_signals=keep_signals))
     finally:
-        log.info("session over (%s): exit work", why)
+        keep = why.startswith(KEEP_PREFIX)
+        log.info("session over (%s): %s", why, "bot kept, offline only" if keep else "exit work")
         try:
-            exit_work(host.client)
+            exit_work(host.client, keep)
         finally:
             ready_file.unlink(missing_ok=True)
-            if session_file.hosted():
+            if session_file.hosted() and not keep:
                 shutil.rmtree(session_file.state_dir(), ignore_errors=True)
     return why
 

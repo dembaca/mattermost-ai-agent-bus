@@ -966,6 +966,26 @@ class MattermostAdapter:
         ):
             os.environ.pop(key, None)
 
+    def keep_sync(self) -> str:
+        """Leave the bot to the host session hooks instead of unregistering it
+        (RT-6.18 step 9): corral's postEnd keeps it for `claude --continue`.
+        Only going offline: no BYE, no stats, no unregister; the token is
+        dropped from this process. Best effort, never raises."""
+        if not self.token:
+            return "no session"
+        uid = self.bot_id
+        try:
+            with httpx.Client(timeout=5.0) as http:
+                http.put(f"{self.base_url}/api/v4/users/{mm_id(uid, 'user')}/status",
+                         headers={"Authorization": f"Bearer {self.token}"},
+                         json={"user_id": uid, "status": "offline"})
+        except (httpx.HTTPError, InvalidId):
+            pass
+        finally:
+            self.session = None
+            self.token = None
+        return "kept the bot for claude --continue (offline)"
+
     def shutdown_sync(self) -> str:
         """Unregister the bot this process is responsible for, synchronously.
 

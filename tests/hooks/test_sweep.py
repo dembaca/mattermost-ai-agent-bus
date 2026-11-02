@@ -187,3 +187,49 @@ def test_a_bot_kept_for_the_workspace_waits_out_the_grace_period_only(mm, run):
     assert "KEPT    ws-recent-aaa1 (ended 2 h ago" in r.stderr
     assert "unregistered ws-old-bbb2" in r.stderr
     assert files["ws-recent-aaa1"].exists() and not files["ws-old-bbb2"].exists()
+
+
+def test_a_corral_bot_kept_for_continue_waits_out_the_grace_period(mm, run):
+    """RT-6.18 step 9 / RT-6.1 step 7: postEnd kept a corral session's bot for
+    `claude --continue` (end mark, no host process, no corral pid). The sweep
+    counts the grace period from the mark, not from the file's mtime, and
+    past it unregisters with the bot's own token and removes its file and its
+    host state directory (the same lib function as preStart's reaping)."""
+    import time
+    files = {}
+    for name, hours in (("mac-proj-kept1", 2), ("mac-proj-kept2", 30)):
+        f = run.state_dir / session(run, name, pid="")
+        t = time.time() - hours * 3600
+        f.write_text(f.read_text().replace("MM_SESSION_PID=\n", "")
+                     + f"MM_SERVER_ENDED={int(t)}\nMM_KEPT_WORKDIR={'1' * 16}\n"
+                     f"MM_KEPT_CLAUDE_SID={'2' * 16}\n")
+        (run.state_dir / "hosted" / name).mkdir(parents=True)
+        files[name] = f
+    r = run(SWEEP, "--apply", MM_BOT_TOKEN=None)
+    assert "KEPT    mac-proj-kept1 (ended 2 h ago" in r.stderr
+    assert "unregistered mac-proj-kept2" in r.stderr
+    assert deletes(mm) == ["/register/v1/agents/mac-proj-kept2"]
+    assert files["mac-proj-kept1"].exists() and (run.state_dir / "hosted" / "mac-proj-kept1").is_dir()
+    assert not files["mac-proj-kept2"].exists()
+    assert not (run.state_dir / "hosted" / "mac-proj-kept2").exists()
+
+
+def test_a_dead_takeovers_claim_goes_back(mm, run):
+    """RT-6.18 step 10: a preStart that died after claiming a kept bot
+    (.<session>.env.taken-<pid>) gives it back under its name, so it is
+    reaped in time. A claim whose bot already has a session file is only a
+    copy and goes."""
+    import time
+    f = run.state_dir / session(run, "mac-proj-kept3", pid="")
+    f.write_text(f.read_text().replace("MM_SESSION_PID=\n", "")
+                 + f"MM_BOT_USER_ID={'k' * 26}\nMM_SERVER_ENDED={int(time.time()) - 60}\n"
+                 f"MM_KEPT_WORKDIR={'1' * 16}\nMM_KEPT_CLAUDE_SID={'2' * 16}\n")
+    claim = run.state_dir / f".{f.name}.taken-{DEAD_PID}"
+    f.rename(claim)
+    copy = run.state_dir / f".other.env.taken-{DEAD_PID}"
+    copy.write_text(f"MM_BOT_USER_ID={'c' * 26}\n")
+    (run.state_dir / "live.env").write_text(f"MM_REG_BOT_NAME=live\nMM_BOT_USER_ID={'c' * 26}\n"
+                                            f"MM_SESSION_PID={os.getpid()}\n")
+    r = run(SWEEP, "--apply", MM_BOT_TOKEN=None)
+    assert "KEPT    mac-proj-kept3" in r.stderr
+    assert f.exists() and not claim.exists() and not copy.exists()
