@@ -71,7 +71,8 @@ def test_static_is_per_turn_text_and_the_skill_its_own_field():
     s = stats.summary("0.53.0", f)
     assert s["static"] == f.instructions + f.tools == len(server._instructions()) + f.tools
     # + get_file (RT-6.23), channel names (RT-6.22); + ask_human's kind, advice, ask_mode (RT-6.25)
-    assert s["skill"] == f.skill > 10_900 > s["static"]
+    # + coordinator's scope (RT-6.14 step 9)
+    assert s["skill"] == f.skill > 11_000 > s["static"]
 
 
 _REAL_CLIENT = httpx.Client
