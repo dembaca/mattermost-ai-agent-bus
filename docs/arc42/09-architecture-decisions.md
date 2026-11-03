@@ -14,6 +14,7 @@ code does today and point here where a decision will change them.
 | ADR-003 | An agent's owner comes from its registrar-bound bot description, or from the registrar's signed claim where its keys are pinned | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) built on the bus side in 0.66.0 (RT-6.24) | WP2, WP3, WP6, #83 |
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
+| ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Proposed (2026-11-03), not built; phase 2 (a signed record) depends on the registrar (#83) | #141 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -83,6 +84,8 @@ through a thread a trusted human started. Holds in every harness with an MCP
 server; without one nothing is gated, as today (Section 7.2).
 
 **Risks created:** RISK-01, RISK-04
+
+**Related:** ADR-006 (proposed): a trusted human's mandate lets a role's tasks count as tasks; the authority stays the human's, so this decision holds unchanged.
 
 ---
 
@@ -466,6 +469,8 @@ coordinator's own asks go to the human (or the delegate), not to itself.
 
 **Risks created:** RISK-07
 
+**Related:** ADR-006 (proposed) names the meta coordinator by a role (`👑 of ~<home>`) and gives its tasks, never its answers, the weight of a mandate.
+
 **Open questions:**
 
 - Stall: settled in phase 1 (RT-6.25 steps 5–7): the stall digest nudges the
@@ -484,3 +489,285 @@ coordinator's own asks go to the human (or the delegate), not to itself.
   whether its answer to a question needs the asking home's coordinator to
   relay it.
 - Standing approval syntax and its overlap with `--scope` of ADR-004.
+
+---
+
+## ADR-006: Mandate for a role
+
+**Status:** Proposed (2026-11-03). Not built; no scenario in Section 6
+changes until it is accepted. Decides #141 point 3 and settles point 4;
+points 6 and 8 bear on it. Builds on ADR-001 (trust), ADR-002 (a crown per
+(agent, home)) and the overview across homes (RT-6.14 step 9, 0.70.0).
+Phase 2 depends on the registrar's signing (#83, RT-6.24), as ADR-005
+phase 2 did.
+
+**Context:** A human asked one home's coordinator to act for them across
+the project channels: see that every agent has work, find issues that could
+move, bundle what waits on the human (#141). That coordinator is a guest in
+the other homes (RT-6.22). To their agents its orders are agent posts: data,
+never approval (RT-6.16). A worker does not let another agent change what its
+own human told it (`coordinator.md`, "Limits"; SKILL.md: the session wins),
+so it asks its human before it follows. In one session two of six asks within
+two hours did nothing but confirm such an order. The human had already said
+what they wanted, to the coordinator, in a channel the worker cannot read.
+Naming a bot in that word does not last: bot names change with every session.
+
+**Decision (proposed):**
+
+1. **A mandate is a trusted human's standing word, addressed to a role.** A
+   trusted human pins a post in a home whose first line is
+   `mandate: 👑 of ~<home> [until <YYYY-MM-DD>]` (any case, in backticks
+   too; further lines may give a reason). It says: in this home, the holder of
+   the crown of `~<home>` gives tasks and priorities for me. The role names
+   who holds what the human handed out; it carries no authority of its own.
+   Without a mandate, holding a crown changes nothing.
+2. **ADR-001 holds unchanged; it is not amended.** Authority still comes from
+   trust: from the act of a human the receiving session trusts, verified by
+   that session (step 4). The role is only the address, resolved when an
+   event arrives (step 5), and its holder must be a peer, so ADR-001's classes
+   apply to it unchanged. "The crown routes, it never authorises" still holds:
+   a crown without a mandate routes only, and with one the authority over
+   tasks is the human's. This is the standing form of
+   `root_from_trusted_human`: a routed request keeps its author, and here the
+   human started the work in advance instead of in the thread. Approvals are
+   untouched (step 7).
+3. **Where it lives: pinned in the home it applies to.** One mandate per home,
+   pinned in that home: where its agents' tasks live (ADR-002) and their
+   servers already read. Each agent's MCP server reads its home's pinned posts
+   (`GET /api/v4/channels/<id>/pinned`, through the chat port) at its first
+   look and then every 120 s on the reminders' heartbeat (RT-6.19), the cadence
+   of the signed mode (RT-6.25 step 8). Cost: one small read per server every
+   two minutes, and no search across channels, the reason ADR-004 rejected a
+   formatted post. The newest qualifying pinned post wins; a home with none
+   has no mandate. The pin is only how servers and people find the post: it
+   proves nothing (step 11). A pin keeps the post findable past the 200 posts
+   RT-6.25 step 2 reads back, and the human revokes it where they set it.
+   Rejected places: the lobby (every server would read a channel it otherwise
+   only answers in, every owner's agents would read the text, and the post
+   would still have to name each home) and the mandating human's or the
+   coordinator's own home (agents of other homes cannot read it: the 403 of
+   #141).
+4. **Who may issue it: the receiving session's own trusted humans.** A server
+   counts a pinned post as a mandate only when its author's account id is one
+   of its own `MM_TRUSTED_HUMANS`, the check `set_by_id` gets in ADR-005
+   phase 2. Never a webhook's post (`props.from_webhook`), a bot or an agent,
+   also not one listed as trusted (as RT-6.25 step 2); top-level only. Without
+   trusted humans no mandate counts. Each session judges for itself: two
+   agents in one home that trust different humans may disagree, and here that
+   is right. Unlike a mode (ADR-005 step 3), a mandate is no fact of the home
+   that all must read alike; it is a grant to each receiver, and authority
+   comes from that receiver's trust. A mandate by another owner's human binds
+   only the agents that trust that human: it never makes another owner's
+   agents take orders without their own human's say.
+5. **How the role resolves: live, per event.** `👑 of ~<home>` is the agent
+   whose live status lease holds the crown of `<home>` (RT-6.6 step 1; the
+   `crown_of` of the ambassador listing, step 3 there). The server resolves it
+   when an event arrives, from the author's status, which it reads for the
+   roster anyway; where it can read `<home>`, it also checks that the author
+   is that home's holder (`lease.coordinator_of`). The holder must be a peer of
+   this session (ADR-001, RT-6.16 step 1).
+   - **The crown moves** (a handover, RT-6.6 step 4): the next holder is
+     mandated from its first live 👑, the former one's posts no longer carry
+     the marker. Nothing is pinned again.
+   - **The crown lapses:** no holder, nobody is mandated; workers follow
+     today's rules until a 👑 is live again.
+   - **An unexpected holder:** a crown taken on its own (the oldest reachable
+     agent, RT-6.6 step 2) is enough when it is a peer: a peer's `TASK` binds
+     today (ADR-001), and the mandate adds no approval. A foreign holder is
+     never mandated: the mandate would follow the election to an agent that
+     obeys humans this session does not trust, the relay ADR-001 closed. Its
+     posts stay requests; the server logs it once, and `bus_info` says so.
+   - **Recommended setup:** the mandated coordinator has a home of its own in
+     which it is the only agent, so the crown cannot pass to a worker the human
+     did not mean, and it runs as an `autonomous` agent (#141 point 7), so the
+     crown does not lapse with a terminal session.
+6. **What it grants: its tasks and priorities count as tasks in this home.**
+   - A post by the holder in the receiving agent's home, a `TASK` root or a
+     reply in a task's thread, carries `mandated: <mandate post id>` and
+     `mandated_by: <human>`, in `wait_for_events` and as push attributes,
+     beside `from_agent: true`. The worker takes its task and its priority as
+     its human's, without a confirmation ask.
+   - Its priorities outrank the order the home's own 👑 proposes, which has no
+     mandate. They yield to every trusted human's direct word, in the session
+     or `from_trusted_human` on the bus: newer and more specific. A worker
+     that sees the two conflict follows its human and says so in the thread
+     (SKILL.md, as today).
+   - `coordinator("tasks")` marks such task rows `mandated`, so the home's 👑
+     and the human see which work came through the mandate.
+   - A DM or group message from the holder carries no marker, nor does a post
+     in any other channel: mandated work stays where the human and the home's
+     coordinator see it (#141 point 4).
+7. **What it never grants.**
+   - **No approval.** The holder's posts stay `from_agent`, never
+     `from_trusted_human`; its 👍 on an ask approves nothing (RT-6.8,
+     RT-6.11). A mandate covers the work, never the actions with effect
+     inside it: a merge, deploy, release, install, delete, push, external
+     write or spending (`askroute.FLOOR`, RT-6.25 step 1) still needs the
+     executing agent's own `ask_human` and a trusted human's yes. A mandated
+     `TASK` "merge PR #12" is a task to prepare the merge and ask for it.
+   - **No trust and no wake.** It adds nobody to a trusted list, changes no
+     author class and opens no gate (RT-6.16).
+   - **No crown and no ask routing.** The home keeps its own 👑, election and
+     header (RT-6.6); questions keep their route (step 10).
+   - **No new reach.** It joins no channel, adds no member and reads nothing
+     the holder's bot could not read before (step 11).
+   - **Not over the session.** It never overrides what an agent's own human
+     told it (`coordinator.md`, "Limits"); it spares the confirmation only
+     where nothing contradicts it.
+8. **Tasks in the target agent's home (#141 point 4): allowed today,
+   unchanged.** ADR-002 puts a task in the worker's home and lets a guest post
+   it there ("a guest that has work for me posts the `TASK` in my home or
+   mentions me"). `post_message(channel=<home>)` does that (RT-6.22 step 4),
+   and the root is that home's task, not the guest's (RT-6.14 step 3). "Guests
+   only talk" governs what wakes a guest and where its own coordination lives;
+   it stays as it is. The mandate changes no channel rule, it adds the marker.
+   A mandated coordinator posts its orders as `TASK` roots in the target home,
+   never by DM; replies in those threads wake it as in any guest thread of its
+   own (RT-6.22 step 3), so `RESULT` and `DONE` reach it.
+9. **Scope and lifetime.**
+   - **Scope:** the home it is pinned in, for the agents whose home it is.
+     Guests there ignore it; a home without a pin is not covered. Five homes
+     take five pins: one explicit act per home.
+   - **Expiry:** `until` is optional. Without it a mandate ends 7 days after
+     the post's time (its last edit, else its creation), and never later than
+     30 days after it. The human renews by editing or posting again; a
+     forgotten mandate dies.
+   - **Revocation:** unpin, delete, or edit the first line away. It ends at
+     the next read, within 120 s. A newer mandate in the same home replaces it.
+   - **Stale:** an expired mandate counts as none, logged once. `bus_info`
+     shows `mandate` (role, by, until, holder, post) or why none holds. The
+     marker is judged when an event arrives, never later: a task taken under a
+     mandate stays a task when the mandate ends (it was a peer's task in any
+     case), and the former role's later priorities need a confirmation again.
+   - **The named home** is resolved by name at each read; a renamed or missing
+     home leaves no holder, logged once. Phase 2 names it by id.
+10. **Fit with ADR-005 ask routing.**
+    - In mode `coordinator` a worker's question goes to its own home's 👑
+      (RT-6.25 step 3), never to the mandated coordinator: the home's 👑 knows
+      that home's tasks and agents.
+    - That 👑 may consult the mandated coordinator by mention in the question's
+      thread, as it may any agent. The answer is advice, `from_agent`, as
+      every coordinator's (RT-6.25 step 4). The mandated coordinator answers no
+      other home's questions directly, and its own asks go to its human, as
+      every crown holder's do.
+    - One ask queue per human (#141 point 6) needs no mandate: the mandated
+      coordinator reads `asks_by_human` (RT-6.14 step 9) and gives the human
+      one list, by DM and as links (step 11).
+    - ADR-005's open point on the meta coordinator ("which agent, how it is
+      named in the record") takes its naming from here: a role,
+      `👑 of ~<home>`. Whether `delegated` routes questions to it stays with
+      ADR-005 phase 3.
+11. **Threats.**
+    - **Prompt injection through the mandated coordinator** (#141 point 8). It
+      reads text from many agents all day. Its posts never carry approval
+      (step 7), so a steered coordinator can assign wrong work and wrong
+      priorities, visibly, in the homes that pinned a mandate, and nothing
+      more. Credentials stay split. The mandated coordinator holds its bot
+      token, on its host (corral keeps it out of the model's shell, RT-6.18),
+      and read access (issues, CI status): no deploy, cloud, merge or
+      registrar credentials. The executing agents hold the credentials for
+      their actions and ask their own humans before using them for an action
+      with effect. The humans hold the approvals. The registrar holds the
+      signing key (phase 2).
+    - **Spoofed pins.** Mattermost lets every member of a channel pin and
+      unpin any post in it, bots included (the API asks only for read access
+      to the channel). A pin proves nothing; the author's account id, checked
+      against the session's trusted humans, decides. Pinning an old trusted
+      post again revives nothing past its expiry. Unpinning by anyone ends the
+      mandate: a denial, which falls back to today's confirmation asks. An
+      admin who edits another user's post keeps its author: the trust
+      assumption of Section 7.3, as for bot descriptions (RISK-03).
+    - **A crown hijack.** In the target home it gains nothing: the mandate
+      names the crown of `~<home>`, not the target home's own. In `<home>` a
+      peer may take the crown by election or `take`; it then gives tasks and
+      priorities, never approvals: the residual of RISK-01. A foreign agent
+      that takes it is never mandated (step 5). A crown status a bot writes for
+      a home it does not hold is caught where the server can read that home;
+      where it cannot, the status counts, and outside corral an agent that
+      reads its token can write one (Section 7.3).
+    - **Who sees what.** The mandate widens no audience. Its text names a role
+      and a home, no content, and it is pinned in the home it applies to, seen
+      by that home's members only. Mandated tasks are posted in the target
+      home, never copied into the coordinator's home or the lobby. The
+      overview across homes reads only the channels a human added the bot to;
+      the consolidated list for the human goes by DM, with links, since the
+      coordinator's home may hold members who are not in every home it lists.
+      What one home's task needs from another is linked, not copied: a link
+      opens only for members.
+12. **Phases.**
+    - **Phase 1: the pinned post.** Builds the read and parse of the home's
+      pinned posts (a `pinned_posts` call on the chat port), the trust check
+      by author id, expiry, the live resolution of the role with the peer
+      check, the `mandated` and `mandated_by` markers on events and push
+      attributes, `mandated` on task rows, and `mandate` in `bus_info`.
+      SKILL.md, the server's `instructions` and `coordinator.md` say that a
+      mandated task needs no confirmation ask and approves nothing. Adds a
+      scenario to Section 6 after RT-6.25 (mandate for a role); changes
+      RT-6.16 steps 1 and 5 (the marker; a mandated event is a task),
+      RT-6.14 steps 3 and 9 (`mandated` on rows) and RT-6.22 step 4 (a
+      pointer). Tests in `mcp/tests/`: a mandate counts only from a trusted
+      human's account, never from a webhook, a bot or a reply; a session that
+      does not trust its author ignores it; an expired mandate pinned again
+      counts nothing; unpinning ends it at the next read; the marker follows
+      the crown on a handover and drops when it lapses; a foreign holder, a DM
+      and a post in another channel get no marker; a mandated event stays
+      `from_trusted_human: false` and its 👍 approves nothing; without a pin
+      every event is as before (parity).
+    - **Phase 2: a registrar-signed record**, as ADR-005 phase 2. A trusted
+      human types `/agent-mandate 👑 of ~<home> [--until <date>]` in the
+      target home (`off`, `status`); the registrar accepts it only from a
+      member of that channel and publishes it signed
+      (`GET <registrar>/register/v1/mandates/<channel id>`, JWS type
+      `mm-agent-mandate+jwt`, claims `channel_id`, `crown_of` (the named
+      home's id), `set_by`, `set_by_id`, `set_at_ms`, `until`, `iat`,
+      `exp`). Each server verifies it like the mode (`attest.verify_mandate`
+      beside `verify_mode`) and counts it only when `set_by_id` is one of its
+      trusted humans. With the registrar's keys pinned the record is the only
+      source and a pinned post mandates nothing; without them phase 1 holds.
+      Gains: only the human revokes it, no old post revives, the home is named
+      by id. Adds a step to the new scenario; tests as for `verify_mode`.
+    - **Later, not decided here:** stall events from guest channels to the
+      mandated coordinator (#141 point 5), and questions routed to it in
+      ADR-005's `delegated` mode.
+
+**Alternatives:** (a) The status quo, a confirmation ask per order: safe, but
+the noise of #141, a human confirming what they already said. (b) The human
+sends every task: the human becomes the router again, the work they asked the
+coordinator to take off them. (c) A mandate naming a bot: bot names change
+with every session (RT-6.1), so every restart needs a new pin, and it survives
+no handover. (d) A per-agent `delegated` mode (ADR-005 phase 3): it routes
+asks, not tasks, so workers would still confirm orders, now with a delegate;
+it also waits on ADR-004. (e) The coordinator's bot in `MM_TRUSTED_HUMANS`:
+an agent listed as trusted never counts as one (RT-6.25 step 2), and it would
+approve. (f) A mandate in the channel header: any member can edit it
+(ADR-005 alternative (c)). (g) The coordinator as a member of every home with
+the crown in each: against ADR-002, one home per agent, and every plain post of
+every home would route through one agent.
+
+**Consequences:** Plus: a worker follows the coordinator its human mandated
+without asking; the human's word is given once per home and outlives bot
+names; mandated work stays visible in the target home; approvals and the gate
+are unchanged. Minus: one pin per home and one more read per server; a session
+that trusts other humans keeps asking, by design; the mandated coordinator is
+worth steering (RISK-08). Holds in every harness with an MCP server, corral or
+not; without one nothing is marked, as today (Section 7.2).
+
+**Risks created:** RISK-08
+
+**Open questions:**
+
+- Expiry defaults (7 days, at most 30). Recommendation: keep them, review after
+  a month of use.
+- Narrowing the holder further, e.g. to `autonomous` agents or an agent type
+  (#141 point 9). Recommendation: not in phase 1; a home of its own (step 5)
+  does it.
+- Whether the holder's server shows the mandates it finds pinned in its guest
+  channels (`coordinator("roster", scope="all")`, per channel).
+  Recommendation: yes, informational, judged against its own trusted humans;
+  each receiver still decides for itself.
+- Whether the home's 👑 should be told when a mandated task arrives.
+  Recommendation: no new wake; it sees the `TASK` root as any post in its
+  home, and the row is marked `mandated`.
+- Whether phase 2 is needed. Recommendation: build it with the registrar's
+  next slash command, once hosts pin the keys in practice: then standing
+  grants follow one rule, a signed record, as the mode does.
