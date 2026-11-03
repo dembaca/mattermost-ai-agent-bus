@@ -632,8 +632,11 @@ Naming a bot in that word does not last: bot names change with every session.
      the post's time (its last edit, else its creation), and never later than
      30 days after it. The human renews by editing or posting again; a
      forgotten mandate dies.
-   - **Revocation:** unpin, delete, or edit the first line away. It ends at
+   - **Revocation:** delete the post or edit the first line away. It ends at
      the next read, within 120 s. A newer mandate in the same home replaces it.
+     Unpinning ends it too, but only as a pause: any member can pin the post
+     again before it expires, which revives it (Threats). So the human revokes
+     by deleting or editing.
    - **Stale:** an expired mandate counts as none, logged once. `bus_info`
      shows `mandate` (role, by, until, holder, post) or why none holds. The
      marker is judged when an event arrives, never later: a task taken under a
@@ -673,7 +676,9 @@ Naming a bot in that word does not last: bot names change with every session.
       unpin any post in it, bots included (the API asks only for read access
       to the channel). A pin proves nothing; the author's account id, checked
       against the session's trusted humans, decides. Pinning an old trusted
-      post again revives nothing past its expiry. Unpinning by anyone ends the
+      post again revives nothing past its expiry, but within it an unpinned
+      mandate comes back: that is why revocation is by delete or edit
+      (Scope and lifetime). Unpinning by anyone ends the
       mandate: a denial, which falls back to today's confirmation asks. An
       admin who edits another user's post keeps its author: the trust
       assumption of Section 7.3, as for bot descriptions (RISK-03).
