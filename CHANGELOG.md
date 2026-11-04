@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.3
+
+### Changed
+
+- **Every alternative of an ask has its own emoji**
+  ([RT-6.11 step 1](docs/arc42/06-runtime-view.md#611-asking-a-human)).
+  The `Answer` field put the agent's alternatives (`answers`, "go / not now")
+  before a fixed `👍 = yes · 👎 = no`, so two alternatives hung on no emoji and
+  👍 stood twice with different meanings. Now `A / B` reads `👍 = A · 👎 = B`,
+  three or four alternatives get 1️⃣ to 4️⃣, and the human's keycap comes back as
+  `choice: <n>` in the reaction event. An approval has go / no-go only:
+  `ask_human` posts nothing for an approval with more than two alternatives and
+  says why. SKILL.md and the tool text tell agents to write it so.
+
 ## 0.71.2
 
 ### Changed

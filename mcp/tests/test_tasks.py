@@ -398,7 +398,7 @@ _SKILL = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-
 # Per-load budgets, about 10 % over the 0.57.0 size (in brackets): SKILL.md is
 # the core every agent loads; the files next to it are read only when they apply.
 _SKILL_BUDGET = {
-    "SKILL.md": 16_600,                 # (16279) was 22,144 before the runtime split; + RT-6.26
+    "SKILL.md": 16_750,                 # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11)
     "runtime-claude-code.md": 4_850,    # (4417)
     "runtime-no-hooks.md": 2_600,       # (2381)
     "self-registration.md": 2_450,      # (2234)

@@ -42,6 +42,9 @@ TITLES = 50
 YES = frozenset({"+1", "thumbsup", "white_check_mark", "heavy_check_mark",
                  "ballot_box_with_check"})
 NO = frozenset({"-1", "thumbsdown", "x", "no_entry", "no_entry_sign"})
+# A choice among three or four alternatives (RT-6.11 step 1): one emoji each.
+CHOICES = ("one", "two", "three", "four")
+KEYCAPS = ("1️⃣", "2️⃣", "3️⃣", "4️⃣")
 
 
 def answer_of(emoji: str) -> str | None:
@@ -51,6 +54,37 @@ def answer_of(emoji: str) -> str | None:
     if emoji in NO:
         return "no"
     return None
+
+
+def choice_of(emoji: str) -> int | None:
+    """The 1-based alternative a keycap emoji picks, None for anything else."""
+    return CHOICES.index(emoji) + 1 if emoji in CHOICES else None
+
+
+def is_answer(emoji: str) -> bool:
+    """An emoji that answers an ask: yes, no or a choice; a remark answers nothing."""
+    return answer_of(emoji) is not None or choice_of(emoji) is not None
+
+
+def alternatives(answers: str) -> list[str]:
+    """The ask's alternatives, written `A / B / C`; empty when it names fewer
+    than two or more than four, which stays free text."""
+    parts = [a.strip() for a in answers.split("/")]
+    return parts if 2 <= len(parts) <= len(CHOICES) and all(parts) else []
+
+
+def answer_line(answers: str, decision: bool) -> str:
+    """The `Answer` field's text: every alternative with its own emoji, no
+    emoji twice. Two alternatives are 👍 (go) and 👎 (no go), three or four the
+    keycaps; none given, 👍 yes (to the decision) and 👎 no."""
+    alts = alternatives(answers)
+    if len(alts) == 2:
+        marks = [f"👍 = {alts[0]}", f"👎 = {alts[1]}"]
+    elif alts:
+        marks = [f"{KEYCAPS[i]} = {a}" for i, a in enumerate(alts)]
+    else:
+        marks = ["👍 = yes to the decision" if decision else "👍 = yes", "👎 = no"]
+    return " · ".join(marks) + " · or reply in this thread"
 
 
 def _path(uid: str) -> Path:

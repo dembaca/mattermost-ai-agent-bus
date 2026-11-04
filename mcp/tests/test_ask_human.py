@@ -52,7 +52,7 @@ async def test_ask_is_one_post_with_the_mention_and_a_callout(monkeypatch):
     # RT-6.11 step 1: the field titles start with a capital letter.
     assert fields == {"From": "@agent-vtpm-hogan-1", "Blocking": "yes",
                       "Where": "#50, hogan",
-                      "Answer": "go / not now — 👍 = yes · 👎 = no · or reply in this thread"}
+                      "Answer": "👍 = go · 👎 = not now · or reply in this thread"}
     assert box["color"] == "#d24b4e"
     assert out["ask"] == ASK and asks.open_asks(BOT) == [ASK]
 
@@ -587,3 +587,33 @@ def test_asks_go_on_the_bus_even_when_asked_in_the_terminal():
     skill = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
     assert "even when you also asked in your terminal\nor UI" in skill.read_text()
     assert "even when you also asked in your terminal or UI" in server._instructions()
+
+
+@pytest.mark.asyncio
+async def test_every_alternative_has_its_own_emoji(monkeypatch):
+    """RT-6.11 step 1: go / no-go are 👍 / 👎, three or four alternatives the
+    keycaps, none given 👍 yes · 👎 no; no emoji stands twice."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="Which order?", kind="question", answers="A / B / C")
+    answer = {f["title"]: f["value"] for f in c.posted[0]["props"]["attachments"][0]["fields"]}["Answer"]
+    assert answer == "1️⃣ = A · 2️⃣ = B · 3️⃣ = C · or reply in this thread"
+    assert asks.answer_line("", False) == "👍 = yes · 👎 = no · or reply in this thread"
+    assert asks.answer_line("one thing", True).startswith("👍 = yes to the decision · 👎 = no")
+    assert asks.answer_line("a / b / c / d / e", False).startswith("👍 = yes")  # free text
+
+
+@pytest.mark.asyncio
+async def test_an_approval_has_two_alternatives_only(monkeypatch):
+    """RT-6.11 step 1: three alternatives naming an action with effect: nothing is posted."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(
+        need="Merge PR 12?", decision="Merge PR 12", answers="merge / wait / close"))
+    assert out["posted"] is False and "go / no-go" in out["hint"] and not c.posted
+
+
+def test_a_keycap_picks_an_alternative_and_answers_the_ask():
+    """RT-6.11: `two` is the second alternative, an answer; a remark emoji is none."""
+    assert [asks.choice_of(e) for e in ("one", "four", "+1", "tada")] == [1, 4, None, None]
+    assert asks.is_answer("three") and asks.is_answer("-1") and not asks.is_answer("tada")
