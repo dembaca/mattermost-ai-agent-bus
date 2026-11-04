@@ -1,4 +1,4 @@
-"""The ask mode from the registrar's signed `/agent-mode` record (RT-6.25 step
+"""The ask mode from the registrar's signed `/agent-ask-mode` record (RT-6.25 step
 8, ADR-005 phase 2): the record and its interop vector, which source counts
 with and without pinned keys, who may set it, the refresh, the 👑's one
 confirmation (also of a switch kept while no server held the crown), and
@@ -275,7 +275,7 @@ async def test_the_crown_confirms_a_new_record_once(pinned, monkeypatch):
     assert len(c.posted) == 1
     got = c.posted[0]
     assert got["root_id"] is None and got["channel_id"] == WORK
-    assert got["message"].startswith("👑 ask-mode coordinator, set by dembaca with /agent-mode "
+    assert got["message"].startswith("👑 ask-mode coordinator, set by dembaca with /agent-ask-mode "
                                      "(signed by the registrar):")
     assert got["props"]["a2a"]["kind"] == "ask_mode"
     kept_at = int(_kept().split("AT=")[1].split()[0])
@@ -301,7 +301,7 @@ async def test_a_command_post_with_keys_pinned_gets_the_hint_once(pinned, monkey
     post = _switch()
     assert await askroute.observe(c, post, BOT) is True
     assert len(c.posted) == 1 and c.posted[0]["root_id"] == SWITCH
-    assert "`/agent-mode coordinator`, signed by the registrar, so this post changes nothing" in (
+    assert "`/agent-ask-mode coordinator`, signed by the registrar, so this post changes nothing" in (
         c.posted[0]["message"])
     c.posts = [post, post_of({"id": "r" * 26, "root_id": SWITCH, "user_id": BOT,
                               "message": c.posted[0]["message"],
