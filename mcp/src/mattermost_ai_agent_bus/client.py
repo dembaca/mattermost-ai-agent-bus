@@ -231,6 +231,9 @@ _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 DESCRIPTION_TTL_SEC = 600.0
 # The bot's own user prop that carries the registrar's attestation (RT-6.24).
 ATTESTATION_PROP = "agent_attestation"
+# The bot's own usage report (ADR-008 step 3), compact JSON in its user props.
+USAGE_PROP = "agent_usage"
+USAGE_TTL_SEC = 60.0
 # The most the registrar's answer with a home's ask-mode record may hold (RT-6.25 step 8).
 MODE_RECORD_MAX = 8192
 # Three base64url segments, as the registrar sends it (attest.py checks the rest).
@@ -426,6 +429,10 @@ class MattermostAdapter:
     # user id -> the attestation its user props carry ('' none), read with
     # its description (RT-6.24); missing: its user object was not read.
     _attestations: dict[str, str] = field(default_factory=dict, repr=False, init=False)
+    # user id -> (when read, the agent_usage its props carry, '' none; None:
+    # not readable), ADR-008 step 3.
+    _usages: dict[str, tuple[float, str | None]] = field(
+        default_factory=dict, repr=False, init=False)
     # RT-6.21: lower-case username -> (when read, its bot account; None: none),
     # and (channel id, user id) -> (when read, a member).
     _named: dict[str, tuple[float, ChannelUser | None]] = field(
@@ -743,24 +750,62 @@ class MattermostAdapter:
         they are now are read first and sent back with it: the custom status
         (the lease, lease.py) is one of them, and the caller holds the lease's
         lock. False when the props carry it already."""
+        if not await self._publish_prop(ATTESTATION_PROP, token):
+            return False
+        uid = mm_id((await self.get_me()).id, "user")
+        self._descriptions.pop(uid, None)
+        self._owners.pop(uid, None)
+        return True
+
+    async def publish_usage(self, value: str) -> bool:
+        """Put this bot's usage report (usage.props_value) into its own user
+        props as `agent_usage` (ADR-008 step 3), the way publish_attestation
+        does, the caller holding the lease's lock. False when it is there."""
+        return await self._publish_prop(USAGE_PROP, value)
+
+    async def _publish_prop(self, key: str, value: str) -> bool:
         me = await self.get_me()
         uid = mm_id(me.id, "user")
         user = await self._api("GET", f"/api/v4/users/{uid}")
         current = user.get("props") if isinstance(user, dict) else None
         props = dict(current) if isinstance(current, Mapping) else {}
-        if props.get(ATTESTATION_PROP) == token:
+        if props.get(key) == value:
             return False
-        props[ATTESTATION_PROP] = token
+        props[key] = value
         await self._api("PUT", f"/api/v4/users/{uid}/patch", json={"props": props})
-        self._descriptions.pop(uid, None)
-        self._owners.pop(uid, None)
         return True
+
+    async def agent_usage(self, user_id: str) -> str | None:
+        """The `agent_usage` a bot carries in its user props (ADR-008 step 3):
+        '' when it has none, None when its user object cannot be read. One
+        lookup per agent, cached for USAGE_TTL_SEC."""
+        now = time.monotonic()
+        hit = self._usages.get(user_id)
+        if hit and now - hit[0] < USAGE_TTL_SEC:
+            return hit[1]
+        try:
+            mm_id(user_id, "user")
+        except InvalidId:
+            return None
+        value: str | None = None
+        try:
+            data = await self._api("GET", f"/api/v4/users/{user_id}")
+        except Exception as exc:  # noqa: BLE001 — the roster without its numbers
+            log.debug("usage of %s not readable: %s", user_id, exc)
+            data = None
+        if isinstance(data, dict):
+            props = data.get("props")
+            raw = props.get(USAGE_PROP) if isinstance(props, Mapping) else None
+            value = raw if isinstance(raw, str) else ""
+        self._usages[user_id] = (now, value)
+        return value
 
     def _take(self, info: SessionInfo) -> None:
         """Make ``info`` this process's bot and hand it to the hooks."""
         self._descriptions.clear()
         self._owners.clear()
         self._attestations.clear()
+        self._usages.clear()
         self.base_url = info.url
         self.token = info.bot_token
         self.session = info

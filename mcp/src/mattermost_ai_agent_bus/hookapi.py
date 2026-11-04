@@ -18,6 +18,9 @@ instead, served next to the WebSocket inbox in the server's event loop:
     POST /v1/presence       {state: working|idle|listening|bus, label?, until?} → {ok}
                             (idle, listening: the turn ended, open permission
                             prompts close, RT-6.13)
+    POST /v1/usage          {ctx?, ctx_size?, five_hour?: {used?, resets_at?},
+                            seven_day?: {…}} → {ok} (the status line's numbers, RT-6.10
+                            step 3, ADR-008: valid fields kept, the rest ignored)
     POST /v1/stat           {k: turn|turn_end|block|compact|wake|transcript, …} → {ok}
                             (one overhead counter, RT-6.9: the hooks of a keyless
                             session cannot reach the server's state dir, RT-6.18)
@@ -76,7 +79,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import a2a, asks, channel, files, gate, lease, ownpost, session_file, stall, stats, turnend, unread
+from . import a2a, asks, channel, files, gate, lease, ownpost, session_file, stall, stats, turnend, unread, usage
 from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
 from .model import Post
 
@@ -601,6 +604,18 @@ async def presence(client: MattermostAdapter, query: Mapping[str, str],
     return 200, {"ok": True}
 
 
+async def usage_route(client: MattermostAdapter, query: Mapping[str, str],
+                      body: Mapping[str, Any]) -> Reply:
+    """The status line's numbers (ADR-008, RT-6.10 step 3): the valid fields
+    are kept as this session's last report, anything else ignored, never a
+    400: the status line's call must not fail on a number. A band crossed
+    (usage.band_due) writes the status and the props once, lease.py."""
+    usage.record(body)
+    if usage.band_due():
+        await lease.usage_crossed(client)
+    return 200, {"ok": True}
+
+
 # The counters the hooks and the listener note (bin/mm-agent-lib.sh mm_stat).
 STAT_KINDS = frozenset({"turn", "turn_end", "block", "compact", "wake", "transcript"})
 MAX_STAT_FIELDS = 4
@@ -798,6 +813,7 @@ _ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/posts"): posts,
     ("GET", "/v1/ask-reactions"): ask_reactions,
     ("POST", "/v1/presence"): presence,
+    ("POST", "/v1/usage"): usage_route,
     ("POST", "/v1/stat"): stat,
     ("POST", "/v1/post"): post_route,
     ("POST", "/v1/reply"): reply_route,

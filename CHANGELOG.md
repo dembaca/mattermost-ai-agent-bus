@@ -3,6 +3,34 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.6
+
+### Added
+
+- **Context and limits of the agents in the chat, phase 1**
+  ([ADR-008](docs/arc42/09-architecture-decisions.md), steps 1 to 3).
+  `bin/mm-agent-statusline.sh` reports the numbers of Claude Code's status line
+  JSON (`ctx`, `ctx_size`, per window `used` and `resets_at`; no cost, no model)
+  to the session's MCP server, detached and within 1 s, when one moved by a
+  point or every 60 s ([RT-6.10 step 3](docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
+  `--usage-only` is the one line for a status line script of your own that
+  passes the JSON on. New `POST /v1/usage` on the hook API keeps the last
+  valid report per session and logs once whether `rate_limits` came
+  ([RT-6.17](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
+- **The bot's status shows them**: `working · bus · ctx 62% · 5h 40% · ~home`;
+  `7d` and the reset time (`↻21:40Z`) only from 90 %; the home stays last, the
+  label, then `7d`, `5h`, `ctx` give way within 100 characters. Written with the
+  lease on the heartbeat, and once more when a band is crossed
+  ([RT-6.6 steps 1 and 8](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
+- **The roster shows them**: each server writes `agent_usage` into its bot's
+  props (like the attestation, under the status lock);
+  `coordinator("roster")` adds `ctx`, `limit_5h`, `limit_7d` per agent and a
+  `limit_shared` group for agents on one subscription (same `five_hour.resets_at`)
+  ([RT-6.14 step 4](docs/arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
+  `coordinator.md` gets one line on what to do with the numbers.
+- Not yet: threshold posts, `BLOCKED` and the blocked state (ADR-008 step 4),
+  `/agent-status`, other runtimes.
+
 ## 0.71.5
 
 ### Changed
