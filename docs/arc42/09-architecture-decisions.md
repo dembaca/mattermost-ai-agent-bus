@@ -953,7 +953,8 @@ built if it shows up in use.
 **Status:** Proposed (2026-11-04); not built. Stage 1 decided by a trusted
 human on 2026-11-04: the tap (step 1), A (step 2), C (step 3) and D (step 4).
 B is stage 2 and only an outlook here; E and F are alternatives. The numbers
-below are proposals. Builds on RT-6.6 (the status lease), RT-6.10 and RT-6.17
+below are proposals, and so is step 4's "a blocked agent is not reachable":
+proposed by the author, for the human to confirm. Builds on RT-6.6 (the status lease), RT-6.10 and RT-6.17
 (the status line helper and the hook API), RT-6.21 (the answer for an agent
 that cannot answer) and ADR-007 (who counts as reachable).
 
@@ -1003,16 +1004,27 @@ about once a second, so nothing there may block or call the API.
    server writes it with the lease, on its heartbeat, and when a number
    crosses a band (ctx 50, 70, 85, 95 %; a window 70, 90, 100 %), never more
    often: no extra call on a normal beat, one rare write at a band.
-3. **C · the roster.** `coordinator("roster")` reads these segments from the
-   status text it reads anyway and returns per agent `ctx`, `limit_5h` and
-   `limit_7d` (each `used`, with `resets_at` when shown), nothing when the
-   agent reports none. coordinator.md gets one line: no large TASKs for an
+3. **C · the roster, from the bot's props.** Each server writes the full
+   values into the user props of its own bot as `agent_usage`: `ctx`, both
+   windows with `used` and `resets_at`, and `at` (when it was taken). It is
+   written like the attestation (RT-6.24 step 3): the props are read first and
+   sent back whole, since Mattermost's user patch replaces the map, under
+   `lease.status_lock`, on the heartbeat and when a number crosses a band
+   (step 2), not more often. The status text of step 2 is only a display,
+   cut and incomplete by design; **nothing parses it**. `coordinator("roster")`
+   reads the props of the agents it lists (one lookup each, cached like the
+   attestation's) and returns per agent `ctx`, `limit_5h` and `limit_7d`
+   (`used`, `resets_at`), nothing when an agent reports none. Stage 2's B needs
+   the same props. coordinator.md gets one line: no large TASKs for an
    agent near the end of its context; hold back new work while the 5-hour
    limit of a subscription is tight; hand over the crown before your own
-   limit. **A limit is the subscription's, not the agent's:** the roster marks
-   agents of one owner whose window numbers agree within two points as one
-   subscription (`limit_shared: <n>`). That is a heuristic: an owner is not a
-   subscription, and the open questions say how to do better.
+   limit. **A limit is the subscription's, not the agent's:** agents with the
+   same `five_hour.resets_at` are on one subscription (one window per account),
+   an exact key. The roster gives them the same `limit_shared` group and the
+   number of agents in it, so the 👑 counts a limit once. **Trust:** the bot
+   reports the values itself. They are a display and a hint to the 👑, never a
+   permission or an authority (ADR-001): a wrong number can only hold work back
+   or mark an agent blocked.
 4. **D · thresholds and the limit reached.** Once per window the agent's
    server posts one fyi line in its HELLO thread: ctx at 85 % ("compaction
    soon"), a window at 90 % with its reset. When a window reaches 100 % (or
@@ -1056,7 +1068,7 @@ problem.
 shows; an agent at its limit is marked, answered for and replaced as 👑
 instead of looking alive; large TASKs stop going to an agent about to run out
 of context. No tokens: the numbers go from the status line to the server and
-from the server to the status and one fyi line per window. Minus: one more
+from the server to the bot's props, the status and one fyi line per window. Minus: one more
 local call a second at most (about one a minute in practice) from every status
 line; a longer status text near the 100 characters; the numbers show only with
 Claude Code's status line, and only when the user's command calls the helper;
@@ -1076,9 +1088,12 @@ change of one point and every 60 s, not more, and never waits longer than 1 s
 or fails the status line; it prints nothing with `--usage-only`; null and
 missing fields are left out; the server keeps only numbers in range; the status
 text carries `ctx`/`5h` and the home last, and cuts the label, then `5h`, then
-`ctx`; `7d` and the reset only from 90 %; the roster returns the segments, and
-one agent without them none (a status of an older plugin still parses); the
-shared-subscription mark needs agreeing numbers; the threshold line comes
+`ctx`; `7d` and the reset only from 90 %; the server writes `agent_usage` into
+its bot's props, keeping the others and the attestation, under the status
+lock, and not more often than a band or the heartbeat; the roster reads the
+props, not the status text, and returns nothing for an agent without them;
+agents with one `five_hour.resets_at` share a `limit_shared` group, others
+not; the threshold line comes
 once per window, a 100 % window posts `BLOCKED` and the blocked state; a
 blocked agent is not reachable and a blocked 👑 loses the crown; a mention of
 a blocked agent is answered once by the 👑's server. RT-6.6 steps 1 and 2,
@@ -1098,11 +1113,6 @@ number can only hold work back or mark an agent blocked; it grants nothing.
   and what it carries is not checked against its hooks documentation.
   Recommendation: check before phase 3; the status line's 100 % is the
   fallback and has the better data.
-- **What is one subscription?** Owner is not subscription (a human may have two
-  accounts, a subscription may serve two humans). Recommendation: the
-  heuristic of step 3 first; if the status text can spare it, the server's own
-  window `resets_at` (equal between agents on one subscription) is the better
-  key.
 - **Is a percentage sensitive?** Judged not, beyond what the status already
   shows (above). Recommendation: keep `7d` and the reset to 90 %.
 - **The blocked 👑:** the next 👑 answers for it and the crown moves. Whether it
