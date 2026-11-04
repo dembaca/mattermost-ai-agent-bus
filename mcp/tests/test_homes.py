@@ -304,10 +304,18 @@ async def test_a_description_that_cannot_be_read_blocks_the_election(home):
     assert not await _ticks(home)
 
 
-async def test_an_own_description_that_cannot_be_read_leaves_the_split_off(home):
-    """RT-6.6 step 2: as owners.mine, the server's own description unreadable
-    is no proof of anything: the election runs as before."""
+async def test_an_own_description_that_cannot_be_read_blocks_like_any_other(home):
+    """RT-6.6 step 2: with trusted humans the server's own description
+    unreadable (a rate limit for one tick) is no "unbound": an unbound oldest
+    bot must not claim beside a bound agent then (case 3); one tick missed is
+    all it costs. Without trusted humans: as before."""
     home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {YOUNGER: MINE}  # my own is missing: not readable
+    home.agent(YOUNGER, "agent-young", 3000)
+    assert not await _ticks(home)
+    home.descriptions[BOT] = UNBOUND  # readable again, and unbound: still no claim
+    assert not await _ticks(home)
+    home.trusted = {}
     assert await _ticks(home)
 
 

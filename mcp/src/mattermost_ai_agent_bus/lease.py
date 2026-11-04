@@ -568,8 +568,8 @@ async def _election(client: ChatPort, rows: list[dict[str, Any]]) -> Election:
     owner (owners.read) stand if this bot is bound and a peer of each of them;
     the ones without an owner are foreign to them and stand only where no agent
     has one. A description that cannot be read blocks the election (nothing is
-    assumed): `owners.read` is None for it, '' for no owner. Only this bot's own
-    description unreadable counts as the split being off (owners.mine)."""
+    assumed): `owners.read` is None for it, '' for no owner. This bot's own
+    description too: with trusted humans only their absence makes parity."""
     oldest = [r["id"] for r in rows if r["reachable"]]
     try:
         names = await owners.trusted_names(client)
@@ -581,8 +581,6 @@ async def _election(client: ChatPort, rows: list[dict[str, Any]]) -> Election:
         return Election(oldest)
     ids = oldest if me in oldest else [*oldest, me]
     agents = {i: await owners.read(client, i) for i in ids}  # never raises: None is unreadable
-    if agents[me] is None:
-        return Election(oldest)  # my own description: the owner split is off, as in owners.mine
     if any(a is None for a in agents.values()):
         log.info("crown: a description is not readable, nobody stands")
         return Election([])

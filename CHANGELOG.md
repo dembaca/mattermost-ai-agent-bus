@@ -17,7 +17,7 @@ before 0.5.0 are described in the git history.
   the crown). Without owners the election runs as before; an explicit `take`
   and the rule of one crown per home are unchanged. Circles foreign to each
   other in one home get no automatic 👑. Without trusted humans (no owner
-  split) the election is as before; a description that cannot be read blocks
+  split) the election is as before; a description that cannot be read, this bot's own too, blocks
   it instead of counting as "no owner"; of two crowns an unbound holder yields
   to a bound one; the roster, the task gate and the departed answer name only
   a peer as the next coordinator.

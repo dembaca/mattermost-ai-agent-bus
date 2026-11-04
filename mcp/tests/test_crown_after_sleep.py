@@ -76,7 +76,8 @@ def home(tmp_path, monkeypatch):
     for var in ("MM_AGENT_PREFIX", "MM_BOT_USERNAME", "MM_REG_BOT_NAME", "MM_LEASE_SEC"):
         monkeypatch.delenv(var, raising=False)
     lease._TYPES.clear()
-    c = Home(username="agent-me", trusted={HUMAN: "dembaca"}, names={HUMAN: "dembaca"})
+    c = Home(username="agent-me", trusted={HUMAN: "dembaca"}, names={HUMAN: "dembaca"},
+             descriptions={BOT: "for @dembaca · trusts @dembaca · via agent-registrar"})
     c.agent(BOT, "agent-me", 2000)
     monkeypatch.setattr(server, "_get_client", lambda: c)
     monkeypatch.setattr(server, "_inbox", None)
