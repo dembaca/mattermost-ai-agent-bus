@@ -540,9 +540,10 @@ Naming a bot in that word does not last: bot names change with every session.
    pinned in that home: where its agents' tasks live (ADR-002) and their
    servers already read. Each agent's MCP server reads its home's pinned posts
    (`GET /api/v4/channels/<id>/pinned`, through the chat port) at its first
-   look and then every 120 s on the reminders' heartbeat (RT-6.19), the cadence
-   of the signed mode (RT-6.25 step 8). Cost: one small read per server every
-   two minutes, and no search across channels, the reason ADR-004 rejected a
+   look and then on the reminders' heartbeat (RT-6.19) once 120 s have passed,
+   the cadence of the signed mode (RT-6.25 step 8): with the default
+   `MM_HEARTBEAT_SEC` about every 5 min. Cost: one small read per server per
+   heartbeat, and no search across channels, the reason ADR-004 rejected a
    formatted post. The newest qualifying pinned post wins; a home with none
    has no mandate. The pin is only how servers and people find the post: it
    proves nothing (step 11). A pin keeps the post findable past the 200 posts
@@ -638,7 +639,8 @@ Naming a bot in that word does not last: bot names change with every session.
      30 days after it. The human renews by editing or posting again; a
      forgotten mandate dies.
    - **Revocation:** delete the post or edit the first line away. It ends at
-     the next read, within 120 s. A newer mandate in the same home replaces it.
+     the next read, within one heartbeat (about 5 min). A newer mandate in the
+     same home replaces it.
      Unpinning ends it too, but only as a pause: any member can pin the post
      again before it expires, which revives it (Threats). So the human revokes
      by deleting or editing.
