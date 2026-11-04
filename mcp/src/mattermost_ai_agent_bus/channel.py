@@ -333,6 +333,22 @@ class Pusher:
             await self.connection.notify(
                 permission.VERDICT, {"request_id": request_id, "behavior": behavior})
 
+    async def recheck(self, wakes: Callable[[dict[str, Any]], Awaitable[bool]]) -> int:
+        """RT-6.12 step 3: the crown came back (RT-6.6 step 6), so push at once,
+        in their order, the held posts that `wakes` now says wake the agent;
+        the rest stay for the digest. A gated item is never pushed. Each goes
+        out once: taken from the held list before it is sent. The number sent."""
+        sent = 0
+        for item in list(self.held):
+            if item.get("gated") or not await wakes(item):
+                continue
+            if not any(h is item for h in self.held):
+                continue  # gone into a digest meanwhile
+            self.held = [h for h in self.held if h is not item]
+            await self.send(notification(item))
+            sent += 1
+        return sent
+
     def _timeout(self, cap: float) -> float:
         if not self.held:
             return cap

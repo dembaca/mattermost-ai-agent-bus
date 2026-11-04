@@ -285,8 +285,17 @@ def _get_inbox() -> WebSocketInbox:
     global _inbox
     client = _get_client()
     if _inbox is None or _inbox.client is not client:
-        _inbox = WebSocketInbox(client=client, typing_sec=_typing_sec(), in_my_thread=_in_my_thread)
+        _inbox = WebSocketInbox(client=client, typing_sec=_typing_sec(), in_my_thread=_in_my_thread,
+                                before_backfill=_crown_before_backfill)
     return _inbox
+
+
+async def _crown_before_backfill() -> None:
+    """RT-6.6 step 6: at a (re)connect, one heartbeat tick before the missed
+    posts are judged. After a sleep past the lease the coord file's crown lay
+    in the past until the next tick; the tick renews it, or claims it by the
+    rules of step 2, never from another agent that holds one."""
+    await lease.command(_get_client(), "tick")
 
 
 def _stall_event(text: str) -> bool:
@@ -1847,22 +1856,41 @@ async def _in_my_thread(item: dict[str, Any], uid: str) -> bool | None:
     return bool(root) and root in _my_threads
 
 
-async def _push_addressed(item: dict[str, Any]) -> bool:
+async def _push_addressed(item: dict[str, Any], *, unsure: bool = True) -> bool:
+    """Whether the pusher wakes the agent with item now (RT-6.12 step 3).
+    unsure: the answer where the bot or the thread cannot be read; the
+    re-check of held posts (`_crown_returned`) keeps them held then."""
     if item.get("gated"):
         return False  # data for the digest (RT-6.16)
     uid = os.environ.get("MM_BOT_USER_ID", "")
     try:
         uid = uid or await lease._user_id(_get_client())
     except Exception:  # noqa: BLE001 — unsure: wake rather than hold
-        return True
+        return unsure
     mine = await _in_my_thread(item, uid)
     if mine is None:
-        return True
+        if unsure:
+            return True
+        mine = False
     root = slim.root_of(item)
     crown = lease.crown_held(uid)
     return channel.wakes(item, coordinator=crown, in_my_thread=mine,
                          my_root=bool(root) and root in _my_roots,
                          routes=await lease.routes(_get_client()) if crown else None)
+
+
+async def _wakes_now(item: dict[str, Any]) -> bool:
+    return await _push_addressed(item, unsure=False)
+
+
+async def _crown_returned() -> None:
+    """RT-6.12 step 3: the crown passed to this agent (RT-6.6 step 6), so the
+    posts held for the digest that now wake it are pushed at once; what
+    `channel.wakes` leaves (gated, fyi, another channel's) stays held."""
+    await _pusher.recheck(_wakes_now)
+
+
+lease.on_crown(_crown_returned)
 
 
 async def _compact_bystander(payload: list[dict[str, Any]]) -> None:

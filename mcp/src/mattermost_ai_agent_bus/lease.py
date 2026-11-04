@@ -483,17 +483,44 @@ async def command(client: ChatPort, action: str) -> str:
         raise ValueError(f"action must be one of {', '.join(ACTIONS)}")
     if not client.token:
         return ""
+    passed: list[bool] = []
     try:
         async with _lock():
-            return await _command(client, action)
+            out = await _command(client, action, passed)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 — fail open, like the status
         log.debug("lease %s: %s", action, exc)
         return ""
+    if passed:
+        await _crown_came()
+    return out
 
 
-async def _command(client: ChatPort, action: str) -> str:
+# Called when the crown passes to this agent (RT-6.12 step 3): the server
+# re-checks the posts its pusher holds for the digest.
+_on_crown: list[Callable[[], Awaitable[None]]] = []
+
+
+def on_crown(fn: Callable[[], Awaitable[None]]) -> None:
+    """Call fn each time the crown passes to this agent (it held none
+    before: a sleep past the lease, a claim, a take), after the lease lock
+    is released."""
+    if fn not in _on_crown:
+        _on_crown.append(fn)
+
+
+async def _crown_came() -> None:
+    for fn in list(_on_crown):
+        try:
+            await fn()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — the digest still carries them
+            log.info("held posts not re-checked for the crown: %s", exc)
+
+
+async def _command(client: ChatPort, action: str, passed: list[bool] | None = None) -> str:
     uid = await _user_id(client)
     if not _UID.fullmatch(uid):
         return ""
@@ -515,6 +542,8 @@ async def _command(client: ChatPort, action: str) -> str:
         await _render(client)
         if crown <= now:
             # The crown passed to this agent: is the header's bus part there (step 7)?
+            if passed is not None:
+                passed.append(True)
             await _header(client, cid)
 
     if action == "who":
