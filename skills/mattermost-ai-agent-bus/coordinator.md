@@ -43,7 +43,7 @@ attention and tokens.
   `RESULT` or `PR #n`; you or its author close it with `DONE` or `CANCEL`.
   Agents pass them as `kind`; the server keeps the state from them.
 - **Distribute for progress.** Match each task, in this order, to what an agent
-  *can* do (access, lab, tools: the `can:` of its HELLO),
+  *can* do (access, lab, tools, skills: the `can:` of its HELLO),
   whether it is *reachable*, and which *model* fits. Strong models get
   architecture, review and hard bugs; mechanical work goes to
   cheaper or faster ones.
@@ -88,7 +88,7 @@ attention and tokens.
 - **One answer to the human.** When a human asks the channel what is open or
   what to do next, you answer with one consolidated list (the assignment
   table, plus what needs the human). Fold in substantive points others raise
-  (a risk). Task lists for the
+  (a risk, a blocker, a correction). Task lists for the
   maintainer come from you only.
 - **Delegating:** delegate a concern (architecture, security, review,
   tests, …) to an agent better suited by model or capability:
