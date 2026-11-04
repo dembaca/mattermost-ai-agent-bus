@@ -253,10 +253,15 @@ def open_asks(posts: Sequence[Post], names: Mapping[str, str],
 
 
 def roster(rows: list[RosterEntry], posts: Sequence[Post], names: Mapping[str, str],
-           owners: Mapping[str, Mapping[str, Any]] | None = None) -> list[dict[str, Any]]:
+           owners: Mapping[str, Mapping[str, Any]] | None = None,
+           usage: Mapping[str, Mapping[str, Any]] | None = None) -> list[dict[str, Any]]:
     """One row per reachable agent: its lease status (lease.roster, RT-6.6),
     its newest card (HELLO props, else the HELLO text) and, from its bot
-    description, `owner`, `trusts` and `foreign` (ADR-001; `owners`, by name)."""
+    description, `owner`, `trusts` and `foreign` (ADR-001; `owners`, by name).
+    `usage` (by name, usage.from_props): `ctx`, `limit_5h`, `limit_7d` of an
+    agent that reports them (ADR-008); agents with one `limit_5h.resets_at`
+    are on one subscription and get the same `limit_shared`
+    {group, agents} (group: 1, 2, … in row order; agents: how many)."""
     cards: dict[str, dict[str, Any]] = {}
     for p in _live(posts):
         if p.root_id:
@@ -279,7 +284,28 @@ def roster(rows: list[RosterEntry], posts: Sequence[Post], names: Mapping[str, s
                "skills": [s.get("name") for s in card.get("skills") or []] or None,
                **(owners or {}).get(r.username, {})}
         out.append({k: v for k, v in row.items() if v})
+    _usage(out, usage or {}, owners or {})
     return out
+
+
+def _usage(rows: list[dict[str, Any]], usage: Mapping[str, Mapping[str, Any]],
+           owners: Mapping[str, Mapping[str, Any]]) -> None:
+    """Add the numbers to the roster rows (ADR-008 step 3); a 0 is a number.
+    One subscription: the same `limit_5h.resets_at` and the same owner (a reset
+    time may be rounded, and an account is one human's)."""
+    groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        got = usage.get(str(row["agent"]))
+        if not got:
+            continue
+        row.update(got)
+        reset = (got.get("limit_5h") or {}).get("resets_at")
+        if reset:
+            owner = str((owners.get(str(row["agent"])) or {}).get("owner") or "")
+            groups.setdefault((reset, owner), []).append(row)
+    for n, members in enumerate((m for m in groups.values() if len(m) > 1), 1):
+        for row in members:
+            row["limit_shared"] = {"group": n, "agents": len(members)}
 
 
 def table(rows: Sequence[Mapping[str, Any]]) -> str:

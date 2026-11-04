@@ -438,7 +438,10 @@ def test_static_budget():
     # + RT-6.6: crown per home; + RT-6.25: questions to the 👑, escalated, never approved;
     # + RT-6.25 step 8: the mode set with /agent-ask-mode once keys are pinned
     # + RT-6.14 step 9: scope="all" across homes (#141); + RT-6.26: a mandate's TASKs
-    assert len((skill / "coordinator.md").read_text()) <= 6_300
+    # + ADR-008: the line on ctx and limits in the roster (the other lines shortened first)
+    # + "skills" and the full risk list restored (the follow-up of #157 that missed its merge)
+    # + the shortened lines of that line restored (review of #161): 6,485 now
+    assert len((skill / "coordinator.md").read_text()) <= 6_500
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
     # + RT-6.14 step 9: scope="all", the overview across homes (#141)
     assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90 + 80

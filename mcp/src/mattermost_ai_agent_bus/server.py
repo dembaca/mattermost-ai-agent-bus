@@ -21,7 +21,7 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import (
     a2a, askroute, asks, attest, channel, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
-    profile, remind, session_file, slim, stall, stats, tasks, unread,
+    profile, remind, session_file, slim, stall, stats, tasks, unread, usage,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
 from .model import Post
@@ -411,6 +411,25 @@ async def _owners_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, di
     return out
 
 
+async def _usage_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, dict[str, Any]]:
+    """Per roster row's username: the context and limits its bot published in
+    its props (ADR-008 step 3), not read from its status text. An agent
+    without them, or one that cannot be read, gives nothing."""
+    out: dict[str, dict[str, Any]] = {}
+    own = (await client.get_me()).id
+    for r in rows:
+        try:
+            # This agent's own row is what it holds in memory, no lookup.
+            got = (usage.from_props(usage.props_value()) if r.user_id == own
+                   else usage.from_props(await client.agent_usage(r.user_id)) if r.user_id else {})
+        except Exception as exc:  # noqa: BLE001 — the roster without its numbers
+            log.info("roster without usage of %s: %s", r.username, exc)
+            continue
+        if got:
+            out[r.username] = got
+    return out
+
+
 def _why(exc: BaseException) -> str:
     """An error in a few words: Mattermost's reason without the URL."""
     return (str(exc).split(" for url ")[0] or type(exc).__name__)[:120]
@@ -438,7 +457,8 @@ async def _overview(client: MattermostAdapter, action: str) -> dict[str, Any]:
             posts, names = await _work_posts(client, ch["id"], known)
             row: dict[str, Any] = {"channel": ch["name"], "role": ch["role"], "crown": crown or None}
             if action == "roster":
-                row["roster"] = tasks.roster(agents, posts, names, await _owners_of(client, agents))
+                row["roster"] = tasks.roster(agents, posts, names, await _owners_of(client, agents),
+                                           await _usage_of(client, agents))
             else:
                 # A foreign agent's ✅ keeps an ask open (RT-6.11, ADR-001).
                 foreign = (await owners.foreign(client, tasks.ask_closers(posts))) if trusted else {}
@@ -1624,7 +1644,7 @@ async def coordinator(action: str = "who", scope: str = "home") -> str:
                 "asks": tasks.open_asks(posts, names, trusted, set(foreign)) + await _queued_rows(client)})
         rows = await lease.roster(client)
         return _out("coordinator", {"roster": tasks.roster(
-            rows, posts, names, await _owners_of(client, rows))})
+            rows, posts, names, await _owners_of(client, rows), await _usage_of(client, rows))})
     if action not in ("who", "take", "release"):
         return _refused("coordinator", 'action must be "who", "take", "release", "tasks" or "roster"')
     out = await lease.command(_get_client(), action)

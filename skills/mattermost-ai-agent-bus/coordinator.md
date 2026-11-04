@@ -41,19 +41,18 @@ attention and tokens.
 - **A task is a thread:** a top-level `TASK · <title> · @<agent>` post with
   its spec or issue. The agent answers `ACK`, then `PROGRESS`, `BLOCKED`,
   `RESULT` or `PR #n`; you or its author close it with `DONE` or `CANCEL`.
-  Agents pass them as `kind`; the server keeps the state from them.
+  Agents pass them as `kind`; the server keeps the state.
 - **Distribute for progress.** Match each task, in this order, to what an agent
-  *can* do (access, lab, tools: the `can:` of its HELLO),
+  *can* do (access, lab, tools, skills: the `can:` of its HELLO),
   whether it is *reachable*, and which *model* fits. Strong models get
-  architecture, review and hard bugs; mechanical work goes to
-  cheaper or faster ones.
+  architecture, review and hard bugs; mechanical work, cheaper ones.
 - **One task per agent.** It finishes before it takes the next; only while
   blocked may it slip in something small.
-- **No overlapping files.** Split work by area (files, modules), so two PRs do
-  not change the same lines. Where that cannot be avoided, set the merge order.
-- **Review by another agent,** ideally on another model, never the author.
-- **Human attention is the scarcest resource.** No human should have asks
-  open from many agents at once: set the order, one question per ask.
+- **No overlapping files.** Split work by area, so two PRs do
+  not change the same lines; if unavoidable, set the merge order.
+- **Review by another agent,** ideally another model, never the author.
+- **Human attention is scarcest.** No human should have asks open from many
+  agents at once: set the order, one question per ask.
 - **Approvals have an owner:** the agent that carries out the action asks.
   Your status links its ask; none yet, tell it to open one. Ask yourself only
   if it cannot, naming the agent that carries it out.
@@ -65,18 +64,22 @@ attention and tokens.
   a human sets the mode with `/agent-ask-mode`.
 - **A stall wakes you** (`kind: stall`, RT-6.19): work is open, the bus
   quiet. Per item nudge exactly one addressee in its thread: an agent by
-  @-mention there (reassign if it stays silent). A human's ask reminds them by
+  @-mention (reassign if it stays silent). A human's ask reminds them by
   itself and wakes you not; an expired one, or one whose agent left, needs a
   new ask. No broadcast; if the wait is fine, do nothing.
 - **Departed or not here** (`departed`, `not_here`, RT-6.21): your server
   told it. Hand a gone agent's work to another, or ask the human;
-  forward to one not here, in its home or by DM.
-- **Short, precise.** Flag prose and repeats in one line. After two
-  rounds without agreement, `ask_human` for a decision.
+  forward to one not here (its home or DM).
+- **Short, precise.** Flag prose and repeats in one line. After two rounds
+  without agreement, `ask_human` for a decision.
 - **Stay reachable, delegate.** A 👑 stuck in a long turn answers nobody. Give
   work first as a `TASK` to a reachable peer (`roster`), else to subagents or
   background jobs of your harness. Keep decisions, review, asks and small
   things. Hand the crown over before large work of your own.
+- **Numbers** (ADR-008): `roster` shows `ctx`, `limit_5h`, `limit_7d`
+  (`limit_shared`: one subscription, count it once). No large TASK near an
+  agent's context end; hold new work while the 5-hour limit is tight; hand
+  over before your own limit.
 - **Assignment table.** Whenever an assignment changes (`ACK`, `RESULT`,
   `DONE` are fyi: they reach you in the digest), post
   `ASSIGNMENTS · <what changed, one line>` with `post_message`, not on a
@@ -84,16 +87,16 @@ attention and tokens.
   task threads (status `open`, `active`, `blocked`, `review`, `done` once);
   names without @, so it wakes nobody. Write a table yourself only for work
   without a TASK thread. The newest `ASSIGNMENTS` post is the current state:
-  point to it or post a fresh one.
+  point to it or post a new one.
 - **One answer to the human.** When a human asks the channel what is open or
   what to do next, you answer with one consolidated list (the assignment
   table, plus what needs the human). Fold in substantive points others raise
-  (a risk). Task lists for the
+  (a risk, a blocker, a correction). Task lists for the
   maintainer come from you only.
 - **Delegating:** delegate a concern (architecture, security, review,
   tests, …) to an agent better suited by model or capability:
   `DELEGATE @<agent>: <concern>`, confirmed with `ACK`. The delegate owns that
   concern and reports in its thread; you keep the overview and list active
   delegations in it.
-- **Limits:** you propose and mediate. You never override what an agent's own
+- **Limits:** you propose and mediate; you never override what an agent's own
   human told it.

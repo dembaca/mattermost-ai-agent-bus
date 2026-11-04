@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import channel, session_file
+from . import channel, session_file, usage
 from .model import ChannelUser, RosterEntry
 
 if TYPE_CHECKING:
@@ -243,7 +243,7 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     if not label and state != "listening":
         label = Path(os.environ.get("CORRAL_WORKDIR") or os.getcwd()).name
 
-    until, reachable, presence = now + lease, True, "online"
+    until, reachable, presence, named = now + lease, True, "online", ""
     if state == "listening":
         if not label.isdigit():
             raise ValueError("listening needs the window's end as epoch seconds")
@@ -252,7 +252,7 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
         # The window may end without the Stop hook running, so the status ends with it.
         until = min(until, int(label))
     elif state == "working":
-        emoji, text = "hammer_and_wrench", f"working · {label}"
+        emoji, text, named = "hammer_and_wrench", "working", label
     elif state == "idle" and channel.confirmed_file(uid).exists():
         # Started as a channel (RT-6.12): this server pushes what comes in, so
         # the agent stays reachable, and keeps a crown, between its turns.
@@ -260,7 +260,7 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     elif state == "idle":
         emoji, text, reachable = "zzz", "idle · until my human resumes", False
     elif state == "bus":
-        emoji, text = "satellite_antenna", f"on the bus · {label}"
+        emoji, text, named = "satellite_antenna", "on the bus", label
     else:
         presence, emoji, text = "offline", "", ""
 
@@ -279,7 +279,8 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     else:
         crown = 0
     if text:
-        text = homed(text, client.work_channel_name)
+        text = status_text(text, named, usage.segments(), client.work_channel_name)
+        usage.shown()
     if coord is not None and coord.is_file():
         lines = _read_lines(coord)
         _write(coord, "".join(f"CROWN_UNTIL={crown}\n" if ln.startswith("CROWN_UNTIL=") else f"{ln}\n"
@@ -312,6 +313,24 @@ def homed(text: str, home: str) -> str:
         return text
     tail = f"{_HOME}{home}"
     return text[:max(0, STATUS_MAX - len(tail))] + tail
+
+
+def status_text(head: str, label: str, segments: list[str], home: str) -> str:
+    """The custom status text (RT-6.6 step 1, ADR-008): `<head> · <label> ·
+    <segments> · ~<home>`, e.g. `working · bus · ctx 62% · 5h 40% · ~home`.
+    The home stays last and STATUS_MAX holds: when it does not fit, the label
+    goes first, then the last segments (`7d`, `5h`, `ctx` in that order, each
+    shown only when it exists), never the home. Without segments it is
+    homed() of head and label, the label cut as before."""
+    if not segments:
+        return homed(f"{head} · {label}" if label else head, home)
+    tail = f"{_HOME}{home}" if home else ""
+    for keep, with_label in ((len(segments), True), (len(segments), False),
+                             *((n, False) for n in range(len(segments) - 1, 0, -1))):
+        text = " · ".join([head, *([label] if label and with_label else []), *segments[:keep]])
+        if len(text) + len(tail) <= STATUS_MAX:
+            return text + tail
+    return homed(head, home)
 
 
 def home_of(text: str) -> str | None:
@@ -635,6 +654,42 @@ async def _header(client: ChatPort, cid: str) -> None:
             log.debug("channel header: %s", exc)
 
 
+async def write_usage(client: ChatPort) -> None:
+    """The last usage report into the bot's props as `agent_usage` (ADR-008
+    step 3), when it changed and a minute passed since the last attempt. Like
+    the attestation: under the status lock, the other props kept. Never raises."""
+    value = usage.props_due()
+    if not value or not client.token:
+        return
+    usage.props_tried()
+    try:
+        async with _lock():
+            await client.publish_usage(value)
+        usage.props_written(value)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — cosmetic, tried again by a later beat
+        log.debug("usage props: %s", exc)
+
+
+async def usage_crossed(client: ChatPort) -> None:
+    """A report crossed a band (ADR-008 step 2): the status text and the props
+    now, once; usage.take_band keeps it rare. A normal beat never comes here
+    (the heartbeat's own renewal carries the numbers). Never raises."""
+    try:
+        if not client.token or not usage.take_band():
+            return
+        uid = await _user_id(client)
+        if not _read(_file("presence", uid)).get("STATE"):
+            return  # no status to renew (offline, or none yet)
+        await set_status(client, "renew")
+        await write_usage(client)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.debug("usage band: %s", exc)
+
+
 async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
                     watch: Callable[[ChatPort], Awaitable[float | None]] | None = None) -> None:
     """Renew the lease until cancelled. Never raises: presence is cosmetic.
@@ -647,6 +702,7 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
             client = await get_client()
             if client is not None and client.token:
                 await command(client, "tick")
+                await write_usage(client)
                 if take_pending(await _user_id(client)):
                     delay = PENDING_POLL_SEC
                 if watch is not None:

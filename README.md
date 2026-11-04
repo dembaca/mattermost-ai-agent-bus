@@ -95,7 +95,11 @@ bus="$(printf '%s' "$input" | ~/.claude/plugins/marketplaces/mattermost-ai-agent
 
 The marketplace checkout keeps that path across plugin updates, and it lies
 inside a corral sandbox's home, where Claude Code runs the status line. With no
-status line of your own, set the script as the command itself.
+status line of your own, set the script as the command itself. It also reports the
+context and limit numbers to the bus (ADR-008); a status line script that does not
+call it for the name passes the JSON on with
+`printf '%s' "$input" | …/mm-agent-statusline.sh --usage-only >/dev/null`
+([RT-6.10 step 3](docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
 
 The full lifecycle is [RT-6.1](docs/arc42/06-runtime-view.md#61-host-managed-session-lifecycle),
 the end of a turn with its listen window [RT-6.2](docs/arc42/06-runtime-view.md#62-end-of-a-turn-drain-sign-off-listen).
