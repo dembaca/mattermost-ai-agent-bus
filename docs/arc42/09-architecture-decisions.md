@@ -1073,16 +1073,20 @@ whether it is a peer (RT-6.25 step 3), and its answer settles the question
    Cost: as step 3, plus one call for the ⏳ on a waking post during a turn.
 3. **Stale copies stay off the bus.** At start a server compares its own
    version with the installed version of the plugin:
-   - its code lies under Claude Code's plugin directory
-     (`~/.claude/plugins/`, the cache included, whichever runtime started
-     it, as in case 2): the version `installed_plugins.json` names for this
-     plugin, read as the update notice reads it today (RT-6.2);
-   - its code lies in a checkout (an environment inside a tree with
-     `.claude-plugin/plugin.json`, as the two of case 2): that checkout's
-     version;
-   - neither, or the file cannot be read: no check, as today, logged once.
+   - its code lies under Claude Code's plugin cache
+     (`~/.claude/plugins/cache/`, whichever runtime started it, as in case 2):
+     current when its tree is the install path of any entry
+     `installed_plugins.json` lists for this plugin (every scope and
+     marketplace), stale when older than every entry (as built in 0.71.11, after
+     review: only an older copy is stale, so a pin, a project install, a clone
+     ahead or a cache folder before the registry rewrite never are);
+   - its code lies in a checkout or the marketplace clone (an environment
+     inside a tree with `.claude-plugin/plugin.json`, as the two of case 2):
+     older than that tree's version is stale;
+   - neither, the file cannot be read, or `CLAUDE_PLUGIN_ROOT` names its own
+     tree: no check, as today, logged once.
 
-   A server whose version is not the installed one registers no bot and
+   A server older than the installed one registers no bot and
    takes none over (RT-6.10 steps 1 and 5); `bus_info` says `on_bus: false`
    with the reason (`stale: this server is 0.42.2 from <path>; installed is
    0.71.6`) and what to do (restart the runtime's server from the installed

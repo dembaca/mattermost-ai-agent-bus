@@ -93,35 +93,83 @@ def _newer_installed() -> str | None:
     return None
 
 
+def _registered_trees() -> list[tuple[Path, str]]:
+    """The installs installed_plugins.json lists for this plugin as (resolved
+    install path, version read from its plugin.json): the entries under
+    `plugins["mattermost-ai-agent-bus@<marketplace>"]`, every scope and
+    marketplace of it, no other plugin (schema version 2). [] when the file
+    or an entry cannot be read."""
+    reg = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
+    try:
+        plugins = json.loads(reg.read_text()).get("plugins", {})
+    except (OSError, ValueError, AttributeError):
+        return []
+    out: list[tuple[Path, str]] = []
+    for key, entries in plugins.items() if isinstance(plugins, dict) else ():
+        if not (isinstance(key, str) and key.startswith("mattermost-ai-agent-bus@")
+                and isinstance(entries, list)):
+            continue
+        for entry in entries:
+            path = entry.get("installPath") if isinstance(entry, dict) else None
+            if not isinstance(path, str):
+                continue
+            try:
+                version = json.loads((Path(path) / ".claude-plugin" / "plugin.json").read_text())["version"]
+                out.append((Path(path).resolve(), str(version)))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+    return out
+
+
+def _own_tree(here: Path) -> tuple[Path, str] | None:
+    """The nearest tree above `here` with `.claude-plugin/plugin.json`, and its version."""
+    for parent in here.parents:
+        try:
+            return parent, str(json.loads((parent / ".claude-plugin" / "plugin.json").read_text())["version"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return None
+
+
 def _stale_reason(here: Path | None = None, own: str = __version__) -> str:
     """ADR-007 amendment step 3, RT-6.10 step 1: why this server must stay off
-    the bus, '' for none. Its code under Claude Code's plugin directory
-    (`~/.claude/plugins`, the cache included, whichever runtime started it):
-    the version installed_plugins.json names (the newest, as the update notice
-    reads it); in a checkout (the nearest tree with `.claude-plugin/plugin.json`
-    above its code, also an environment inside one): that tree's version.
-    Neither, or not readable: no check. Not on the host side of a keyless
-    session: corral's preStart compares the host copy there (RT-6.18 step 1)."""
+    the bus, '' for none. Only an OLDER copy is stale, and only when sure:
+    - the plugin root Claude Code names (`CLAUDE_PLUGIN_ROOT`) is this server's
+      own tree: not checked;
+    - code under `~/.claude/plugins/cache/` (whichever runtime started it):
+      current when its tree is the install path of any entry of
+      installed_plugins.json for this plugin (any scope, any marketplace),
+      else stale when older than every entry (no entry readable: not checked);
+    - any other code (a checkout, also an environment inside one, the
+      marketplace clone): stale when older than the nearest tree above it with
+      `.claude-plugin/plugin.json`.
+    Not on the host side of a keyless session: corral's preStart compares the
+    host copy there (RT-6.18 step 1)."""
     if session_file.hosted():
         return ""
     here = (here or Path(__file__)).resolve()
-    plugins = (Path.home() / ".claude" / "plugins").resolve()
-    installed: str | None
-    if here.is_relative_to(plugins):
-        installed = max(_installed_versions(), key=_version_key, default=None)
+    tree = _own_tree(here)
+    root = os.environ.get("CLAUDE_PLUGIN_ROOT", "")
+    if root and tree is not None and Path(root).resolve() == tree[0].resolve():
+        return ""  # Claude Code runs this very tree: it is the installed one
+    cache = (Path.home() / ".claude" / "plugins" / "cache").resolve()
+    newest: str | None
+    if here.is_relative_to(cache):
+        entries = _registered_trees()
+        if tree is not None and any(path == tree[0].resolve() for path, _ in entries):
+            return ""
+        versions = [v for _, v in entries]
+        newest = max(versions, key=_version_key, default=None)
+        if versions and any(_version_key(own) >= _version_key(v) for v in versions):
+            return ""  # not older than every entry: newer or equal, a race, a pin, a clone ahead
     else:
-        installed = None
-        for parent in here.parents:
-            try:
-                installed = json.loads((parent / ".claude-plugin" / "plugin.json").read_text())["version"]
-                break
-            except (OSError, ValueError, KeyError):
-                continue
-    if not isinstance(installed, str) or not installed or installed == own:
-        if installed is None:
-            log.info("stale-copy check: no installed version found, not checked")
+        newest = tree[1] if tree is not None else None
+        if newest is not None and _version_key(own) >= _version_key(newest):
+            return ""
+    if newest is None:
+        log.info("stale-copy check: no installed version found, not checked")
         return ""
-    return (f"stale: this server is {own} from {here.parent}; installed is {installed}")
+    return f"stale: this server is {own} from {here.parent}; installed is {newest}"
 
 
 # Set at start (ADR-007 amendment step 3): a running session keeps the plugin

@@ -759,12 +759,14 @@ def test_a_stale_host_environment_is_no_bus(mm, run, tmp_path):
     assert not any(p == "/register/v1/agents" for _, p, _ in mm.writes)
 
 
-@pytest.mark.parametrize("says", ["current", None], ids=["current", "unreadable"])
+@pytest.mark.parametrize("says", ["current", "newer", None], ids=["current", "newer", "unreadable"])
 def test_a_current_or_unreadable_host_environment_is_not_refused(mm, run, tmp_path, says):
     """RT-6.18 step 1: an environment of the copy's version, or one that says nothing (no check), goes on."""
     version = None
-    if says == "current":
+    if says in ("current", "newer"):
         version = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]
+        if says == "newer":
+            version = "99.0.0"  # only an older environment is stale
     tree = _versioned(tmp_path, version)
     r = run(str(tree / START), CORRAL_SESSION_ID="sess-ok", **HOST)
     why = json.loads(r.stdout)["env"].get("MM_BUS_UNAVAILABLE", "")
