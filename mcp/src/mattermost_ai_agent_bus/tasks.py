@@ -86,6 +86,7 @@ def build(
     now_ms: int | None = None,
     untrusted: Collection[str] = (),
     coordinators: Collection[str] = (),
+    mandated: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """The tasks of the work channel: top-level TASK / DELEGATE posts and
     their threads, newest change last. Only the task's own thread moves it:
@@ -93,7 +94,8 @@ def build(
     out what is unknown. A root in `untrusted` (post ids by someone the
     agent does not trust, RT-6.16) is no task. `coordinators`: usernames of
     the crown holder now (lease.roster), who may close any task; an agent's
-    close written while it held the crown (props.a2a.crown) counts too."""
+    close written while it held the crown (props.a2a.crown) counts too.
+    `mandated`: root id -> the mandate post that covers it (RT-6.26 step 5)."""
     now_ms = now_ms or int(time.time() * 1000)
     order = _live(posts)
 
@@ -115,6 +117,7 @@ def build(
                 "task": p.id, "title": title(msg), "by": who(p), "agent": None,
                 "status": "open", "spec": ", ".join(dict.fromkeys(refs).keys()) or None,
                 "pr": None, "branch": None, "updated": p.create_at,
+                "mandated": (mandated or {}).get(p.id),
                 "_candidates": [m for m in _mentions(msg) if m != who(p)],
             }
     for p in order:

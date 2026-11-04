@@ -14,7 +14,7 @@ code does today and point here where a decision will change them.
 | ADR-003 | An agent's owner comes from its registrar-bound bot description, or from the registrar's signed claim where its keys are pinned | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) built on the bus side in 0.66.0 (RT-6.24) | WP2, WP3, WP6, #83 |
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
-| ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Proposed (2026-11-03), not built; phase 2 (a signed record) depends on the registrar (#83) | #141 |
+| ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Proposed (2026-11-03); phase 1 built (0.71.0): the pinned post, RT-6.26; phase 2 (a signed record) depends on the registrar (#83) | #141 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -494,8 +494,13 @@ coordinator's own asks go to the human (or the delegate), not to itself.
 
 ## ADR-006: Mandate for a role
 
-**Status:** Proposed (2026-11-03). Not built; no scenario in Section 6
-changes until it is accepted. Decides #141 point 3 and settles point 4;
+**Status:** Proposed (2026-11-03); phase 1 built (0.71.0): the pinned
+post, RT-6.26: the read of the home's pinned posts, the trust check by
+author id, expiry, the role resolved per event with the peer check,
+`mandated` and `mandated_by` on events and push attributes, `mandated` on
+task rows and `mandate` in `bus_info`, with RT-6.16, RT-6.14 and RT-6.22
+changed as step 12 names; phase 2 open (the registrar's signed record).
+Acceptance stays the owner's. Decides #141 point 3 and settles point 4;
 points 6 and 8 bear on it. Builds on ADR-001 (trust), ADR-002 (a crown per
 (agent, home)) and the overview across homes (RT-6.14 step 9, 0.70.0).
 Phase 2 depends on the registrar's signing (#83, RT-6.24), as ADR-005

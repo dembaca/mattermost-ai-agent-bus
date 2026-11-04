@@ -45,10 +45,13 @@ def _isolate_bus_env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(session_file, "_hosted_dir", None)
     # What the attestation code remembers per process (RT-6.24).
-    from mattermost_ai_agent_bus import attest, owners
+    from mattermost_ai_agent_bus import attest, mandate, owners
 
     attest._started.clear()
     owners._noted.clear()
+    # What the mandate reader keeps per process (RT-6.26).
+    for kept in (mandate._reads, mandate._fetched, mandate._judged, mandate._noted):
+        kept.clear()
     yield
     # monkeypatch restores the real environment itself; session_start also writes
     # into os.environ, so make sure nothing leaks into the next test.

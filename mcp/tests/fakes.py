@@ -88,6 +88,11 @@ class FakeChat:
         # RT-6.25 step 8: the registrar's ask-mode record per home, and each read.
         self.mode_records: dict[str, str | BaseException] = {}
         self.fetched: list[str] = []
+        # RT-6.26: the home's pinned posts (or an exception they raise), how
+        # often they were read; channel ids by name besides the work channel.
+        self.pinned: list[Post | Mapping[str, Any]] | BaseException = []
+        self.pinned_reads = 0
+        self.channel_ids: dict[str, str] = {}
 
     def _posts(self) -> list[Post]:
         return [p if isinstance(p, Post) else post_of(p) for p in self.posts]
@@ -106,6 +111,16 @@ class FakeChat:
         if channel_name != self.channel:
             raise LookupError(f"no channel {channel_name}")
         return WORK
+
+    async def get_channel_id(self, channel_name: str | None = None,
+                             team_name: str | None = None) -> str:
+        """`channel` (or no name) is the work channel, else `channel_ids`;
+        any other name is missing."""
+        if not channel_name or channel_name == self.channel:
+            return WORK
+        if channel_name in self.channel_ids:
+            return self.channel_ids[channel_name]
+        raise LookupError(f"no channel {channel_name}")
 
     async def get_channel(self, channel_id: str) -> Channel:
         """Ids in `dms` are DMs; every other channel is open and named `channel`."""
@@ -222,6 +237,13 @@ class FakeChat:
         """The content handed in self.contents[(id, preview)], cut at limit + 1."""
         self.calls.append(("preview" if preview else "file", limit, None))
         return self.contents[(file_id, preview)][:limit + 1]
+
+    async def pinned_posts(self, channel_id: str) -> list[Post]:
+        """`pinned` (RT-6.26 step 1), or the exception it holds; counted."""
+        self.pinned_reads += 1
+        if isinstance(self.pinned, BaseException):
+            raise self.pinned
+        return [p if isinstance(p, Post) else post_of(p) for p in self.pinned]
 
     async def reactions(self, post_id: str) -> list[Reaction]:
         return [r if isinstance(r, Reaction) else reaction_of(r) for r in self.reacts.get(post_id, [])]

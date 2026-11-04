@@ -66,6 +66,13 @@ class ChatPort(Protocol):
 
     async def get_channel(self, channel_id: str) -> Channel: ...
 
+    async def get_channel_id(self, channel_name: str | None = None,
+                             team_name: str | None = None) -> str:
+        """The id of the team's channel `channel_name` (default: the home),
+        without joining it (RT-6.26 step 4); raises when it is missing or
+        the bot may not see it."""
+        ...
+
     async def channel_header(self, channel_id: str) -> str:
         """The channel's header as it is now, never cached (RT-6.6 step 7)."""
         ...
@@ -162,6 +169,11 @@ class ChatPort(Protocol):
                           max_pages: int = 25) -> list[Post]: ...
 
     async def reactions(self, post_id: str) -> list[Reaction]: ...
+
+    async def pinned_posts(self, channel_id: str) -> list[Post]:
+        """A channel's pinned posts, newest first (RT-6.26 step 1); raises
+        when they cannot be read."""
+        ...
 
     async def file_info(self, file_id: str) -> FileInfo:
         """A file attached to a post (RT-6.23); raises where the bot may not read it."""
