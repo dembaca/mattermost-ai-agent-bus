@@ -3,6 +3,25 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.1
+
+### Fixed
+
+- **The 👑 is renewed before missed posts are judged**
+  ([RT-6.6 step 6](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease),
+  [RT-6.12 step 3](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)).
+  After a sleep longer than the lease, the crown in `coord-<uid>.env` lay in
+  the past until the next heartbeat tick. A trusted human's plain post in the
+  home that the reconnect's backfill found in that window was held for the
+  digest (up to `MM_LISTEN_DIGEST_SEC`) instead of waking the coordinator,
+  and the gate judged it as if the agent had no crown. A (re)connect now runs
+  one tick before the backfill (`WebSocketInbox.before_backfill`): it renews
+  the crown, or claims it by the rules of step 2, and never takes one another
+  agent holds; failing, it logs and goes on as before. And each time the
+  crown passes to the agent (`lease.on_crown`), the pusher pushes at once the
+  held posts that now wake it, in their order and once; gated and fyi posts
+  stay for the digest.
+
 ## 0.71.0
 
 ### Added

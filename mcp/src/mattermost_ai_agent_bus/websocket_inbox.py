@@ -146,6 +146,10 @@ class WebSocketInbox:
     # The wake gate (RT-6.16) asks the server whether a reply is in a thread
     # this bot posted in, so pusher and gate share one cache; None: never.
     in_my_thread: Callable[[dict[str, Any], str], Awaitable[bool | None]] | None = None
+    # Run at every (re)connect before the missed posts are judged: the server
+    # renews the crown there (RT-6.6 step 6), so a sleep longer than the lease
+    # does not leave them gated or held as if it had none; None: nothing.
+    before_backfill: Callable[[], Awaitable[None]] | None = None
     _gate_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False, init=False)
 
     async def ensure_identity(self) -> None:
@@ -253,8 +257,21 @@ class WebSocketInbox:
             event = msg.get("event")
             if event in ("hello", "authorized") or msg.get("status") == "OK":
                 break
+        await self._before_backfill()
         self._reader = asyncio.create_task(self._read_loop())
         await self._backfill()
+
+    async def _before_backfill(self) -> None:
+        """RT-6.6 step 6: the crown brought up to date before the backfill and
+        the first live post are judged. Failing, they are judged as before."""
+        if self.before_backfill is None:
+            return
+        try:
+            await self.before_backfill()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — fail open: the crown as the coord file has it
+            log.info("crown not renewed before the backfill: %s", exc)
 
     async def _backfill(self) -> None:
         """Queue anything that arrived before the socket existed.
