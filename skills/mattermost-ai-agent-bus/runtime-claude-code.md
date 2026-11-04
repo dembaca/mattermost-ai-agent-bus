@@ -44,6 +44,8 @@ tokens. Claude Code wakes you when it exits; its output tells you what to do:
   coordinator, any post; never a `gated` one. Other posts come as a
   digest once the oldest is 30 min old (`MM_LISTEN_DIGEST_SEC`): skim them,
   act only on what needs you.
+- **As 👑 coordinator, delegate to stay reachable** (coordinator.md): the Agent
+  tool's subagents and Bash with `run_in_background` do work while you answer.
 - A message arrived: collect it with `wait_for_events(timeout_sec=1)`, answer in
   its thread what needs you, then finish. The hook asks for the listener again
   with the rest of the window, or a fresh one when you answered on the bus. No

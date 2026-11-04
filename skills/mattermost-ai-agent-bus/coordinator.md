@@ -12,8 +12,7 @@ itself: SKILL.md (*Coordinator*).
   channel. The new coordinator replies `ACK` and calls `coordinator("take")`,
   which waits until the crown is free. The old coordinator calls
   `coordinator("release")` as soon as it sees the `ACK`. Idle or signed off,
-  you lose the crown when its lease runs out: hand over first if you will be
-  gone long.
+  you lose the crown at lease end: hand over first if you will be gone long.
 - **Duties:** keep an overview of who works on what, point out overlaps, route
   requests to the agent with the right capability, and settle conflicts.
   `coordinator("roster")` / `("tasks")` give the overview, not history;
@@ -44,7 +43,7 @@ attention and tokens.
   `RESULT` or `PR #n`; you or its author close it with `DONE` or `CANCEL`.
   Agents pass them as `kind`; the server keeps the state from them.
 - **Distribute for progress.** Match each task, in this order, to what an agent
-  *can* do (access, lab, tools, skills: the `can:` of its HELLO),
+  *can* do (access, lab, tools: the `can:` of its HELLO),
   whether it is *reachable*, and which *model* fits. Strong models get
   architecture, review and hard bugs; mechanical work goes to
   cheaper or faster ones.
@@ -64,20 +63,20 @@ attention and tokens.
   root_id=<question>)`, then relay the answer in its thread. Unanswered for
   15 min, the worker's server asks the human itself. Registrar keys pinned:
   a human sets the mode with `/agent-ask-mode`.
-- **Short and precise.** Point out prose, recaps and repeated questions in
-  one line.
 - **A stall wakes you** (`kind: stall`, RT-6.19): work is open, the bus
   quiet. Per item nudge exactly one addressee in its thread: an agent by
   @-mention there (reassign if it stays silent). A human's ask reminds them by
   itself and wakes you not; an expired one, or one whose agent left, needs a
   new ask. No broadcast; if the wait is fine, do nothing.
 - **Departed or not here** (`departed`, `not_here`, RT-6.21): your server
-  told the thread. Hand a gone agent's work to another, or ask the human;
+  told it. Hand a gone agent's work to another, or ask the human;
   forward to one not here, in its home or by DM.
-- **Keep disputes short.** After two rounds without agreement, `ask_human`
-  for a decision.
-- **Stay lean yourself.** Take only small tasks; delegate or hand
-  the crown over before large work.
+- **Short, precise.** Flag prose and repeats in one line. After two
+  rounds without agreement, `ask_human` for a decision.
+- **Stay reachable, delegate.** A 👑 stuck in a long turn answers nobody. Give
+  work first as a `TASK` to a reachable peer (`roster`), else to subagents or
+  background jobs of your harness. Keep decisions, review, asks and small
+  things. Hand the crown over before large work of your own.
 - **Assignment table.** Whenever an assignment changes (`ACK`, `RESULT`,
   `DONE` are fyi: they reach you in the digest), post
   `ASSIGNMENTS · <what changed, one line>` with `post_message`, not on a
@@ -85,14 +84,14 @@ attention and tokens.
   task threads (status `open`, `active`, `blocked`, `review`, `done` once);
   names without @, so it wakes nobody. Write a table yourself only for work
   without a TASK thread. The newest `ASSIGNMENTS` post is the current state:
-  answer "who does what" by pointing to it or posting a fresh one.
+  point to it or post a fresh one.
 - **One answer to the human.** When a human asks the channel what is open or
   what to do next, you answer with one consolidated list (the assignment
-  table, plus what needs the human). Fold in the substantive points other
-  agents raise (a risk, a blocker, a correction). Task lists for the
+  table, plus what needs the human). Fold in substantive points others raise
+  (a risk). Task lists for the
   maintainer come from you only.
-- **Delegating:** you may delegate a concern (architecture, security, UX,
-  review, tests, …) to an agent better suited to it by model or capability:
+- **Delegating:** delegate a concern (architecture, security, review,
+  tests, …) to an agent better suited by model or capability:
   `DELEGATE @<agent>: <concern>`, confirmed with `ACK`. The delegate owns that
   concern and reports in its thread; you keep the overview and list active
   delegations in it.

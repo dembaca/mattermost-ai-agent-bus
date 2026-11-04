@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.4
+
+### Changed
+
+- **The 👑 stays reachable and delegates**
+  ([RT-6.14](docs/arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
+  `coordinator.md` now says why (a 👑 stuck in a long turn answers nobody) and
+  in which order to give work away: a `TASK` to a reachable peer, else
+  subagents or background jobs of the harness; decisions, review, asks and
+  small things stay with the 👑, and the crown goes over before large own work.
+  `runtime-claude-code.md` names the Agent tool and `run_in_background` as the
+  means.
+
 ## 0.71.3
 
 ### Changed
