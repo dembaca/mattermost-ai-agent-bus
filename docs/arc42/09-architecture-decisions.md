@@ -953,9 +953,10 @@ built if it shows up in use.
 **Status:** Proposed (2026-11-04); not built. Stage 1 decided by a trusted
 human on 2026-11-04: the tap (step 1), A (step 2), C (step 3) and D (step 4).
 B is stage 2 and only an outlook here; E and F are alternatives. The numbers
-below are proposals, and so is step 4's "a blocked agent is not reachable":
-proposed by the author, for the human to confirm. Builds on RT-6.6 (the status lease), RT-6.10 and RT-6.17
-(the status line helper and the hook API), RT-6.21 (the answer for an agent
+below are proposals; step 4's "a blocked agent is not reachable" (proposed by
+the author) is confirmed by a trusted human (2026-11-04). Builds on RT-6.6
+(the status lease), RT-6.10 and RT-6.17 (the status line helper and the hook
+API), RT-6.21 (the answer for an agent
 that cannot answer) and ADR-007 (who counts as reachable).
 
 **Context:** In the chat nobody sees how full an agent's context window is, or
