@@ -37,7 +37,10 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             decision, words and listen window for a turn plugin (RT-6.20)
     GET  /v1/wake           {wake, reason: dm|stall|reaction|addressed|digest|'', count, text}
                             (?since=MS&until=S): the listener's decision inside the
-                            listen window (RT-6.20)
+                            listen window (RT-6.20); ?wait=S (at most MAX_WAIT_SEC,
+                            until optional): a long poll held until that decision
+                            wakes or S passed, reason "replaced" when a newer one
+                            took over (ADR-009 phase 1, RT-6.17 step 7)
     GET  /v1/handoff        {context}: the own latest posts after a compaction
                             (RT-6.7, RT-6.20)
 
@@ -105,12 +108,31 @@ MAX_LABEL = 64
 # A listen window ends within Claude Code's 2 h limit; a day is ample.
 MAX_UNTIL_AHEAD_SEC = 86400
 MAX_POSTS = 200
+# The long poll of GET /v1/wake?wait=S (ADR-009 phase 1, RT-6.17 step 7): held
+# at most MAX_WAIT_SEC; checked again when the inbox queues an event (ring),
+# no sooner than MIN_GAP_SEC after the last check, and at the latest every
+# RECHECK_SEC for what the inbox does not see (a digest coming due, an inbox
+# not connected yet): as often as the plugin's timer polled before.
+MAX_WAIT_SEC = 55
+MIN_GAP_SEC = 1.0
+RECHECK_SEC = 15.0
+# The empty answer's reason for a long poll a newer one of the session replaced.
+REPLACED = "replaced"
 _REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
             413: "Payload Too Large", 502: "Bad Gateway", 503: "Service Unavailable"}
 
 Reply = tuple[int, dict[str, Any]]
 Route = Callable[[Any, Mapping[str, str], Mapping[str, Any]], Awaitable[Reply]]
 _UID = re.compile(r"[a-z0-9]{26}")
+# One per waiting long poll; ring() sets them all (ADR-009 phase 1).
+_bells: set[asyncio.Event] = set()
+
+
+def ring() -> None:
+    """Something was queued for the agent: a waiting long poll checks again.
+    The inbox calls it, in the server's event loop (server._get_inbox)."""
+    for bell in _bells:
+        bell.set()
 
 
 class BadRequest(ValueError):
@@ -167,6 +189,10 @@ class HookAPI:
         self.unkeyed = ""
         # The MCP client's name (clientInfo), written into the file.
         self.client = ""
+        # The waiting long poll of /v1/wake (ADR-009), and when the session's
+        # last check of one ended (loop time): MIN_GAP_SEC runs from there.
+        self._poll: _Poll | None = None
+        self._checked = float("-inf")
 
     async def start(self, *, write_file: bool = True) -> str:
         """Listen on 127.0.0.1 and (by default) write the discovery file."""
@@ -293,6 +319,8 @@ class HookAPI:
             pass
 
     async def close(self) -> None:
+        if self._poll is not None:
+            self._poll.end()  # the server's exit ends the wait: it answers empty
         self.remove_file()
         if self._server is not None:
             self._server.close()
@@ -360,7 +388,9 @@ class HookAPI:
         if client is None or not client.token:
             return 503, {"error": "no bus session"}
         try:
-            reply = await asyncio.wait_for(self._run(route, client, query, payload), ROUTE_TIMEOUT_SEC)
+            run = (self._long_poll(client, query, payload, reader) if route is wake and "wait" in query
+                   else self._run(route, client, query, payload))
+            reply = await asyncio.wait_for(run, ROUTE_TIMEOUT_SEC)
         except (BadRequest, InvalidId) as exc:  # InvalidId: refused before any request (#81)
             return 400, {"error": str(exc)}
         except Forbidden as exc:
@@ -378,6 +408,104 @@ class HookAPI:
             return await route(client, query, payload)
         async with self._heavy:  # each makes several Mattermost calls: a few at a time
             return await route(client, query, payload)
+
+    async def _long_poll(self, client: MattermostAdapter, query: Mapping[str, str],
+                         payload: Mapping[str, Any], reader: asyncio.StreamReader) -> Reply:
+        """GET /v1/wake?wait=S (ADR-009 phase 1, RT-6.17 step 7): hold the
+        request until wake() says the agent wakes, by the rules it has
+        without wait, and answer as it does; S seconds (at most MAX_WAIT_SEC)
+        are a hard deadline: then empty, a check still running given up.
+        Only looks, like wake(). One per session: a newer one ends it with
+        reason "replaced" and gives up its check, the heavy slot with it; the
+        client closing its side or the server's exit ends it empty. A slot is
+        held only for a check; the session's checks are MIN_GAP_SEC apart,
+        from the end of one to the start of the next. wait=0 asks once."""
+        wait = wait_sec(query)
+        _wake_query(query)  # a bad since or until: 400 before an older wait ends
+        if wait == 0:
+            return await self._run(wake, client, query, payload)  # asks once
+        loop = asyncio.get_running_loop()
+        end = loop.time() + wait
+        if self._poll is not None:
+            self._poll.end(replaced=True)  # one waiting request per session
+        poll = self._poll = _Poll()
+        bell = asyncio.Event()
+        _bells.add(bell)
+        # The client sends nothing after its request (Connection: close): EOF
+        # or a reset says it is gone.
+        gone = asyncio.ensure_future(reader.read(1))
+        check: asyncio.Future[Reply] | None = None
+        due = loop.time()  # the first check at once, as far as the session's gap allows
+        try:
+            while True:
+                now = loop.time()
+                if poll.over.is_set() or gone.done() or now >= end:
+                    return 200, poll.answer()
+                # Due: rung, or RECHECK_SEC after the last check; never sooner
+                # than MIN_GAP_SEC after the end of the session's last check.
+                at = max(now if bell.is_set() else due, self._checked + MIN_GAP_SEC)
+                if now < at:
+                    await _first(min(at, end) - now, gone, poll.over, *(() if bell.is_set() else (bell,)))
+                    continue
+                bell.clear()  # a ring from now on, during the check too, asks again
+                check = asyncio.ensure_future(self._run(wake, client, query, payload))
+                await _first(end - now, gone, poll.over, check)
+                if not check.done():  # replaced, gone or the deadline
+                    await _give_up(check)
+                    return 200, poll.answer()
+                self._checked = loop.time()
+                reply = check.result()  # Mattermost failed: 502, as without wait
+                if reply[1].get("wake") and not (poll.over.is_set() or gone.done()):
+                    return reply
+                due = self._checked + RECHECK_SEC
+        finally:
+            if check is not None and not check.done():
+                check.cancel()
+            if gone.done() and not gone.cancelled():
+                gone.exception()  # a reset connection: retrieved, not logged
+            else:
+                gone.cancel()
+            _bells.discard(bell)
+            if self._poll is poll:
+                self._poll = None
+
+
+class _Poll:
+    """The waiting long poll of a session (ADR-009 phase 1, RT-6.17 step 7)."""
+
+    def __init__(self) -> None:
+        self.over = asyncio.Event()
+        self.replaced = False
+
+    def end(self, *, replaced: bool = False) -> None:
+        """A newer request (replaced) or the server's exit ends it."""
+        self.replaced = replaced
+        self.over.set()
+
+    def answer(self) -> dict[str, Any]:
+        """Empty; reason "replaced" when a newer request took over, so a
+        client can back off instead of asking again at once."""
+        return {**turnend.no_wake(), "reason": REPLACED} if self.replaced else turnend.no_wake()
+
+
+async def _give_up(check: asyncio.Future[Reply]) -> None:
+    """Cancel a check and wait until it let go of its heavy slot."""
+    check.cancel()
+    await asyncio.wait([check])
+    if not check.cancelled():
+        check.exception()  # it ended meanwhile: retrieved, not logged
+
+
+async def _first(timeout: float, *what: asyncio.Event | asyncio.Future[Any]) -> None:
+    """Wait until one of the futures is done or one of the events set, or timeout s passed."""
+    waits = [asyncio.ensure_future(w.wait()) for w in what if isinstance(w, asyncio.Event)]
+    either: list[asyncio.Future[Any]] = [w for w in what if not isinstance(w, asyncio.Event)]
+    try:
+        await asyncio.wait([*either, *waits], timeout=max(0.0, timeout),
+                           return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for w in waits:
+            w.cancel()
 
 
 async def _read_head(reader: asyncio.StreamReader) -> tuple[str, str, dict[str, str]]:
@@ -765,19 +893,38 @@ async def _own_posts(client: MattermostAdapter, uid: str, body: Mapping[str, Any
     return own
 
 
+def wait_sec(query: Mapping[str, str]) -> int:
+    """?wait=S of the long poll (ADR-009 phase 1): whole seconds, at most MAX_WAIT_SEC."""
+    raw = query.get("wait", "")
+    if not raw.isdigit():
+        raise BadRequest("wait: seconds")
+    return min(int(raw), MAX_WAIT_SEC)
+
+
+def _wake_query(query: Mapping[str, str]) -> tuple[int, int | None]:
+    """?since=MS and ?until=S of /v1/wake. until is needed without wait (the
+    listen window, RT-6.2 step 3); a long poll may leave it out, then no
+    window ends it (None) and the other gates hold (ADR-009 phase 1)."""
+    since, until = query.get("since", ""), query.get("until", "")
+    if not since.isdigit():
+        raise BadRequest("since: epoch ms")
+    if not until and "wait" in query:
+        return int(since), None
+    if not until.isdigit():
+        raise BadRequest("until: epoch s")
+    return int(since), int(until)
+
+
 async def wake(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """The listener's checks for a turn plugin (RT-6.20; RT-6.2 step 4): is
     anything on the bus for the agent since ?since=MS, or a stall event
     (RT-6.19)? Only inside the listen window ending at ?until=S and while its
     gates hold (RT-6.2 step 3). Only looks: the agent collects with
-    wait_for_events, which marks read."""
-    since, until = query.get("since", ""), query.get("until", "")
-    if not since.isdigit():
-        raise BadRequest("since: epoch ms")
-    if not until.isdigit():
-        raise BadRequest("until: epoch s")
+    wait_for_events, which marks read. The long poll (?wait=S) asks it again
+    whenever the inbox queues something (HookAPI._long_poll, RT-6.17 step 7)."""
+    since, until = _wake_query(query)
     _, message, _ = await _last(client, query, body)
-    if int(until) <= time.time() or not turnend.listens(message, project=_project(client)):
+    if (until is not None and until <= time.time()) or not turnend.listens(message, project=_project(client)):
         return 200, turnend.no_wake()
     count = sum(r.waiting for r in await counted(client))
     waits = 1 if stall.waiting() else 0  # a stall event for the coordinator (RT-6.19)
@@ -791,9 +938,9 @@ async def wake(client: MattermostAdapter, query: Mapping[str, str], body: Mappin
     who = await client.get_me()
     uid = who.id
     own = await _own_posts(client, uid, body)
-    _, new = await posts(client, {"since": since}, body)
+    _, new = await posts(client, {"since": str(since)}, body)
     return 200, turnend.wake(new["posts"], own, me=uid,
-                             username=who.username, since_ms=int(since),
+                             username=who.username, since_ms=since,
                              coordinator=lease.crown_until(uid) > time.time(),
                              digest_sec=channel.digest_sec())
 
