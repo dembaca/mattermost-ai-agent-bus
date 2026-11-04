@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.2
+
+### Changed
+
+- **The registrar's slash command is now `/agent-ask-mode`** (was `/agent-mode`)
+  ([RT-6.25 step 8](docs/arc42/06-runtime-view.md#625-ask-routing-modes)).
+  It now carries the concept's name and shares the `agent-` prefix with
+  `/agent-token`. The bus's announcement and hint texts, the docs and the
+  skill texts name the new command. The operator renames the trigger word of
+  the existing command in Mattermost; the command keeps its token, so no
+  registrar config or redeploy is needed. The JWT type `mm-agent-mode+jwt` and
+  the `ask-mode direct|coordinator` post keyword are unchanged.
+
 ## 0.71.1
 
 ### Fixed

@@ -436,7 +436,7 @@ def test_static_budget():
     skill = _SKILL
     # + RT-6.16: posts not trusted; + RT-6.19: stall; + RT-6.21: departed, not here;
     # + RT-6.6: crown per home; + RT-6.25: questions to the 👑, escalated, never approved;
-    # + RT-6.25 step 8: the mode set with /agent-mode once keys are pinned
+    # + RT-6.25 step 8: the mode set with /agent-ask-mode once keys are pinned
     # + RT-6.14 step 9: scope="all" across homes (#141); + RT-6.26: a mandate's TASKs
     assert len((skill / "coordinator.md").read_text()) <= 6_300
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
