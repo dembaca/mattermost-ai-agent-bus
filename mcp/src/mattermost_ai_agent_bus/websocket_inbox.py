@@ -22,8 +22,8 @@ log = logging.getLogger(__name__)
 
 
 # Events the server raises itself, with no post behind them: a stall (RT-6.19),
-# a question passed on to the human (RT-6.25 step 6).
-OWN_EVENTS = ("stall", askroute.KIND)
+# a question passed on to the human (RT-6.25 step 6), a queued ask posted (RT-6.11).
+OWN_EVENTS = ("stall", askroute.KIND, askroute.POSTED)
 
 
 @dataclass

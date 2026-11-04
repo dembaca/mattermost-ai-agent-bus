@@ -21,7 +21,7 @@ from mcp.server.mcpserver import Image, MCPServer
 
 from . import (
     a2a, askroute, asks, attest, channel, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
-    profile, session_file, slim, stall, stats, tasks, unread,
+    profile, remind, session_file, slim, stall, stats, tasks, unread,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
 from .model import Post
@@ -459,7 +459,32 @@ async def _overview(client: MattermostAdapter, action: str) -> dict[str, Any]:
             by_human.setdefault(a.get("human") or "(none)", []).append(
                 {"ask": a["ask"], "channel": name,
                  **{k: v for k, v in a.items() if k not in ("ask", "human")}})
+    for a in await _queued_rows(client):  # this agent's own queue (RT-6.11 step 3)
+        if a.get("human") and not a.get("question"):
+            by_human.setdefault(a["human"], []).append({k: v for k, v in a.items() if k != "human"})
     return {"channels": rows, "asks_by_human": by_human}
+
+
+async def _queued_rows(client: MattermostAdapter) -> list[dict[str, Any]]:
+    """This agent's queued asks (RT-6.11 step 3) as rows of `asks`, marked
+    queued: only its own server knows them (they are in its state file, no
+    post yet). Not an item of the stall check, which reads posts. Fails open."""
+    try:
+        me = await client.get_me()
+    except Exception as exc:  # noqa: BLE001
+        log.info("queued asks not listed: %s", exc)
+        return []
+    out: list[dict[str, Any]] = []
+    seen: dict[str, int] = {}
+    for e in asks.queued(me.id):
+        seen[e["target"]] = n = seen.get(e["target"], 0) + 1
+        behind = (asks.blocking(me.id, e["target"]) or asks.open_to(me.id, e["target"]) or [""])[0]
+        row = {"queued": True, "by": me.username, "human": e["target"],
+               "question": e["target"] != e["who"].lower(),
+               "need": _headline(e["need"])[0][:tasks.TITLE], "position": n,
+               "behind": behind, "at": tasks._when(int(e["at"] * 1000))}
+        out.append({k: v for k, v in row.items() if v})
+    return out
 
 
 async def _note_client(ctx: Any, call_next: Any) -> Any:
@@ -903,11 +928,13 @@ async def _unasked(client: MattermostAdapter, text: str, uid: str) -> list[str]:
         return []
     named = [n for n in trusted
              if re.search(rf"(?<![\w.@/-]){re.escape(n)}(?![\w@/-]|\.\w)", text, re.I)]
-    return sorted(n for n in named if not (uid and asks.open_to(uid, n)))
+    # A queued ask counts: it is posted when the open one is settled (RT-6.11 step 2).
+    waiting = {x for e in asks.queued(uid) for x in (e["target"], e.get("who", "").lower())} if uid else set()
+    return sorted(n for n in named if not (uid and (asks.open_to(uid, n) or n.lower() in waiting)))
 
 
 def _with_unmentioned(result: dict[str, Any], removed: list[str],
-                      unasked: list[str] | None = None) -> dict[str, Any]:
+                      unasked: list[str] | None = None, word: str = "") -> dict[str, Any]:
     hints = []
     people = [n for n in removed if n not in _EVERYONE]
     if removed:
@@ -923,6 +950,12 @@ def _with_unmentioned(result: dict[str, Any], removed: list[str],
             f"you name {', '.join(unasked)} with no open ask of yours: if this waits on them "
             "(an approval, a decision), call ask_human now; the agent that carries out the "
             "action asks, the others link its ask")
+        if word in ("IDLE", "RESULT"):
+            # RT-6.11 step 3: the text that waits on a human without an ask is the gap.
+            result["warning"] = (
+                f"this {word} leaves {', '.join(unasked)} waiting in text only: nobody is "
+                "notified and nothing is open on the bus. Call ask_human now, or the human "
+                "never learns that you wait")
     if hints:
         result["hint"] = "; ".join(hints)
     return result
@@ -1143,7 +1176,8 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
     await _posted(client, post)
     await _as_guest(client, uid, guest, post)
     return await _claimed(client, post.root_id or root_id, message, uid, _with_unmentioned(
-        await slim.post(client, post), removed, await _unasked(client, message, uid)))
+        await slim.post(client, post), removed, await _unasked(client, message, uid),
+        a2a.word(message) or ""))
 
 
 @mcp.tool()
@@ -1197,7 +1231,8 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
     await _posted(client, post)
     await _as_guest(client, uid, guest, post)
     return await _claimed(client, post.root_id or root_id, message, uid, _with_unmentioned(
-        await slim.post(client, post), removed, await _unasked(client, message, uid)))
+        await slim.post(client, post), removed, await _unasked(client, message, uid),
+        a2a.word(message) or ""))
 
 
 # Task threads this bot holds: its next claim there needs no thread read.
@@ -1257,11 +1292,11 @@ async def ask_human(
     human. The ask is always a top-level post, its thread its own; root_id
     links it from that thread.
 
-    One question per ask, one ask at a time: several questions in need and
-    context are refused (the human would scroll between them, and an answer
-    often settles the next one), and while you have an open ask to that human
-    this refuses and names it — wait for the answer, or resolve_ask it if it is
-    obsolete. Ask the most important question first.
+    One question per ask: several in need and context are refused (an answer
+    often settles the next). A further ask while one to that human is open is
+    queued, up to 5 (queue_full above): {queued: true, position, behind}; it is
+    posted, routed then, when the open one is answered or resolved, and an
+    ask_posted event tells you. Ask the most important question first.
 
     The answer comes through wait_for_events: a reply, or {kind: reaction,
     emoji, answer: yes|no|null, choice: 1–4, ask} — 👍/✅ from a trusted human is a yes to
@@ -1299,25 +1334,37 @@ async def ask_human(
             "hint": "an approval has two alternatives, go / no-go (👍 and 👎): write answers as "
                     "'go / no-go', or ask a question with kind=question (and no action with "
                     "effect) for a choice among three or four"})
-    route = await _ask_route(client, me, effective)
-    coord = route.pop("to", "")
-    target = coord or who
-    pending = asks.open_to(me.id, target)
-    if pending:
-        # The human answers one question at a time, each in a word (RT-6.11);
-        # the 👑 too (RT-6.25 step 3).
-        hint = (f"{target} still has your ask {pending[0]} open: wait for the answer, "
-                "or resolve_ask it if it is obsolete, then ask the next one")
-        if asks.expired(me.id, pending[0]):
-            hint = (f"your ask {pending[0]} to {target} is more than 24 h old, a yes to it "
-                    "approves nothing: resolve_ask it, then ask again")
-        return _out("ask_human", {"posted": False, "open_ask": pending[0], "hint": hint})
     if _questions(f"{need} {context}") > 1:
         return _out("ask_human", {
             "posted": False,
             "hint": "one question per ask: ask the most important one now, wait for the "
                     "answer, then the next — it may settle the rest",
         })
+    route = await _ask_route(client, me, effective)
+    coord = route.pop("to", "")
+    target = coord or who
+    pending = asks.open_to(me.id, target)
+    if pending:
+        # The human answers one question at a time, each in a word (RT-6.11);
+        # the 👑 too (RT-6.25 step 3): a further ask waits its turn.
+        if asks.expired(me.id, pending[0]):
+            return _out("ask_human", {"posted": False, "open_ask": pending[0], "hint": (
+                f"your ask {pending[0]} to {target} is more than 24 h old, a yes to it "
+                "approves nothing: resolve_ask it, then ask again")})
+        behind = (asks.blocking(me.id, target) or pending)[0]
+        if len(asks.queued(me.id, target)) >= asks.QUEUE_MAX:
+            return _out("ask_human", {
+                "posted": False, "queue_full": True, "open_ask": behind,
+                "hint": f"{asks.QUEUE_MAX} asks to {target} already wait behind {behind}: "
+                        "wait for the answers, or resolve_ask what is obsolete"})
+        position = asks.enqueue(me.id, target, {
+            "need": need, "context": context, "recommendation": recommendation,
+            "decision": decision, "where": where, "blocking": blocking, "answers": answers,
+            "who": who, "link": root_id, "kind": effective})
+        return _out("ask_human", {
+            "posted": False, "queued": True, "position": position, "behind": behind,
+            "hint": f"{target} still has your ask {behind} open: this one is posted when it is "
+                    "answered or resolved; you get an ask_posted event"})
     head, rest = _headline(need)
     if rest:
         context = f"{rest} {context}"
@@ -1356,6 +1403,45 @@ async def _ask_route(client: MattermostAdapter, me: Any, kind: str) -> dict[str,
     if not coord:
         return out | {"route_note": "no 👑 reachable in your home: asked the human at once"}
     return out | {"route": "coordinator", "to": coord}
+
+
+async def _post_queued(client: MattermostAdapter, me: Any, key: str, *, ready: bool = False) -> str | None:
+    """RT-6.11 step 2: post the oldest ask queued for `key`, routed as of now
+    (RT-6.25), unless its target has an ask open that is not answered: for
+    `key` itself `ready` says the heartbeat found them answered. The new ask's id; the agent is told by an ask_posted event (fyi, wakes nobody)."""
+    queue = asks.queued(me.id, key)
+    if not queue:
+        return None
+    e = queue[0]
+    route = await _ask_route(client, me, e["kind"])
+    coord = route.pop("to", "")
+    target = coord or e["who"]
+    if (not ready or target != key) and asks.blocking(me.id, target):
+        return None
+    head, rest = _headline(e["need"])
+    out = await _post_ask(
+        client, me, to=target, head=head, need=e["need"],
+        context=f"{rest} {e['context']}" if rest else e["context"],
+        recommendation=e["recommendation"], decision=e["decision"], where=e["where"],
+        blocking=e["blocking"], answers=e["answers"], root_id=e.get("link", ""),
+        human=e["who"] if coord else "")
+    asks.dequeue(me.id, key)
+    left = len(asks.queued(me.id, key))
+    try:
+        _get_inbox().notify(askroute.POSTED, (
+            f"Your queued ask to {target} is posted (ask {out['ask']}): {head}. "
+            f"{left} more wait." if left else
+            f"Your queued ask to {target} is posted (ask {out['ask']}): {head}."))
+    except Exception as exc:  # noqa: BLE001 — the ask is out all the same
+        log.info("ask %s: agent not told: %s", out["ask"], exc)
+    return str(out["ask"])
+
+
+async def _advance_queue(client: MattermostAdapter, key: str) -> None:
+    await _post_queued(client, await client.get_me(), key, ready=True)
+
+
+remind.advance = _advance_queue  # type: ignore[assignment]
 
 
 async def _post_ask(client: MattermostAdapter, me: Any, *, to: str, head: str, need: str,
@@ -1450,7 +1536,13 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
     client = _get_client()
     me = await client.get_me()
     await client.add_reaction(post_id, "white_check_mark")
+    target = asks.whom_of(me.id, post_id)[0]
     was_open = asks.resolve(me.id, post_id)
+    if was_open and target and asks.queued(me.id, target):
+        try:  # RT-6.11 step 2: the next queued ask goes out at once
+            await _post_queued(client, me, target)
+        except Exception as exc:  # noqa: BLE001 — the heartbeat tries again
+            log.info("queued ask to %s not posted: %s", target, exc)
     if note:
         note, _ = await _unmention(client, note)
         stats.record("post", chars=len(note))
@@ -1493,8 +1585,9 @@ async def coordinator(action: str = "who", scope: str = "home") -> str:
                 trusted = {}
             # A foreign agent's ✅ keeps an ask open (RT-6.11, ADR-001).
             foreign = (await owners.foreign(client, tasks.ask_closers(posts))) if trusted else {}
-            return _out("coordinator", {"tasks": await _tasks(client, posts, names),
-                                        "asks": tasks.open_asks(posts, names, trusted, set(foreign))})
+            return _out("coordinator", {
+                "tasks": await _tasks(client, posts, names),
+                "asks": tasks.open_asks(posts, names, trusted, set(foreign)) + await _queued_rows(client)})
         rows = await lease.roster(client)
         return _out("coordinator", {"roster": tasks.roster(
             rows, posts, names, await _owners_of(client, rows))})

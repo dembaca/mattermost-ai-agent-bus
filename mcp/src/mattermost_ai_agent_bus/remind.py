@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,6 +41,8 @@ log = logging.getLogger(__name__)
 
 _TITLE = re.compile(r"\*\*(.+?)\*\*")
 TITLE = 90
+# Posts the next ask queued for a target (RT-6.11 step 2); the server sets it.
+advance: Callable[[ChatPort, str], Awaitable[None]] | None = None
 
 
 def _sec(name: str, default: int) -> int:
@@ -105,11 +108,13 @@ def _ago(sec: float) -> str:
     return f"{minutes} min" if minutes < 60 else f"{minutes // 60} h {minutes % 60} min".replace(" 0 min", "")
 
 
-def text(human: str, title: str, waited: float) -> str:
-    """The reminder: the human's mention, the ask's title, how long it waits."""
+def text(human: str, title: str, waited: float, more: int = 0) -> str:
+    """The reminder: the human's mention, the ask's title, how long it waits,
+    and how many more asks of the agent wait behind it (RT-6.11 step 2)."""
     head = f"**{title}**" if title else "your answer to the ask above"
+    tail = f" · {more} more waiting" if more else ""
     return (f"🔔 @{human} — reminder: {head} · waiting {_ago(waited)} · "
-            "👍/👎 on the ask, or reply here")
+            f"👍/👎 on the ask, or reply here{tail}")
 
 
 async def _answered(client: ChatPort, uid: str, pid: str, root: str,
@@ -143,6 +148,7 @@ async def tick(client: ChatPort, uid: str, now: float | None = None) -> float | 
         # under the same lock, so two servers of one bot do not both ask.
         routed = await askroute.tick(client, uid, now)
         due = await _tick(client, uid, now)
+        await _advance(client, uid)
         return min((d for d in (routed, due) if d is not None), default=None)
     finally:
         os.close(lock)
@@ -167,6 +173,30 @@ def _lock(uid: str) -> int | None:
     return fd
 
 
+async def _advance(client: ChatPort, uid: str) -> None:
+    """RT-6.11 step 2: for each target whose open asks are all answered (the
+    rule that stops the reminders), the next queued ask is posted. An expired
+    ask stays a block until the agent closes it. Never raises."""
+    if advance is None:
+        return
+    for key in asks.queued_targets(uid):
+        try:
+            for pid in asks.blocking(uid, key):
+                if asks.expired(uid, pid):
+                    break
+                human, root = asks.whom_of(uid, pid)
+                if pid in asks.questions(uid):  # a question to the 👑 (RT-6.25)
+                    done = await askroute._answered(client, uid, pid, human)
+                else:
+                    done, _ = await _answered(client, uid, pid, root, human)
+                if not done:
+                    break
+            else:
+                await advance(client, key)
+        except Exception as exc:  # noqa: BLE001 — the next tick tries again
+            log.info("queued ask to %s not posted: %s", key, exc)
+
+
 async def _tick(client: ChatPort, uid: str, now: float) -> float | None:
     open_asks = asks.waiting(uid)
     sent, stop = _read(uid)
@@ -189,7 +219,7 @@ async def _tick(client: ChatPort, uid: str, now: float) -> float | None:
             if done:
                 stop.add(pid)
                 continue
-            message = lease.with_crown(text(human, title, now - asked), uid,
+            message = lease.with_crown(text(human, title, now - asked, len(asks.queued(uid, human))), uid,
                                        here=await lease.crown_here(client, uid, root_id=root or pid))
             stats.record("post", chars=len(message))
             await client.post(message, root_id=root or pid, props=a2a.props(kind=a2a.REMINDER))

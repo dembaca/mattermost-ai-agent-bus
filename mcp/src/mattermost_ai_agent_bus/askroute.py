@@ -70,6 +70,8 @@ WAIT_ENV = "MM_ASK_ROUTE_WAIT_MIN"
 WAIT_MIN = 15
 # The server's own event when it asked the human instead of the 👑 (step 6).
 KIND = "ask_route"
+# The server's own fyi when it posted a queued ask (RT-6.11 step 2).
+POSTED = "ask_posted"
 # How far back a server looks for the newest switch without a stored one.
 READ_POSTS = 200
 ENV_SOURCE = "env"
