@@ -196,7 +196,7 @@ def ask_answered(ask: Post, thread: Collection[Post],
 
     for r in reactions:
         u = r.user_id
-        if asks.answer_of(r.emoji_name) and (by_human(u) or u in trusted):
+        if asks.is_answer(r.emoji_name) and (by_human(u) or u in trusted):
             return True
     root, at = ask.thread, ask.create_at
     return any(p.thread == root and p.create_at > at

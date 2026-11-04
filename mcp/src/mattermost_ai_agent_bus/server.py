@@ -1251,8 +1251,9 @@ async def ask_human(
     — what you would do and why; decision — the decision written out ("Install
     02dadca on hogan now, VM 399 stays up"), which a 👍 then approves as it
     stands. where: PR, thread or host; PRs and issues as markdown links, as in
-    posts. blocking: true if you cannot go on without it. answers: other
-    choices, if any ("go / not now"). human defaults to your responsible
+    posts. blocking: true if you cannot go on without it. answers: "A / B"
+    (👍 = A, 👎 = B; an approval is go / no-go) or, for a question, up to
+    four: 1️⃣ 2️⃣ 3️⃣ 4️⃣. human defaults to your responsible
     human. The ask is always a top-level post, its thread its own; root_id
     links it from that thread.
 
@@ -1263,7 +1264,7 @@ async def ask_human(
     obsolete. Ask the most important question first.
 
     The answer comes through wait_for_events: a reply, or {kind: reaction,
-    emoji, answer: yes|no|null, ask} — 👍/✅ from a trusted human is a yes to
+    emoji, answer: yes|no|null, choice: 1–4, ask} — 👍/✅ from a trusted human is a yes to
     exactly this ask, within 24 h of it: a later answer comes with
     expired: true and approves nothing; resolve_ask it and ask again. Until
     then the server reminds the human in its thread (RT-6.19). When it is
@@ -1290,6 +1291,14 @@ async def ask_human(
         return _refused("ask_human", "no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
     # RT-6.25: the server's floor decides the class, then the mode whom it goes to.
     effective, floored = askroute.classify(kind, need, decision, answers)
+    if effective == askroute.APPROVAL and len([a for a in answers.split("/") if a.strip()]) > 2:
+        # RT-6.11 step 1: an approval is go / no-go, 👍 and 👎; three or four
+        # alternatives with their keycaps are for a question.
+        return _out("ask_human", {
+            "posted": False,
+            "hint": "an approval has two alternatives, go / no-go (👍 and 👎): write answers as "
+                    "'go / no-go', or ask a question with kind=question (and no action with "
+                    "effect) for a choice among three or four"})
     route = await _ask_route(client, me, effective)
     coord = route.pop("to", "")
     target = coord or who
@@ -1367,10 +1376,9 @@ async def _post_ask(client: MattermostAdapter, me: Any, *, to: str, head: str, n
                          ("Decision", decision)):
         if value.strip():
             fields.append((title, " ".join(value.split()), False))
-    yes = "👍 = yes to the decision" if decision.strip() else "👍 = yes"
-    fields.append(("Answer", (f"{_one_line(answers)} — " if answers else "")
-                   + ("reply in this thread · the 👑's answer is advice, never approval" if human
-                      else f"{yes} · 👎 = no · or reply in this thread"), False))
+    fields.append(("Answer", ("reply in this thread · the 👑's answer is advice, never approval"
+                              if human else asks.answer_line(_one_line(answers),
+                                                             bool(decision.strip()))), False))
     props = (attachment_props(fields, fallback=f"{to}: {_one_line(need)}", urgent=blocking)
              | (a2a.props(kind=a2a.ASK) or {}))
     stats.record("post", chars=len(text))
@@ -1634,7 +1642,8 @@ def _human_task(event: Any, item: dict[str, Any]) -> bool:
 def _ask_answer(event: Any, item: dict[str, Any]) -> bool:
     """A trusted human's yes/no reaction on an open ask, within its 24 h (RT-6.11)."""
     return bool(event.kind == "reaction" and not event.gated and item.get("from_trusted_human")
-                and item.get("answer") and not item.get("expired"))
+                and (item.get("answer") or item.get("choice"))
+                and not item.get("expired"))
 
 
 async def _note_delivered(events: list[Any], items: list[dict[str, Any]]) -> None:
@@ -1780,6 +1789,8 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
             # and only for this ask.
             item |= {"ask": e.raw["ask"], "emoji": e.raw["emoji"],
                      "answer": asks.answer_of(e.raw["emoji"])}
+            if (choice := asks.choice_of(e.raw["emoji"])) is not None:
+                item["choice"] = choice  # RT-6.11: the keycap of one alternative
         # RT-6.11: a trusted human's reaction on an ask or reply in its thread
         # more than 24 h after it approves nothing; the agent asks again. Others
         # approve nothing anyway: no flag on every late post in the thread.
@@ -1794,7 +1805,8 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         # RT-6.9: the first answer by a trusted human ends the ask's wait. A
         # remark emoji answers nothing; the file remembers, so a second
         # reaction or a restarted server counts nothing again.
-        if uid and root and cls == gate.TRUSTED and (e.kind != "reaction" or item.get("answer")):
+        if uid and root and cls == gate.TRUSTED and (
+                e.kind != "reaction" or item.get("answer") or item.get("choice")):
             got = asks.answered(uid, root, e.post.create_at / 1000,
                                 thread=e.kind != "reaction")
             if got:

@@ -471,7 +471,7 @@ async def _answered(client: ChatPort, uid: str, pid: str, coord: str) -> bool:
     def by(user: str) -> bool:
         return user in trusted or (bool(coord) and names.get(user, "").lower() == coord.lower())
 
-    if any(asks.answer_of(r.emoji_name) and by(r.user_id) for r in reactions):
+    if any(asks.is_answer(r.emoji_name) and by(r.user_id) for r in reactions):
         return True
     return any(p.id != pid and p.create_at > ask.create_at and not p.delete_at and by(p.user_id)
                for p in posts)
