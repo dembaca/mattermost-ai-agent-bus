@@ -31,6 +31,12 @@ before 0.5.0 are described in the git history.
 - Not yet: threshold posts, `BLOCKED` and the blocked state (ADR-008 step 4),
   `/agent-status`, other runtimes.
 
+### Fixed
+
+- **`coordinator.md` of 0.71.4**: the follow-up of that release (`skills` back in
+  the list of what an agent *can* do, the full "a risk, a blocker, a correction"
+  list) missed its merge; it is in here, with the budget at 6,500 characters.
+
 ## 0.71.5
 
 ### Changed
