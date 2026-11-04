@@ -217,3 +217,93 @@ async def test_one_channel_routes_as_before(home):
     _crown(home)
     assert await lease.routes(home) == {WORK}
     assert await lease.coordinates_in(home, BOT, WORK)
+
+
+# --- the crown only for peers (RT-6.6 step 2, ADR-007 amendment step 4) -----------------
+
+MINE = "for @dembaca · trusts @dembaca · via agent-registrar"
+CAROL = "for @carol · trusts @carol · via agent-registrar"
+UNBOUND = "Registered via agent-registrar"
+FAR = "f" * 26
+
+
+@pytest.fixture
+def owned(home):
+    """The session trusts dembaca and its own bot is bound to dembaca."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: MINE}
+    return home
+
+
+async def _ticks(home) -> bool:
+    await lease.command(home, "tick")
+    return lease.crown_held(BOT)
+
+
+async def test_a_foreign_oldest_agent_is_skipped_and_the_oldest_peer_claims(owned):
+    """RT-6.6 step 2: the foreign agent is never the oldest for this server."""
+    owned.agent(FAR, "agent-far", 500)
+    owned.descriptions[FAR] = CAROL
+    assert not await _ticks(owned)  # a foreign owner circle is reachable: nobody claims here
+    owned.agent(FAR, "agent-far", 500, "zzz")  # idle: not reachable
+    assert await _ticks(owned)
+
+
+async def test_an_unbound_agent_is_skipped_for_a_bound_server(owned):
+    """RT-6.6 step 2: the unbound oldest agent (case 3 of ADR-007) is foreign;
+    the bound younger one claims."""
+    owned.agent(OLDER, "agent-unbound", 1000)
+    owned.descriptions[OLDER] = UNBOUND
+    assert await _ticks(owned)
+
+
+async def test_an_unbound_server_does_not_claim_beside_a_bound_agent(home):
+    """RT-6.6 step 2: an unbound bot never claims while an agent with an owner is reachable."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: UNBOUND, YOUNGER: MINE}
+    home.agent(YOUNGER, "agent-young", 3000)
+    assert not await _ticks(home)
+
+
+async def test_an_unbound_server_claims_where_no_agent_has_an_owner(home):
+    """RT-6.6 step 2, parity: no reachable agent has an owner: everyone is a
+    peer, the oldest reachable claims as before."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: UNBOUND, YOUNGER: UNBOUND}
+    home.agent(YOUNGER, "agent-young", 3000)
+    assert await _ticks(home)
+    home2_older = "q" * 26
+    home.agent(home2_older, "agent-first", 100)
+    home.descriptions[home2_older] = UNBOUND
+    lease._save_coord(BOT, 0, 0, 0)
+    assert not await _ticks(home)  # a younger agent does not claim
+
+
+async def test_a_bound_server_that_is_no_peer_of_a_reachable_bound_agent_does_not_claim(owned):
+    """RT-6.6 step 2: circles foreign to each other: nobody is crowned on its own."""
+    owned.agent(YOUNGER, "agent-young", 3000)
+    owned.descriptions[YOUNGER] = CAROL
+    assert not await _ticks(owned)
+
+
+async def test_a_live_foreign_crown_keeps_anyone_from_claiming_a_second(owned):
+    """RT-6.6 step 2: one crown per home, whoever wears it."""
+    owned.agent(FAR, "agent-far", 500, "crown", "coordinator · working · x · ~agents")
+    owned.descriptions[FAR] = CAROL
+    assert not await _ticks(owned)
+
+
+async def test_an_explicit_take_is_allowed_beside_a_foreign_agent(owned):
+    """RT-6.6 step 4: `take` stays."""
+    owned.agent(FAR, "agent-far", 500)
+    owned.descriptions[FAR] = CAROL
+    assert await lease.command(owned, "take") == "taken"
+    assert lease.crown_held(BOT)
+
+
+async def test_unreadable_owners_claim_nothing(owned, monkeypatch):
+    """Fails closed: a failed description read claims nothing."""
+    async def boom(client, user_id):
+        raise RuntimeError("down")
+    monkeypatch.setattr(lease.owners, "read", boom)
+    assert not await _ticks(owned)

@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import channel, session_file, usage
+from . import channel, owners, session_file, usage
 from .model import ChannelUser, RosterEntry
 
 if TYPE_CHECKING:
@@ -539,6 +539,35 @@ async def _crown_came() -> None:
             log.info("held posts not re-checked for the crown: %s", exc)
 
 
+async def _elected(client: ChatPort, uid: str, rows: list[dict[str, Any]]) -> bool:
+    """RT-6.6 step 2 (ADR-007, the crown only for peers): this agent is the
+    oldest reachable one among its peers, and may claim. The reachable agents
+    of the home that have an owner (owners.read) are the ones it must be a
+    peer of; the others (unbound, not readable) are foreign to them, so they
+    never stand in the election while one with an owner is reachable. Where
+    no agent has an owner, everyone is a peer: the oldest reachable claims.
+    An unbound bot never claims beside an agent with an owner, a bound one
+    never beside an owner's circle foreign to it. Fails closed: a failed
+    read claims nothing."""
+    reachable = [r for r in rows if r["reachable"]]
+    try:
+        agents = {r["id"]: await owners.read(client, r["id"]) for r in reachable}
+        names, _ = await owners.mine(client)
+    except Exception as exc:  # noqa: BLE001 — no claim; the next tick tries again
+        log.info("crown: owners not read, no claim: %s", exc)
+        return False
+    owned = {i: a for i, a in agents.items() if a is not None and a.owner}
+    if not owned:
+        return bool(reachable) and reachable[0]["id"] == uid
+    if not names or uid in agents and uid not in owned:
+        return False  # my bot is unbound: foreign to every agent with an owner
+    if any(not owners.is_peer(a, names) for i, a in owned.items() if i != uid):
+        log.info("crown: not elected, the home has an agent of a foreign owner circle")
+        return False
+    peers = [r["id"] for r in reachable if r["id"] in owned]
+    return bool(peers) and peers[0] == uid
+
+
 async def _command(client: ChatPort, action: str, passed: list[bool] | None = None) -> str:
     uid = await _user_id(client)
     if not _UID.fullmatch(uid):
@@ -589,8 +618,8 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
             await _render(client)
     elif not holding and not others and yield_until <= now:
         me_reachable = any(r["id"] == uid and r["reachable"] for r in rows)
-        oldest = next((r["id"] for r in rows if r["reachable"]), "")
-        if me_reachable and (pending == 1 or oldest == uid):
+        # An explicit take (pending) is allowed; the election only among peers.
+        if me_reachable and (pending == 1 or await _elected(client, uid, rows)):
             await take_now()
     if cid not in _header_seen and _coord(uid).get("CROWN_UNTIL", 0) > now:
         # Once per process while holding: an upgrade finds an older header (step 7).
