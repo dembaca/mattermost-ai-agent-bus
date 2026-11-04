@@ -5,6 +5,19 @@ before 0.5.0 are described in the git history.
 
 ## 0.71.7
 
+### Fixed
+
+- **A question never goes to a foreign 👑**
+  ([RT-6.25 steps 3, 5 and 6](docs/arc42/06-runtime-view.md#625-ask-routing-modes)).
+  In ask mode `coordinator` the question of a worker went to the home's 👑
+  whoever it was, so a foreign or unbound bot that held the crown took the
+  question, and its answer closed it before the human saw it. Now only a peer
+  of this session is asked (`owners.peer`, the check of the mandate): else the
+  human at once, with a `route_note`. The 👑's answer settles a question only
+  while it is a peer, also if the crown moved after the question.
+- `adapters/corral.md`: the example secret is the enrollment token from
+  `/agent-token create`, the shared secret is gone.
+=======
 ### Added
 
 - **A long poll for `GET /v1/wake`**

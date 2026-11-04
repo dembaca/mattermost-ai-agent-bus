@@ -12,6 +12,8 @@ from mattermost_ai_agent_bus import askroute, asks, channel, lease, remind, serv
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
+from mattermost_ai_agent_bus.model import ChannelUser
+
 from fakes import WORK, FakeChat
 
 BOT = "b" * 26      # the asking agent
@@ -23,6 +25,8 @@ ASK = "a" * 26
 SWITCH = "s" * 26
 WAIT = 15 * 60
 
+MINE = "for @dembaca · trusts @dembaca · via agent-registrar"
+
 
 class _Client(FakeChat):
     """FakeChat with the adapter's add_reaction the fallback calls."""
@@ -33,6 +37,8 @@ class _Client(FakeChat):
                                 AGENT: "agent-x", BOT: "agent-worker"},
                          agents={COORD, AGENT, BOT}, post_id=ASK, **kw)
         self.reacted = []
+        self.descriptions |= {BOT: MINE, COORD: MINE}  # the 👑 is a peer (ADR-001)
+        self.bots["agent-coord"] = ChannelUser(COORD, "agent-coord", create_at=1)
 
     async def add_reaction(self, post_id, emoji):
         self.reacted.append((post_id, emoji))
@@ -518,3 +524,78 @@ async def test_the_fallback_asks_the_human_linked_and_closes_the_question(monkey
     item = (await server._event_items([event]))[0]
     assert item["kind"] == "ask_route" and item["from_agent"] is False
     assert item["from_trusted_human"] is False
+
+
+# --- the 👑 is a peer of this session (RT-6.25 steps 3, 5, 6; ADR-001) -------------------
+
+FOREIGN = "for @carol · trusts @carol · via agent-registrar"
+UNBOUND = "Registered via agent-registrar"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("description", [FOREIGN, UNBOUND, None],
+                         ids=["foreign", "unbound", "not readable"])
+async def test_a_question_never_goes_to_a_crown_that_is_no_peer(monkeypatch, description):
+    """RT-6.25 step 3, security: a foreign, unbound or unreadable 👑 is no
+    one to ask; the question goes to the human at once, and says why."""
+    c = _Client()
+    if description is None:
+        del c.descriptions[COORD]
+    else:
+        c.descriptions[COORD] = description
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need="A or B?", kind="question"))
+    assert c.posted[0]["message"] == "🙋 @dembaca — **A or B?**"
+    assert out["route"] == "human" and "to" not in out
+    assert out["route_note"] == ("the home's 👑 agent-coord is not a peer of this session: "
+                                 "asked the human at once")
+    assert asks.open_to(BOT, "agent-coord") == [] and asks.questions(BOT) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_crown_that_is_not_a_bot_found_is_no_peer(monkeypatch):
+    """RT-6.25 step 3: the holder's account cannot be found: the human."""
+    c = _Client()
+    c.bots.clear()
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need="A or B?", kind="question"))
+    assert out["route"] == "human" and "not a peer" in out["route_note"]
+
+
+@pytest.mark.asyncio
+async def test_without_the_owner_split_no_crown_is_a_peer(monkeypatch):
+    """RT-6.25 step 3: my own bot unbound (the split off): no 👑 can be shown
+    to be a peer."""
+    c = _Client()
+    c.descriptions[BOT] = UNBOUND
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need="A or B?", kind="question"))
+    assert out["route"] == "human" and "not a peer" in out["route_note"]
+
+
+@pytest.mark.asyncio
+async def test_a_peer_crown_is_asked_as_before(monkeypatch):
+    c = _Client()
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need="A or B?", kind="question"))
+    assert out["route"] == "coordinator"
+    assert c.posted[0]["message"].startswith("❓ @agent-coord")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["reply", "reaction"])
+async def test_a_foreign_crowns_answer_closes_nothing(monkeypatch, kind):
+    """RT-6.25 step 6, security: the crown moved to a foreign agent after the
+    question: its reply or 👍 does not settle it, the human is asked at the
+    end of the wait; a trusted human's still does."""
+    c = _Client()
+    c.descriptions[COORD] = FOREIGN
+    called = _fallback(monkeypatch)
+    at = _asked(c)
+    if kind == "reply":
+        c.posts.append(post_of({"id": "r" * 26, "root_id": ASK, "user_id": COORD,
+                                "channel_id": WORK, "message": "B", "create_at": 2000}))
+    else:
+        c.reacts = {ASK: [{"user_id": COORD, "post_id": ASK, "emoji_name": "+1"}]}
+    await askroute.tick(c, BOT, at + WAIT)
+    assert called == [(ASK, "dembaca", "agent-coord")]
