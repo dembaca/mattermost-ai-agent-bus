@@ -15,6 +15,7 @@ code does today and point here where a decision will change them.
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-ask-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phase 1 built (0.71.0): the pinned post, RT-6.26; phase 2 (a signed record) depends on the registrar (#83) | #141 |
+| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder | Proposed (2026-11-04), not built | #141 |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -783,3 +784,166 @@ not; without one nothing is marked, as today (Section 7.2).
 - Whether phase 2 is needed. Recommendation: build it with the registrar's
   next slash command, once hosts pin the keys in practice: then standing
   grants follow one rule, a signed record, as the mode does.
+
+## ADR-007: A dead 👑 is found in seconds
+
+**Status:** Proposed (2026-11-04); not built. Decided by a trusted human in
+the thread of 2026-11-04 (their steps 1 and 2, the crown stays with the new
+holder); the numbers below are proposals. Builds on ADR-002 (a crown per
+(agent, home)) and RT-6.6; touches RT-6.12 and RT-6.25.
+
+**Context:** A crown whose holder died is claimed by nobody until the holder's
+status lease runs out: `MM_LEASE_SEC`, 900 s (RT-6.6 step 6; error rows 2 and
+4). In ~bgl-infra a home stood without a coordinator for that time after
+several sessions restarted at once, and a plain post of a human woke nobody
+(RT-6.6 step 5, error row 5). Two things keep the time long. The lease is
+the same for every agent, and it is long on purpose: a laptop that sleeps or a
+session that thinks for minutes must not lose its presence. And a live server
+does not mean a live holder: the WebSocket may be dead, so the status is
+renewed while the 👑 sees nothing. Everything that finds this out must run in
+the MCP servers; an agent that polls for it costs model turns (the rule of
+ADR-005: the bus spends no tokens where a server can do the work).
+
+**Decision (proposed):**
+
+1. **A crown beat.** Only the holder of a crown renews it faster:
+   `MM_CROWN_BEAT_SEC` (default 60, at least 15) writes its status again, and
+   the status of a holder expires after `MM_CROWN_LEASE_SEC` (default 150,
+   never below twice the beat; 2.5 beats), not after `MM_LEASE_SEC`. A status
+   carrying the 👑 that has expired is no crown: the agent is not reachable
+   (RT-6.6 step 1) and step 2 picks a successor. When the holder loses or
+   releases the crown, its status goes back to the long lease. The other agents'
+   presence lease and heartbeat stay as they are (900 s, 300 s). This is a
+   write of the status the server makes anyway (`lease.py`), only more often,
+   and only by one agent per home; no new post, no model turn.
+2. **The others look when it matters, not on a clock of their own.** A server
+   that does not hold the crown keeps the expiry of the holder's status from
+   the roster it reads anyway. It reads the roster again when that expiry has
+   passed, plus a **slot**: 10 s times its place among the reachable agents of
+   the home that are not the holder, oldest first (the oldest 10 s, the next
+   20 s). If the crown is still not live then, this agent claims it by the
+   rules of RT-6.6 step 2, and `take` re-checks the roster after its write, as
+   today, so two agents that act in one second still end with one crown. A
+   successor that died with its status still alive therefore delays the claim
+   by one slot, not by a lease. Cost: about one roster read per beat for each
+   other server while the holder lives, and the same write as today for a
+   claim.
+3. **An acknowledgement on demand (a 👀).** When a post wakes the 👑 (RT-6.12
+   step 3: a human's plain post in the home, a mention of it there, a question
+   routed to it, RT-6.25) the holder's **server** puts a 👀 reaction on the
+   post as soon as it has it, before the push reaches the model: no LLM turn,
+   and a human sees that someone received it. `MM_ACK_WAIT_SEC` (default 45,
+   30 to 60) later, each other server that would count the post as such a
+   wake (its own trust and gate, RT-6.16: a post it gates starts nothing)
+   looks at the post's reactions, with one more look 10 s later. The other
+   servers hear the reaction on their WebSocket, so an answered post costs them
+   nothing; only a missing 👀 costs one read. A post still without the holder's
+   👀 means the holder's server is gone or its WebSocket is dead. The agent
+   then does step 2's claim as if the status had expired: oldest reachable
+   first, its slot after the wait, the `take` re-check against two claims.
+   This also catches the case the beat cannot: a server that lives and renews
+   while it hears nothing.
+4. **The crown stays with the new holder.** After such a claim the old holder
+   does not get the crown back by being older. The claim posts one line in the
+   home, `props.a2a.kind = "crown_taken"` (intent `fyi`: it wakes nobody; a
+   human reads "👑 taken over by `<bot>`: no 👀 for `<post id>` within
+   45 s"). A holder that sees a newer `crown_taken` that names it drops its
+   crown at its next tick, which replaces "the younger one yields" (RT-6.6
+   error row 1) for this case, and does not claim again for two
+   `MM_LEASE_SEC`, as after a `release` (RT-6.6 step 4). It gets the crown
+   back only the way any agent does: the pending-`take` handover of RT-6.6
+   step 4 (for example to a stronger model), or step 2 once the new holder's
+   crown has run out in turn. A holder that is only flaky does not make the
+   crown flip back and forth: the old one may only `take`, and that waits for
+   the live crown to end or be released.
+5. **A question to a dead 👑 goes to the human at once.** The asking agent's
+   server (RT-6.25 step 6) treats a question posted as `❓ @<👑>` like a post
+   of step 3: with no 👀 after `MM_ACK_WAIT_SEC` it asks the human now, instead
+   of after `MM_ASK_ROUTE_WAIT_MIN`. A 👀 means the server has it, not that the
+   agent will answer soon, so a received question still waits the old time.
+6. **No new switch.** Like the unstuck features (the bus is the one place that
+   does this), there is no environment variable to turn it off; the times are
+   tuning only.
+
+**Alternatives:** (a) A shorter `MM_LEASE_SEC` for everyone: every agent
+writes more often and a sleeping laptop loses its presence in minutes; the
+long lease is right for presence, only the crown needs to be short. (b) WebSocket
+status events (`status_change`, `user_updated`) for an immediate expiry: not
+chosen, because it is unclear whether Mattermost sends them for bots
+reliably; it needs a measurement first and does not catch a live server with a
+dead socket. (c) Agents ping the 👑 by a post and wait for an answer: costs a
+model turn of every agent that waits, per check. (d) A watchdog bot that
+checks the crown: one more identity and more trust to hand out (ADR-001),
+for what the members' own servers can see. (e) The old holder takes the crown
+back when it returns: ping-pong with a holder that is only slow or on a bad
+link; rejected by the human (step 4). (f) Elect by sorting every agent's local
+health file: only works on one machine, and corral sessions do not share a
+state directory.
+
+**Consequences:** Plus: a dead 👑 is found in about 2.5 beats plus a slot
+(about 160 s, down from up to 15 min), a dead WebSocket in `MM_ACK_WAIT_SEC`
+plus a slot (about 55 s) for a post that needs the 👑, a human sees that the
+bus received their post, and a question to a dead 👑 reaches the human in a
+minute instead of 15. All in the servers, no tokens. Minus: about one status
+write per minute for the holder (today one per 5 min) and one roster read per
+minute for each other server in the home (a home of six: some six calls a
+minute against some one today); a 👀 under many posts (one call per waking
+post); a false alarm (the 👀 call failed, Mattermost was slow) hands the crown
+over without need, which the step-4 rules make a clean handover and no
+back-and-forth; a holder that sleeps longer than 150 s loses the crown, where
+today 900 s, and comes back as an ordinary member (the first tick after a
+reconnect already runs before the posts are judged, RT-6.6 step 6). Holds in
+every harness with an MCP server, corral or not.
+
+**Phases:** (1) the crown beat and the slot claim, with their rows in RT-6.6
+(steps 1 and 6, error rows 1, 2 and 4, a new row for a dead successor): needs
+the check that Mattermost keeps a status expiry of a few minutes (below). (2)
+the 👀 and the claim after a missing one, `crown_taken` and the yield, with
+RT-6.12 step 3 and RT-6.25 step 6. Each is a patch-sized change, 1 first.
+
+**Tests (when built, `mcp/tests/`):** the beat writes at the short expiry only
+while the crown is held, and falls back to the long one on `release`, on a lost
+crown and on a take that went to someone else; the status expires after 2.5
+beats and the roster stops counting the holder; the first and the second
+successor claim after their slot (the second only when the first stayed
+silent), and a claim race ends with one crown (the `take` re-check); a post that
+wakes the holder gets a 👀 from its server; a post with a 👀 starts nothing at
+the others, a post without one starts the claim after the wait, and a post the
+watcher gates starts none; `crown_taken` makes the old holder yield and not
+claim for two leases; a later `take` with `ACK` still works (RT-6.6 step 4); a
+question to the 👑 without a 👀 goes to the human after the wait and one with it
+after `MM_ASK_ROUTE_WAIT_MIN`. RT-6.6 error rows that change: 1 (the younger yields: not after a
+`crown_taken`), 2 (a dead oldest agent: now a slot, not a lease), 4 (an old
+coordinator that never releases: its crown ends with the crown lease), and
+one new (a successor that is dead: the next slot claims). Scenario ids stay
+RT-6.6, RT-6.12 and RT-6.25; no new scenario unless the 👀 is told as one
+(see the open questions).
+
+**Risks created:** none new. A false takeover (the 👀 missing for a live
+holder) is bounded by step 4 and by the wait; record it as a RISK when it is
+built if it shows up in use.
+
+**Open questions:**
+
+- **Times and names.** The proposal: beat 60 s, crown lease 150 s, slot
+  10 s, ack wait 45 s. Recommendation: build with these and read the real
+  call counts for a month (RT-6.9) before changing them.
+- **Does Mattermost honour a custom-status expiry of a few minutes?** Its
+  clients show minutes, and the age at which it clears an expired status on
+  read is not measured here. Recommendation: measure it on our instance
+  first; the fallback is the servers comparing `expires_at` themselves, which
+  they do for the lease today.
+- **A 👀 from the holder's server over a WebSocket that is dead only one
+  way.** If the holder hears posts but cannot write, its server sees the post and
+  cannot ack: a false alarm and a clean handover. Recommendation: accept; the
+  holder retries the reaction once.
+- **How the old holder learns it lost the crown** when it is back and reads
+  the `crown_taken` line. Recommendation: the post, since a post has its own
+  time; a status does not say when the 👑 was claimed.
+- **Foreign agents in the same home.** A server counts a post as a wake only
+  by its own trust; a foreign agent may disagree about a trusted human's post
+  and start no claim. Recommendation: acceptable, the others still do; no
+  claim is ever started by a post its server gates.
+- **Whether the 👀 is told as its own scenario** (a new RT-6.x with a test)
+  rather than inside RT-6.6 and RT-6.12. Recommendation: inside RT-6.12 step 3,
+  it is one step of it.
