@@ -45,9 +45,11 @@ def reset() -> None:
 
 
 def _percent(value: Any) -> float | None:
-    if type(value) not in (int, float) or not 0 <= value <= 100:  # also not NaN
+    """A percentage 0 to 100; above 100 it is 100 (a window at its limit may
+    say 100.4), never dropped; below 0, NaN and no number are none."""
+    if type(value) not in (int, float) or not value >= 0:  # also not NaN
         return None
-    return float(round(value, 1))
+    return float(round(min(value, 100), 1))
 
 
 def _epoch(value: Any, now: float) -> int | None:
@@ -75,6 +77,9 @@ def parse(body: Any, now: float) -> dict[str, Any]:
         raw = body.get(name)
         if not isinstance(raw, dict):
             continue
+        end = raw.get("resets_at")
+        if isinstance(end, (int, float)) and not isinstance(end, bool) and end <= now:
+            continue  # the window is over, however long ago: its `used` is old
         window: dict[str, Any] = {}
         used = _percent(raw.get("used"))
         if used is not None:

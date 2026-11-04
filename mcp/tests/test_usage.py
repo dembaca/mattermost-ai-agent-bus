@@ -50,7 +50,9 @@ def test_a_report_keeps_the_valid_numbers_only():
         "ctx": 62.46, "ctx_size": 200000,
         "five_hour": {"used": 40, "resets_at": NOW + 600},
         "seven_day": {"used": 140, "resets_at": "soon"}}, NOW)
-    assert got == {"ctx": 62.5, "ctx_size": 200000, "five_hour": {"used": 40.0, "resets_at": NOW + 600}}
+    # A value above 100 is 100, not dropped: `5h` must not vanish at the limit.
+    assert got == {"ctx": 62.5, "ctx_size": 200000, "five_hour": {"used": 40.0, "resets_at": NOW + 600},
+                   "seven_day": {"used": 100.0}}
     bad = usage.parse({"ctx": -1, "ctx_size": 0, "five_hour": {"used": True, "resets_at": 5},
                        "seven_day": "x"}, NOW)
     assert bad == {}
@@ -290,21 +292,83 @@ async def test_the_roster_reads_the_props_not_the_status_text():
 
     future = int(time.time()) + 3600
     c = FakeChat()
-    c.usages = {UID: _prop(ctx=62.0, five_hour={"used": 40.0, "resets_at": future},
-                           seven_day={"used": 12.5, "resets_at": future + 9999}),
-                OTHER: "not json"}
-    rows = _rows("agent-a", "agent-b", "agent-c")
+    # The first row is this agent itself (its own numbers are in memory, none here).
+    c.usages = {OTHER: _prop(ctx=62.0, five_hour={"used": 40.0, "resets_at": future},
+                             seven_day={"used": 12.5, "resets_at": future + 9999}),
+                THIRD: "not json"}
+    rows = _rows("agent-me", "agent-a", "agent-b")
     got = await server._usage_of(c, rows)
     assert got == {"agent-a": {"ctx": 62.0, "limit_5h": {"used": 40.0, "resets_at": future},
                                "limit_7d": {"used": 12.5, "resets_at": future + 9999}}}
     out = tasks.roster(rows, [], {}, None, got)
-    assert out[0]["ctx"] == 62.0 and out[0]["limit_5h"]["used"] == 40.0
-    assert "ctx" not in out[1] and "limit_5h" not in out[2] and "limit_shared" not in out[0]
+    assert out[1]["ctx"] == 62.0 and out[1]["limit_5h"]["used"] == 40.0
+    assert "ctx" not in out[0] and "limit_5h" not in out[2] and "limit_shared" not in out[1]
     assert tasks.roster(rows, [], {}) == [{"agent": n, "status": "working"} for n in
-                                          ("agent-a", "agent-b", "agent-c")]
+                                          ("agent-me", "agent-a", "agent-b")]
     # A window that has reset since is not shown.
-    c.usages = {UID: _prop(ctx=0, five_hour={"used": 99.0, "resets_at": int(time.time()) - 5})}
+    c.usages = {OTHER: _prop(ctx=0, five_hour={"used": 99.0, "resets_at": int(time.time()) - 5})}
     assert await server._usage_of(c, rows) == {"agent-a": {"ctx": 0.0}}
+
+
+def test_a_window_that_is_over_is_dropped_however_long_ago():
+    """Review of #161: resets_at older than a day was dropped by itself and left
+    `used` standing; the whole window goes, in a report and from the props."""
+    old = NOW - 3 * 86400
+    assert usage.parse({"five_hour": {"used": 95, "resets_at": old}, "ctx": 5}, NOW) == {"ctx": 5.0}
+    raw = json.dumps({"ctx": 5, "five_hour": {"used": 95, "resets_at": old},
+                      "seven_day": {"used": 3, "resets_at": NOW + 600}})
+    assert usage.from_props(raw, NOW) == {"ctx": 5.0, "limit_7d": {"used": 3.0, "resets_at": NOW + 600}}
+    assert usage.parse({"five_hour": {"used": 100.4}}, NOW) == {"five_hour": {"used": 100.0}}
+
+
+async def test_the_own_row_comes_from_memory_and_the_others_from_one_lookup():
+    """Review of #161: no lookup for the agent's own row."""
+    from mattermost_ai_agent_bus import server
+
+    usage.record({"ctx": 11}, now=time.time())
+    c = FakeChat()
+    c.usages = {OTHER: _prop(ctx=22.0)}
+    looked: list[str] = []
+    orig = c.agent_usage
+
+    async def spy(user_id):
+        looked.append(user_id)
+        return await orig(user_id)
+
+    c.agent_usage = spy
+    got = await server._usage_of(c, _rows("agent-a", "agent-b"))
+    assert got["agent-a"]["ctx"] == 11.0 and got["agent-b"]["ctx"] == 22.0
+    assert looked == [OTHER]
+
+
+async def test_the_description_read_carries_the_usage_so_the_roster_needs_one_get():
+    """Review of #161: _owners_of and _usage_of read one user object per agent."""
+    reads: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == f"/api/v4/users/{OTHER}" and req.method == "GET":
+            reads.append(req.url.path)
+            return httpx.Response(200, json={"id": OTHER, "username": "agent-b", "is_bot": True,
+                                             "bot_description": "for @dembaca",
+                                             "props": {"agent_usage": '{"ctx":7.0}'}})
+        return httpx.Response(404)
+
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    assert await c.bot_description(OTHER) == "for @dembaca"
+    assert await c.agent_usage(OTHER) == '{"ctx":7.0}'
+    assert len(reads) == 1
+
+
+def test_one_subscription_needs_the_same_owner_too():
+    """Review of #161: a reset time may be rounded; agents of different humans are not one."""
+    win = {"used": 30.0, "resets_at": 1_800_003_600}
+    rows = _rows("agent-a", "agent-b", "agent-c")
+    got = {n: {"limit_5h": win} for n in ("agent-a", "agent-b", "agent-c")}
+    owners = {"agent-a": {"owner": "dembaca"}, "agent-b": {"owner": "dembaca"}, "agent-c": {"owner": "other"}}
+    out = tasks.roster(rows, [], {}, owners, got)
+    assert out[0]["limit_shared"] == out[1]["limit_shared"] == {"group": 1, "agents": 2}
+    assert "limit_shared" not in out[2]
 
 
 def test_one_five_hour_reset_is_one_subscription():

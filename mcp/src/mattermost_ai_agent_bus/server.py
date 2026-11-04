@@ -416,9 +416,12 @@ async def _usage_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, dic
     its props (ADR-008 step 3), not read from its status text. An agent
     without them, or one that cannot be read, gives nothing."""
     out: dict[str, dict[str, Any]] = {}
+    own = (await client.get_me()).id
     for r in rows:
         try:
-            got = usage.from_props(await client.agent_usage(r.user_id)) if r.user_id else {}
+            # This agent's own row is what it holds in memory, no lookup.
+            got = (usage.from_props(usage.props_value()) if r.user_id == own
+                   else usage.from_props(await client.agent_usage(r.user_id)) if r.user_id else {})
         except Exception as exc:  # noqa: BLE001 — the roster without its numbers
             log.info("roster without usage of %s: %s", r.username, exc)
             continue

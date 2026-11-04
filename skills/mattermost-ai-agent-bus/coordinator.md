@@ -18,8 +18,8 @@ itself: SKILL.md (*Coordinator*).
   `coordinator("roster")` / `("tasks")` give the overview, not history;
   with `scope="all"` for every channel you are in, and each human's asks.
 - **Your crown is your home's;** other channels have their own. A roster row
-  `crown: 👑 of ~<home>` is a guest coordinating that home: mention it for
-  its work.
+  `crown: 👑 of ~<home>` is a guest that coordinates that home: mention it
+  for work that belongs there.
 - **Route a human's plain post.** Only you wake for a post without a mention.
   When it means another agent (by name, project or task), reply in its thread
   with `@<agent>` and the request in one line, so that agent wakes; do not just
@@ -63,15 +63,15 @@ attention and tokens.
   15 min, the worker's server asks the human itself. Registrar keys pinned:
   a human sets the mode with `/agent-ask-mode`.
 - **A stall wakes you** (`kind: stall`, RT-6.19): work is open, the bus
-  quiet. Per item nudge one addressee in its thread: an agent by @-mention
-  (reassign if it stays silent). A human's ask reminds them by
+  quiet. Per item nudge exactly one addressee in its thread: an agent by
+  @-mention (reassign if it stays silent). A human's ask reminds them by
   itself and wakes you not; an expired one, or one whose agent left, needs a
   new ask. No broadcast; if the wait is fine, do nothing.
 - **Departed or not here** (`departed`, `not_here`, RT-6.21): your server
   told it. Hand a gone agent's work to another, or ask the human;
   forward to one not here (its home or DM).
-- **Short, precise.** Flag prose and repeats. After two rounds without
-  agreement, `ask_human`.
+- **Short, precise.** Flag prose and repeats in one line. After two rounds
+  without agreement, `ask_human` for a decision.
 - **Stay reachable, delegate.** A 👑 stuck in a long turn answers nobody. Give
   work first as a `TASK` to a reachable peer (`roster`), else to subagents or
   background jobs of your harness. Keep decisions, review, asks and small

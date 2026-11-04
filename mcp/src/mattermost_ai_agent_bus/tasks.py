@@ -284,13 +284,16 @@ def roster(rows: list[RosterEntry], posts: Sequence[Post], names: Mapping[str, s
                "skills": [s.get("name") for s in card.get("skills") or []] or None,
                **(owners or {}).get(r.username, {})}
         out.append({k: v for k, v in row.items() if v})
-    _usage(out, usage or {})
+    _usage(out, usage or {}, owners or {})
     return out
 
 
-def _usage(rows: list[dict[str, Any]], usage: Mapping[str, Mapping[str, Any]]) -> None:
-    """Add the numbers to the roster rows (ADR-008 step 3); a 0 is a number."""
-    groups: dict[int, list[dict[str, Any]]] = {}
+def _usage(rows: list[dict[str, Any]], usage: Mapping[str, Mapping[str, Any]],
+           owners: Mapping[str, Mapping[str, Any]]) -> None:
+    """Add the numbers to the roster rows (ADR-008 step 3); a 0 is a number.
+    One subscription: the same `limit_5h.resets_at` and the same owner (a reset
+    time may be rounded, and an account is one human's)."""
+    groups: dict[tuple[int, str], list[dict[str, Any]]] = {}
     for row in rows:
         got = usage.get(str(row["agent"]))
         if not got:
@@ -298,7 +301,8 @@ def _usage(rows: list[dict[str, Any]], usage: Mapping[str, Mapping[str, Any]]) -
         row.update(got)
         reset = (got.get("limit_5h") or {}).get("resets_at")
         if reset:
-            groups.setdefault(reset, []).append(row)
+            owner = str((owners.get(str(row["agent"])) or {}).get("owner") or "")
+            groups.setdefault((reset, owner), []).append(row)
     for n, members in enumerate((m for m in groups.values() if len(m) > 1), 1):
         for row in members:
             row["limit_shared"] = {"group": n, "agents": len(members)}

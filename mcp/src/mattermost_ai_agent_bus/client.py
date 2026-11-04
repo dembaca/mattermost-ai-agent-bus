@@ -706,6 +706,10 @@ class MattermostAdapter:
         props = user.get("props")
         signed = props.get(ATTESTATION_PROP) if isinstance(props, Mapping) else None
         self._attestations[user_id] = signed if isinstance(signed, str) else ""
+        # The same object carries the usage report: the roster reads it next
+        # (ADR-008 step 3) without a second GET.
+        raw = props.get(USAGE_PROP) if isinstance(props, Mapping) else None
+        self._usages[user_id] = (time.monotonic(), raw if isinstance(raw, str) else "")
 
     async def agent_attestation(self, user_id: str) -> str | None:
         """The registrar's attestation the bot put into its own user props

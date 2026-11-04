@@ -65,7 +65,8 @@ usage_tap() {
       elif moved("ctx") or moved("five") or moved("seven") or (($o.at // 0) + 60 <= $now)
       then ($b, ($cur + {at: $now})) else empty end' <<<"$input" 2>/dev/null)
   [[ -n "${body:-}" && -n "${st:-}" ]] || return 0
-  mkdir -p "$STATE" 2>/dev/null && printf '%s\n' "$st" >"$sf.$$" 2>/dev/null && mv -f "$sf.$$" "$sf" 2>/dev/null
+  # No state file, no throttle: then nothing is sent, not one call a second.
+  mkdir -p "$STATE" 2>/dev/null && printf '%s\n' "$st" >"$sf.$$" 2>/dev/null && mv -f "$sf.$$" "$sf" 2>/dev/null || return 0
   (
     [[ -n "$sid" ]] && export CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID:-$sid}"
     # shellcheck source=mm-agent-lib.sh

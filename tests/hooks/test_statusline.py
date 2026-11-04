@@ -147,6 +147,18 @@ def test_tap_throttle_one_point_or_a_minute(run, api):
     assert len(api.wait(4)) == 4
 
 
+def test_tap_sends_nothing_when_the_throttle_file_cannot_be_written(run, api):
+    """Review of #161: no state file, no throttle: not one call a second."""
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    run.state_dir.chmod(0o500)  # nothing can be written there
+    try:
+        r = run(SCRIPT, stdin=_status(40, 10), MM_BOT_USERNAME="agent-x-1", **api.env)
+        assert r.code == 0 and r.stdout == "@agent-x-1"
+        api.quiet(0)
+    finally:
+        run.state_dir.chmod(0o700)
+
+
 def test_tap_never_waits_for_a_dead_endpoint(run):
     """RT-6.10 step 3: a server that does not answer, or is not there, costs
     the status line nothing: prompt, exit 0, the usual output."""
