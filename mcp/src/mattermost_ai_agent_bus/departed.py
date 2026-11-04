@@ -3,8 +3,8 @@
 A post in the work channel that @-mentions an agent which is gone, or a live
 one that is no member of the channel, reaches nobody. One server answers it in
 the thread, without the model: the coordinator's (a live 👑 here), else, with
-no crown anywhere, the server of the oldest reachable agent, which the lease
-hands the crown to next (RT-6.6). For a gone agent the answer says since when
+no crown anywhere, the server of the oldest reachable peer, which the lease
+hands the crown to next (RT-6.6 step 2). For a gone agent the answer says since when
 and links its BYE (its handoff) or its last post; for one not here, that it
 is not in this channel and where its home is. The event wakes the answering
 agent, which routes or forwards the work.
@@ -72,13 +72,14 @@ def mentioned(message: str, me: str) -> list[str]:
 async def answers(client: ChatPort, uid: str, name: str) -> bool:
     """Whether this server is the one that answers (RT-6.21 step 2): it holds
     its home's 👑, or no agent of the home wears one and it is the home's
-    oldest reachable agent (lease.roster counts only the home's agents)."""
+    oldest reachable peer (lease.roster counts only the home's agents and marks a
+    coordinator only among those that stand for the crown, ADR-007)."""
     if lease.crown_held(uid):
         return True
     if await gate.coordinator_name(client):
         return False
     rows = await lease.roster(client)
-    return bool(rows) and rows[0].username.lower() == name.lower()
+    return bool(rows) and rows[0].coordinator and rows[0].username.lower() == name.lower()
 
 
 def _hello_of(post: Post, name: str, authors: dict[str, str]) -> bool:

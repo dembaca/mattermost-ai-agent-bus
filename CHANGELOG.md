@@ -3,6 +3,25 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.9
+
+### Changed
+
+- **The crown only for peers**
+  ([RT-6.6 step 2](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease),
+  [ADR-007](docs/arc42/09-architecture-decisions.md) amendment, phase B). Each
+  server elects among its own agent and the agents of the home that are its
+  peers (`lease._elected`, `owners.py`): an unbound or foreign agent is never
+  the oldest, and a server claims only when its bot is bound and it is a peer
+  of each reachable agent with an owner (the case of an unbound bot that won
+  the crown). Without owners the election runs as before; an explicit `take`
+  and the rule of one crown per home are unchanged. Circles foreign to each
+  other in one home get no automatic 👑. Without trusted humans (no owner
+  split) the election is as before; a description that cannot be read, this bot's own too, blocks
+  it instead of counting as "no owner"; of two crowns an unbound holder yields
+  to a bound one; the roster, the task gate and the departed answer name only
+  a peer as the next coordinator.
+
 ## 0.71.8
 
 ### Added

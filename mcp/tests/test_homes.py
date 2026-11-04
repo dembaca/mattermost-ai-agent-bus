@@ -217,3 +217,160 @@ async def test_one_channel_routes_as_before(home):
     _crown(home)
     assert await lease.routes(home) == {WORK}
     assert await lease.coordinates_in(home, BOT, WORK)
+
+
+# --- the crown only for peers (RT-6.6 step 2, ADR-007 amendment step 4) -----------------
+
+MINE = "for @dembaca · trusts @dembaca · via agent-registrar"
+CAROL = "for @carol · trusts @carol · via agent-registrar"
+UNBOUND = "Registered via agent-registrar"
+FAR = "f" * 26
+
+
+@pytest.fixture
+def owned(home):
+    """The session trusts dembaca and its own bot is bound to dembaca."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: MINE}
+    return home
+
+
+async def _ticks(home) -> bool:
+    await lease.command(home, "tick")
+    return lease.crown_held(BOT)
+
+
+async def test_a_foreign_circle_in_the_home_blocks_every_automatic_claim(owned):
+    """RT-6.6 step 2: a reachable agent of another owner's circle: nobody is
+    crowned on its own, until it is gone."""
+    owned.agent(FAR, "agent-far", 500)
+    owned.descriptions[FAR] = CAROL
+    assert not await _ticks(owned)
+    owned.agent(FAR, "agent-far", 500, "zzz")  # idle: not reachable
+    assert await _ticks(owned)
+
+
+async def test_an_unbound_agent_is_skipped_for_a_bound_server(owned):
+    """RT-6.6 step 2: the unbound oldest agent (case 3 of ADR-007) is foreign;
+    the bound younger one claims."""
+    owned.agent(OLDER, "agent-unbound", 1000)
+    owned.descriptions[OLDER] = UNBOUND
+    assert await _ticks(owned)
+
+
+async def test_an_unbound_server_does_not_claim_beside_a_bound_agent(home):
+    """RT-6.6 step 2: an unbound bot never claims while an agent with an owner is reachable."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: UNBOUND, YOUNGER: MINE}
+    home.agent(YOUNGER, "agent-young", 3000)
+    assert not await _ticks(home)
+
+
+async def test_an_unbound_server_claims_where_no_agent_has_an_owner(home):
+    """RT-6.6 step 2, parity: no reachable agent has an owner: everyone is a
+    peer, the oldest reachable claims as before, a younger one does not."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: UNBOUND, YOUNGER: UNBOUND}
+    home.agent(YOUNGER, "agent-young", 3000)
+    assert await _ticks(home)
+    lease._save_coord(BOT, 0, 0, 0)
+    home.agent(FAR, "agent-first", 100)
+    home.descriptions[FAR] = UNBOUND
+    assert not await _ticks(home)
+
+
+async def test_without_trusted_humans_the_oldest_claims_as_before(home):
+    """RT-6.6 step 2, parity (non-corral): no trusted humans, no owner split:
+    no peer can be told, so the election is unchanged, bound agents or not."""
+    home.descriptions = {BOT: MINE, OLDER: CAROL}
+    home.agent(YOUNGER, "agent-young", 3000)
+    assert await _ticks(home)
+    lease._save_coord(BOT, 0, 0, 0)
+    home.agent(OLDER, "agent-old", 1000)
+    assert not await _ticks(home)  # the oldest reachable claims, not this one
+
+
+async def test_a_bound_agent_alone_in_its_home_claims(owned):
+    assert await _ticks(owned)
+
+
+async def test_a_description_that_cannot_be_read_blocks_the_election(home):
+    """RT-6.6 step 2: an unreadable description is not "no owner": an unbound
+    oldest server does not slip into the parity branch beside a bound agent
+    it cannot read (case 3 again)."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: UNBOUND}  # YOUNGER's description is missing: not readable
+    home.agent(YOUNGER, "agent-young", 3000)
+    assert not await _ticks(home)
+
+
+async def test_an_own_description_that_cannot_be_read_blocks_like_any_other(home):
+    """RT-6.6 step 2: with trusted humans the server's own description
+    unreadable (a rate limit for one tick) is no "unbound": an unbound oldest
+    bot must not claim beside a bound agent then (case 3); one tick missed is
+    all it costs. Without trusted humans: as before."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {YOUNGER: MINE}  # my own is missing: not readable
+    home.agent(YOUNGER, "agent-young", 3000)
+    assert not await _ticks(home)
+    home.descriptions[BOT] = UNBOUND  # readable again, and unbound: still no claim
+    assert not await _ticks(home)
+    home.trusted = {}
+    assert await _ticks(home)
+
+
+async def test_a_bound_server_that_is_no_peer_of_a_reachable_bound_agent_does_not_claim(owned):
+    """RT-6.6 step 2: circles foreign to each other: nobody is crowned on its own."""
+    owned.agent(YOUNGER, "agent-young", 3000)
+    owned.descriptions[YOUNGER] = CAROL
+    assert not await _ticks(owned)
+
+
+async def test_a_live_foreign_crown_alone_keeps_anyone_from_claiming_a_second(home):
+    """RT-6.6 step 2: one crown per home, whoever wears it; here the foreign
+    agent is the only other one, wearing the crown, and nothing else blocks."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: UNBOUND, FAR: UNBOUND}
+    home.agent(FAR, "agent-far", 3000, "crown", "coordinator · working · x · ~agents")
+    assert not await _ticks(home)
+
+
+async def test_an_explicit_take_is_allowed_beside_a_foreign_agent(owned):
+    """RT-6.6 step 4: `take` stays."""
+    owned.agent(FAR, "agent-far", 500)
+    owned.descriptions[FAR] = CAROL
+    assert await lease.command(owned, "take") == "taken"
+    assert lease.crown_held(BOT)
+
+
+async def test_two_crowns_an_unbound_holder_yields_to_a_bound_one(home):
+    """RT-6.6 step 2: the older keeps it only among peers; an unbound holder,
+    older or not, gives way to a bound holder."""
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: UNBOUND, OLDER: MINE}
+    home.agent(BOT, "agent-me", 500)  # older than the bound holder
+    home.agent(OLDER, "agent-bound", 1000, "crown", "coordinator · working · x · ~agents")
+    _crown(home)
+    await lease.command(home, "tick")
+    assert not lease.crown_held(BOT)
+
+
+async def test_two_crowns_a_bound_holder_keeps_it_against_an_unbound_one(home):
+    home.trusted = {"h" * 26: "dembaca"}
+    home.descriptions = {BOT: MINE, OLDER: UNBOUND}
+    home.agent(OLDER, "agent-unbound", 1000, "crown", "coordinator · working · x · ~agents")
+    _crown(home)
+    await lease.command(home, "tick")
+    assert lease.crown_held(BOT)  # younger, but the other does not stand
+
+
+async def test_the_roster_names_no_unbound_or_foreign_coordinator(owned):
+    """RT-6.6 steps 2-3: without a live crown the roster marks the oldest agent
+    that stands, never an unbound or foreign one."""
+    owned.agent(OLDER, "agent-unbound", 1000)
+    owned.descriptions[OLDER] = UNBOUND
+    assert [(r.username, r.coordinator) for r in await lease.roster(owned)] == [
+        ("agent-me", True), ("agent-unbound", False)]
+    owned.descriptions[OLDER] = CAROL
+    assert [(r.username, r.coordinator) for r in await lease.roster(owned)] == [
+        ("agent-unbound", False), ("agent-me", False)]

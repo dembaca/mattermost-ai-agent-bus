@@ -63,7 +63,7 @@ it because it parallelises well.
 **Coordinator.** The coordinator wears the 👑 crown: a custom status your MCP
 server renews while you are reachable; it runs out when you go idle or your
 session dies. Its posts start with 👑. You never claim it by hand: without a
-crown anywhere, the oldest reachable agent takes it on its own. Ask
+crown anywhere, the oldest reachable peer takes it on its own. Ask
 `coordinator("who")`. If you are alone, you coordinate.
 
 When you wear the crown, or are about to take it, read

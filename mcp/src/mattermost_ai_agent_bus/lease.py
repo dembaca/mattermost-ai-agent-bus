@@ -24,11 +24,12 @@ import re
 import time
 import weakref
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import channel, session_file, usage
+from . import channel, owners, session_file, usage
 from .model import ChannelUser, RosterEntry
 
 if TYPE_CHECKING:
@@ -430,11 +431,15 @@ def _at_home(rows: list[dict[str, Any]], home: str) -> list[dict[str, Any]]:
     return [r for r in rows if r["home"] in (None, home)]
 
 
-def _coordinator_first(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _coordinator_first(rows: list[dict[str, Any]], standing: list[str] | None = None
+                       ) -> list[dict[str, Any]]:
     """The reachable rows, the coordinator first and marked: the agent with a
-    live 👑, else the oldest reachable one, which the lease hands it to next."""
+    live 👑, else the oldest reachable one that stands for the crown
+    (`standing`, _election: only a peer is handed it; [] none, None every
+    reachable one), which the lease hands it to next."""
+    reachable = [r["id"] for r in rows if r["reachable"]]
     coord = next((r["id"] for r in rows if r["crown"]), "") or next(
-        (r["id"] for r in rows if r["reachable"]), "")
+        (i for i in reachable if standing is None or i in standing), "")
     ordered = [r for r in rows if r["id"] == coord] + [r for r in rows if r["id"] != coord]
     return [dict(r, coordinator=r["id"] == coord) for r in ordered if r["reachable"]]
 
@@ -460,7 +465,9 @@ async def roster_in(client: ChatPort, channel_id: str, name: str) -> list[Roster
     rows = await _rows(client, channel_id)
     guests = [entry(dict(r, crown=False), crown_of=str(r["home"]))
               for r in rows if r["home"] not in (None, name) and r["crown"]]
-    return [entry(r) for r in _coordinator_first(_at_home(rows, name))] + guests
+    here = _at_home(rows, name)
+    standing = None if any(r["crown"] for r in here) else (await _election(client, here)).ids
+    return [entry(r) for r in _coordinator_first(here, standing)] + guests
 
 
 def crown_in(rows: list[RosterEntry]) -> str:
@@ -539,6 +546,62 @@ async def _crown_came() -> None:
             log.info("held posts not re-checked for the crown: %s", exc)
 
 
+@dataclass(frozen=True)
+class Election:
+    """What this server's view of the home's election is (RT-6.6 step 2).
+    ids: the reachable agents that stand, oldest first ([]: nobody may be
+    crowned on its own: circles foreign to each other, this bot unbound beside
+    an agent with an owner, a description not readable); unbound: this bot has
+    no owner while an agent with an owner is reachable; owned: the reachable
+    agents that have one."""
+
+    ids: list[str]
+    unbound: bool = False
+    owned: frozenset[str] = frozenset()
+
+
+async def _election(client: ChatPort, rows: list[dict[str, Any]]) -> Election:
+    """RT-6.6 step 2 (ADR-007 amendment step 4, the crown only for peers):
+    who stands for the crown in the home of `rows`, as this server sees it.
+    Without trusted humans no peer can be told (the owner split is off) and
+    every reachable agent stands, as before. Else the reachable agents with an
+    owner (owners.read) stand if this bot is bound and a peer of each of them;
+    the ones without an owner are foreign to them and stand only where no agent
+    has one. A description that cannot be read blocks the election (nothing is
+    assumed): `owners.read` is None for it, '' for no owner. This bot's own
+    description too: with trusted humans only their absence makes parity."""
+    oldest = [r["id"] for r in rows if r["reachable"]]
+    try:
+        names = await owners.trusted_names(client)
+        me = (await client.get_me()).id if names else ""
+    except Exception as exc:  # noqa: BLE001 — the owner split is off, as in owners.mine
+        log.info("crown: trusted humans or own account not read, every agent stands: %s", exc)
+        return Election(oldest)
+    if not names:
+        return Election(oldest)
+    ids = oldest if me in oldest else [*oldest, me]
+    agents = {i: await owners.read(client, i) for i in ids}  # never raises: None is unreadable
+    if any(a is None for a in agents.values()):
+        log.info("crown: a description is not readable, nobody stands")
+        return Election([])
+    owned = {i: a for i, a in agents.items() if a is not None and a.owner and (i in oldest or i == me)}
+    held = frozenset(i for i in owned if i in oldest)
+    if not held:
+        return Election(oldest)  # no owners: every agent is a peer
+    if me not in owned:
+        return Election([], unbound=True, owned=held)
+    if any(not owners.is_peer(a, names) for i, a in owned.items() if i != me and i in oldest):
+        log.info("crown: the home has an agent of a foreign owner circle: nobody stands")
+        return Election([], owned=held)
+    return Election([i for i in oldest if i in owned], owned=held)
+
+
+async def _elected(client: ChatPort, uid: str, rows: list[dict[str, Any]]) -> bool:
+    """This agent is the oldest reachable one that stands (_election): it may claim."""
+    ids = (await _election(client, rows)).ids
+    return bool(ids) and ids[0] == uid
+
+
 async def _command(client: ChatPort, action: str, passed: list[bool] | None = None) -> str:
     uid = await _user_id(client)
     if not _UID.fullmatch(uid):
@@ -582,15 +645,27 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
 
     holding = crown > now
     if holding and others:
-        # Two crowns in one home (a race): the older agent keeps it.
+        # Two crowns in one home (a race): the older agent keeps it, among
+        # peers; a holder that does not stand yields to one that does (an
+        # unbound one to a bound one, ADR-007 amendment step 4).
         mine = next((r["create_at"] for r in rows if r["id"] == uid), None)
-        if mine is not None and others[0]["create_at"] < mine:
+        el = await _election(client, rows)
+        other = others[0]["id"]
+        if el.unbound and other in el.owned:
+            yields = True
+        elif el.ids and uid in el.ids and other not in el.ids:
+            yields = False
+        elif el.ids and other in el.ids and uid not in el.ids:
+            yields = True
+        else:
+            yields = mine is not None and others[0]["create_at"] < mine
+        if yields:
             _save_coord(uid, 0, pending, yield_until)
             await _render(client)
     elif not holding and not others and yield_until <= now:
         me_reachable = any(r["id"] == uid and r["reachable"] for r in rows)
-        oldest = next((r["id"] for r in rows if r["reachable"]), "")
-        if me_reachable and (pending == 1 or oldest == uid):
+        # An explicit take (pending) is allowed; the election only among peers.
+        if me_reachable and (pending == 1 or await _elected(client, uid, rows)):
             await take_now()
     if cid not in _header_seen and _coord(uid).get("CROWN_UNTIL", 0) > now:
         # Once per process while holding: an upgrade finds an older header (step 7).

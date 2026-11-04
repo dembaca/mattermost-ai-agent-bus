@@ -87,7 +87,7 @@ async def author_name(client: ChatPort, post: Post) -> str:
 
 async def coordinator_name(client: ChatPort) -> str:
     """The agent wearing a live 👑, '' when none. Only a crown counts: the
-    roster's oldest reachable agent coordinates nothing yet. An unreadable
+    roster's agent next in line for the crown coordinates nothing yet. An unreadable
     roster is not remembered."""
     global _coord
     now = time.monotonic()
