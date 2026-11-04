@@ -52,7 +52,7 @@ import from `@opencode/plugin` is types.
 Options: `root` (the checkout, when the file is copied, not linked; or
 `MM_AGENT_BUS_ROOT`), `mcp: false` (add no MCP server), `command` and `environment`
 (the server's command and extra variables, e.g. the `sh -c` command above that fetches
-the secret), `waitSec` (how long the server holds the plugin's long poll, 1 to 55, default
+the secret), `waitSec` (how long the server holds the plugin's long poll, 10 to 55, default
 50), `retrySec` (the pause after a failed poll, default 15; `replaced` doubles it).
 `pollSec` and `MM_LISTEN_POLL_SEC` are gone: there is no timer to set.
 

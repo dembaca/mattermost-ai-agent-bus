@@ -253,6 +253,7 @@ test("RT-6.20: the long poll waits 50 s by default (1 to 55), a failed poll is a
   assert.equal(waitSec({ waitSec: 20 }), 20)
   assert.equal(waitSec({ waitSec: 500 }), 55)
   assert.equal(waitSec({ waitSec: 0 }), 50)
+  assert.equal(waitSec({ waitSec: 3 }), 10) // never so short that the pause for a server that answers at once is lost
   assert.equal(waitSec({ waitSec: "x" as any }), 50)
   assert.equal(RETRY_SEC, 15)
   assert.equal(retryMs({}), 15_000)
@@ -531,8 +532,12 @@ test("RT-6.20: a failed turn-end check leaves a listening session listening", as
   // The next turn: its end check fails (a timeout, a 503): nothing is known, so it keeps listening.
   await fx.prompt()
   answers["/v1/turn-end"] = undefined
+  calls = []
   await fx.ended()
   await until(() => held.length === 1, "still asked for after a failed check")
+  // The status goes back to "on the bus", not left at the turn's "working".
+  await until(() => rest().some((c) => c.path === "/v1/presence"), "a presence")
+  assert.deepEqual(rest().filter((c) => c.path === "/v1/presence").map((c) => c.body), [{ state: "bus", label: "ws" }])
   // And the first check that works with no gates (BYE) ends it.
   answers["/v1/turn-end"] = { action: "idle" }
   await fx.prompt()

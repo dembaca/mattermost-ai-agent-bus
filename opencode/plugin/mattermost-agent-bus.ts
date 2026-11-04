@@ -80,7 +80,7 @@ export type Options = {
   // e.g. one that fetches MM_REG_SECRET itself (adapters/opencode.md).
   command?: string[]
   environment?: Record<string, string>
-  // How long the server holds the long poll of /v1/wake (s, at most 55; default 50).
+  // How long the server holds the long poll of /v1/wake (s, 10 to 55; default 50).
   waitSec?: number
   // The pause after a failed or empty-handed poll, and the base of the one
   // after "replaced" (s, default 15).
@@ -111,10 +111,11 @@ export function busFile(env: Env, directory: string, prefix = "endpoint"): strin
   return f && existsSync(f) ? f : null
 }
 
-// The long poll's wait in seconds: the option, else WAIT_SEC; 1 to 55.
+// The long poll's wait in seconds: the option, else WAIT_SEC; 10 to 55 (a
+// shorter one would defeat the pause for a server that answers at once).
 export function waitSec(options: Options): number {
   const sec = Number(options.waitSec ?? WAIT_SEC)
-  return Math.min(55, Math.max(1, Number.isFinite(sec) && sec > 0 ? Math.floor(sec) : WAIT_SEC))
+  return Math.min(55, Math.max(10, Number.isFinite(sec) && sec > 0 ? Math.floor(sec) : WAIT_SEC))
 }
 
 // The least pause after a failed poll, as the old `pollSec` had: a server that
@@ -400,7 +401,9 @@ export async function setup(ctx: Plugin.Context) {
       // (ADR-009). None (a BYE, no project channel, the listener off): idle.
       if (!r) {
         // The check failed (timeout, 503): nothing is known, so what held stays:
-        // a session that was listening keeps listening, reachable while it lives.
+        // a session that was listening keeps listening, reachable while it lives
+        // (the status says so, not "working" from the turn).
+        await (t.listening ? reachable() : presence("idle"))
         nudge()
       } else if ((Number(r.listen_until) || 0) * 1000 > Date.now()) {
         t.listening = true
