@@ -363,9 +363,9 @@ since all of them use the registrar.
 
 **Status:** Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and
 `coordinator`, switched by a command in the home; phase 2 built (0.68.0):
-source (b) of step 3, the registrar's signed `/agent-ask-mode` record; phases 3–4
-open (`delegated` with ADR-004, standing approvals). The command was called `/agent-mode` until 0.71.2. Phase 1 is
-RT-6.25: the `kind` of an ask and the server's floor (step 5), the two modes
+source (b) of step 3, the registrar's signed `/agent-ask-mode` record (the
+command was called `/agent-mode` until 0.71.2); phases 3–4 open (`delegated`
+with ADR-004, standing approvals). Phase 1 is RT-6.25: the `kind` of an ask and the server's floor (step 5), the two modes
 (step 2), switched by source (a) of step 3 as the interim it names, with the
 mode kept per server; the fallback to `direct` of the open question on stall.
 Phase 2 is RT-6.25 step 8: with the registrar's keys pinned the signed record
