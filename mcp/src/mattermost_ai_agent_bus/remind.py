@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 _TITLE = re.compile(r"\*\*(.+?)\*\*")
 TITLE = 90
 # Posts the next ask queued for a target (RT-6.11 step 2); the server sets it.
-advance: Callable[[ChatPort, str], Awaitable[None]] | None = None
+advance: Callable[[ChatPort, str, set[str]], Awaitable[None]] | None = None
 
 
 def _sec(name: str, default: int) -> int:
@@ -181,6 +181,7 @@ async def _advance(client: ChatPort, uid: str) -> None:
         return
     for key in asks.queued_targets(uid):
         try:
+            answered: set[str] = set()
             for pid in asks.blocking(uid, key):
                 if asks.expired(uid, pid):
                     break
@@ -191,8 +192,9 @@ async def _advance(client: ChatPort, uid: str) -> None:
                     done, _ = await _answered(client, uid, pid, root, human)
                 if not done:
                     break
+                answered.add(pid)
             else:
-                await advance(client, key)
+                await advance(client, key, answered)
         except Exception as exc:  # noqa: BLE001 — the next tick tries again
             log.info("queued ask to %s not posted: %s", key, exc)
 

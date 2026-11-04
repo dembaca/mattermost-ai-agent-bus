@@ -2,13 +2,15 @@
 with all fields, posted when the open one is answered or resolved, routed as
 of then (RT-6.25), told to the agent, shown to the human and in `tasks`."""
 
+import asyncio
 import json
 import time
 
 import pytest
 
-from mattermost_ai_agent_bus import askroute, asks, lease, remind, server
+from mattermost_ai_agent_bus import askroute, asks, channel, lease, remind, server
 from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
 
 from fakes import WORK, FakeChat
 
@@ -86,14 +88,14 @@ async def test_a_second_ask_is_queued_with_all_its_fields(bus):
 
 def test_the_queue_survives_multi_line_text_and_the_old_file_format(bus):
     asks.add(BOT, "a" * 26, "dembaca", "a" * 26)
-    asks.enqueue(BOT, "dembaca", {"need": "x?", "context": "line 1\nline 2 = ü 🙋", "who": "dembaca"})
+    _, qid = asks.enqueue(BOT, "dembaca", {"need": "x?", "context": "line 1\nline 2 = ü 🙋", "who": "dembaca"})
     text = asks._path(BOT).read_text()
     assert text.count("\n") == len(text.splitlines()) and "line 1" not in text
     assert asks.queued(BOT, "dembaca")[0]["context"] == "line 1\nline 2 = ü 🙋"
     assert asks.open_asks(BOT) == ["a" * 26]  # the open ask is read as before
     asks.resolve(BOT, "a" * 26)
     assert asks.queued(BOT, "dembaca")  # resolve keeps the queue
-    asks.dequeue(BOT, "dembaca")
+    assert asks.claim(BOT, qid)["need"] == "x?" and asks.claim(BOT, qid) is None  # once
     assert not asks._path(BOT).exists()
 
 
@@ -271,3 +273,139 @@ async def test_a_queued_ask_counts_as_an_ask_for_the_warning(monkeypatch):
     asks.resolve(BOT, c.ids()[0])  # no open ask now, one queued
     out = json.loads(await server.post_message("IDLE · open: go from dembaca"))
     assert "unasked" not in out and "warning" not in out
+
+
+def _entry(**kw):
+    return {"need": "q?", "context": "", "recommendation": "", "decision": "", "where": "",
+            "blocking": False, "answers": "", "who": "dembaca", "link": "", "kind": "approval"} | kw
+
+
+@pytest.mark.asyncio
+async def test_the_heartbeat_and_resolve_ask_post_each_queued_ask_once(bus):
+    """The race of the review: the heartbeat is posting the next ask when
+    resolve_ask runs; each queued ask goes out once, none is lost."""
+    first = await _ask(need="Merge #61?")
+    await _ask(need="Archive #60?")
+    await _ask(need="Keep VM 399?")
+    bus.reacts[first["ask"]] = [{"user_id": HUMAN, "emoji_name": "+1"}]
+    gate, entered = asyncio.Event(), asyncio.Event()
+    orig, calls = bus.post, [0]
+
+    async def slow(message, **kw):
+        calls[0] += 1
+        if calls[0] == 1:
+            entered.set()
+            await gate.wait()
+        return await orig(message, **kw)
+
+    bus.post = slow
+    tick = asyncio.create_task(remind.tick(bus, BOT))
+    await entered.wait()
+    resolve = asyncio.create_task(server.resolve_ask(first["ask"]))  # the heartbeat's post is on its way
+    await asyncio.sleep(0.05)
+    assert not resolve.done()  # it waits its turn: one queued ask is posted at a time
+    gate.set()
+    await asyncio.gather(tick, resolve)
+    sent = [p["message"] for p in bus.posted]
+    assert sum("Archive #60?" in m for m in sent) == 1
+    assert sum("Keep VM 399?" in m for m in sent) <= 1
+    left = [e["need"] for e in asks.queued(BOT)]
+    assert ("Keep VM 399?" in left) == (not any("Keep VM 399?" in m for m in sent))
+    assert len(asks.open_to(BOT, "dembaca")) == 1  # one open ask at a time
+
+
+@pytest.mark.asyncio
+async def test_a_failure_after_the_ask_is_out_spends_the_entry(bus):
+    """RT-6.11 error row: the ask is posted, its link is not: not posted twice."""
+    first = await _ask(need="Merge #61?")
+    await _ask(need="Archive #60?", root_id="t" * 26)
+    orig = bus.post
+
+    async def flaky(message, **kw):
+        if kw.get("root_id") == "t" * 26:
+            raise OSError("network down")
+        return await orig(message, **kw)
+
+    bus.post = flaky
+    await server.resolve_ask(first["ask"])
+    assert asks.queued(BOT) == [] and len(bus.posted) == 2
+    bus.post = orig
+    await server.resolve_ask(bus.ids()[-1])
+    assert len(bus.posted) == 2  # nothing posts a second time
+
+
+@pytest.mark.asyncio
+async def test_a_failure_before_the_ask_is_out_keeps_the_entry(bus):
+    first = await _ask(need="Merge #61?")
+    await _ask(need="Archive #60?")
+    orig = bus.post
+
+    async def down(message, **kw):
+        raise OSError("network down")
+
+    bus.post = down
+    await server.resolve_ask(first["ask"])
+    assert [e["need"] for e in asks.queued(BOT)] == ["Archive #60?"]
+    bus.post = orig
+    await remind.tick(bus, BOT)
+    assert len(bus.posted) == 2 and asks.queued(BOT) == []
+
+
+@pytest.mark.asyncio
+async def test_a_queued_ask_has_an_id_and_is_withdrawn_by_it(bus):
+    first = await _ask(need="Merge #61?")
+    one = await _ask(need="Archive #60?")
+    two = await _ask(need="Keep VM 399?")
+    assert one["id"].startswith("q-") and two["id"] != one["id"]
+    out = json.loads(await server.resolve_ask(one["id"]))
+    assert out == {"ask": one["id"], "queued": True, "was_open": True}
+    assert [e["id"] for e in asks.queued(BOT)] == [two["id"]]
+    assert json.loads(await server.resolve_ask(one["id"]))["was_open"] is False
+    assert bus.reacted == []  # no post to put a ✅ on
+    await server.resolve_ask(first["ask"])
+    assert "Keep VM 399?" in bus.posted[1]["message"]
+
+
+@pytest.mark.asyncio
+async def test_queue_full_names_the_ids_to_withdraw(bus):
+    await _ask(need="Merge #61?")
+    ids = [(await _ask(need=f"Ask {i}?"))["id"] for i in range(asks.QUEUE_MAX)]
+    out = await _ask(need="One more?")
+    assert out["queue_full"] is True and all(i in out["hint"] for i in ids)
+
+
+@pytest.mark.asyncio
+async def test_a_queued_result_carries_the_floor_and_the_unmentioned(bus):
+    await _ask(need="Merge #61?")
+    out = await _ask(need="Which order, A or B?", kind="question", context="ping @all")
+    assert out["queued"] is True and out["kind"] == "question"
+    out = await _ask(need="Deploy it now?", kind="question")
+    assert out["queued"] is True and out["kind"] == "approval" and out["kind_declared"] == "question"
+    assert out["floor"]
+
+
+@pytest.mark.asyncio
+async def test_a_changed_route_on_the_heartbeat_still_waits_behind_an_open_ask(bus, monkeypatch):
+    """The target the ask goes to now is judged by its own open asks, not
+    by the one the heartbeat found answered."""
+    async def holder(client, channel_id):
+        return "agent-coord"
+    monkeypatch.setattr(lease, "coordinator_of", holder)
+    monkeypatch.setenv("MM_ASK_ROUTE", "coordinator")
+    first = await _ask(need="Merge #61?")
+    asks.enqueue(BOT, "dembaca", _entry(need="Which order, A or B?", kind="question"))
+    crown = await _ask(need="Which name, A or B?", kind="question")  # open to the 👑
+    assert crown["route"] == "coordinator"
+    bus.reacts[first["ask"]] = [{"user_id": HUMAN, "emoji_name": "+1"}]
+    await remind.tick(bus, BOT)
+    assert len(bus.posted) == 2  # the question would go to the 👑, who has one open
+    assert [e["need"] for e in asks.queued(BOT)] == ["Which order, A or B?"]
+
+
+@pytest.mark.asyncio
+async def test_ask_posted_and_ask_route_wake_nobody_but_a_stall_wakes_the_crown(bus, monkeypatch):
+    monkeypatch.setattr(server, "_client", bus)
+    for kind, wakes in (("ask_posted", False), ("ask_route", False), ("stall", True)):
+        event = ClassifiedEvent(kind=kind, post=post_of({"id": "", "message": "x", "create_at": 1}))
+        (item,) = await server._event_items([event])
+        assert channel.wakes(item, coordinator=True, in_my_thread=False) is wakes, kind

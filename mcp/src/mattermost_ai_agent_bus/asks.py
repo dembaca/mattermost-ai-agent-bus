@@ -31,8 +31,12 @@ handed to the agent as expired. Asks older than MAX_AGE_SEC are forgotten.
 from __future__ import annotations
 
 import base64
+import contextlib
+import fcntl
 import json
+import os
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -328,25 +332,54 @@ def queued(uid: str, target: str = "") -> list[dict[str, Any]]:
     return out
 
 
-def enqueue(uid: str, target: str, fields: dict[str, Any]) -> int:
-    """Queue an ask to `target` behind its open one; its place in that queue.
-    The caller checks QUEUE_MAX."""
-    entry = {**fields, "target": target.lower(), "at": time.time()}
-    everything = queued(uid) + [entry]
-    asks, seen = _read(uid)
-    _write(uid, asks, seen, queue=everything)
-    return len([e for e in everything if e["target"] == entry["target"]])
+@contextlib.contextmanager
+def _queue_lock(uid: str) -> Any:
+    """An exclusive advisory lock around a change of the queue, so two servers of
+    one bot do not both take the same entry. A state dir that cannot be written
+    locks nothing."""
+    fd = -1
+    try:
+        fd = os.open(session_file.state_dir() / f"asks-{uid}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    except OSError:
+        pass
+    try:
+        yield
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
-def dequeue(uid: str, target: str) -> None:
-    """The oldest queued ask to `target` is posted: drop it."""
-    everything = queued(uid)
-    for e in everything:
-        if e["target"] == target.lower():
-            everything.remove(e)
-            break
-    asks, seen = _read(uid)
-    _write(uid, asks, seen, queue=everything)
+def enqueue(uid: str, target: str, fields: dict[str, Any]) -> tuple[int, str]:
+    """Queue an ask to `target` behind its open one: its place in that queue
+    and its id (`q-…`, what resolve_ask takes to withdraw it). The caller
+    checks QUEUE_MAX."""
+    entry = {**fields, "target": target.lower(), "at": time.time(), "id": f"q-{uuid.uuid4().hex[:8]}"}
+    with _queue_lock(uid):
+        everything = queued(uid) + [entry]
+        asks, seen = _read(uid)
+        _write(uid, asks, seen, queue=everything)
+    return len([e for e in everything if e["target"] == entry["target"]]), entry["id"]
+
+
+def claim(uid: str, qid: str) -> dict[str, Any] | None:
+    """Take the entry `qid` out of the queue (it is posted, or withdrawn): the
+    entry, or None when it is gone, so only one caller gets it."""
+    with _queue_lock(uid):
+        everything = queued(uid)
+        hit = next((e for e in everything if e.get("id") == qid), None)
+        if hit is not None:
+            everything.remove(hit)
+            asks, seen = _read(uid)
+            _write(uid, asks, seen, queue=everything)
+        return hit
+
+
+def unclaim(uid: str, entry: dict[str, Any]) -> None:
+    """Put a claimed entry back in front: it was not posted."""
+    with _queue_lock(uid):
+        asks, seen = _read(uid)
+        _write(uid, asks, seen, queue=[entry, *queued(uid)])
 
 
 def queued_targets(uid: str) -> list[str]:

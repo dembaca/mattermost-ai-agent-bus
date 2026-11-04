@@ -18,6 +18,11 @@ before 0.5.0 are described in the git history.
   at once; an `ask_posted` fyi event tells the agent. A 24 h old ask still blocks.
   The reminder says `· n more waiting` (RT-6.19), `coordinator("tasks")` lists the
   agent's own queue with `queued: true`.
+- A queued ask gets an id (`q-…`): `resolve_ask` withdraws it. One queued ask is
+  taken out of the queue before it is posted, so the heartbeat and `resolve_ask`
+  never post it twice; once the ask is out, a failing later step does not post
+  it again. `ask_posted` and `ask_route` events carry `intent: fyi` and no
+  longer wake the 👑.
 - `post_message` / `reply_in_thread` with `IDLE` or `RESULT` that name a trusted
   human without an open or queued ask return a `warning` beside `unasked`.
 

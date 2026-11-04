@@ -25,7 +25,7 @@ from . import (
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
 from .model import Post
-from .websocket_inbox import OWN_EVENTS, WebSocketInbox
+from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox
 
 log = logging.getLogger(__name__)
 
@@ -1352,19 +1352,26 @@ async def ask_human(
                 f"your ask {pending[0]} to {target} is more than 24 h old, a yes to it "
                 "approves nothing: resolve_ask it, then ask again")})
         behind = (asks.blocking(me.id, target) or pending)[0]
-        if len(asks.queued(me.id, target)) >= asks.QUEUE_MAX:
+        waiting = asks.queued(me.id, target)
+        if len(waiting) >= asks.QUEUE_MAX:
+            ids = ", ".join(e["id"] for e in waiting if e.get("id"))
             return _out("ask_human", {
-                "posted": False, "queue_full": True, "open_ask": behind,
+                "posted": False, "queue_full": True, "open_ask": behind, "queue": ids,
                 "hint": f"{asks.QUEUE_MAX} asks to {target} already wait behind {behind}: "
-                        "wait for the answers, or resolve_ask what is obsolete"})
-        position = asks.enqueue(me.id, target, {
+                        f"wait for the answers, or withdraw an obsolete one with resolve_ask ({ids})"})
+        position, qid = asks.enqueue(me.id, target, {
             "need": need, "context": context, "recommendation": recommendation,
             "decision": decision, "where": where, "blocking": blocking, "answers": answers,
             "who": who, "link": root_id, "kind": effective})
-        return _out("ask_human", {
-            "posted": False, "queued": True, "position": position, "behind": behind,
-            "hint": f"{target} still has your ask {behind} open: this one is posted when it is "
-                    "answered or resolved; you get an ask_posted event"})
+        out = {"posted": False, "queued": True, "id": qid, "position": position, "behind": behind,
+               "hint": f"{target} still has your ask {behind} open: this one is posted when it is "
+                       "answered or resolved; you get an ask_posted event; resolve_ask "
+                       f"{qid} withdraws it", "kind": effective}
+        if effective != kind.strip().lower():
+            out["kind_declared"] = kind
+        if floored:
+            out["floor"] = floored
+        return _out("ask_human", _with_unmentioned(out | route, everyone))
     head, rest = _headline(need)
     if rest:
         context = f"{rest} {context}"
@@ -1405,27 +1412,49 @@ async def _ask_route(client: MattermostAdapter, me: Any, kind: str) -> dict[str,
     return out | {"route": "coordinator", "to": coord}
 
 
-async def _post_queued(client: MattermostAdapter, me: Any, key: str, *, ready: bool = False) -> str | None:
+# One queued ask is posted at a time in this process (RT-6.11 step 2): the
+# heartbeat and resolve_ask can both be on their way.
+_queue_post = asyncio.Lock()
+
+
+async def _post_queued(client: MattermostAdapter, me: Any, key: str,
+                       answered: frozenset[str] | set[str] = frozenset()) -> str | None:
     """RT-6.11 step 2: post the oldest ask queued for `key`, routed as of now
-    (RT-6.25), unless its target has an ask open that is not answered: for
-    `key` itself `ready` says the heartbeat found them answered. The new ask's id; the agent is told by an ask_posted event (fyi, wakes nobody)."""
-    queue = asks.queued(me.id, key)
-    if not queue:
-        return None
-    e = queue[0]
-    route = await _ask_route(client, me, e["kind"])
-    coord = route.pop("to", "")
-    target = coord or e["who"]
-    if (not ready or target != key) and asks.blocking(me.id, target):
-        return None
-    head, rest = _headline(e["need"])
-    out = await _post_ask(
-        client, me, to=target, head=head, need=e["need"],
-        context=f"{rest} {e['context']}" if rest else e["context"],
-        recommendation=e["recommendation"], decision=e["decision"], where=e["where"],
-        blocking=e["blocking"], answers=e["answers"], root_id=e.get("link", ""),
-        human=e["who"] if coord else "")
-    asks.dequeue(me.id, key)
+    (RT-6.25), unless its target has an ask open that is not answered; the
+    heartbeat passes the open asks it found answered. The entry is taken out
+    of the queue before anything is awaited (another server of the bot cannot
+    take it too) and put back when nothing was posted; once the ask itself is
+    out it is spent, whatever fails after. The new ask's id; the agent is told
+    by an ask_posted event (fyi)."""
+    async with _queue_post:
+        queue = asks.queued(me.id, key)
+        e = queue[0] if queue else None
+        if e is None or (e := asks.claim(me.id, e.get("id", ""))) is None:
+            return None
+        before = set(asks.open_asks(me.id))
+        try:
+            route = await _ask_route(client, me, e["kind"])
+            coord = route.pop("to", "")
+            target = coord or e["who"]
+            if [p for p in asks.blocking(me.id, target) if p not in answered]:
+                asks.unclaim(me.id, e)
+                return None
+            head, rest = _headline(e["need"])
+            out = await _post_ask(
+                client, me, to=target, head=head, need=e["need"],
+                context=f"{rest} {e['context']}" if rest else e["context"],
+                recommendation=e["recommendation"], decision=e["decision"], where=e["where"],
+                blocking=e["blocking"], answers=e["answers"], root_id=e.get("link", ""),
+                human=e["who"] if coord else "")
+        except Exception as exc:
+            posted = set(asks.open_asks(me.id)) - before
+            if not posted:
+                asks.unclaim(me.id, e)  # nothing went out: it waits for the next try
+                raise
+            # The ask is out, a later step failed (its link): spent, not posted twice.
+            log.info("queued ask %s: posted as %s, then: %s", e.get("id"), sorted(posted), exc)
+            out = {"ask": sorted(posted)[0]}
+            target, head = e["who"], _headline(e["need"])[0]
     left = len(asks.queued(me.id, key))
     try:
         _get_inbox().notify(askroute.POSTED, (
@@ -1437,8 +1466,8 @@ async def _post_queued(client: MattermostAdapter, me: Any, key: str, *, ready: b
     return str(out["ask"])
 
 
-async def _advance_queue(client: MattermostAdapter, key: str) -> None:
-    await _post_queued(client, await client.get_me(), key, ready=True)
+async def _advance_queue(client: MattermostAdapter, key: str, answered: set[str]) -> None:
+    await _post_queued(client, await client.get_me(), key, answered)
 
 
 remind.advance = _advance_queue  # type: ignore[assignment]
@@ -1528,9 +1557,14 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
     """Close an ask once it is answered or no longer needed (RT-6.11).
 
     Puts ✅ on the ask, so open asks are the ones without it, stops waking you
-    for reactions to it, and with note replies in its thread.
+    for reactions to it, and with note replies in its thread. A queued ask
+    (its id `q-…` from ask_human) is withdrawn.
     """
     _done_typing()
+    if post_id.startswith("q-"):  # RT-6.11 step 2: withdraw a queued ask
+        me = await _get_client().get_me()
+        return _out("resolve_ask", {"ask": post_id, "queued": True,
+                                    "was_open": asks.claim(me.id, post_id) is not None})
     if bad := _bad_id(post=post_id or "-"):
         return _refused("resolve_ask", bad)
     client = _get_client()
@@ -1841,7 +1875,9 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         if e.kind in OWN_EVENTS:
             # The server's own event (RT-6.19, RT-6.25): no author, its text.
             payload.append({"kind": e.kind, "from_trusted_human": False, "from_agent": False,
-                            "post": {"message": e.post.message}})
+                            "post": {"message": e.post.message},
+                            # Needs no answer: wakes no coordinator (RT-6.14 step 8); a stall does.
+                            **({"intent": a2a.FYI} if e.kind in FYI_EVENTS else {})})
             continue
         author = e.post.user_id
         # Server-verified (RT-6.8, RT-6.16): Mattermost authenticates the author,
