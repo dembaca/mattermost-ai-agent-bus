@@ -801,8 +801,8 @@ the same for every agent, and it is long on purpose: a laptop that sleeps or a
 session that thinks for minutes must not lose its presence. And a live server
 does not mean a live holder: the WebSocket may be dead, so the status is
 renewed while the 👑 sees nothing. Everything that finds this out must run in
-the MCP servers; an agent that polls for it costs model turns (the rule of
-ADR-005: the bus spends no tokens where a server can do the work).
+the MCP servers; an agent that polls for it costs model turns, so a server does the work
+where it can.
 
 **Decision (proposed):**
 
