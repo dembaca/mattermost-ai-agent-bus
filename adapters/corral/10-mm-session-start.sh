@@ -175,6 +175,18 @@ fi
 [[ -x "$HOST_PY" ]] ||
   no_bus "the MCP server has no Python environment on the host (${ROOT}/mcp/.venv) — rerun bin/mm-agent-host-install.sh (needs uv), then restart the session"
 
+# A stale environment is no bus either (ADR-007 amendment step 3, RT-6.18 step 1):
+# the host process runs from this copy's environment, whose package may be older
+# than the copy (a `git pull` without the installer). The host process reads no
+# installed_plugins.json, which a sandbox can write, so the copy is compared with
+# its own environment. Unreadable or no version: not checked.
+env_ver="$(cd "$ROOT/mcp" && env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=C \
+  "$HOST_PY" -I -c 'import mattermost_ai_agent_bus as m; print(m.__version__)' </dev/null 2>/dev/null | head -n 1)" || env_ver=""
+tree_ver="$(mm_tree_version "$ROOT")"
+if [[ "$env_ver" =~ ^[0-9]+(\.[0-9]+)*$ && "$tree_ver" =~ ^[0-9]+(\.[0-9]+)*$ && "$env_ver" != "$tree_ver" ]]; then
+  no_bus "stale: the Python environment of the host copy (${ROOT}/mcp/.venv) is ${env_ver}, the host copy is ${tree_ver} — rerun bin/mm-agent-host-install.sh, then restart the session"
+fi
+
 # --- identity ----------------------------------------------------------------
 # Two names, two audiences:
 #   NAME    the username without the registrar's prefix ("agent-" by default).

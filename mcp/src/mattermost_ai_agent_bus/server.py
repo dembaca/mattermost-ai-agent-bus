@@ -20,7 +20,7 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import (
-    a2a, askroute, asks, attest, channel, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
+    __version__, a2a, askroute, asks, attest, channel, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
     profile, remind, session_file, slim, stall, stats, tasks, unread, usage,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
@@ -43,25 +43,14 @@ def _plugin_version() -> str:
 VERSION = _plugin_version()
 
 
-def _version_key(v: str) -> tuple[int, ...]:
-    return tuple(int(x) for x in re.findall(r"\d+", v)[:3]) or (0,)
-
-
-def _newer_installed() -> str | None:
-    """A newer plugin version installed than this server runs, if any (RT-6.2).
-
-    A running session keeps the plugin it started with; an update (also an
-    automatic one) applies after a restart: quit, then `claude --continue`.
-    Not on the host side of a keyless session (RT-6.18): its plugin list is
-    the host's, which the sandbox may write; the Stop hook tells the sandbox's.
-    """
-    if session_file.hosted():
-        return None
+def _installed_versions() -> list[str]:
+    """The versions of this plugin that installed_plugins.json names, each read
+    from its install path's plugin.json (RT-6.2); [] when it cannot be read."""
     reg = Path.home() / ".claude" / "plugins" / "installed_plugins.json"
     try:
         data = json.loads(reg.read_text())
     except (OSError, ValueError):
-        return None
+        return []
     found: list[str] = []
 
     def walk(node: Any) -> None:
@@ -80,10 +69,66 @@ def _newer_installed() -> str | None:
                 walk(v)
 
     walk(data)
+    return found
+
+
+def _version_key(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:3]) or (0,)
+
+
+def _newer_installed() -> str | None:
+    """A newer plugin version installed than this server runs, if any (RT-6.2).
+
+    A running session keeps the plugin it started with; an update (also an
+    automatic one) applies after a restart: quit, then `claude --continue`.
+    Not on the host side of a keyless session (RT-6.18): its plugin list is
+    the host's, which the sandbox may write; the Stop hook tells the sandbox's.
+    """
+    if session_file.hosted():
+        return None
+    found = _installed_versions()
     newest = max(found, key=_version_key, default=None)
     if newest and VERSION != "unknown" and _version_key(newest) > _version_key(VERSION):
         return newest
     return None
+
+
+def _stale_reason(here: Path | None = None, own: str = __version__) -> str:
+    """ADR-007 amendment step 3, RT-6.10 step 1: why this server must stay off
+    the bus, '' for none. Its code under Claude Code's plugin directory
+    (`~/.claude/plugins`, the cache included, whichever runtime started it):
+    the version installed_plugins.json names (the newest, as the update notice
+    reads it); in a checkout (the nearest tree with `.claude-plugin/plugin.json`
+    above its code, also an environment inside one): that tree's version.
+    Neither, or not readable: no check. Not on the host side of a keyless
+    session: corral's preStart compares the host copy there (RT-6.18 step 1)."""
+    if session_file.hosted():
+        return ""
+    here = (here or Path(__file__)).resolve()
+    plugins = (Path.home() / ".claude" / "plugins").resolve()
+    installed: str | None
+    if here.is_relative_to(plugins):
+        installed = max(_installed_versions(), key=_version_key, default=None)
+    else:
+        installed = None
+        for parent in here.parents:
+            try:
+                installed = json.loads((parent / ".claude-plugin" / "plugin.json").read_text())["version"]
+                break
+            except (OSError, ValueError, KeyError):
+                continue
+    if not isinstance(installed, str) or not installed or installed == own:
+        if installed is None:
+            log.info("stale-copy check: no installed version found, not checked")
+        return ""
+    return (f"stale: this server is {own} from {here.parent}; installed is {installed}")
+
+
+# Set at start (ADR-007 amendment step 3): a running session keeps the plugin
+# it started with, so an update that lands later is the update notice's, not this.
+STALE = _stale_reason()
+STALE_HOW = ("restart this runtime's MCP server from the installed plugin, or point the "
+             "runtime's MCP configuration at it (an older copy registers no bot and takes none over, RT-6.10)")
 
 
 async def _bus_client() -> MattermostAdapter | None:
@@ -130,7 +175,7 @@ async def _start_hook_api() -> hookapi.HookAPI | None:
     """The turn hooks' and the listener's way to the bus (RT-6.17): they hold
     no token and ask this server. None without a bus configured."""
     global _hook_api
-    if await _bus_client() is None:
+    if await _bus_client() is None and not STALE:  # a stale copy answers 503, as before a bus session
         return None
     api = hookapi.HookAPI(_bus_client)
     try:
@@ -235,6 +280,9 @@ _roots_pending = False
 
 def _get_client() -> MattermostAdapter:
     global _client, _adopt_tried
+    if STALE:
+        # A stale copy registers no bot and takes none over (RT-6.10 steps 1, 5).
+        raise RuntimeError(STALE)
     if _client is None:
         _client = MattermostAdapter.from_env()
     if _client_named and not _adopt_tried and not _roots_pending:
@@ -688,7 +736,7 @@ async def bus_info() -> str:
     "autonomous" — announce puts both into your HELLO (for / trusts). trusted_humans says
     whose posts are marked from_trusted_human and where that came from; if the
     list is empty, approvals over the bus are off. Off the bus (no chat URL, no
-    bot yet) it says so in on_bus/reason instead of failing.
+    bot yet, stale copy) it says so in on_bus/reason instead of failing.
     """
     try:
         client = _get_client()
@@ -698,9 +746,10 @@ async def bus_info() -> str:
             "version": VERSION,
             "on_bus": False,
             "reason": str(exc),
-            "how": ("session_start when MM_REG_SECRET (in this server's environment) and "
-                    "MM_PROJECT_CHANNEL are set; otherwise the host must pass the bus "
-                    "settings into the session"),
+            "how": STALE_HOW if STALE else (
+                "session_start when MM_REG_SECRET (in this server's environment) and "
+                "MM_PROJECT_CHANNEL are set; otherwise the host must pass the bus "
+                "settings into the session"),
             **_hook_warning(),
         })
     trusted = await client.trusted_humans()

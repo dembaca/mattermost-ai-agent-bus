@@ -736,3 +736,36 @@ def test_a_state_dir_a_sandbox_can_write_is_refused(mm, run, tmp_path):
     r = run(STOP, CORRAL_SESSION_ID="sess-w", CORRAL_WORKDIR=str(work),
             XDG_STATE_HOME=str(work / "state"), **END)
     assert r.code == 0 and "state directory" in r.stderr
+
+
+def _versioned(tmp_path, version: str | None):
+    """A host copy whose Python environment says it is `version` (None: it says nothing)."""
+    say = f"echo {version}" if version else "true"
+    return _tree(tmp_path, f'#!/bin/sh\ncase "$1 $2" in "-I -c") {say};; *) cat >/dev/null; exit 1;; esac\n')
+
+
+def test_a_stale_host_environment_is_no_bus(mm, run, tmp_path):
+    """RT-6.10 step 1 (ADR-007 amendment step 3), RT-6.18 step 1: the host copy's
+    Python environment is not the host copy's version: no bot is registered, the
+    sandbox learns why, and the reinstall."""
+    tree = _versioned(tmp_path, "0.42.2")
+    r = run(str(tree / START), CORRAL_SESSION_ID="sess-stale", **HOST)
+    assert r.code == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert set(out["env"]) == {"MM_BUS_UNAVAILABLE"} and TOKEN not in r.stdout
+    why = out["env"]["MM_BUS_UNAVAILABLE"]
+    assert why.startswith("stale: the Python environment of the host copy") and "is 0.42.2" in why
+    assert "mm-agent-host-install.sh" in why
+    assert not any(p == "/register/v1/agents" for _, p, _ in mm.writes)
+
+
+@pytest.mark.parametrize("says", ["current", None], ids=["current", "unreadable"])
+def test_a_current_or_unreadable_host_environment_is_not_refused(mm, run, tmp_path, says):
+    """RT-6.18 step 1: an environment of the copy's version, or one that says nothing (no check), goes on."""
+    version = None
+    if says == "current":
+        version = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]
+    tree = _versioned(tmp_path, version)
+    r = run(str(tree / START), CORRAL_SESSION_ID="sess-ok", **HOST)
+    why = json.loads(r.stdout)["env"].get("MM_BUS_UNAVAILABLE", "")
+    assert not why.startswith("stale:") and "did not start on the host" in why  # the stub's host process exits at once

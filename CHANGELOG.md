@@ -3,6 +3,25 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.11
+
+### Added
+
+- **Stale copies stay off the bus**
+  ([RT-6.10 step 1](docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent),
+  [RT-6.18 step 1](docs/arc42/06-runtime-view.md), ADR-007 amendment step 3).
+  At start the MCP server compares its version with the installed one: for code
+  under `~/.claude/plugins` the version `installed_plugins.json` names, for code
+  in a checkout (also an environment inside one) that checkout's. A server that
+  is not the installed version registers no bot and takes none over: `bus_info`
+  says `on_bus: false` with `stale: this server is <v> from <path>; installed
+  is <v>` and what to do, the hook API answers `503`. Not checked while an
+  installed version cannot be read, and only at start: a running session
+  survives an auto-update. Case: 13 old servers from Cursor's `mcp-process`.
+- corral's `preStart` compares the host copy's Python environment with the host
+  copy and fails closed on a mismatch (`MM_BUS_UNAVAILABLE`, rerun the
+  installer), since the host process reads no `installed_plugins.json`.
+
 ## 0.71.9
 
 ### Changed
