@@ -39,7 +39,8 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             (?since=MS&until=S): the listener's decision inside the
                             listen window (RT-6.20); ?wait=S (at most MAX_WAIT_SEC,
                             until optional): a long poll held until that decision
-                            wakes or S passed (ADR-009 phase 1, RT-6.17 step 7)
+                            wakes or S passed, reason "replaced" when a newer one
+                            took over (ADR-009 phase 1, RT-6.17 step 7)
     GET  /v1/handoff        {context}: the own latest posts after a compaction
                             (RT-6.7, RT-6.20)
 
@@ -115,6 +116,8 @@ MAX_POSTS = 200
 MAX_WAIT_SEC = 55
 MIN_GAP_SEC = 1.0
 RECHECK_SEC = 15.0
+# The empty answer's reason for a long poll a newer one of the session replaced.
+REPLACED = "replaced"
 _REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
             413: "Payload Too Large", 502: "Bad Gateway", 503: "Service Unavailable"}
 
@@ -186,8 +189,10 @@ class HookAPI:
         self.unkeyed = ""
         # The MCP client's name (clientInfo), written into the file.
         self.client = ""
-        # The waiting long poll of /v1/wake: set, it answers empty (ADR-009).
-        self._poll: asyncio.Event | None = None
+        # The waiting long poll of /v1/wake (ADR-009), and when the session's
+        # last check of one ended (loop time): MIN_GAP_SEC runs from there.
+        self._poll: _Poll | None = None
+        self._checked = float("-inf")
 
     async def start(self, *, write_file: bool = True) -> str:
         """Listen on 127.0.0.1 and (by default) write the discovery file."""
@@ -315,7 +320,7 @@ class HookAPI:
 
     async def close(self) -> None:
         if self._poll is not None:
-            self._poll.set()  # the server's exit ends the wait: it answers empty
+            self._poll.end()  # the server's exit ends the wait: it answers empty
         self.remove_file()
         if self._server is not None:
             self._server.close()
@@ -408,57 +413,95 @@ class HookAPI:
                          payload: Mapping[str, Any], reader: asyncio.StreamReader) -> Reply:
         """GET /v1/wake?wait=S (ADR-009 phase 1, RT-6.17 step 7): hold the
         request until wake() says the agent wakes, by the rules it has
-        without wait, or for S seconds (at most MAX_WAIT_SEC), then answer as
-        it does; at the end of S, empty. Only looks, like wake(). One per
-        session: a newer one, the client closing its side or the server's
-        exit ends it with the empty answer. It holds no heavy slot while it
-        waits, only for each check."""
+        without wait, and answer as it does; S seconds (at most MAX_WAIT_SEC)
+        are a hard deadline: then empty, a check still running given up.
+        Only looks, like wake(). One per session: a newer one ends it with
+        reason "replaced" and gives up its check, the heavy slot with it; the
+        client closing its side or the server's exit ends it empty. A slot is
+        held only for a check; the session's checks are MIN_GAP_SEC apart,
+        from the end of one to the start of the next. wait=0 asks once."""
         wait = wait_sec(query)
         _wake_query(query)  # a bad since or until: 400 before an older wait ends
+        if wait == 0:
+            return await self._run(wake, client, query, payload)  # asks once
         loop = asyncio.get_running_loop()
         end = loop.time() + wait
         if self._poll is not None:
-            self._poll.set()  # one waiting request per session: the older answers empty
-        over = self._poll = asyncio.Event()
+            self._poll.end(replaced=True)  # one waiting request per session
+        poll = self._poll = _Poll()
         bell = asyncio.Event()
         _bells.add(bell)
         # The client sends nothing after its request (Connection: close): EOF
         # or a reset says it is gone.
         gone = asyncio.ensure_future(reader.read(1))
+        check: asyncio.Future[Reply] | None = None
+        due = loop.time()  # the first check at once, as far as the session's gap allows
         try:
             while True:
-                bell.clear()  # what is queued from now on is checked again
-                checked = loop.time()
-                reply = await self._run(wake, client, query, payload)
-                if reply[1].get("wake") and not (over.is_set() or gone.done()):
+                now = loop.time()
+                if poll.over.is_set() or gone.done() or now >= end:
+                    return 200, poll.answer()
+                # Due: rung, or RECHECK_SEC after the last check; never sooner
+                # than MIN_GAP_SEC after the end of the session's last check.
+                at = max(now if bell.is_set() else due, self._checked + MIN_GAP_SEC)
+                if now < at:
+                    await _first(min(at, end) - now, gone, poll.over, *(() if bell.is_set() else (bell,)))
+                    continue
+                bell.clear()  # a ring from now on, during the check too, asks again
+                check = asyncio.ensure_future(self._run(wake, client, query, payload))
+                await _first(end - now, gone, poll.over, check)
+                if not check.done():  # replaced, gone or the deadline
+                    await _give_up(check)
+                    return 200, poll.answer()
+                self._checked = loop.time()
+                reply = check.result()  # Mattermost failed: 502, as without wait
+                if reply[1].get("wake") and not (poll.over.is_set() or gone.done()):
                     return reply
-                due = min(end, checked + RECHECK_SEC)
-                while True:
-                    now = loop.time()
-                    if over.is_set() or gone.done() or now >= end:
-                        return 200, turnend.no_wake()
-                    if now >= due or (bell.is_set() and now >= checked + MIN_GAP_SEC):
-                        break
-                    if bell.is_set():  # rung: check again once the gap has passed
-                        await _first(min(due, checked + MIN_GAP_SEC) - now, gone, over)
-                    else:
-                        await _first(due - now, gone, over, bell)
+                due = self._checked + RECHECK_SEC
         finally:
+            if check is not None and not check.done():
+                check.cancel()
             if gone.done() and not gone.cancelled():
                 gone.exception()  # a reset connection: retrieved, not logged
             else:
                 gone.cancel()
             _bells.discard(bell)
-            if self._poll is over:
+            if self._poll is poll:
                 self._poll = None
 
 
-async def _first(timeout: float, gone: asyncio.Future[bytes], *events: asyncio.Event) -> None:
-    """Wait until the client is gone, one of the events is set, or timeout s passed."""
-    waits = [asyncio.ensure_future(e.wait()) for e in events]
-    either: list[asyncio.Future[Any]] = [gone, *waits]
+class _Poll:
+    """The waiting long poll of a session (ADR-009 phase 1, RT-6.17 step 7)."""
+
+    def __init__(self) -> None:
+        self.over = asyncio.Event()
+        self.replaced = False
+
+    def end(self, *, replaced: bool = False) -> None:
+        """A newer request (replaced) or the server's exit ends it."""
+        self.replaced = replaced
+        self.over.set()
+
+    def answer(self) -> dict[str, Any]:
+        """Empty; reason "replaced" when a newer request took over, so a
+        client can back off instead of asking again at once."""
+        return {**turnend.no_wake(), "reason": REPLACED} if self.replaced else turnend.no_wake()
+
+
+async def _give_up(check: asyncio.Future[Reply]) -> None:
+    """Cancel a check and wait until it let go of its heavy slot."""
+    check.cancel()
+    await asyncio.wait([check])
+    if not check.cancelled():
+        check.exception()  # it ended meanwhile: retrieved, not logged
+
+
+async def _first(timeout: float, *what: asyncio.Event | asyncio.Future[Any]) -> None:
+    """Wait until one of the futures is done or one of the events set, or timeout s passed."""
+    waits = [asyncio.ensure_future(w.wait()) for w in what if isinstance(w, asyncio.Event)]
+    either: list[asyncio.Future[Any]] = [w for w in what if not isinstance(w, asyncio.Event)]
     try:
-        await asyncio.wait(either, timeout=max(0.0, timeout),
+        await asyncio.wait([*either, *waits], timeout=max(0.0, timeout),
                            return_when=asyncio.FIRST_COMPLETED)
     finally:
         for w in waits:
