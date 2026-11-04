@@ -53,7 +53,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import a2a, asks, attest, lease, session_file
+from . import a2a, asks, attest, lease, owners, session_file
 from .model import Post
 
 if TYPE_CHECKING:
@@ -62,6 +62,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 QUESTION, APPROVAL = "question", "approval"
+NO_CROWN = "no 👑 reachable in your home: asked the human at once"
 KINDS = (QUESTION, APPROVAL)
 DIRECT, COORDINATOR = "direct", "coordinator"
 MODES = (DIRECT, COORDINATOR)
@@ -439,16 +440,35 @@ async def info(client: ChatPort, uid: str) -> dict[str, object]:
             "signed": source == REGISTRAR}
 
 
-async def coordinator(client: ChatPort, username: str) -> str:
-    """The home's 👑 to ask a question (step 3), as coordinator("who") finds
-    it: a live 👑 among the agents of the home. '' for none, for the asking
-    agent itself, or when the roster cannot be read (step 5: the human)."""
+async def _peer_holder(client: ChatPort, holder: str) -> bool:
+    """The 👑 is a peer of this session (ADR-001, owners.peer). A bot that is
+    not found, not readable or not bound is none."""
+    try:
+        bot = (await client.bots_named({holder})).get(holder.lower())
+        return bot is not None and await owners.peer(client, bot.id)
+    except Exception as exc:  # noqa: BLE001 — unsure: no peer
+        log.info("ask route: %s not shown to be a peer: %s", holder, exc)
+        return False
+
+
+async def coordinator(client: ChatPort, username: str) -> tuple[str, str]:
+    """The home's 👑 to ask a question (RT-6.25 step 3), as coordinator("who") finds
+    it, and why not: a live 👑 among the agents of the home that is a peer of
+    this session. ('', note) for none, for the asking agent itself, for a 👑
+    that is no peer (foreign, unbound, not readable, owner split off: a
+    question never goes to one) or when the roster cannot be read (step 5:
+    the human)."""
     try:
         holder = await lease.coordinator_of(client, await client.work_channel_id())
     except Exception as exc:  # noqa: BLE001 — unsure: the human
         log.info("ask route: no roster: %s", exc)
-        return ""
-    return "" if not holder or holder.lower() == username.lower() else holder
+        return "", NO_CROWN
+    if not holder or holder.lower() == username.lower():
+        return "", NO_CROWN
+    if not await _peer_holder(client, holder):
+        log.info("ask route: the home's 👑 %s is no peer: the human", holder)
+        return "", f"the home's 👑 {holder} is not a peer of this session: asked the human at once"
+    return holder, ""
 
 
 # --- no answer in time (step 6) --------------------------------------------------------
@@ -460,7 +480,9 @@ fallback: Callable[[ChatPort, str, str, str], Awaitable[str]] | None = None
 
 async def _answered(client: ChatPort, uid: str, pid: str, coord: str) -> bool:
     """A reply in the question's thread after it by the 👑 or a trusted human,
-    or a yes/no reaction by either; or the question gone."""
+    or a yes/no reaction by either; or the question gone. The 👑 counts only
+    while it is a peer of this session (ADR-001): a crown that moved to a
+    foreign agent since the question closes nothing."""
     posts = (await client.thread(pid)).posts
     ask = next((p for p in posts if p.id == pid), None)
     if ask is None or ask.delete_at:
@@ -470,8 +492,10 @@ async def _answered(client: ChatPort, uid: str, pid: str, coord: str) -> bool:
     names = await client.usernames(({p.user_id for p in posts} | {r.user_id for r in reactions})
                                    - {"", uid})
 
+    crown = bool(coord) and await _peer_holder(client, coord)
+
     def by(user: str) -> bool:
-        return user in trusted or (bool(coord) and names.get(user, "").lower() == coord.lower())
+        return user in trusted or (crown and names.get(user, "").lower() == coord.lower())
 
     if any(asks.is_answer(r.emoji_name) and by(r.user_id) for r in reactions):
         return True

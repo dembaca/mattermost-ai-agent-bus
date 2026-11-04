@@ -218,13 +218,8 @@ async def holder(client: ChatPort, m: Mandate) -> tuple[str, str]:
 
 
 async def _peer(client: ChatPort, user_id: str) -> bool:
-    """The holder is a peer (ADR-001): the owner split is active and its owner
-    and trusted humans are all this session's. Unreadable or split off: no."""
-    names, _ = await owners.mine(client)
-    if not names:
-        return False
-    agent = await owners.read(client, user_id)
-    return agent is not None and owners.is_peer(agent, names)
+    """The holder is a peer (ADR-001): owners.peer."""
+    return await owners.peer(client, user_id)
 
 
 async def _in_task(client: ChatPort, post: Post, home: str) -> bool:
