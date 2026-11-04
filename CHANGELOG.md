@@ -3,6 +3,29 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.5
+
+### Changed
+
+- **Asks to the same target are queued, not refused**
+  ([RT-6.11 step 2](docs/arc42/06-runtime-view.md#611-asking-a-human)).
+  A second `ask_human` to a human (or the 👑) with an ask open used to come back
+  `posted: false`; the agent had to remember and ask again. Now it is stored in
+  `asks-<uid>.env` (`QUEUED=`) and answers `queued: true`, `position`, `behind`;
+  at most 5 wait (`queue_full: true`). One question per ask and go / no-go are
+  checked at once. When the open ask is answered (the reminders' rule) the
+  heartbeat posts the next, routed as of then (RT-6.25); `resolve_ask` posts it
+  at once; an `ask_posted` fyi event tells the agent. A 24 h old ask still blocks.
+  The reminder says `· n more waiting` (RT-6.19), `coordinator("tasks")` lists the
+  agent's own queue with `queued: true`.
+- A queued ask gets an id (`q-…`): `resolve_ask` withdraws it. One queued ask is
+  taken out of the queue before it is posted, so the heartbeat and `resolve_ask`
+  never post it twice; once the ask is out, a failing later step does not post
+  it again. `ask_posted` and `ask_route` events carry `intent: fyi` and no
+  longer wake the 👑.
+- `post_message` / `reply_in_thread` with `IDLE` or `RESULT` that name a trusted
+  human without an open or queued ask return a `warning` beside `unasked`.
+
 ## 0.71.4
 
 ### Changed

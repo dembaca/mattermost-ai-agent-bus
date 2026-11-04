@@ -362,7 +362,9 @@ async def test_one_open_question_to_the_crown_at_a_time(monkeypatch):
     _coordinator_mode(monkeypatch, c)
     asks.add(BOT, "q" * 26, "agent-coord", "q" * 26, question="dembaca")
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert out["posted"] is False and out["open_ask"] == "q" * 26 and c.posted == []
+    # RT-6.11 step 2: it waits behind the open one.
+    assert out["posted"] is False and out["queued"] is True and out["behind"] == "q" * 26
+    assert c.posted == [] and asks.queued(BOT, "agent-coord")[0]["kind"] == "question"
 
 
 # --- step 4: the 👑's answer --------------------------------------------------------------

@@ -315,18 +315,18 @@ async def test_only_the_first_sentence_is_bold(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_one_open_ask_per_human_at_a_time(monkeypatch):
-    """RT-6.11: several questions at once are asked one after the other."""
+    """RT-6.11 step 2: several questions at once are asked one after the other."""
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)
     first = json.loads(await server.ask_human(need="Merge #61?"))
     second = json.loads(await server.ask_human(need="Archive #60?"))
     assert len(c.posted) == 1 and second["posted"] is False
-    assert second["open_ask"] == first["ask"] and "resolve_ask" in second["hint"]
+    assert second["queued"] is True and second["position"] == 1 and second["behind"] == first["ask"]
+    c.post_id = "o" * 26
     other = json.loads(await server.ask_human(need="Hand on hogan?", human="kollegin"))
     assert other["ask"] and len(c.posted) == 2  # another human: own queue
     await server.resolve_ask(first["ask"])
-    third = json.loads(await server.ask_human(need="Archive #60?"))
-    assert third["ask"] and len(c.posted) == 3
+    assert len(c.posted) == 3 and c.posted[2]["message"].endswith("**Archive #60?**")
 
 
 @pytest.mark.asyncio

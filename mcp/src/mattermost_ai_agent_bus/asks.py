@@ -17,6 +17,10 @@ look at. It lives next to the other per-bot state, asks-<uid>.env:
                                        human asked if it does not answer in time
                                        (- once settled), whether it blocks; kept
                                        like TITLE, so an answer is known as advice
+    QUEUED=<target> <base64 of json>   an ask to <target> that waits behind an
+                                       open one (RT-6.11 step 2): every field of
+                                       ask_human on one line, posted when the
+                                       open one is answered or resolved
 
 The background listener (bin/mm-agent-listen.sh) wakes the agent for any
 reaction on an open ask that is not SEEN. resolve() drops the ask and its SEEN
@@ -26,8 +30,15 @@ handed to the agent as expired. Asks older than MAX_AGE_SEC are forgotten.
 
 from __future__ import annotations
 
+import base64
+import contextlib
+import fcntl
+import json
+import os
 import time
+import uuid
 from pathlib import Path
+from typing import Any
 
 from . import session_file
 
@@ -38,6 +49,8 @@ APPROVAL_SEC = 86400
 # Headlines kept, open asks or resolved: an IDLE right after resolve_ask still
 # links `ask <id>` by its headline (RT-6.15 step 2). Not an open ask.
 TITLES = 50
+# Asks that wait behind an open ask to the same target, per target (RT-6.11).
+QUEUE_MAX = 5
 
 YES = frozenset({"+1", "thumbsup", "white_check_mark", "heavy_check_mark",
                  "ballot_box_with_check"})
@@ -159,7 +172,8 @@ def questions(uid: str) -> dict[str, str]:
 
 def _write(uid: str, asks: dict[str, float], seen: set[str],
            whom: dict[str, str] | None = None, done: set[str] | None = None,
-           title: dict[str, str] | None = None, question: dict[str, str] | None = None) -> None:
+           title: dict[str, str] | None = None, question: dict[str, str] | None = None,
+           queue: list[dict[str, Any]] | None = None) -> None:
     if whom is None:
         whom = _read_all(uid)[2]
     if done is None:
@@ -179,6 +193,8 @@ def _write(uid: str, asks: dict[str, float], seen: set[str],
     lines += [f"ANSWERED={p}" for p in sorted(done) if p in asks]
     lines += [f"TITLE={p} {t}" for p, t in list(heads.items())[-TITLES:]]
     lines += [f"QUESTION={p} {v}" for p, v in list(qs.items())[-TITLES:]]
+    lines += [f"QUEUED={e['target']} " + base64.b64encode(json.dumps(e).encode()).decode()
+              for e in (queued(uid) if queue is None else queue)]
     path = _path(uid)
     if not lines:
         path.unlink(missing_ok=True)
@@ -295,3 +311,89 @@ def resolve(uid: str, post_id: str) -> bool:
         return False
     _write(uid, asks, seen)
     return True
+
+
+def queued(uid: str, target: str = "") -> list[dict[str, Any]]:
+    """Asks waiting behind an open ask (RT-6.11 step 2), oldest first: the
+    fields of ask_human and `target`, whom it goes to; of that target only,
+    when given. A line that does not read, or older than MAX_AGE_SEC, is gone."""
+    out = []
+    now = time.time()
+    for v in _lines(uid, "QUEUED"):
+        who, _, blob = v.partition(" ")
+        try:
+            entry = json.loads(base64.b64decode(blob))
+        except ValueError:
+            continue
+        if (isinstance(entry, dict) and entry.get("target") == who
+                and now - float(entry.get("at", now)) < MAX_AGE_SEC
+                and (not target or who == target.lower())):
+            out.append(entry)
+    return out
+
+
+@contextlib.contextmanager
+def _queue_lock(uid: str) -> Any:
+    """An exclusive advisory lock around a change of the queue, so two servers of
+    one bot do not both take the same entry. A state dir that cannot be written
+    locks nothing."""
+    fd = -1
+    try:
+        fd = os.open(session_file.state_dir() / f"asks-{uid}.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    except OSError:
+        pass
+    try:
+        yield
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def enqueue(uid: str, target: str, fields: dict[str, Any]) -> tuple[int, str]:
+    """Queue an ask to `target` behind its open one: its place in that queue
+    and its id (`q-…`, what resolve_ask takes to withdraw it). The caller
+    checks QUEUE_MAX."""
+    entry = {**fields, "target": target.lower(), "at": time.time(), "id": f"q-{uuid.uuid4().hex[:8]}"}
+    with _queue_lock(uid):
+        everything = queued(uid) + [entry]
+        asks, seen = _read(uid)
+        _write(uid, asks, seen, queue=everything)
+    return len([e for e in everything if e["target"] == entry["target"]]), entry["id"]
+
+
+def claim(uid: str, qid: str) -> dict[str, Any] | None:
+    """Take the entry `qid` out of the queue (it is posted, or withdrawn): the
+    entry, or None when it is gone, so only one caller gets it."""
+    with _queue_lock(uid):
+        everything = queued(uid)
+        hit = next((e for e in everything if e.get("id") == qid), None)
+        if hit is not None:
+            everything.remove(hit)
+            asks, seen = _read(uid)
+            _write(uid, asks, seen, queue=everything)
+        return hit
+
+
+def unclaim(uid: str, entry: dict[str, Any]) -> None:
+    """Put a claimed entry back in front: it was not posted."""
+    with _queue_lock(uid):
+        asks, seen = _read(uid)
+        _write(uid, asks, seen, queue=[entry, *queued(uid)])
+
+
+def queued_targets(uid: str) -> list[str]:
+    return sorted({e["target"] for e in queued(uid)})
+
+
+def whom_of(uid: str, post_id: str) -> tuple[str, str]:
+    """The human an open ask goes to and the thread it is in ('' for none)."""
+    human, _, root = _read_all(uid)[2].get(post_id, "").partition(" ")
+    return ("" if human == "-" else human), root
+
+
+def blocking(uid: str, human: str) -> list[str]:
+    """Open asks to that human no trusted human answered (as the agent saw it):
+    they hold the queue back. Answered but not yet resolved ones do not."""
+    done = _read_answered(uid)
+    return [p for p in open_to(uid, human) if p not in done]
