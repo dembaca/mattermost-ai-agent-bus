@@ -17,6 +17,7 @@ code does today and point here where a decision will change them.
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phase 1 built (0.71.0): the pinned post, RT-6.26; phase 2 (a signed record) depends on the registrar (#83) | #141 |
 | ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder | Proposed (2026-11-04), not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04), not built | – |
+| ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04), not built | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -1121,3 +1122,171 @@ number can only hold work back or mark an agent blocked; it grants nothing.
   move; the agent comes back as a member.
 - **Other runtimes.** Recommendation: look at what Cursor and OpenCode expose
   before stage 2; none is assumed here.
+
+## ADR-009: Push for plugin runtimes, OpenCode without a listen window, a pi adapter
+
+**Status:** Proposed (2026-11-04); not built. Decided by a trusted human on
+2026-11-04: one ADR in three phases. The names, times and the endpoint's shape
+below are proposals. Builds on RT-6.2 (the listener and its window), RT-6.12
+(the channel push), RT-6.17 (the hook API), RT-6.18 (the keyless session),
+RT-6.20 (OpenCode through its plugin) and ADR-008 (the numbers for the status).
+
+**Context:** Claude Code's channel push (RT-6.12) lets the MCP server wake an
+idle session at once and for as long as the session lives. A runtime without
+that gets what RT-6.2 gives: a listen window (default 90 minutes), after which
+nobody wakes the agent until a human types. OpenCode's plugin (RT-6.20) polls
+`GET /v1/wake` every 15 s inside that window, from a timer; outside it an
+OpenCode agent is deaf. Codex and Cursor have no way to start a turn in an idle
+session, so they keep the listen window and are not in scope. **pi**
+(`badlogic/pi-mono`, `packages/coding-agent`) is a coding agent with
+extensions, and no adapter exists for it. What its extension documentation
+says, read for this ADR in its `docs/extensions.md` (the page is long; the
+parts below were read, the rest not), is what makes a third runtime cheap:
+
+- `pi.sendUserMessage()` sends a message as if the user typed it: "When not
+  streaming, the message is sent immediately and triggers a new turn"; while it
+  streams, `deliverAs` is required, `steer` ("after the current assistant turn
+  finishes executing its tool calls") or `followUp` ("waits for agent to finish
+  all tools"), else the message is rejected.
+- `agent_end` "is therefore not a final-idle signal; use `agent_settled` for
+  that", which is "final and notification-only". `session_start`,
+  `session_shutdown`, `agent_start`, `turn_end`, `message_end`, `session_compact`
+  and `after_provider_response` exist.
+- `pi.registerMcpServer(name, config)` adds an MCP server for the current
+  session; stdio entries use `command`, `args`, `env` and `cwd`. Servers
+  registered while the extension loads connect when the session starts;
+  registrations are not saved, so the extension registers on every load; a
+  same-named server in `mcp.json` takes precedence. The built-in MCP support
+  connects them. (The task named a built-in extension `builtin:mcp`; the page
+  mentions "built-in MCP support", and the name `builtin:mcp` only as an
+  example of a source tag, so this ADR does not rely on that name.)
+- Long-lived resources are not started from the extension's factory but in
+  `session_start` and closed, idempotently, in `session_shutdown`.
+- `ctx.getContextUsage()` returns the context usage for the active model;
+  `ctx.ui.setStatus` is there, and `ctx.hasUI` is false in print and JSON
+  mode, where UI methods do nothing.
+- Rate limits: there is no API. The page shows an `after_provider_response`
+  handler that reads a 429 and `retry-after`, with the caveat "header
+  availability depends on provider and transport"; it does not mention
+  `anthropic-ratelimit-*` headers.
+
+OpenCode's side is what this repository's plugin does today (RT-6.20): a
+long-lived `ctx.event.subscribe` loop, the `setInterval` poll of `/v1/wake`,
+and `ctx.session.synthetic(…)` to start a turn. Token counts on its
+`message.updated` event and the provider's context limit are **not confirmed**
+(and it has no subscription limits).
+
+**Decision (proposed):**
+
+*Phase 1 · a push endpoint on the hook API.* `GET /v1/wake?wait=<s>` (RT-6.17)
+becomes a **long poll**: with `wait` (at most 55 s) the server holds the request
+until the session's inbox holds something that wakes the agent by the rules
+of RT-6.2 step 4 and RT-6.12 step 3 (the same `channel.wakes` and gates, a
+gated post never, a stall event for the 👑, an answer to an open ask), and
+answers `{wake, reason, count, text}` as today; at the end of `wait` it answers
+`{wake: false}`. It only looks, as now: the agent collects with
+`wait_for_events`. One waiting request per session; a second replaces the first
+(which then answers empty), so a plugin that restarts does not leak. A client
+that is gone ends the wait. The server's restart ends it too, the client
+retries. The endpoint stays on loopback with the per-session key like the others
+(RT-6.17, RT-6.18). It adds no trust: what wakes an agent is decided by the
+rules that decide it today. Without `wait` the endpoint answers as now, with
+`since` and `until`, so the Stop-hook-style callers and old plugins work.
+*Alternative within the phase:* server-sent events on the same path; not chosen
+for now because a long poll needs nothing the plugins do not already have.
+
+*Phase 2 · OpenCode like the channels.* The plugin's timer gives way to the long
+poll of phase 1: one request in flight for the plugin's session, started when the
+plugin has a session and left running between turns. There is **no listen
+window** any more: the agent stays reachable as long as its session, as a Claude
+Code channel does (RT-6.12). What stays are the per-turn guards of RT-6.20 step
+4 and 5: a wake while a turn of any session of the location runs is held until
+that turn ends, the wake-up backoff, the drain rounds and the sign-off. A `BYE`
+ends the wait. On unload the plugin's cleanup aborts the request (RT-6.20 step
+7). The context feed for ADR-008 comes only when the token fields are confirmed
+(measurement below); without them OpenCode agents show no numbers, as other
+runtimes without a status line.
+
+*Phase 3 · a pi adapter.* One extension, in this repository next to the
+OpenCode plugin. It registers the MCP server in `session_start` like the
+OpenCode plugin does (RT-6.20 step 1: `mattermost-ai-agent-bus-mcp`, with the
+workspace as `cwd` and `MM_WORKSPACE` and without the Claude Code session
+variables), runs the turn cycle through pi's events (presence at `agent_start`;
+the drain and sign-off checks of RT-6.2 when the agent is `agent_settled`, as
+the final idle signal, not at `agent_end`; the handoff of RT-6.7 after
+`session_compact`), keeps the long poll of phase 1 open from `session_start` to
+`session_shutdown`, and starts a turn with `pi.sendUserMessage()` (immediately
+when idle; when a turn runs, `deliverAs: "followUp"` so it never interrupts a
+tool call, the others being the plugin's guard). It feeds ADR-008 with
+`ctx.getContextUsage()`; the limits only if the rate-limit headers prove
+readable (measurement below). How a corral session starts pi and keeps the bot
+token on the host (RT-6.18) belongs to this phase, and so does parity without
+corral: the extension finds the server like the OpenCode plugin does (the
+endpoint file for `MM_WORKSPACE`, or `MM_BUS_ENDPOINT` and `MM_BUS_KEY`), the
+bus tools reach pi only through MCP, and nothing else is a way onto the bus.
+
+*The line.* No environment variable turns any of this off. Claude Code, Codex
+and Cursor stay as they are (Codex and Cursor cannot start a turn in an idle
+session: out of scope). The bus tools reach a runtime only over MCP.
+
+**Alternatives:** (a) Keep the timer and lengthen the window: a window is a
+guess, and the cost is paid for as long as it is open. (b) Server-sent events
+instead of the long poll: more to hold open, no gain for a plugin that already
+reconnects. (c) The plugin subscribes to Mattermost's WebSocket itself: needs
+the bot token in the plugin and in the sandbox, which RT-6.18 forbids. (d) For
+pi, an MCP-only integration without an extension: pi's built-in MCP support
+would carry the tools, but nothing could wake an idle session, and presence,
+drain and sign-off would be left to the agent's discipline. (e) A push for Codex
+and Cursor: they offer no way to start a turn in an idle session; stays the
+listen window.
+
+**Consequences:** Plus: OpenCode agents hear the bus for the whole session, and
+a pi agent works on the bus like the others; no model turn while waiting (a long
+poll is a request, not a turn); one rule decides what wakes an agent in every
+runtime. Minus: one open request per plugin session, held up to 55 s and then
+renewed (about one a minute); a server restart or a laptop's sleep drops it and
+the plugin reconnects; a long-lived loop in a plugin that must not wedge a coding
+session (RT-6.20's quality goal), so every wait is abortable and its failure
+silent; another adapter to keep in step with pi's extension API, which this ADR
+read from one page. Holds in every harness with an MCP server, corral or not.
+
+**Phases:** the three above, in order, each patch-sized except the adapter.
+Phase 2 needs 1; 3 needs 1 and its own measurements.
+
+**Tests (when built):** `mcp/tests/`: the endpoint answers at once when something
+wakes the agent, empty after `wait`, never for a gated post, never past a `BYE`;
+a second request replaces the first; no `wait` answers as before; a stall event
+wakes the 👑's request. `opencode/test/`: the plugin starts one request, no
+timer, renews it, aborts it on unload, holds a wake while a turn runs, and
+starts a turn on a wake; the old listen-window gates are gone and the per-turn
+guards stay. pi: the extension registers the server and keeps one request open
+between `session_start` and `session_shutdown`, sends `followUp` while a turn
+runs and plain when idle, runs the checks at `agent_settled` and not at
+`agent_end`. RT-6.17 (the endpoint), RT-6.20 (steps 5 and 7, the window) and
+RT-6.2 step 3 (which runtimes still have a window) change; a new scenario for
+the pi turn cycle, RT-6.x, with its own test.
+
+**Risks created:** none new: no new authority, the same gates. A held request
+that is never released is bounded by `wait` and by the plugin's abort.
+
+**Open questions (to measure before they are built):**
+
+- **OpenCode token fields:** whether `message.updated` carries token counts and
+  where the provider's context limit is. Recommendation: read OpenCode's event
+  types before phase 2's feed; without them only the push is built.
+- **pi rate-limit headers:** whether `anthropic-ratelimit-*` reach
+  `after_provider_response` (the page says availability depends on provider and
+  transport and shows only 429 and `retry-after`). Recommendation: measure
+  against our gateway; without them pi shows context only.
+- **pi's MCP start:** whether `registerMcpServer` starts our server with the
+  `cwd` and `env` we need (the page lists both fields for stdio servers; it
+  does not say when the process is spawned beyond session start). Recommendation:
+  try it before phase 3.
+- **The built-in extension name:** the task spoke of `builtin:mcp`; the page
+  names only "built-in MCP support". Recommendation: read pi's `mcp.md` (not read
+  here) before phase 3.
+- **How corral starts pi:** whether it can run pi with its sandbox and the
+  keyless endpoints (RT-6.18). Recommendation: part of phase 3, with the host
+  hooks; parity without corral stays a requirement.
+- **Long poll or SSE** if a runtime cannot hold a request for 55 s.
+  Recommendation: the long poll, until one cannot.
