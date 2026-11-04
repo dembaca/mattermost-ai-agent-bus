@@ -294,3 +294,37 @@ async def test_a_client_that_goes_or_the_servers_exit_ends_the_wait(bus):
     await waiting(bus, task, checks=len(bus.checks) + 1)
     await bus.api.close()
     assert (await asyncio.wait_for(task, 3)).json() == EMPTY
+
+
+async def test_a_long_poll_opens_the_inbox_before_it_checks(bus, monkeypatch):
+    """RT-6.17 step 7 (ADR-009 phase 2): the first long poll connects the
+    inbox's socket, so a post rings the wait from then on; a connect that
+    fails does not stop the check, and wait=0 connects nothing."""
+    order = []
+
+    async def connect():
+        order.append("connect")
+
+    orig = hookapi._last
+
+    async def noting_last(client, query, body):
+        order.append("check")
+        return await orig(client, query, body)
+
+    monkeypatch.setattr(hookapi, "connect", connect)
+    monkeypatch.setattr(hookapi, "_last", noting_last)
+    got = (await bus.http.get(f"/v1/wake?{bus.q}&wait=1")).json()
+    assert got["wake"] is False and order[:2] == ["connect", "check"]
+
+    async def broken():
+        raise RuntimeError("no token")
+
+    monkeypatch.setattr(hookapi, "connect", broken)
+    bus.rows[:] = [("dm", 1)]
+    got = (await bus.http.get(f"/v1/wake?{bus.q}&wait=5")).json()
+    assert got["wake"] is True and got["reason"] == "dm"  # looked all the same
+
+    order.clear()
+    monkeypatch.setattr(hookapi, "connect", connect)
+    await bus.http.get(f"/v1/wake?{bus.q}&wait=0")
+    assert order == ["check"]

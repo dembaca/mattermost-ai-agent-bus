@@ -29,8 +29,7 @@ refused (`configured plugin path must be a directory`):
     {
       "package": "file:///ABS/PATH/mattermost-ai-agent-bus/opencode",
       "options": {
-        "command": ["sh", "-c", "MM_REG_SECRET=\"$(gopass show -o bus/registrar)\" exec uv run --locked --project /ABS/PATH/mattermost-ai-agent-bus/mcp mattermost-ai-agent-bus-mcp"],
-        "pollSec": 15
+        "command": ["sh", "-c", "MM_REG_SECRET=\"$(gopass show -o bus/registrar)\" exec uv run --locked --project /ABS/PATH/mattermost-ai-agent-bus/mcp mattermost-ai-agent-bus-mcp"]
       }
     }
   ]
@@ -53,8 +52,9 @@ import from `@opencode/plugin` is types.
 Options: `root` (the checkout, when the file is copied, not linked; or
 `MM_AGENT_BUS_ROOT`), `mcp: false` (add no MCP server), `command` and `environment`
 (the server's command and extra variables, e.g. the `sh -c` command above that fetches
-the secret), `pollSec` (how often an idle session asks, default `MM_LISTEN_POLL_SEC` or
-15 s, at least 5 s).
+the secret), `waitSec` (how long the server holds the plugin's long poll, 1 to 55, default
+50), `retrySec` (the pause after a failed poll, default 15; `replaced` doubles it).
+`pollSec` and `MM_LISTEN_POLL_SEC` are gone: there is no timer to set.
 
 The plugin adds the MCP server `mattermost-agent-bus` (`uv run --locked --project
 <checkout>/mcp mattermost-ai-agent-bus-mcp`) unless your configuration already has it or
@@ -161,9 +161,12 @@ reachable server they exit 3 and say what to start.
 ## Reachability
 
 With the plugin, a turn ends with the drain and sign-off checks, and an idle session
-is woken within the same listen window as in Claude Code (`MM_LISTEN_SEC`, project
-channel only) while OpenCode serves the project (not after `opencode run --standalone`
-exits); there is no channel push (Claude Code only). Without the plugin there are no
+is woken for as long as its session lives, as a Claude Code channel is (no listen window,
+`MM_LISTEN_SEC` does not apply; the server's gates hold: a project channel, an own post in
+the work channel that is no `BYE`), by one long poll the plugin keeps open between turns
+([RT-6.20](../docs/arc42/06-runtime-view.md#620-opencode-turn-cycle-through-its-plugin), ADR-009),
+while OpenCode serves the project (not after `opencode run --standalone` exits); there is
+no channel push (Claude Code only). Between turns the status is 🛰 "on the bus", reachable. Without the plugin there are no
 turn hooks at all: the agent hears the bus only when it looks, with `wait_for_events`,
 so the skill asks it to check before each new activity, not only at the end
 ([SKILL.md, *Staying reachable*](../skills/mattermost-ai-agent-bus/SKILL.md#staying-reachable),

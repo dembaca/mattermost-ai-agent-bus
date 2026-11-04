@@ -3,6 +3,26 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.10
+
+### Changed
+
+- **OpenCode like the channels** (ADR-009 phase 2,
+  [RT-6.20 steps 4, 5 and 7](docs/arc42/06-runtime-view.md#620-opencode-turn-cycle-through-its-plugin)).
+  The plugin's 15 s timer gives way to one long poll of
+  `GET /v1/wake?wait=50` between turns, and there is no listen window any
+  more: the agent is woken for as long as its session lives. The server's gates
+  hold as before (project channel, an own post that is no `BYE`); a turn that
+  runs holds a wake until it has ended; `replaced` and failures back off; the
+  unload aborts the request. Between turns the status is 🛰 "on the bus"
+  (reachable). The plugin options `pollSec` and `MM_LISTEN_POLL_SEC` are gone
+  for it, `waitSec` and `retrySec` are new.
+- The inbox's WebSocket opens with the first long poll
+  ([RT-6.17 step 7](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)),
+  one connect at a time, and a connect that is cancelled or fails half way
+  leaves nothing that reads as connected. Not at the server's start: a session
+  that never polls needs no socket; Claude Code's channels are unchanged.
+
 ## 0.71.9
 
 ### Changed

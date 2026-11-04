@@ -118,6 +118,9 @@ class WebSocketInbox:
         default_factory=asyncio.Queue, repr=False, init=False
     )
     _reader: asyncio.Task[None] | None = field(default=None, repr=False, init=False)
+    # One connect at a time: wait_for_events, the channel push and the wake
+    # long poll (ADR-009 phase 2) may all ask for the socket at once.
+    _connecting: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, init=False)
     _channel_cache: dict[str, Channel] = field(
         default_factory=dict, repr=False, init=False
     )
@@ -242,12 +245,36 @@ class WebSocketInbox:
             self._channel_cache[channel_id] = await self.client.get_channel(channel_id)
         return self._channel_cache[channel_id]
 
+    async def ensure_connected(self) -> None:
+        """The socket, opened if it is not (one connect at a time)."""
+        async with self._connecting:
+            if self._ws is None:
+                await self.connect()
+
     async def connect(self) -> None:
         await self.ensure_identity()
         if not self.client.token:
             raise RuntimeError("bot token required for WebSocket")
         url = ws_url_from_http(self.client.base_url)
         self._ws = await ws_connect(url)
+        try:
+            await self._open()
+        except BaseException:
+            # Cancelled (a long poll's deadline) or failed half way: nothing is
+            # left half open that reads as connected, the next call connects
+            # afresh and its backfill runs whole (_seen_ids drops the doubles).
+            if self._reader is not None:
+                self._reader.cancel()
+                self._reader = None
+            ws, self._ws = self._ws, None
+            if ws is not None:
+                try:
+                    await ws.close()
+                except Exception:  # noqa: BLE001 — already gone
+                    pass
+            raise
+
+    async def _open(self) -> None:
         auth = {
             "seq": self._seq,
             "action": "authentication_challenge",
@@ -716,7 +743,7 @@ class WebSocketInbox:
         if agent:
             self.stop_typing()
         if self._ws is None:
-            await self.connect()
+            await self.ensure_connected()
         if self._getter is not None and not self._getter.done():
             self._getter.cancel()
         getter = asyncio.ensure_future(self._queue.get())

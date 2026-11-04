@@ -11,14 +11,17 @@
 //   session.execution.succeeded / .failed
 //                      a turn ends: GET /v1/turn-end → drain or sign-off as
 //                      synthetic input that starts the next round, else
-//                      presence listening for the listen window the server
-//                      opens, or idle (the Stop hook, RT-6.2)
+//                      presence "on the bus" (reachable, no listen window:
+//                      the session is reachable as long as it lives, like a
+//                      Claude Code channel, RT-6.12; the Stop hook, RT-6.2)
 //   session.execution.interrupted
 //                      the human stopped the turn: presence idle, no checks (RT-6.9)
-//   a timer            while no top-level turn runs, inside that window: GET
-//                      /v1/wake → synthetic input that tells the agent to collect
-//                      with wait_for_events (the listener, RT-6.2 step 4); the
-//                      same counter again after the turn it woke backs off
+//   one long poll      GET /v1/wake?wait=50 (ADR-009), in flight between turns:
+//                      the server answers when the bus has something → synthetic
+//                      input that tells the agent to collect with
+//                      wait_for_events (the listener's rules, RT-6.2 step 4);
+//                      no timer, no listen window; the same counter again
+//                      after the turn it woke backs off; "replaced" backs off
 //   session.compaction.ended
 //                      GET /v1/handoff → the own latest posts as synthetic
 //                      context that starts no turn (RT-6.7); a compaction
@@ -43,14 +46,24 @@ export const SKILL = "mattermost-ai-agent-bus"
 // Marks the input this plugin sends, so the prompt hook tells it from the human's.
 export const MARK = "mattermost-agent-bus"
 const QUICK_MS = 3000
-// /v1/turn-end and /v1/wake read several channels (the Stop hook's 8 s).
+// /v1/turn-end reads several channels (the Stop hook's 8 s).
 const SLOW_MS = 8000
+// The long poll of /v1/wake: the server holds it WAIT_SEC (at most 55) and
+// answers empty; the read timeout is a margin above (RT-6.17 step 7).
+export const WAIT_SEC = 50
+const READ_MARGIN_MS = 10_000
+// After a failed or empty-handed poll, a wake that backs off, and as the base
+// of the pause after "replaced" (doubling, at most REPLACED_MAX_MS).
+export const RETRY_SEC = 15
+const REPLACED_MAX_MS = 60_000
+// A turn running or no session known: asked again when something changes,
+// at the latest after this.
+const IDLE_PAUSE_MS = 60_000
 const WAKE_RETRY_MS = 60_000
 // The same unread counter, stall or reaction again after the turn it woke: a
 // counter wait_for_events cannot clear. Wait 1, 2, 4 … min, at most 30.
 export const WAKE_BACKOFF_MS = 60_000
 export const WAKE_BACKOFF_MAX_MS = 30 * 60_000
-const MIN_POLL_SEC = 5
 const RESUBSCRIBE_MS = 1000
 const KEEP_MS = 24 * 3600_000 // turn state older than a day is not restored
 
@@ -67,8 +80,11 @@ export type Options = {
   // e.g. one that fetches MM_REG_SECRET itself (adapters/opencode.md).
   command?: string[]
   environment?: Record<string, string>
-  // How often an idle session asks whether the bus has something (s).
-  pollSec?: number
+  // How long the server holds the long poll of /v1/wake (s, at most 55; default 50).
+  waitSec?: number
+  // The pause after a failed or empty-handed poll, and the base of the one
+  // after "replaced" (s, default 15).
+  retrySec?: number
 }
 
 function sha16(text: string): string {
@@ -95,10 +111,16 @@ export function busFile(env: Env, directory: string, prefix = "endpoint"): strin
   return f && existsSync(f) ? f : null
 }
 
-// How often an idle session asks: the option, MM_LISTEN_POLL_SEC or 15 s, at least 5 s.
-export function pollMs(options: Options, env: Env): number {
-  const sec = Number(options.pollSec ?? env.MM_LISTEN_POLL_SEC ?? 15)
-  return Math.max(MIN_POLL_SEC, Number.isFinite(sec) && sec > 0 ? sec : 15) * 1000
+// The long poll's wait in seconds: the option, else WAIT_SEC; 1 to 55.
+export function waitSec(options: Options): number {
+  const sec = Number(options.waitSec ?? WAIT_SEC)
+  return Math.min(55, Math.max(1, Number.isFinite(sec) && sec > 0 ? Math.floor(sec) : WAIT_SEC))
+}
+
+// The pause after a failed or empty-handed poll in ms: the option, else RETRY_SEC.
+export function retryMs(options: Options): number {
+  const sec = Number(options.retrySec ?? RETRY_SEC)
+  return (Number.isFinite(sec) && sec > 0 ? sec : RETRY_SEC) * 1000
 }
 
 export function wakeBackoffMs(repeats: number): number {
@@ -117,7 +139,8 @@ function parseEnvFile(text: string): Record<string, string> {
 // One call to the hook API; null for no server, no bus session or any failure.
 // missing: called when no endpoint file is there.
 export function hookApi(env: Env, directory: string, missing: () => void = () => {}) {
-  return async (method: "GET" | "POST", path: string, body?: Json, ms = QUICK_MS): Promise<Json | null> => {
+  // signal: ends the call when it aborts (the plugin's unload), as the timeout does.
+  return async (method: "GET" | "POST", path: string, body?: Json, ms = QUICK_MS, signal?: AbortSignal): Promise<Json | null> => {
     let endpoint = env.MM_BUS_ENDPOINT || ""
     let key = env.MM_BUS_KEY || ""
     if (!endpoint || !key) {
@@ -140,7 +163,7 @@ export function hookApi(env: Env, directory: string, missing: () => void = () =>
         method,
         headers: { Authorization: `Bearer ${key}`, ...(body ? { "Content-Type": "application/json" } : {}) },
         body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(ms),
+        signal: signal ? AbortSignal.any([AbortSignal.timeout(ms), signal]) : AbortSignal.timeout(ms),
       })
       if (res.status !== 200) return null
       return (await res.json()) as Json
@@ -222,8 +245,7 @@ type Turn = {
   byBus: boolean
   aborted: boolean // until the human's next prompt: no checks, no wake-up
   inFlight: boolean
-  listenSince: number // the listen window, epoch s (0: none)
-  listenUntil: number
+  listening: boolean // the server's gates hold (it opened a window): the long poll runs; no end by time
   wakeKey: string // the last wake-up's counter (reason:count), "" for new posts
   wakeRepeats: number
   wakeAfter: number // epoch ms: no wake-up for the same counter before
@@ -233,7 +255,7 @@ type Turn = {
 }
 
 const fresh = (): Turn => ({ busy: false, idleAt: Date.now(), drains: 0, signoffAsked: false, byBus: false, aborted: false,
-  inFlight: false, listenSince: 0, listenUntil: 0, wakeKey: "", wakeRepeats: 0, wakeAfter: 0, sent: "", turn: false, compactOnly: false })
+  inFlight: false, listening: false, wakeKey: "", wakeRepeats: 0, wakeAfter: 0, sent: "", turn: false, compactOnly: false })
 
 export async function setup(ctx: Plugin.Context) {
   const options = (ctx.options ?? {}) as Options
@@ -253,14 +275,16 @@ export async function setup(ctx: Plugin.Context) {
   const tops = new Map<string, boolean>() // session id → a top-level session of this location
   let last = "" // the top-level session that had a prompt or ended a turn last: the one a wake starts
   let wakeFailedAt = 0
-  let ticking = false
   let closed = false
 
   // The turn state survives an unload of the location (restart-safe).
   try {
     const saved: any = await ctx.storage.get(storeKey)
     for (const [id, t] of Object.entries<any>(saved?.turns ?? {})) {
-      if (Date.now() - Number(t?.idleAt || 0) < KEEP_MS) turns.set(id, { ...fresh(), ...t, busy: false, inFlight: false, turn: false, compactOnly: false })
+      // listenUntil: the state of a plugin before ADR-009 (a window going on counts as listening).
+      if (Date.now() - Number(t?.idleAt || 0) < KEEP_MS)
+        turns.set(id, { ...fresh(), ...t, busy: false, inFlight: false, turn: false, compactOnly: false,
+                        listening: Boolean(t?.listening) || Number(t?.listenUntil || 0) * 1000 > Date.now() })
     }
     if (turns.has(saved?.last)) last = saved.last
   } catch {
@@ -303,7 +327,8 @@ export async function setup(ctx: Plugin.Context) {
 
   const stat = (k: string, fields: Json = {}) => bus("POST", "/v1/stat", { k, ...fields })
   const presence = (state: "working" | "idle") => bus("POST", "/v1/presence", { state, label })
-  const listening = (until: number) => bus("POST", "/v1/presence", { state: "listening", until })
+  // Reachable between turns, renewed by the server's heartbeat (RT-6.6 step 1).
+  const reachable = () => bus("POST", "/v1/presence", { state: "bus", label })
 
   // Synthetic input: the plugin's, not the human's. It starts a turn (resume),
   // except the context after a compaction, which waits for the next one.
@@ -324,12 +349,13 @@ export async function setup(ctx: Plugin.Context) {
   const humanTurn = async (id: string) => {
     if (!(await topLevel(id))) return
     const t = turn(id)
-    Object.assign(t, { busy: true, turn: true, aborted: false, drains: 0, signoffAsked: false, byBus: false, listenSince: 0,
-                       listenUntil: 0, wakeKey: "", wakeRepeats: 0, wakeAfter: 0 })
+    Object.assign(t, { busy: true, turn: true, aborted: false, drains: 0, signoffAsked: false, byBus: false, listening: false,
+                       wakeKey: "", wakeRepeats: 0, wakeAfter: 0 })
     last = id
     await stat("turn", { by: "human" })
     await presence("working")
     await save()
+    nudge()
   }
 
   // The Stop hook's checks, asked of the server (RT-6.20; RT-6.2 steps 1–2).
@@ -351,7 +377,7 @@ export async function setup(ctx: Plugin.Context) {
     last = id
     t.inFlight = true
     try {
-      const q = `drains=${t.drains}&signoff_asked=${+t.signoffAsked}&by_bus=${+t.byBus}&push=1&listen_since=${t.listenSince}`
+      const q = `drains=${t.drains}&signoff_asked=${+t.signoffAsked}&by_bus=${+t.byBus}&push=1`
       const r = await bus("GET", `/v1/turn-end?${q}`, undefined, SLOW_MS)
       if (r && (r.action === "drain" || r.action === "signoff")) {
         if (r.action === "drain") t.drains += 1
@@ -362,14 +388,15 @@ export async function setup(ctx: Plugin.Context) {
         t.busy = false
       }
       if (r) await stat("turn_end")
-      // The listen window the server opened (RT-6.2 step 3): wake-ups only inside it.
-      const until = Number(r?.listen_until) || 0
-      if (until * 1000 > Date.now()) {
-        t.listenSince = Number(r!.listen_since) || 0
-        t.listenUntil = until
-        await listening(until)
+      // A window the server opened (RT-6.2 step 3) says its gates hold: the
+      // session is reachable and the long poll runs, with no end by time
+      // (ADR-009). None (a BYE, no project channel, the listener off): idle.
+      if ((Number(r?.listen_until) || 0) * 1000 > Date.now()) {
+        t.listening = true
+        await reachable()
+        nudge()
       } else {
-        t.listenUntil = 0
+        t.listening = false
         await presence("idle")
       }
     } finally {
@@ -403,49 +430,96 @@ export async function setup(ctx: Plugin.Context) {
     await send(id, text, "context", "Mattermost agent bus: your latest posts")
   }
 
-  // The listener's checks while the session is idle (RT-6.20; RT-6.2 step 4).
-  const tick = async () => {
-    // A top-level turn at work: its human is there, wake no other session now.
-    if (ticking || closed || !last || Date.now() - wakeFailedAt < WAKE_RETRY_MS || anyBusy()) return
-    const t = turns.get(last)
-    if (!t || t.aborted || Date.now() >= t.listenUntil * 1000) return
-    ticking = true
-    const id = last
-    try {
-      const r = await bus("GET", `/v1/wake?since=${t.idleAt}&until=${t.listenUntil}`, undefined, SLOW_MS)
-      if (!r) return
+  // A pause the loop ends early when something changes (nudge): a turn ended,
+  // a prompt came, the plugin unloads.
+  let poke: (() => void) | null = null
+  const pause = (ms: number) =>
+    new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer)
+        if (poke === done) poke = null
+        resolve()
+      }
+      const timer = setTimeout(done, ms)
+      ;(timer as any).unref?.()
+      poke = done
+    })
+  const nudge = () => poke?.()
+
+  const WAIT = waitSec(options)
+  const RETRY = retryMs(options)
+  const ac = new AbortController()
+
+  // The wake-up: the answer of the long poll, for the session it was asked for.
+  // False: nothing was sent (a turn runs, backoff, a failure).
+  const woken = async (id: string, t: Turn, r: Json): Promise<boolean> => {
+    // A turn that started meanwhile holds it: asked again once it has ended.
+    if (closed || anyBusy() || t.aborted || last !== id) return false
+    // New posts are counted since the session went idle; the counters,
+    // a stall and reactions are not: the same one again backs off.
+    const key = r.reason === "addressed" || r.reason === "digest" ? "" : `${r.reason}:${r.count}`
+    const now = Date.now()
+    if (key && key === t.wakeKey) {
+      if (now < t.wakeAfter) return false
+      t.wakeRepeats += 1
+    } else {
+      t.wakeRepeats = 0
+    }
+    t.wakeKey = key
+    t.wakeAfter = now + wakeBackoffMs(t.wakeRepeats)
+    // The bus's turn keeps the drain rounds: only the human's next prompt
+    // starts them afresh.
+    t.busy = true
+    t.byBus = true
+    await stat("wake", { reason: String(r.reason || "") })
+    if (await send(id, String(r.text), "wake", "Mattermost agent bus: wake-up")) {
+      await stat("turn", { by: "bus" })
+      await presence("working")
+      await save()
+      return true
+    }
+    t.busy = false
+    wakeFailedAt = Date.now()
+    await save()
+    return false
+  }
+
+  // The listener (RT-6.20 step 5, ADR-009 phase 2): one long poll of
+  // /v1/wake in flight for the current session while no turn runs, renewed
+  // when it ends, ended by the unload (ac). The server decides; it only looks.
+  const listen = async () => {
+    let replaced = 0
+    while (!closed) {
+      const id = last
+      const t = id ? turns.get(id) : undefined
+      // No session to wake, a turn at work (its human is there, and a wake
+      // would only be held), no gates, or the last wake just failed.
+      if (!id || !t || !t.listening || t.aborted || anyBusy() || Date.now() - wakeFailedAt < WAKE_RETRY_MS) {
+        await pause(id && Date.now() - wakeFailedAt < WAKE_RETRY_MS ? RETRY : IDLE_PAUSE_MS)
+        continue
+      }
+      const asked = Date.now()
+      const r = await bus("GET", `/v1/wake?since=${t.idleAt}&wait=${WAIT}`, undefined, WAIT * 1000 + READ_MARGIN_MS, ac.signal)
+      if (closed) break
+      if (!r) {
+        await pause(RETRY) // no server, 503 (not registered yet), a failure
+        continue
+      }
+      if (r.reason === "replaced") {
+        // Another poller of the session took over: back off, or two replace each other.
+        replaced += 1
+        await pause(Math.min(RETRY * 2 ** (replaced - 1), REPLACED_MAX_MS))
+        continue
+      }
+      replaced = 0
       if (!r.wake) {
         t.wakeKey = ""
-        return
+        // Held for the wait it is empty after a while; at once it is a server that
+        // does not hold (an older one): no tight loop.
+        if (Date.now() - asked < 1000) await pause(RETRY)
+        continue
       }
-      if (closed || anyBusy() || t.aborted || last !== id) return
-      // New posts are counted since the session went idle; the counters,
-      // a stall and reactions are not: the same one again backs off.
-      const key = r.reason === "addressed" || r.reason === "digest" ? "" : `${r.reason}:${r.count}`
-      const now = Date.now()
-      if (key && key === t.wakeKey) {
-        if (now < t.wakeAfter) return
-        t.wakeRepeats += 1
-      } else {
-        t.wakeRepeats = 0
-      }
-      t.wakeKey = key
-      t.wakeAfter = now + wakeBackoffMs(t.wakeRepeats)
-      // The bus's turn keeps the drain rounds and the listen window: only the
-      // human's next prompt starts them afresh.
-      t.busy = true
-      t.byBus = true
-      await stat("wake", { reason: String(r.reason || "") })
-      if (await send(id, String(r.text), "wake", "Mattermost agent bus: wake-up")) {
-        await stat("turn", { by: "bus" })
-        await presence("working")
-      } else {
-        t.busy = false
-        wakeFailedAt = Date.now()
-      }
-      await save()
-    } finally {
-      ticking = false
+      if (!(await woken(id, t, r)) && !anyBusy() && !closed) await pause(RETRY) // backoff: look again in a while
     }
   }
 
@@ -510,7 +584,6 @@ export async function setup(ctx: Plugin.Context) {
     void humanTurn(String(ev?.sessionID || ""))
   }))
 
-  const ac = new AbortController()
   void (async () => {
     while (!ac.signal.aborted) {
       try {
@@ -525,13 +598,12 @@ export async function setup(ctx: Plugin.Context) {
     }
   })()
 
-  const timer = setInterval(() => void tick(), pollMs(options, env))
-  ;(timer as any).unref?.()
+  void listen()
 
   return async () => {
     closed = true
-    clearInterval(timer)
-    ac.abort()
+    ac.abort() // ends the event stream and a long poll in flight
+    nudge()
     for (const r of registrations) await r.dispose().catch(() => {})
     await save()
   }
