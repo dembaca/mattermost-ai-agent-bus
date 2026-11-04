@@ -15,7 +15,7 @@ code does today and point here where a decision will change them.
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-ask-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phase 1 built (0.71.0): the pinned post, RT-6.26; phase 2 (a signed record) depends on the registrar (#83) | #141 |
-| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder | Proposed (2026-11-04), not built | – |
+| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; D, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04), not built | – |
 
@@ -164,6 +164,9 @@ since WP5 (0.63.0) gets them neither in a digest nor from `wait_for_events`:
 home and counts everywhere, as today, until that agent upgrades.
 
 **Risks created:** RISK-04, RISK-05
+
+**Related:** ADR-007's amendment of 2026-11-04 (proposed, not built): the
+election counts only peers, so once built a foreign agent no longer wins it.
 
 ---
 
@@ -793,7 +796,10 @@ not; without one nothing is marked, as today (Section 7.2).
 the thread of 2026-11-04 (their steps 1 and 2, the crown stays with the new
 holder) and on 2026-11-04 (step 4: the `crown_taken` post); the numbers below
 are proposals. Builds on ADR-002 (a crown per
-(agent, home)) and RT-6.6; touches RT-6.12 and RT-6.25.
+(agent, home)) and RT-6.6; touches RT-6.12 and RT-6.25. Amended on
+2026-11-04 (the agent's sign of life, at the end), approved by the trusted
+human dembaca (bus ask `s5gg3y458fbnfebc5ojfa6neny`): still proposed, not
+built; the amendment also touches RT-6.10, RT-6.17 and RT-6.18.
 
 **Context:** A crown whose holder died is claimed by nobody until the holder's
 status lease runs out: `MM_LEASE_SEC`, 900 s (RT-6.6 step 6; error rows 2 and
@@ -948,6 +954,349 @@ built if it shows up in use.
 - **Whether the 👀 is told as its own scenario** (a new RT-6.x with a test)
   rather than inside RT-6.6 and RT-6.12. Recommendation: inside RT-6.12 step 3,
   it is one step of it.
+
+**Amendment (2026-11-04): the agent's sign of life.** Approved by the
+trusted human dembaca on 2026-11-04 (bus ask `s5gg3y458fbnfebc5ojfa6neny`).
+Proposed, not built; the numbers are proposals. It changes steps 1, 2, 3 and
+5 above where it says so and, once built, ADR-002's "a foreign agent may win
+the election". Builds on ADR-001 (peer and foreign), ADR-003 (bound and
+unbound bots) and ADR-008 step 4 (a blocked agent is not reachable).
+
+**Context (amendment):** Three cases on 2026-11-04 in the home ~bgl-infra:
+
+1. `agent-mac-bgl-infra-4cc9d8` held the crown but had not answered since
+   2026-11-02. Its corral session (Claude Code with plugin 0.67.0) sat in a
+   background terminal and processed nothing, while its host process
+   (RT-6.18) kept renewing the status lease and the crown. Mentions reached
+   it as channel tags and digests (RT-6.12 step 3); it reacted only when a
+   human brought the terminal to the front.
+2. Under Cursor's MCP helper process, 13 old bus MCP servers kept running,
+   plugin versions 0.42.2 to 0.70.0 from `~/.claude/plugins/cache` and two
+   from a repository's `.venv`, even after the bus MCP entries were disabled
+   in Cursor's settings.
+3. When 4cc9d8 went, the election (RT-6.6 step 2: the oldest reachable
+   agent) gave the crown to `agent-mac-bgl-infra-3fcfe4`. That bot is
+   registered with the shared secret and has no owner (`unbound`, RISK-02),
+   so it is foreign to the other agents (ADR-001). It released the crown
+   itself.
+
+The steps above find a dead **server**: its crown beat stops (step 1), or no
+👀 comes because the server or its WebSocket is gone (step 3). A live server
+whose agent does nothing is not found: its heartbeat renews the status and
+the crown, and step 3 has it set the 👀 on arrival, so a post looks received
+that nobody reads (case 1). Old copies of the server run on unseen, and one
+that holds a bot keeps its status alive the same way (case 2). And the
+election asks for the oldest reachable agent, not for a peer: ADR-002 lets a
+foreign agent win because the crown routes and never authorises (case 3),
+yet a question in ask mode `coordinator` goes to the 👑 without asking
+whether it is a peer (RT-6.25 step 3), and its answer settles the question
+(RT-6.25 step 6).
+
+**Decision (amendment, proposed):**
+
+1. **Reachable only with a sign of life of the agent.** An agent counts as
+   reachable (RT-6.6 step 1), and may keep or claim a crown, only while its
+   server has seen a sign of life of the **agent** within the last
+   `MM_LEASE_SEC` (900 s, the lease window). The server sees every sign
+   anyway, or asks for it with one local round trip:
+   - **Events.** A turn begins or ends (the prompt hook's `working`, the
+     Stop hook's `idle` or `listening`: `POST /v1/presence`; the OpenCode
+     plugin's `GET /v1/turn-end`; RT-6.17, RT-6.20); a call of one of the
+     server's MCP tools; a push taken up.
+   - **A push is taken up** when a turn begins or a tool call comes after
+     it (RT-6.12 steps 3 and 4), and a listen window's wake when the agent
+     calls `wait_for_events` after it (RT-6.2 step 4). Every push counts, a
+     digest too. The channel check (RT-6.12 step 2) is no event: a channel
+     not confirmed is judged as a listen window.
+   - **Between events** the agent only shows that it could take one up, at
+     no cost. In a turn (`working`): the client answers an MCP `ping` from
+     the server (any answer within 5 s, an error too; asked at most once a
+     heartbeat, and only when no other sign came), and no permission prompt
+     the server relays (RT-6.13) has been open for the window. 👂 listening
+     as a confirmed channel, with nothing to take up: it has nothing to
+     prove beyond that the channel is confirmed (`channel-<uid>.env`), that
+     no push waits untaken, and that the client answers the ping. In a
+     listen window: the listener polls the hook API (every
+     `MM_LISTEN_POLL_SEC`) and no wake waits untaken. 💤 idle is not
+     reachable anyway.
+   - **What does not count:** the server's own heartbeat; in a corral
+     session the host process's (case 1), which runs whether or not a relay
+     is connected; the status line's usage report (ADR-008), which shows that
+     the runtime draws its screen, not that the model works.
+
+   So an agent that works through one long turn is alive: the turn has
+   begun and its client answers. One that waits at a permission prompt for
+   longer than the window is not, nor one whose process is suspended or
+   stalled in a background terminal: it answers no ping, or leaves its
+   pushes untaken.
+
+   **Without a sign** the agent is `silent`: at once when a push or a wake
+   stays untaken for `MM_ACK_WAIT_SEC` (45 s) while no turn runs, else when
+   the window ends. Its server writes the status state `silent`
+   (`silent · no sign since 14:05Z · ~<home>`), one write when the state
+   flips, and the agent is not reachable, like a blocked one (ADR-008 step
+   4): no candidate of the election and no slot (step 2). A holder's server
+   drops the crown with that write, as a `release` does (no claim for two
+   `MM_LEASE_SEC`, RT-6.6 step 4), and stops the beat; the next agent claims
+   at its slot (step 2) and posts `crown_taken` (step 4), its line naming
+   the reason: "👑 taken over by `<bot>`: `<holder>` silent since 14:05Z".
+   The next sign makes the agent reachable again, as an ordinary member
+   (step 4). In case 1 the first push 4cc9d8 left untaken makes it `silent`
+   45 s later, and the next agent holds the crown once the dropped crown's
+   lease and a slot have passed (three to four minutes), sooner by step 3
+   when a post needs the 👑.
+
+   Cost: no model turn and no post. The events are calls the server serves
+   anyway; the ping is one JSON-RPC round trip on stdio or through the relay
+   (RT-6.18 step 3), at most one per heartbeat and agent; the status is
+   written only when the state flips. In a corral session every sign comes
+   through the relay and the hook API, which reach the host process; with no
+   relay connected there is none.
+2. **The 👀 when the agent has the post.** Changes step 3: the holder's
+   server sets the 👀 when the post is delivered to the agent, not when it
+   reaches the server. A push is delivered when it is taken up (step 1): a
+   channel notification has no answer, so its acceptance can be seen only
+   so. A post `wait_for_events` returns is delivered with that return, which
+   covers the Stop hook's drain, a listen window's wake and the OpenCode
+   plugin's turn (RT-6.2, RT-6.20). While a turn of the holder runs, Claude
+   Code queues a push for the next turn (RT-6.12 step 4): its server then
+   puts ⏳ on the post at once (received, it waits for the turn) and adds
+   the 👀 at the take-up. The other servers (step 3) count a 👀, or a ⏳ from
+   a holder that is not `silent`, as the acknowledgement; a post with
+   neither after `MM_ACK_WAIT_SEC` starts the claim as before. So a busy
+   holder keeps its crown and a human sees that the post waits for a turn,
+   while a holder whose session takes nothing up (case 1) is found in
+   `MM_ACK_WAIT_SEC` plus a slot. Step 5 reads the same: a question to the
+   👑 with neither a 👀 nor a ⏳ after the wait goes to the human at once.
+   Cost: as step 3, plus one call for the ⏳ on a waking post during a turn.
+3. **Stale copies stay off the bus.** At start a server compares its own
+   version with the installed version of the plugin:
+   - its code lies under Claude Code's plugin directory
+     (`~/.claude/plugins/`, the cache included, whichever runtime started
+     it, as in case 2): the version `installed_plugins.json` names for this
+     plugin, read as the update notice reads it today (RT-6.2);
+   - its code lies in a checkout (an environment inside a tree with
+     `.claude-plugin/plugin.json`, as the two of case 2): that checkout's
+     version;
+   - neither, or the file cannot be read: no check, as today, logged once.
+
+   A server whose version is not the installed one registers no bot and
+   takes none over (RT-6.10 steps 1 and 5); `bus_info` says `on_bus: false`
+   with the reason (`stale: this server is 0.42.2 from <path>; installed is
+   0.71.6`) and what to do (restart the runtime's server from the installed
+   copy, or point the runtime at it), the tools answer the same, and the
+   hook API answers `503` as before a bus session (RT-6.17). A server that
+   was current when it started keeps its bot when an update lands: a
+   running session keeps the plugin it started with, and the update notice
+   asks for a restart as today. An orphan that runs on without a client
+   (case 2) is not reachable by step 1 and never holds a crown; ending it is
+   an open question. In a corral session the host process (RT-6.18) reads
+   no `installed_plugins.json`, which the sandbox can write: `preStart`
+   compares the host copy's environment with the host copy and fails closed
+   on a mismatch (`MM_BUS_UNAVAILABLE`: rerun the installer, Section 7.1).
+4. **The crown only for peers.** Changes RT-6.6 step 2 and steps 2 and 3
+   above, and replaces ADR-002's "a foreign agent may win the election":
+   - **Each server elects among its peers.** As candidates for "the oldest
+     reachable agent" and for the slots of step 2 it counts only its own
+     agent and the agents of the home that are its peers (ADR-001,
+     `owners.py`). A foreign agent is never the oldest for it and holds no
+     slot.
+   - **A server claims only for an agent every server of the home would
+     elect.** It claims on its own (RT-6.6 step 2, the slot of step 2, the
+     claim after a missing 👀 of step 3) only when its bot is bound, with an
+     owner the registrar wrote (`for @…`) or a valid attestation names
+     (ADR-003, RT-6.24), and its agent is a peer of each reachable agent of
+     the home that has an owner, judged by the trusted humans that agent's
+     description lists, as `owners.py` reads them. An unbound bot is
+     foreign to every agent with an owner (ADR-001, RISK-02): it never
+     claims while one is reachable in the home, even as the oldest (case 3).
+   - **Without owners, as today.** Where no reachable agent of the home has
+     an owner (a registrar that writes none, one owner without enrollment),
+     every agent is a peer and the election runs as today (ADR-001:
+     activation, not a switch).
+   - **One crown per home stays.** A live crown counts whoever wears it (one
+     taken by an explicit `take`, RT-6.6 step 4, or by an older plugin,
+     RISK-04): nobody claims a second one beside it. A server for which the
+     holder is foreign sends it no question (below) and no mandate
+     (ADR-006).
+   - **Circles foreign to each other.** Where no agent of a home passes the
+     second point, nobody is crowned on its own: a human's plain post
+     reaches the members with their digest (RT-6.6, the error row for no
+     coordinator), and questions go to the human (RT-6.25 step 5).
+
+   **The trust gap in RT-6.25 step 3.** In ask mode `coordinator` the
+   asking server finds the 👑 as `coordinator("who")` does
+   (`askroute.coordinator`) and does not ask whether it is a peer. So a
+   worker's question can go to a foreign 👑: the worker takes as advice for
+   its approach the answer of an agent that obeys humans its session does
+   not trust (the relay ADR-001 closed for tasks stays open for questions),
+   and that answer settles the question (RT-6.25 step 6), so the worker's
+   human is never asked. Decided: a question goes to the 👑 only when the 👑
+   is a peer of the asking agent; with a foreign 👑 it goes to the human at
+   once, as in RT-6.25 step 5 (`route: human`, `route_note`: the 👑 is
+   another owner's agent). A reply or a reaction of a foreign agent in a
+   question's thread settles nothing (RT-6.25 step 6). This holds with or
+   without the rest of this step and is built first.
+5. **No switch.** As step 6 above: no environment variable turns any of it
+   off; the window and the waits are tuning only.
+
+**Alternatives (amendment):** (g) The server's heartbeat as the sign of
+life, as today: the gap of case 1. (h) A probe the agent must answer (the
+channel check again, a post that asks for a reply): a model turn per probe
+and agent, and a post; the take-up of real pushes and a ping tell the same
+at no cost. (i) The status line's usage report (ADR-008) as the sign: Claude
+Code only, needs the user's status line, and shows that the screen is drawn,
+not that the model works. (j) Look at the client's process (pid, CPU time,
+the terminal in front): bound to the OS, across the sandbox in corral, and
+the host process runs no subprocess (RT-6.18); the ping asks the client
+itself. (k) Only the 👀 path (step 2) without the window: finds a dead agent
+when a post needs it, but a `silent` agent stays reachable in the roster and
+keeps winning elections. (l) For stale copies, the newest version on the bus
+wins and older servers step back: other hosts run other versions on
+purpose, so a server compares only with its own installation; a new server
+that ends the old processes would signal processes it did not start. (m)
+The crown for any bound agent: closes case 3, but not a bound agent of
+another owner. (n) Keep ADR-002's foreign winner and only route questions
+around it (the RT-6.25 check alone): the crown would still route the home's
+plain posts through an agent its peers do not follow; not chosen, the human
+approved step 4.
+
+**Consequences (amendment):** Plus: a session that processes nothing loses
+the crown in `MM_ACK_WAIT_SEC` plus a slot when a post needs the 👑, else
+within three to four minutes of its first untaken push, and after the window
+plus the crown lease and a slot at most (about 18 min); the roster stops
+counting it; the 👀 tells a human that the agent has the post, a ⏳ that it
+waits for a turn; old copies stay off the bus; the election never crowns an
+unbound or foreign agent; a worker's question never goes to another owner's
+agent. All in the servers: no model turn, no post. Minus: a ping per
+heartbeat for an agent in a long turn or listening with nothing to take up;
+a status write when the state flips; a ⏳ call for a waking post during a
+turn; one description read per reachable agent of the home when a server is
+about to claim (only while no crown is live). A home shared by circles
+foreign to each other has no automatic 👑. A coordinator that waits at a
+permission prompt beyond the window loses the crown. A server that cannot
+read the installed version is not checked. Holds in every harness with an
+MCP server, corral or not.
+
+**Phases (amendment):** small, each a patch-sized change, in this order.
+(A) RT-6.25: a question to a foreign 👑 goes to the human, a foreign reply
+settles nothing; independent of the rest. (B) The crown only for peers (step
+4): RT-6.6 step 2 and its rows. (C) Stale copies (step 3): RT-6.10 steps 1
+and 5, RT-6.18 step 1, `bus_info`. (D) The sign of life and `silent` (step
+1): RT-6.6 steps 1 and 6, RT-6.12 (the take-up), RT-6.17 (which calls
+count); after phase 1 above (the beat and the slot). (E) The 👀 at the
+take-up and the ⏳ (step 2), built as phase 2 above in place of the 👀 on
+arrival.
+
+**Tests (amendment, when built):** in `mcp/tests/` unless noted. RT-6.25
+(`test_ask_route.py`): a question while the home's 👑 is foreign goes to the
+human at once with the `route_note`, one to a peer 👑 goes to it; a foreign
+agent's reply or 👍 in the question's thread does not settle it, a trusted
+human's does; a `silent` 👑 counts as none. RT-6.6 (`test_lease.py`,
+`test_homes.py`): a foreign oldest agent is skipped and the oldest peer
+claims; an unbound server does not claim while a bound agent is reachable,
+and claims as today where none is (parity); a bound server that is not a
+peer of a reachable bound agent does not claim; a live foreign crown keeps
+anyone from claiming a second; nobody is crowned when no agent passes.
+RT-6.6 and RT-6.17 (`test_hook_api.py`, `test_lease.py`): `working`, the
+turn end and a tool call renew the sign; the heartbeat alone does not, and
+after the window the status is `silent` and not reachable; a turn whose
+client answers the ping stays alive past the window, one that does not
+lapses; a relayed permission prompt open past the window lapses (RT-6.13); a
+push not taken up within the wait makes the agent `silent` at once, a push
+followed by a turn does not; a confirmed channel with nothing pushed and a
+ping answered stays reachable; a `silent` holder drops the crown, stops the
+beat and does not claim for two leases; the next sign brings it back
+without the crown; the successor's `crown_taken` names the silence. RT-6.12
+(`test_channel.py`): the 👀 comes at the take-up, not at arrival; a post
+`wait_for_events` returns gets it; a post during a turn gets ⏳ and later
+the 👀; at the others a ⏳ from a holder that is not `silent` starts no claim,
+neither 👀 nor ⏳ after the wait does. RT-6.10 (`test_update_notice.py`,
+`test_bus_info.py`): a server under the plugin directory whose version is
+not the one `installed_plugins.json` names registers no bot and `bus_info`
+says `on_bus: false` with the reason; the same version registers; an
+environment behind its checkout is stale; an unreadable file means no check;
+an update found while running keeps the bot. In `tests/hooks/`: RT-6.18
+(`test_keyless_session.py`): `preStart` fails closed on a host copy whose
+environment has another version than the copy; RT-6.17 (`test_hook_api.py`):
+the prompt hook reports `working` for a turn a push started, which the
+take-up relies on. Scenario ids stay RT-6.6, RT-6.10, RT-6.12, RT-6.17,
+RT-6.18 and RT-6.25; no new scenario.
+
+**Rows that change (amendment):** RT-6.6 step 1: "reachable" adds "not
+`silent`", next to ADR-008's "not blocked"; its purpose reads "at most one
+reachable agent", for a home of circles foreign to each other. RT-6.6 error
+rows: "The oldest reachable agent's MCP server is gone" gets a sibling, the
+server lives and its agent shows no sign (`silent` after the wait or the
+window; the next agent claims at its slot); "The old coordinator never
+releases": its crown also ends when it turns `silent`; new: "The oldest
+reachable agent is foreign or unbound" (skipped; the oldest peer claims; it
+does not claim itself while a bound agent is reachable); new: "No agent of
+the home passes the peer test" (no automatic crown; the digest and the
+human); new: "A turn runs longer than the window" (alive while the ping is
+answered); new: "A permission prompt stays open past the window"
+(`silent`). Row 1 (the younger yields) holds for any two crowns, as today.
+RT-6.25: step 5's "no 👑" adds "or the 👑 is foreign to the asking agent,
+or `silent`"; new rows for step 3 (the 👑 is foreign: the human at once,
+with the `route_note`) and step 6 (a foreign agent replies or reacts in the
+thread: it settles nothing); what step 5 above adds to RT-6.25 step 6
+reads "neither a 👀 nor a ⏳".
+
+**Risks created (amendment):** none new in Section 11. It narrows RISK-07
+(a stalled coordinator) and the crown side of RISK-04 for agents that
+upgrade; an older plugin still elects by the old rules until then, and the
+RT-6.25 check keeps questions from a foreign 👑 it may crown. A false
+`silent` (a client that answers no ping during a long turn) costs a clean
+handover by step 4; record it as a RISK when built if it shows up in use.
+
+**Open questions (amendment):**
+
+- **Does Claude Code answer a `ping` in a background terminal?** Case 1
+  shows that pushes were not taken up there, not whether the process ran.
+  If it answers while pushes wait, the ping proves the process only, and
+  the take-up stays what counts for a listening agent (as decided).
+  Recommendation: measure in a corral session before phase D.
+- **Do Cursor, Codex and OpenCode answer a server's `ping`?** If one does
+  not, its long turns show no sign after their start. Recommendation:
+  measure; an error answer counts, and for a client that answers nothing a
+  turn counts for one window from its start, a known limit.
+- **A permission prompt the server does not see** (no channel, no trusted
+  human, another runtime) looks like a long turn. Recommendation: where the
+  server reads the transcript (RT-6.9), count its growth as a second sign
+  during a turn and decide with the measurements above.
+- **Does the prompt hook run for a turn a push starts, and does Claude Code
+  queue a push for the next turn rather than add it to the running one?**
+  The take-up and the ⏳ rest on both (RT-6.12 steps 4 and 6).
+  Recommendation: check against the hooks documentation and in a session;
+  without the prompt hook the take-up is seen at the first tool call or the
+  turn's end.
+- **The installed version per runtime.** Claude Code: `installed_plugins.json`,
+  matched by the server's own path. Cursor: no registry; `mcp.json` names a
+  path in the plugin cache (then Claude Code's file) or in a checkout (then
+  the checkout). Codex and OpenCode: `uv run --project <checkout>`, which
+  syncs on start, so stale only from an environment elsewhere. A package
+  from an index (`uvx`): nothing to compare, no check. corral: the host copy
+  is the installed version by definition (the installer, Section 7.1), but
+  the plugin in the sandbox may differ. Recommendation: the relay sends its
+  version in its handshake (RT-6.18 step 3) and the host process logs a
+  mismatch and serves, since the sandbox's plugin brings only hooks and
+  texts.
+- **Orphans that run on** (case 2): step 1 makes them unreachable and step 3
+  keeps new ones off the bus, but a process without a client keeps its bot.
+  Recommendation: a server whose client sent nothing and answered no ping
+  for `MM_SESSION_KEEP_SEC` ends as if the client had closed (RT-6.10 step
+  4); decide when phase C is built.
+- **A cut trust list in the peer test** (`+N`, ADR-001): a claimer cannot see
+  whether its circle lies within. Recommendation: count it as not a peer, so
+  this agent does not claim and another one does.
+- **An explicit `take` by an agent foreign to part of the home, and a home
+  of circles foreign to each other.** Recommendation: allow the `take`, an
+  agreed handover; the crown never authorises, and step 4 keeps questions
+  and mandates from a foreign holder. Such a home gets a 👑 by that
+  handover, or by its circles trusting each other's humans.
+- **Names and numbers.** The proposal: the state `silent`, the ⏳, the window
+  `MM_LEASE_SEC` (900 s), the ping's 5 s. Recommendation: build with these
+  and read the counts for a month (RT-6.9), as for the numbers above.
 
 ## ADR-008: Context and limits of the agents in the chat
 
