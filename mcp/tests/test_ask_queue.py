@@ -12,11 +12,15 @@ from mattermost_ai_agent_bus import askroute, asks, channel, lease, remind, serv
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
 
+from mattermost_ai_agent_bus.model import ChannelUser
+
 from fakes import WORK, FakeChat
 
 BOT = "b" * 26
 HUMAN = "h" * 26
 COORD = "k" * 26
+
+MINE = "for @dembaca · trusts @dembaca · via agent-registrar"
 
 
 class _Bus(FakeChat):
@@ -27,6 +31,8 @@ class _Bus(FakeChat):
                          names={HUMAN: "dembaca", COORD: "agent-coord", BOT: "agent-worker"},
                          agents={COORD, BOT}, channel="proj")
         self.reacted = []
+        self.descriptions |= {BOT: MINE, COORD: MINE}  # the 👑 is a peer (ADR-001)
+        self.bots["agent-coord"] = ChannelUser(COORD, "agent-coord", create_at=1)
         self.n = 0
 
     async def add_reaction(self, post_id, emoji):

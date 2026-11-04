@@ -1426,9 +1426,9 @@ async def _ask_route(client: MattermostAdapter, me: Any, kind: str) -> dict[str,
         return out  # approvals always go to the human
     if lease.crown_held(me.id):
         return out | {"route_note": "you hold the crown: your asks go to the human"}
-    coord = await askroute.coordinator(client, me.username)
+    coord, why = await askroute.coordinator(client, me.username)
     if not coord:
-        return out | {"route_note": "no 👑 reachable in your home: asked the human at once"}
+        return out | {"route_note": why}
     return out | {"route": "coordinator", "to": coord}
 
 

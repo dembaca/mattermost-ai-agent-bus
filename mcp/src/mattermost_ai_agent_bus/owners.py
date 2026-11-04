@@ -198,6 +198,17 @@ async def mine(client: ChatPort) -> tuple[set[str], str]:
     return names, me
 
 
+async def peer(client: ChatPort, user_id: str) -> bool:
+    """The agent is a peer (ADR-001): the owner split is active and its owner
+    and trusted humans are all this session's. Unreadable or split off: no
+    (where `foreign` lets everyone pass, a power over a session needs proof)."""
+    names, _ = await mine(client)
+    if not names:
+        return False
+    agent = await read(client, user_id)
+    return agent is not None and is_peer(agent, names)
+
+
 async def foreign(client: ChatPort, agent_ids: Iterable[str]) -> dict[str, str]:
     """The foreign agents among `agent_ids` (bus agents), each with its owner
     ('' when its description names none); {} while the split is off. Never fails."""
