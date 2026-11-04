@@ -46,7 +46,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import a2a, asks, gate, lease, owners, remind, session_file, tasks
+from . import a2a, asks, gate, lease, mandate, owners, remind, session_file, tasks
 from .model import Post
 
 if TYPE_CHECKING:
@@ -317,7 +317,8 @@ async def watch(client: ChatPort) -> float | None:
         crowned(uid)
     _held = held
     waits: list[float] = []
-    for name, step in (("reminders", remind.tick), ("stall", check)):
+    # RT-6.26 step 1: the home's pinned posts read again for a mandate.
+    for name, step in (("reminders", remind.tick), ("mandate", mandate.tick), ("stall", check)):
         if step is check and not held:
             continue
         try:

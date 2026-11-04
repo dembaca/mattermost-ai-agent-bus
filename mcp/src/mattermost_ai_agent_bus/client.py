@@ -1604,6 +1604,14 @@ class MattermostAdapter:
                       key=lambda i: posts[i].get("create_at", 0), reverse=True)
         return [post_of(posts[i]) for i in order + rest]
 
+    async def pinned_posts(self, channel_id: str) -> list[Post]:
+        """A channel's pinned posts, `GET /api/v4/channels/<id>/pinned`
+        (RT-6.26 step 1): one read, newest first."""
+        data = await self._api("GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}/pinned") or {}
+        posts = data.get("posts") or {}
+        return sorted((post_of(p) for p in posts.values() if isinstance(p, Mapping)),
+                      key=lambda p: p.create_at, reverse=True)
+
     async def list_recent(
         self,
         *,

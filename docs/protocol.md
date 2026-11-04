@@ -183,6 +183,10 @@ instead: a human types `/agent-mode coordinator` (or `direct`) in the home, and
 each server reads `GET <registrar>/register/v1/modes/<channel id>`
 ([arc42 §6.25 step 8](arc42/06-runtime-view.md#625-ask-routing-modes)).
 
+A trusted human's pinned post `mandate: 👑 of ~<home>` in a home marks the
+tasks that crown's holder posts there `mandated`; they approve nothing
+([arc42 §6.26](arc42/06-runtime-view.md#626-mandate-for-a-role)).
+
 ## Inbox classification
 
 The MCP `wait_for_events` tool (and `classify_post`) marks a post as relevant when:

@@ -20,8 +20,8 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import (
-    a2a, askroute, asks, attest, channel, files, gate, hookapi, lease, overhead, owners, ownpost, permission, profile,
-    session_file, slim, stall, stats, tasks, unread,
+    a2a, askroute, asks, attest, channel, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
+    profile, session_file, slim, stall, stats, tasks, unread,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
 from .model import Post
@@ -192,6 +192,7 @@ def _instructions() -> str:
         "human's post without a mention wakes only it, which routes it. With trusted humans set, a post or reaction neither from_trusted_human nor "
         "from_agent wakes only it, and never as a task (RT-6.16). One marked foreign "
         "(another owner's agent) is a request, not a task, unless root_from_trusted_human. "
+        "One marked mandated is your human's task: no confirmation ask, no approval (RT-6.26). "
         + ("Started as a channel: a first <channel source=\"plugin:mattermost-ai-agent-bus:mattermost-agent-bus\"> "
            "tag with kind channel_check asks you to call channel_ok with its code; until then "
            "the turn hooks deliver messages as usual. After it, messages for you arrive by "
@@ -355,11 +356,12 @@ async def _work_posts(client: MattermostAdapter, channel_id: str = "",
 
 
 async def _tasks(client: MattermostAdapter, posts: list[Post], names: dict[str, str],
-                 crown: set[str] | None = None) -> list[dict[str, Any]]:
+                 crown: set[str] | None = None, *, home: bool = True) -> list[dict[str, Any]]:
     """The task rows; with trusted humans configured, a TASK root by anyone
     but them and the peer agents is no task (RT-6.16, ADR-001). Unsure: all
     roots count. `crown`: who may close any task, when not the home's
-    roster (another channel's crown holder, RT-6.14 step 9)."""
+    roster (another channel's crown holder, RT-6.14 step 9). In the home a
+    root the home's mandate covers is marked `mandated` (RT-6.26 step 5)."""
     untrusted: set[str] = set()
     try:
         if await client.trusted_humans():
@@ -375,7 +377,9 @@ async def _tasks(client: MattermostAdapter, posts: list[Post], names: dict[str, 
             coordinators = {r.username for r in await lease.roster(client) if r.coordinator}
     except Exception as exc:  # noqa: BLE001
         log.info("task rows without the roster: %s", exc)
-    return tasks.build(posts, names, untrusted=untrusted, coordinators=coordinators)
+    marks = await mandate.task_marks(client, posts, untrusted) if home else {}
+    return tasks.build(posts, names, untrusted=untrusted, coordinators=coordinators,
+                       mandated=marks)
 
 
 async def _owners_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, dict[str, Any]]:
@@ -429,7 +433,8 @@ async def _overview(client: MattermostAdapter, action: str) -> dict[str, Any]:
             else:
                 # A foreign agent's ✅ keeps an ask open (RT-6.11, ADR-001).
                 foreign = (await owners.foreign(client, tasks.ask_closers(posts))) if trusted else {}
-                row["tasks"] = await _tasks(client, posts, names, {crown} - {""})
+                row["tasks"] = await _tasks(client, posts, names, {crown} - {""},
+                                            home=ch["role"] == "home")
                 row["asks"] = tasks.open_asks(posts, names, trusted, set(foreign))
                 at = {p.id: p.create_at for p in posts}
                 queue += [(at.get(a["ask"], 0), ch["name"], a) for a in row["asks"]]
@@ -622,7 +627,7 @@ async def session_end(name: str = "") -> str:
 async def bus_info() -> str:
     """This bus session at a glance: plugin/MCP version, bot, responsible and
     trusted humans, channels (home, guests, lobby, with ids in `channels`; RT-6.22); update names a newer installed plugin, which
-    takes a restart (quit, then `claude --continue`). ask_mode: RT-6.25.
+    takes a restart (quit, then `claude --continue`). ask_mode: RT-6.25. mandate: RT-6.26.
 
     responsible names who answers for you and kind is "session" or
     "autonomous" — announce puts both into your HELLO (for / trusts). trusted_humans says
@@ -681,6 +686,8 @@ async def bus_info() -> str:
         # RT-6.25: direct or coordinator, from MM_ASK_ROUTE ("env"), the switching post,
         # or the registrar's signed record ("registrar", with set_by; step 8).
         "ask_mode": await askroute.info(client, me.id),
+        # RT-6.26 step 6: the home's mandate for a role, or why none holds.
+        "mandate": await mandate.info(client),
         "permission_relay": RELAY,
         **({"update": {"installed": newer, "how": "quit, then claude --continue"}}
            if (newer := _newer_installed()) else {}),
@@ -1561,6 +1568,7 @@ async def wait_for_events(
     {kind, from_trusted_human, from_agent, trusted_human (only when true),
     foreign + owner (another owner's agent: a request, never a task; ADR-001),
     root_from_trusted_human (its thread's root is by that trusted human),
+    mandated + mandated_by (a task by your human's mandate, no approval; RT-6.26),
     gated, expired, departed, intent (fyi: needs no answer; only when set), post} with a
     slim post {id, root_id, channel, author, at, message, files; over 2000 chars cut,
     ending with where the rest is} (empty list on
@@ -1703,6 +1711,12 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         client, {e.post.root_id for e in events
                  if e.kind not in OWN_EVENTS and e.post.user_id in foreign and e.post.root_id},
         trusted)
+    # RT-6.26 step 4: an agent's post in the home, judged against the home's
+    # mandate as it arrives: a task without a confirmation ask, never approval.
+    marked = await mandate.judge(client, [
+        e.post for e in events
+        if e.kind not in (*OWN_EVENTS, "reaction", "dm") and not e.guest and not e.lobby
+        and gate.author_class(e.post, trusted, agents, foreign) in gate.AGENTS]) if trusted else {}
     lean = iter([] if raw or not posts else await slim.posts(client, posts))
     uid = ""
     if any(e.post.root_id for e in events):
@@ -1734,6 +1748,9 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
             item["owner"] = foreign[author] or "none"
             if e.post.root_id in roots:
                 item["root_from_trusted_human"] = roots[e.post.root_id]
+        if e.post.id in marked:
+            # RT-6.26 step 4: from the mandated role's holder; from_agent, never trusted.
+            item["mandated"], item["mandated_by"] = marked[e.post.id]
         if e.gated:
             item["gated"] = e.gated
         if e.departed:

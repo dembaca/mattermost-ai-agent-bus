@@ -398,7 +398,7 @@ _SKILL = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-
 # Per-load budgets, about 10 % over the 0.57.0 size (in brackets): SKILL.md is
 # the core every agent loads; the files next to it are read only when they apply.
 _SKILL_BUDGET = {
-    "SKILL.md": 16_500,                 # (16279) was 22,144 before the runtime split
+    "SKILL.md": 16_600,                 # (16279) was 22,144 before the runtime split; + RT-6.26
     "runtime-claude-code.md": 4_850,    # (4417)
     "runtime-no-hooks.md": 2_600,       # (2381)
     "self-registration.md": 2_450,      # (2234)
@@ -437,8 +437,8 @@ def test_static_budget():
     # + RT-6.16: posts not trusted; + RT-6.19: stall; + RT-6.21: departed, not here;
     # + RT-6.6: crown per home; + RT-6.25: questions to the 👑, escalated, never approved;
     # + RT-6.25 step 8: the mode set with /agent-mode once keys are pinned
-    # + RT-6.14 step 9: scope="all" across homes (#141)
-    assert len((skill / "coordinator.md").read_text()) <= 6_100
+    # + RT-6.14 step 9: scope="all" across homes (#141); + RT-6.26: a mandate's TASKs
+    assert len((skill / "coordinator.md").read_text()) <= 6_300
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
     # + RT-6.14 step 9: scope="all", the overview across homes (#141)
     assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90 + 80
@@ -448,10 +448,11 @@ def test_static_budget():
 # (no push, push, push + permission relay), each limit about 10 % over its
 # 0.55.0 size (in brackets). The unavailable reason is at its longest, 300.
 _INSTRUCTION_BUDGET = {
-    "self-registering": (2050, 2350, 2500),   # (1860, 2128, 2267)
-    "host-managed": (1880, 2150, 2300),       # (1680, 1948, 2087); + get_file (RT-6.23)
-    "hosted": (2000, 2300, 2450),             # (1806, 2074, 2213)
-    "unavailable": (2200, 2500, 2650),        # (1987, 2255, 2394)
+    # + 80 each, RT-6.26: an event marked mandated is a task, never approval.
+    "self-registering": (2130, 2430, 2580),   # (1860, 2128, 2267)
+    "host-managed": (1960, 2230, 2380),       # (1680, 1948, 2087); + get_file (RT-6.23)
+    "hosted": (2080, 2380, 2530),             # (1806, 2074, 2213)
+    "unavailable": (2280, 2580, 2730),        # (1987, 2255, 2394)
 }
 
 

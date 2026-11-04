@@ -3,6 +3,35 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.0
+
+### Added
+
+- **Mandate for a role**
+  ([RT-6.26](docs/arc42/06-runtime-view.md#626-mandate-for-a-role),
+  ADR-006 phase 1, #141 point 3). A trusted human pins a post in a home whose
+  first line is `mandate: 👑 of ~<home> [until <YYYY-MM-DD>]`; the holder of
+  that crown then gives tasks there as the human's standing word. Each MCP
+  server reads its home's pinned posts (`GET /api/v4/channels/<id>/pinned`)
+  at its first look and on the heartbeat once 120 s have passed, keeps the
+  result in memory, and keeps the last good one through a failed read until
+  it expires. It counts only when the author's account id is one of the
+  session's own trusted humans, top-level in the home, never a webhook's,
+  bot's or agent's post. It ends 7 days after the post's time (its last
+  edit, else its creation), `until` (the start of that day, UTC) at most 30
+  days after it; deleted or edited away it is gone at the next read, unpinned
+  it pauses. The role resolves per event to the live 👑 of `~<home>`
+  (`lease.coordinator_of`, else that agent's own status here), and only a
+  peer with the owner split active: a foreign holder or a lapsed crown
+  mandates nobody. The holder's `TASK` roots in the home and its replies in
+  their threads carry `mandated` (the mandate post's id) and `mandated_by` in
+  `wait_for_events` and as push attributes; `coordinator("tasks")` marks the
+  rows `mandated` (with `scope="all"` only in the home's entry), each judged
+  once at first sight; `bus_info` shows `mandate` (role, by, until, holder,
+  post) or why none holds. It approves nothing: the posts stay `from_agent`,
+  never `from_trusted_human`, and the approval floor is unchanged. New
+  `pinned_posts` and `get_channel_id` on the chat port.
+
 ## 0.70.0
 
 ### Added
