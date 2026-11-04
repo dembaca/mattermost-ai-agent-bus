@@ -17,7 +17,7 @@ code does today and point here where a decision will change them.
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phase 1 built (0.71.0): the pinned post, RT-6.26; phase 2 (a signed record) depends on the registrar (#83) | #141 |
 | ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; D, B and the other runtimes open | – |
-| ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04), not built | – |
+| ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phase 1 built (0.71.8): the long poll of `GET /v1/wake`; phases 2 and 3 open | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -1475,7 +1475,14 @@ number can only hold work back or mark an agent blocked; it grants nothing.
 
 ## ADR-009: Push for plugin runtimes, OpenCode without a listen window, a pi adapter
 
-**Status:** Proposed (2026-11-04); not built. Decided by a trusted human on
+**Status:** Proposed (2026-11-04); phase 1 built (0.71.8): the long poll of
+`GET /v1/wake` (RT-6.17 step 7). As built, a long poll may leave `until` out
+(no listen window ends it, the other gates of RT-6.2 step 3 hold); `wait` is
+a hard deadline; a replaced request answers with reason `replaced` and gives
+up its running check. The inbox rings it when it queues an event, but posts
+and reactions reach the inbox only once it is connected, which is at the
+first `wait_for_events`: until then the check every 15 s finds them, as the
+plugin's timer did. Phases 2 and 3 not built. Decided by a trusted human on
 2026-11-04: one ADR in three phases. The names, times and the endpoint's shape
 below are proposals. Builds on RT-6.2 (the listener and its window), RT-6.12
 (the channel push), RT-6.17 (the hook API), RT-6.18 (the keyless session),
@@ -1553,7 +1560,10 @@ Code channel does (RT-6.12). What stays are the per-turn guards of RT-6.20 step
 4 and 5: a wake while a turn of any session of the location runs is held until
 that turn ends, the wake-up backoff, the drain rounds and the sign-off. A `BYE`
 ends the wait. On unload the plugin's cleanup aborts the request (RT-6.20 step
-7). The context feed for ADR-008 comes only when the token fields are confirmed
+7). A `replaced` answer means another poller of the session took over: the
+plugin backs off before it asks again. The server starts its inbox when it
+starts (today it connects at the first `wait_for_events`), so a post rings the
+wait from the session's start and not only after the agent's first collection. The context feed for ADR-008 comes only when the token fields are confirmed
 (measurement below); without them OpenCode agents show no numbers, as other
 runtimes without a status line.
 
