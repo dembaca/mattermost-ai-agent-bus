@@ -15,7 +15,7 @@ code does today and point here where a decision will change them.
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-ask-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phase 1 built (0.71.0): the pinned post, RT-6.26; phase 2 (a signed record) depends on the registrar (#83) | #141 |
-| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder | Proposed (2026-11-04), not built | #141 |
+| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder | Proposed (2026-11-04), not built | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -789,7 +789,8 @@ not; without one nothing is marked, as today (Section 7.2).
 
 **Status:** Proposed (2026-11-04); not built. Decided by a trusted human in
 the thread of 2026-11-04 (their steps 1 and 2, the crown stays with the new
-holder); the numbers below are proposals. Builds on ADR-002 (a crown per
+holder) and on 2026-11-04 (step 4: the `crown_taken` post); the numbers below
+are proposals. Builds on ADR-002 (a crown per
 (agent, home)) and RT-6.6; touches RT-6.12 and RT-6.25.
 
 **Context:** A crown whose holder died is claimed by nobody until the holder's
@@ -843,7 +844,8 @@ where it can.
    first, its slot after the wait, the `take` re-check against two claims.
    This also catches the case the beat cannot: a server that lives and renews
    while it hears nothing.
-4. **The crown stays with the new holder.** After such a claim the old holder
+4. **The crown stays with the new holder** (decided 2026-11-04, the post
+   included). After such a claim the old holder
    does not get the crown back by being older. The claim posts one line in the
    home, `props.a2a.kind = "crown_taken"` (intent `fyi`: it wakes nobody; a
    human reads "👑 taken over by `<bot>`: no 👀 for `<post id>` within
@@ -937,9 +939,6 @@ built if it shows up in use.
   way.** If the holder hears posts but cannot write, its server sees the post and
   cannot ack: a false alarm and a clean handover. Recommendation: accept; the
   holder retries the reaction once.
-- **How the old holder learns it lost the crown** when it is back and reads
-  the `crown_taken` line. Recommendation: the post, since a post has its own
-  time; a status does not say when the 👑 was claimed.
 - **Foreign agents in the same home.** A server counts a post as a wake only
   by its own trust; a foreign agent may disagree about a trusted human's post
   and start no claim. Recommendation: acceptable, the others still do; no
