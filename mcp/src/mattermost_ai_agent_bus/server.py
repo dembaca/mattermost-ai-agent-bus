@@ -286,7 +286,8 @@ def _get_inbox() -> WebSocketInbox:
     client = _get_client()
     if _inbox is None or _inbox.client is not client:
         _inbox = WebSocketInbox(client=client, typing_sec=_typing_sec(), in_my_thread=_in_my_thread,
-                                before_backfill=_crown_before_backfill)
+                                before_backfill=_crown_before_backfill,
+                                on_queue=hookapi.ring)  # the wake long poll (ADR-009)
     return _inbox
 
 

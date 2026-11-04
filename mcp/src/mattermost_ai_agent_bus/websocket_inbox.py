@@ -152,6 +152,9 @@ class WebSocketInbox:
     # renews the crown there (RT-6.6 step 6), so a sleep longer than the lease
     # does not leave them gated or held as if it had none; None: nothing.
     before_backfill: Callable[[], Awaitable[None]] | None = None
+    # Called whenever an event is queued, gated or not: the hook API's long
+    # poll checks again at once (hookapi.ring, ADR-009 phase 1); None: nothing.
+    on_queue: Callable[[], None] | None = None
     _gate_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False, init=False)
 
     async def ensure_identity(self) -> None:
@@ -498,6 +501,7 @@ class WebSocketInbox:
         event = ClassifiedEvent(kind="reaction", post=post, raw={"emoji": emoji, "ask": pid})
         await self._gate_reaction(event)
         await self._queue.put(event)
+        self._queued()
 
     async def _gate_reaction(self, event: ClassifiedEvent) -> None:
         """RT-6.16 step 7: with trusted humans configured, a reaction by anyone
@@ -611,6 +615,13 @@ class WebSocketInbox:
         (RT-6.19: a stall); delivered like any other."""
         self._queue.put_nowait(ClassifiedEvent(kind=kind, post=post_of({
             "id": "", "message": message, "create_at": int(time.time() * 1000)})))
+        self._queued()
+
+    def _queued(self) -> None:
+        """An event was queued: tell whoever waits for one without taking it
+        (the hook API's long poll, ADR-009 phase 1). The queue is left alone."""
+        if self.on_queue is not None:
+            self.on_queue()
 
     def waits(self, kind: str) -> bool:
         """Whether an event of that kind waits in the queue."""
@@ -685,6 +696,7 @@ class WebSocketInbox:
             except Exception as exc:  # noqa: BLE001
                 log.warning("read watermark not held: %s", exc)
         await self._queue.put(event)
+        self._queued()
 
     async def wait_for_events(
         self,

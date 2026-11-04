@@ -3,6 +3,24 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.7
+
+### Added
+
+- **A long poll for `GET /v1/wake`**
+  ([ADR-009](docs/arc42/09-architecture-decisions.md) phase 1,
+  [RT-6.17 step 7](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
+  With `?wait=S` (whole seconds, at most 55) the server holds the request until
+  the checks of `/v1/wake` say the agent wakes, with the same rules, gates and
+  trust as without it (a gated post never, past a `BYE` never), and answers as
+  before; once `S` is over it answers `{wake: false}`. `until` may be left out:
+  no listen window ends the wait. The inbox rings it whenever it queues an
+  event, and it checks again at the latest every 15 s; it takes nothing from
+  the queue. One waiting request per session: a second one answers the first
+  empty; a client that goes, or the server's exit, ends it. Without `wait`
+  nothing changes, so the OpenCode plugin works as before; it moves to the long
+  poll in phase 2.
+
 ## 0.71.6
 
 ### Added
