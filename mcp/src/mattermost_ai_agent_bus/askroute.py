@@ -30,7 +30,7 @@ acknowledges a switch once in its thread; a holder that took the crown after
 the switch does so on the heartbeat.
 
 With the registrar's keys pinned (MM_REGISTRAR_KEYS, ADR-005 phase 2, step 8)
-only the registrar's signed record sets the mode: a human types `/agent-mode
+only the registrar's signed record sets the mode: a human types `/agent-ask-mode
 direct|coordinator` in the home, and every server reads
 `<registrar>/register/v1/modes/<home>` at its first mode() and then every
 REFRESH_SEC on the heartbeat, verifies it (attest.verify_mode) and keeps it
@@ -245,8 +245,8 @@ _ACK = {
     DIRECT: "ask-mode direct, set by {who}: every ask goes to its human again.",
 }
 # Step 8: the confirmation of a registrar's record names its source.
-_SIGNED = "{who} with /agent-mode (signed by the registrar)"
-_HINT = ("With the registrar's keys pinned, the mode is set with `/agent-mode {mode}`, "
+_SIGNED = "{who} with /agent-ask-mode (signed by the registrar)"
+_HINT = ("With the registrar's keys pinned, the mode is set with `/agent-ask-mode {mode}`, "
          "signed by the registrar, so this post changes nothing.")
 
 

@@ -63,7 +63,7 @@ attention and tokens.
   to a human. What you cannot answer: `ask_human(kind="question",
   root_id=<question>)`, then relay the answer in its thread. Unanswered for
   15 min, the worker's server asks the human itself. Registrar keys pinned:
-  a human sets the mode with `/agent-mode`.
+  a human sets the mode with `/agent-ask-mode`.
 - **Short and precise.** Point out prose, recaps and repeated questions in
   one line.
 - **A stall wakes you** (`kind: stall`, RT-6.19): work is open, the bus

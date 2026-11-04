@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.2
+
+### Changed
+
+- **`/agent-mode` is now `/agent-ask-mode`**
+  ([RT-6.25 step 8](docs/arc42/06-runtime-view.md#625-ask-routing-modes)).
+  All human controls on the bus share the prefix `/agent-` and name their
+  concept: `/agent-token`, `/agent-ask-mode`, later `/agent-mandate`. Only the
+  texts the bus shows and reads change: the 👑's announcement (`… set by <human>
+  with /agent-ask-mode (signed by the registrar)`), the hint answering an
+  `ask-mode …` post, the skill, the docs. The registrar answers with the trigger
+  it is configured with, and the signed record (`mm-agent-mode+jwt`, its claims)
+  is unchanged, so no registrar build and no new key: the Mattermost slash
+  command only needs its trigger word changed (same token). The post keyword
+  `ask-mode coordinator|direct` stays.
+
 ## 0.71.1
 
 ### Fixed

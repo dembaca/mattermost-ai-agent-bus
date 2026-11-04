@@ -268,7 +268,7 @@ def _verify_jws(token: object, keys: Mapping[str, Ed25519PublicKey], *, typ: str
 @dataclass(frozen=True)
 class ModeRecord:
     """A verified ask-mode record: the mode a human set for a home with the
-    registrar's `/agent-mode`, and who set it (name lower case)."""
+    registrar's `/agent-ask-mode`, and who set it (name lower case)."""
 
     channel_id: str
     mode: str
