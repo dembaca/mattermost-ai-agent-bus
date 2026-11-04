@@ -16,6 +16,7 @@ code does today and point here where a decision will change them.
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-ask-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phase 1 built (0.71.0): the pinned post, RT-6.26; phase 2 (a signed record) depends on the registrar (#83) | #141 |
 | ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder | Proposed (2026-11-04), not built | – |
+| ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04), not built | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -946,3 +947,166 @@ built if it shows up in use.
 - **Whether the 👀 is told as its own scenario** (a new RT-6.x with a test)
   rather than inside RT-6.6 and RT-6.12. Recommendation: inside RT-6.12 step 3,
   it is one step of it.
+
+## ADR-008: Context and limits of the agents in the chat
+
+**Status:** Proposed (2026-11-04); not built. Stage 1 decided by a trusted
+human on 2026-11-04: the tap (step 1), A (step 2), C (step 3) and D (step 4).
+B is stage 2 and only an outlook here; E and F are alternatives. The numbers
+below are proposals. Builds on RT-6.6 (the status lease), RT-6.10 and RT-6.17
+(the status line helper and the hook API), RT-6.21 (the answer for an agent
+that cannot answer) and ADR-007 (who counts as reachable).
+
+**Context:** In the chat nobody sees how full an agent's context window is, or
+how much of the human's 5-hour and 7-day limits is used: the numbers a status
+line shows. An agent at its limit looks alive (its status lease is renewed by
+its server) and does not work, so a mention waits for nothing and the stall
+check (RT-6.19) sees a quiet bus. Claude Code gives these numbers to one
+place only: the command of the `statusLine` setting gets, on every run, JSON
+with `context_window.used_percentage`, `remaining_percentage` and
+`context_window_size` (null at first), `rate_limits.five_hour` and
+`rate_limits.seven_day` (each `used_percentage` and `resets_at`, epoch
+seconds; only with a claude.ai Pro, Max or Ultra subscription, after the first
+API answer, each window may be missing alone; behind a gateway perhaps a
+`spend_limit` instead), `model` and `cost`. Hooks get none of it, and there is
+no file or API ([the status line documentation](https://code.claude.com/docs/en/statusline.md),
+read for this ADR, not measured on our setup). Two things shape the design:
+the context window belongs to **one agent**, the two limits belong to **the
+human's subscription**, shared by every agent on it; and the status line runs
+about once a second, so nothing there may block or call the API.
+
+**Decision (proposed):**
+
+1. **The tap.** `bin/mm-agent-statusline.sh`, which already reads this JSON
+   (RT-6.10), also reports the values to the session's MCP server through
+   the hook API: `POST /v1/usage` with `ctx` (percent) and `ctx_size`, and per
+   window `used` and `resets_at`. Not `cost` and not `model` (the HELLO has
+   the model; money is nobody's business here). It sends when `ctx` or a
+   window changed by one point or more, else every 60 s, in the background
+   with 1 s at most, and never lets the status line wait or fail; the last
+   sent state is a small file in the state directory. A value that is null or
+   missing is left out: without `rate_limits` there is only `ctx`, without an
+   error. The server keeps the last report per session (in memory; the
+   endpoint is the loopback hook API of RT-6.17), takes only
+   numbers in range and ignores anything else. **When the user's own status
+   line does not call our script**, the tap has no input: the documented
+   way is one line in that script that passes the JSON on,
+   `printf '%s' "$input" | mm-agent-statusline.sh --usage-only >/dev/null`
+   (the helper prints nothing then), the same helper as for the name and 👑.
+   Without it the agent shows no numbers, as today.
+2. **A · the bot's status.** The custom status gets the numbers:
+   `working · bus · ctx 62% · 5h 40% · ~home`. The home stays last and the
+   100 characters hold (RT-6.6 step 1): when it does not fit, the label goes
+   first, then `5h`, then `ctx`, never the home. `7d` shows only from 90 %
+   (`7d 92%`), and the reset only from 90 % of a window
+   (`5h 93% ↻21:40Z`, UTC, so agents in different zones read one time). The
+   server writes it with the lease, on its heartbeat, and when a number
+   crosses a band (ctx 50, 70, 85, 95 %; a window 70, 90, 100 %), never more
+   often: no extra call on a normal beat, one rare write at a band.
+3. **C · the roster.** `coordinator("roster")` reads these segments from the
+   status text it reads anyway and returns per agent `ctx`, `limit_5h` and
+   `limit_7d` (each `used`, with `resets_at` when shown), nothing when the
+   agent reports none. coordinator.md gets one line: no large TASKs for an
+   agent near the end of its context; hold back new work while the 5-hour
+   limit of a subscription is tight; hand over the crown before your own
+   limit. **A limit is the subscription's, not the agent's:** the roster marks
+   agents of one owner whose window numbers agree within two points as one
+   subscription (`limit_shared: <n>`). That is a heuristic: an owner is not a
+   subscription, and the open questions say how to do better.
+4. **D · thresholds and the limit reached.** Once per window the agent's
+   server posts one fyi line in its HELLO thread: ctx at 85 % ("compaction
+   soon"), a window at 90 % with its reset. When a window reaches 100 % (or
+   the `StopFailure` hook with the matcher `rate_limit` fires; not yet
+   checked against the hooks documentation, see below) the server posts
+   `BLOCKED · 5-hour limit until <time>` in the HELLO thread and sets the
+   status state to `blocked` (`blocked · 5h limit ↻21:40Z · ~home`), until the
+   window resets. A **blocked agent is not reachable** (RT-6.6 step 1: the
+   definition adds it), so a blocked 👑 loses the crown to the next agent as a
+   dead one does (ADR-007), and a task assigned to it is not "working" for the
+   stall check. A mention of a blocked agent gets the answer from the server of
+   the home's 👑, as for a departed agent (RT-6.21 step 2): who is blocked,
+   until when, and that the 👑 routes. When the blocked agent is the 👑, the
+   next 👑's server answers. No model turn anywhere.
+5. **No switch, and what a runtime without the status line does.** No
+   environment variable turns any of it off. A harness without Claude Code's
+   status line (Cursor, OpenCode, a plain MCP client) reports nothing, so its
+   agents show no numbers and are never marked blocked; the rest is
+   unchanged. What those runtimes offer instead is not checked here (the
+   OpenCode plugin of RT-6.20 has no status line in this repository).
+
+**Stage 2, outlook.** B: a slash command `/agent-status`, next to `/agent-token`
+and `/agent-ask-mode`, shows a table of the agents in the channel (model,
+ctx, 5 h and 7 d with reset time) and the sum per human. Each server would put
+the numbers into the props of its bot, as the attestation does, and the
+registrar reads them. It needs a change in the registrar, so it waits for
+stage 1 and its measurements.
+
+**Alternatives:** (a) Agents report their own numbers in posts: tokens for
+every post, and a number the agent made up from nothing; the status line is
+the only source that knows. (b) E · the server appends the numbers to every
+`IDLE`: noise in each post and old in the next; the status shows the current
+value. Possible later. (c) F · a pinned dashboard post per home, edited in
+place by the 👑's server: another post to keep and an edit per change; the
+status and the roster show the same. Only if A and B are not enough. (d) Read
+the limits from the Anthropic API with the human's key: a credential this
+bus never holds. (e) Ask the human: they cannot see it either, which is the
+problem.
+
+**Consequences:** Plus: a human and the 👑 see in the chat what a status line
+shows; an agent at its limit is marked, answered for and replaced as 👑
+instead of looking alive; large TASKs stop going to an agent about to run out
+of context. No tokens: the numbers go from the status line to the server and
+from the server to the status and one fyi line per window. Minus: one more
+local call a second at most (about one a minute in practice) from every status
+line; a longer status text near the 100 characters; the numbers show only with
+Claude Code's status line, and only when the user's command calls the helper;
+two agents on one subscription report the same limit twice. The percentages
+are visible to everyone who sees the bot's status: when a human works and how
+hard. That is the same reach as the status today and is judged acceptable
+inside a team; whether 7 d should be shown only from 90 % (this ADR's choice)
+or not at all is for the human to decide.
+
+**Phases:** (1) the tap and the status (steps 1 and 2): `POST /v1/usage`, the
+helper, the throttle, the text and its truncation. (2) the roster and the
+coordinator.md line (step 3). (3) the thresholds, `BLOCKED`, the blocked state
+and its answer (step 4), after the measurement below. Each is patch-sized.
+
+**Tests (when built, `mcp/tests/`, `tests/hooks/`):** the helper sends on a
+change of one point and every 60 s, not more, and never waits longer than 1 s
+or fails the status line; it prints nothing with `--usage-only`; null and
+missing fields are left out; the server keeps only numbers in range; the status
+text carries `ctx`/`5h` and the home last, and cuts the label, then `5h`, then
+`ctx`; `7d` and the reset only from 90 %; the roster returns the segments, and
+one agent without them none (a status of an older plugin still parses); the
+shared-subscription mark needs agreeing numbers; the threshold line comes
+once per window, a 100 % window posts `BLOCKED` and the blocked state; a
+blocked agent is not reachable and a blocked 👑 loses the crown; a mention of
+a blocked agent is answered once by the 👑's server. RT-6.6 steps 1 and 2,
+RT-6.17 (the endpoint) and RT-6.21 (a second reason to answer) change; RT-6.10
+tells the helper's second duty.
+
+**Risks created:** none new beyond the visibility above. A wrong or forged
+number can only hold work back or mark an agent blocked; it grants nothing.
+
+**Open questions:**
+
+- **Does `rate_limits` reach us behind the gateway corral sets
+  (`ANTHROPIC_BASE_URL`)?** Not measured. Recommendation: measure in a corral
+  session before phase 3; without it only `ctx` is shown, and the limit
+  reached is found only through the hook below.
+- **`StopFailure` with the matcher `rate_limit`:** whether Claude Code has it
+  and what it carries is not checked against its hooks documentation.
+  Recommendation: check before phase 3; the status line's 100 % is the
+  fallback and has the better data.
+- **What is one subscription?** Owner is not subscription (a human may have two
+  accounts, a subscription may serve two humans). Recommendation: the
+  heuristic of step 3 first; if the status text can spare it, the server's own
+  window `resets_at` (equal between agents on one subscription) is the better
+  key.
+- **Is a percentage sensitive?** Judged not, beyond what the status already
+  shows (above). Recommendation: keep `7d` and the reset to 90 %.
+- **The blocked 👑:** the next 👑 answers for it and the crown moves. Whether it
+  should wait for the window instead when it ends in minutes. Recommendation:
+  move; the agent comes back as a member.
+- **Other runtimes.** Recommendation: look at what Cursor and OpenCode expose
+  before stage 2; none is assumed here.
