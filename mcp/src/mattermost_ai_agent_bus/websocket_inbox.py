@@ -742,8 +742,9 @@ class WebSocketInbox:
         # Waiting again means the agent is done with what it was given.
         if agent:
             self.stop_typing()
-        if self._ws is None:
-            await self.ensure_connected()
+        # Always through the lock: a connect that another caller (a long poll)
+        # has under way is waited for, not skipped (its `_ws` is set early).
+        await self.ensure_connected()
         if self._getter is not None and not self._getter.done():
             self._getter.cancel()
         getter = asyncio.ensure_future(self._queue.get())

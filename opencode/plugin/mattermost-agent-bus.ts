@@ -117,10 +117,15 @@ export function waitSec(options: Options): number {
   return Math.min(55, Math.max(1, Number.isFinite(sec) && sec > 0 ? Math.floor(sec) : WAIT_SEC))
 }
 
-// The pause after a failed or empty-handed poll in ms: the option, else RETRY_SEC.
+// The least pause after a failed poll, as the old `pollSec` had: a server that
+// is gone must not be asked in a tight loop. `timing` is the tests' to lower.
+export const timing = { minRetrySec: 5 }
+
+// The pause after a failed or empty-handed poll in ms: the option, else
+// RETRY_SEC, at least `timing.minRetrySec`.
 export function retryMs(options: Options): number {
   const sec = Number(options.retrySec ?? RETRY_SEC)
-  return (Number.isFinite(sec) && sec > 0 ? sec : RETRY_SEC) * 1000
+  return Math.max(timing.minRetrySec, Number.isFinite(sec) && sec > 0 ? sec : RETRY_SEC) * 1000
 }
 
 export function wakeBackoffMs(repeats: number): number {
@@ -246,6 +251,7 @@ type Turn = {
   aborted: boolean // until the human's next prompt: no checks, no wake-up
   inFlight: boolean
   listening: boolean // the server's gates hold (it opened a window): the long poll runs; no end by time
+  heldSince: number // epoch ms: the `since` of a wake dropped while a turn ran, kept for the next poll (0: none)
   wakeKey: string // the last wake-up's counter (reason:count), "" for new posts
   wakeRepeats: number
   wakeAfter: number // epoch ms: no wake-up for the same counter before
@@ -255,7 +261,7 @@ type Turn = {
 }
 
 const fresh = (): Turn => ({ busy: false, idleAt: Date.now(), drains: 0, signoffAsked: false, byBus: false, aborted: false,
-  inFlight: false, listening: false, wakeKey: "", wakeRepeats: 0, wakeAfter: 0, sent: "", turn: false, compactOnly: false })
+  inFlight: false, listening: false, heldSince: 0, wakeKey: "", wakeRepeats: 0, wakeAfter: 0, sent: "", turn: false, compactOnly: false })
 
 export async function setup(ctx: Plugin.Context) {
   const options = (ctx.options ?? {}) as Options
@@ -349,8 +355,9 @@ export async function setup(ctx: Plugin.Context) {
   const humanTurn = async (id: string) => {
     if (!(await topLevel(id))) return
     const t = turn(id)
-    Object.assign(t, { busy: true, turn: true, aborted: false, drains: 0, signoffAsked: false, byBus: false, listening: false,
-                       wakeKey: "", wakeRepeats: 0, wakeAfter: 0 })
+    Object.assign(t, { busy: true, turn: true, aborted: false, drains: 0, signoffAsked: false, byBus: false,
+                       heldSince: 0, wakeKey: "", wakeRepeats: 0, wakeAfter: 0 })
+    // `listening` stays as the last turn end left it: this turn's end decides (a failed check keeps it).
     last = id
     await stat("turn", { by: "human" })
     await presence("working")
@@ -391,7 +398,11 @@ export async function setup(ctx: Plugin.Context) {
       // A window the server opened (RT-6.2 step 3) says its gates hold: the
       // session is reachable and the long poll runs, with no end by time
       // (ADR-009). None (a BYE, no project channel, the listener off): idle.
-      if ((Number(r?.listen_until) || 0) * 1000 > Date.now()) {
+      if (!r) {
+        // The check failed (timeout, 503): nothing is known, so what held stays:
+        // a session that was listening keeps listening, reachable while it lives.
+        nudge()
+      } else if ((Number(r.listen_until) || 0) * 1000 > Date.now()) {
         t.listening = true
         await reachable()
         nudge()
@@ -452,9 +463,15 @@ export async function setup(ctx: Plugin.Context) {
 
   // The wake-up: the answer of the long poll, for the session it was asked for.
   // False: nothing was sent (a turn runs, backoff, a failure).
-  const woken = async (id: string, t: Turn, r: Json): Promise<boolean> => {
-    // A turn that started meanwhile holds it: asked again once it has ended.
-    if (closed || anyBusy() || t.aborted || last !== id) return false
+  const woken = async (id: string, t: Turn, r: Json, since: number): Promise<boolean> => {
+    // A turn that started meanwhile holds it: asked again once it has ended,
+    // with the same `since`: a post that wakes by its time only (addressed,
+    // digest) would be older than the new idle time and never wake.
+    if (!closed && anyBusy() && !t.aborted && last === id) {
+      t.heldSince = Math.min(t.heldSince || since, since)
+      return false
+    }
+    if (closed || t.aborted || last !== id) return false
     // New posts are counted since the session went idle; the counters,
     // a stall and reactions are not: the same one again backs off.
     const key = r.reason === "addressed" || r.reason === "digest" ? "" : `${r.reason}:${r.count}`
@@ -473,6 +490,7 @@ export async function setup(ctx: Plugin.Context) {
     t.byBus = true
     await stat("wake", { reason: String(r.reason || "") })
     if (await send(id, String(r.text), "wake", "Mattermost agent bus: wake-up")) {
+      t.heldSince = 0
       await stat("turn", { by: "bus" })
       await presence("working")
       await save()
@@ -499,7 +517,12 @@ export async function setup(ctx: Plugin.Context) {
         continue
       }
       const asked = Date.now()
-      const r = await bus("GET", `/v1/wake?since=${t.idleAt}&wait=${WAIT}`, undefined, WAIT * 1000 + READ_MARGIN_MS, ac.signal)
+      const since = t.heldSince || t.idleAt
+      // `until` (a day ahead) is for a server before 0.71.8, which refuses a wake without it
+      // (400) and would be asked in vain for ever; later ones hold the request and ignore it.
+      const until = Math.floor(asked / 1000) + 86400
+      const r = await bus("GET", `/v1/wake?since=${since}&until=${until}&wait=${WAIT}`, undefined, WAIT * 1000 + READ_MARGIN_MS,
+                          ac.signal)
       if (closed) break
       if (!r) {
         await pause(RETRY) // no server, 503 (not registered yet), a failure
@@ -514,12 +537,12 @@ export async function setup(ctx: Plugin.Context) {
       replaced = 0
       if (!r.wake) {
         t.wakeKey = ""
-        // Held for the wait it is empty after a while; at once it is a server that
-        // does not hold (an older one): no tight loop.
-        if (Date.now() - asked < 1000) await pause(RETRY)
+        // Held for the wait it is empty at its end; an empty answer long before
+        // is a server that does not hold the request: no tight loop.
+        if (Date.now() - asked < (WAIT - 5) * 1000) await pause(RETRY)
         continue
       }
-      if (!(await woken(id, t, r)) && !anyBusy() && !closed) await pause(RETRY) // backoff: look again in a while
+      if (!(await woken(id, t, r, since)) && !anyBusy() && !closed) await pause(RETRY) // backoff: look again in a while
     }
   }
 

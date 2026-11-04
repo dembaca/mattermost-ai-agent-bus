@@ -88,3 +88,26 @@ async def test_a_failed_connect_leaves_it_unconnected(inbox, monkeypatch):
     with pytest.raises(OSError):
         await inbox.ensure_connected()
     assert not inbox.connected and inbox.sockets[0].closed
+
+
+async def test_wait_for_events_waits_for_a_connect_under_way(inbox, monkeypatch):
+    """A long poll's connect sets the socket early; wait_for_events must not
+    take that for a finished connect, or a connect its deadline cancels leaves
+    it waiting on a queue nobody fills."""
+    release = asyncio.Event()
+
+    async def slow_open():
+        await release.wait()
+
+    monkeypatch.setattr(inbox, "_open", slow_open)
+    connecting = asyncio.create_task(inbox.ensure_connected())
+    await asyncio.sleep(0.05)
+    assert inbox._ws is not None and not connecting.done()
+    waiter = asyncio.create_task(inbox.wait_for_events(timeout_sec=0.2))
+    await asyncio.sleep(0.05)
+    connecting.cancel()  # the long poll's deadline
+    await asyncio.gather(connecting, return_exceptions=True)
+    release.set()
+    await waiter
+    # It connected afresh itself (two sockets in all) rather than wait on a dead one.
+    assert len(inbox.sockets) == 2 and inbox.connected

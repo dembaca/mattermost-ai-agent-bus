@@ -12,7 +12,7 @@ import { dirname, join } from "node:path"
 import { after, afterEach, before, beforeEach, mock, test } from "node:test"
 import { fileURLToPath } from "node:url"
 
-import plugin, { addMcp, busFile, busRoot, MARK, RETRY_SEC, retryMs, SERVER, setup, SKILL, skillInfo, WAIT_SEC,
+import plugin, { addMcp, busFile, busRoot, MARK, RETRY_SEC, retryMs, SERVER, setup, SKILL, skillInfo, timing, WAIT_SEC,
   WAKE_BACKOFF_MAX_MS, WAKE_BACKOFF_MS, wakeBackoffMs, waitSec } from "../plugin/mattermost-agent-bus.ts"
 import entry from "../server.ts"
 
@@ -42,6 +42,8 @@ const until = async (cond: () => boolean, what: string, ms = 3000) => {
 }
 // The fake server holds /v1/wake until the test answers it (or the client leaves).
 const HOLD = Symbol("hold")
+// A server before 0.71.8: a wake without `until` is a 400.
+const OLD = Symbol("old")
 let held: Array<{ res: ServerResponse; path: string }> = []
 let dropped = 0 // held requests the client aborted
 const answerWake = (body: any) => {
@@ -84,6 +86,12 @@ before(async () => {
         })
         return
       }
+      if (answer === OLD) {
+        const ok = path.includes("until=")
+        res.writeHead(ok ? 200 : 400, { "Content-Type": "application/json" })
+          .end(JSON.stringify(ok ? { wake: false } : { error: "until: epoch s" }))
+        return
+      }
       if (answer === undefined) res.writeHead(503).end('{"error":"no bus session"}')
       else res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(answer))
     })
@@ -108,10 +116,16 @@ beforeEach(() => {
   mkdirSync(dir, { recursive: true })
   process.env.XDG_STATE_HOME = join(tmp, "state")
   writeFileSync(join(dir, `endpoint-${sha16(ws)}.env`), `MM_BUS_ENDPOINT=${endpoint}\nMM_BUS_KEY=${KEY}\nMM_BUS_PID=1\n`)
+  timing.minRetrySec = 0.01 // the tests' pauses are short; the clamp is tested apart
   mock.timers.enable({ apis: ["Date"], now: Date.now() })
 })
 
-afterEach(() => {
+// Every plugin a test started is unloaded when it ends, red or green: one
+// failing test must not leave a poller that takes the next tests' requests.
+const live: Array<() => Promise<void>> = []
+
+afterEach(async () => {
+  for (const stop of live.splice(0)) await stop().catch(() => {})
   mock.timers.reset()
   for (const h of held) h.res.destroy()
   held = []
@@ -195,6 +209,7 @@ async function start(opts: Record<string, unknown> = {}, sessions: Record<string
                      store?: Map<string, any>) {
   const fx = fakeCtx(opts, sessions, store)
   const cleanup = await setup(fx.ctx)
+  live.push(cleanup as () => Promise<void>)
   const prompt = async (id = "s1", text = "hi") => {
     const working = () => calls.filter((c) => c.path === "/v1/presence" && c.body?.state === "working").length
     const before = working()
@@ -243,6 +258,10 @@ test("RT-6.20: the long poll waits 50 s by default (1 to 55), a failed poll is a
   assert.equal(retryMs({}), 15_000)
   assert.equal(retryMs({ retrySec: 2 }), 2000)
   assert.equal(retryMs({ retrySec: -1 }), 15_000)
+  // Never a tight loop: at least the old pollSec's 5 s (the tests lower it).
+  timing.minRetrySec = 5
+  assert.equal(retryMs({ retrySec: 0.01 }), 5000)
+  assert.equal(retryMs({ retrySec: 2 }), 5000)
 })
 
 test("RT-6.20: the same counter backs off to 30 min", () => {
@@ -328,11 +347,11 @@ test("RT-6.20: an idle session holds one long poll, no timer; a wake starts one 
   await until(() => held.length === 1, "one long poll in flight")
   // One request, with a wait and no listen window, since the turn ended.
   assert.equal(wakes().length, 1)
-  assert.match(wakes()[0].path, /^\/v1\/wake\?since=\d+&wait=50$/)
+  assert.match(wakes()[0].path, /^\/v1\/wake\?since=\d+&until=\d+&wait=50$/)
   assert.equal(fx.sent.length, 0)
   calls = []
   answerWake({ wake: true, reason: "dm", count: 1, text: "Mattermost: 1 unread mention(s) …" })
-  await until(() => fx.sent.length === 1, "the wake input")
+  await until(() => fx.sent.length === 1 && rest().length >= 3, "the wake input, its count, its turn and its presence")
   assert.deepEqual(fx.sent[0].metadata, { [MARK]: "wake" })
   assert.equal(fx.sent[0].resume, true)
   // It counts as the bus's turn and sets the presence working.
@@ -361,13 +380,19 @@ test("RT-6.20: a wake that arrives while a turn runs is held: asked again after 
   await fx.ended()
   await until(() => held.length === 1, "long poll")
   // The human types while the request is out: a turn runs when the answer comes.
+  const since = (path: string) => path.match(/since=(\d+)/)![1]
+  const first = since(wakes()[0].path)
   await fx.prompt()
   answerWake({ wake: true, reason: "addressed", count: 1, text: "Mattermost: 1 new post(s) …" })
   await settle(150)
   assert.equal(fx.sent.length, 0)
+  tick(5000) // the turn ends later than the poll began
   await fx.ended()
   await until(() => held.length === 1, "asked again after the turn")
   assert.equal(fx.sent.length, 0)
+  // A post that wakes by its time only (addressed, digest) is older than the new idle time: the
+  // dropped wake's `since` is kept, or it would never wake.
+  assert.equal(since(wakes().at(-1)!.path), first)
   answerWake({ wake: true, reason: "addressed", count: 1, text: "Mattermost: 1 new post(s) …" })
   await until(() => fx.sent.length === 1, "woken once the turn ended")
   await fx.cleanup()
@@ -377,6 +402,7 @@ test("RT-6.20: a counter the woken turn cannot clear wakes again only after 1, 2
   const fx = await start()
   await fx.prompt()
   await fx.ended()
+  calls = []
   // The server answers at once for a counter that stays: not held.
   answers["/v1/wake"] = { wake: true, reason: "dm", count: 2, text: "Mattermost: 2 unread …" }
   const woken = async () => {
@@ -483,14 +509,38 @@ test("RT-6.20: a request another poller replaced backs off, a failure is asked a
   await fx.cleanup()
 })
 
-test("RT-6.20: a server that does not hold the request (an older one) is not asked in a tight loop", async () => {
+test("RT-6.20: a server before 0.71.8 (a wake without until is a 400) is asked with until, not in a tight loop", async () => {
   const fx = await start({ retrySec: 0.1 })
   await fx.prompt()
-  answers["/v1/wake"] = { wake: false, reason: "", count: 0, text: "" } // answers at once
+  answers["/v1/wake"] = OLD
   await fx.ended()
   await until(() => wakes().length >= 1, "asked")
+  // Every request names a window a day ahead: the old server accepts it and holds nothing, the new one ignores it.
+  assert.ok(wakes().every((c) => /&until=\d+&/.test(c.path)))
   await settle(250)
-  assert.ok(wakes().length >= 2 && wakes().length <= 5, `paused between asks: ${wakes().length}`)
+  // It answers at once, empty: a pause (the tests' 10 ms) between asks, not a tight loop.
+  assert.ok(wakes().length <= 40, `paused between asks: ${wakes().length}`)
+  await fx.cleanup()
+})
+
+test("RT-6.20: a failed turn-end check leaves a listening session listening", async () => {
+  const fx = await start()
+  await fx.prompt()
+  await fx.ended()
+  await until(() => held.length === 1, "listening")
+  // The next turn: its end check fails (a timeout, a 503): nothing is known, so it keeps listening.
+  await fx.prompt()
+  answers["/v1/turn-end"] = undefined
+  await fx.ended()
+  await until(() => held.length === 1, "still asked for after a failed check")
+  // And the first check that works with no gates (BYE) ends it.
+  answers["/v1/turn-end"] = { action: "idle" }
+  await fx.prompt()
+  await fx.ended()
+  // The request in flight ends as it was (the server's gates decide a wake); no new one is asked.
+  answerWake({ wake: false, reason: "", count: 0, text: "" })
+  await settle(150)
+  assert.equal(held.length, 0)
   await fx.cleanup()
 })
 
@@ -586,7 +636,7 @@ test("RT-6.20: the turn state survives OpenCode unloading the location", async (
   // Loaded again: the same session, its idle time, and still listening.
   const second = await start({}, {}, store)
   await until(() => held.length === 1, "asked again")
-  assert.match(wakes()[0].path, /^\/v1\/wake\?since=\d+&wait=50$/)
+  assert.match(wakes()[0].path, /^\/v1\/wake\?since=\d+&until=\d+&wait=50$/)
   answerWake({ wake: true, reason: "dm", count: 1, text: "Mattermost: 1 unread …" })
   await until(() => second.sent.length === 1, "woken")
   assert.equal(second.sent[0].sessionID, "s1")
