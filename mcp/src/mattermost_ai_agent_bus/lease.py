@@ -226,6 +226,7 @@ async def set_status(client: ChatPort, state: str, label: str = "") -> None:
         return
     async with _lock():
         await _set_status(client, state, label)
+        await _write_usage_locked(client)  # the numbers arrive with the status, not at the next beat
 
 
 async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
@@ -733,13 +734,18 @@ async def write_usage(client: ChatPort) -> None:
     """The last usage report into the bot's props as `agent_usage` (ADR-008
     step 3), when it changed and a minute passed since the last attempt. Like
     the attestation: under the status lock, the other props kept. Never raises."""
+    async with _lock():
+        await _write_usage_locked(client)
+
+
+async def _write_usage_locked(client: ChatPort) -> None:
+    """write_usage under the status lock, which the caller holds."""
     value = usage.props_due()
     if not value or not client.token:
         return
     usage.props_tried()
     try:
-        async with _lock():
-            await client.publish_usage(value)
+        await client.publish_usage(value)
         usage.props_written(value)
     except asyncio.CancelledError:
         raise

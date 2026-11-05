@@ -27,6 +27,15 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def describe_failure(exc: Exception) -> str:
+    """A failed call as `METHOD /path → status` (no host, no query, no body: no
+    secret can be in it), else the exception's type and a short text."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        req = exc.request
+        return f"{req.method} {req.url.path} → {exc.response.status_code}"
+    return f"{type(exc).__name__}: {str(exc)[:120]}"
+
+
 def from_webhook(post: Mapping[str, Any]) -> bool:
     """Anyone with a hook's URL posts as the account that made the hook."""
     return str((post.get("props") or {}).get("from_webhook", "")) == "true"
@@ -431,6 +440,16 @@ class MattermostAdapter:
     _attestations: dict[str, str] = field(default_factory=dict, repr=False, init=False)
     # user id -> (when read, the agent_usage its props carry, '' none; None:
     # not readable), ADR-008 step 3.
+    # The last outcome of the usage report's way through the bot's props (ADR-008
+    # step 3, bus_info `usage`): when it was written, and the last failure of
+    # writing it and of reading another bot's, each with endpoint and status.
+    usage_written_at: float = field(default=0.0, repr=False, init=False)
+    usage_write_error: str = field(default="", repr=False, init=False)
+    usage_read_error: str = field(default="", repr=False, init=False)
+    # How the reads of other bots' reports went: one with a value, a readable
+    # account without one (never written, or overwritten), a failed read.
+    usage_reads: dict[str, int] = field(
+        default_factory=lambda: {"found": 0, "empty": 0, "failed": 0}, repr=False, init=False)
     _usages: dict[str, tuple[float, str | None]] = field(
         default_factory=dict, repr=False, init=False)
     # RT-6.21: lower-case username -> (when read, its bot account; None: none),
@@ -710,6 +729,7 @@ class MattermostAdapter:
         # (ADR-008 step 3) without a second GET.
         raw = props.get(USAGE_PROP) if isinstance(props, Mapping) else None
         self._usages[user_id] = (time.monotonic(), raw if isinstance(raw, str) else "")
+        self.usage_reads["found" if isinstance(raw, str) and raw else "empty"] += 1
 
     async def agent_attestation(self, user_id: str) -> str | None:
         """The registrar's attestation the bot put into its own user props
@@ -765,7 +785,22 @@ class MattermostAdapter:
         """Put this bot's usage report (usage.props_value) into its own user
         props as `agent_usage` (ADR-008 step 3), the way publish_attestation
         does, the caller holding the lease's lock. False when it is there."""
-        return await self._publish_prop(USAGE_PROP, value)
+        try:
+            changed = await self._publish_prop(USAGE_PROP, value)
+        except Exception as exc:
+            self._usage_failed("write", exc)
+            raise
+        self.usage_written_at, self.usage_write_error = time.time(), ""
+        return changed
+
+    def _usage_failed(self, which: str, exc: Exception) -> None:
+        """The usage report's way through the props failed: kept for bus_info and
+        logged as a warning once per distinct failure, so a session sees for itself
+        why its numbers do not reach the roster."""
+        text = describe_failure(exc)
+        if getattr(self, f"usage_{which}_error") != text:
+            log.warning("usage report %s failed: %s", which, text)
+        setattr(self, f"usage_{which}_error", text)
 
     async def _publish_prop(self, key: str, value: str) -> bool:
         me = await self.get_me()
@@ -795,12 +830,16 @@ class MattermostAdapter:
         try:
             data = await self._api("GET", f"/api/v4/users/{user_id}")
         except Exception as exc:  # noqa: BLE001 — the roster without its numbers
-            log.debug("usage of %s not readable: %s", user_id, exc)
+            self._usage_failed("read", exc)
+            self.usage_reads["failed"] += 1
             data = None
+        else:
+            self.usage_read_error = ""
         if isinstance(data, dict):
             props = data.get("props")
             raw = props.get(USAGE_PROP) if isinstance(props, Mapping) else None
             value = raw if isinstance(raw, str) else ""
+            self.usage_reads["found" if value else "empty"] += 1
         self._usages[user_id] = (now, value)
         return value
 
