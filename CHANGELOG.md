@@ -14,8 +14,21 @@ before 0.5.0 are described in the git history.
   once under another bot). The update note of the Stop hook, `bus_info`'s
   `update.how` and the docstrings now say `claude --resume <session-id>`
   (`corral run -- --resume <session-id>`), with the session's own id when the
-  server knows it, else "pick this session" in the `--resume` picker. Texts that
+  server (or, in the Stop hook, the hook's input) knows it, else "pick this session" in the `--resume` picker. Texts that
   only describe the takeover name `--resume <id>` first.
+
+## 0.71.12
+
+### Fixed
+
+- **A reconnect is confirmed again**
+  ([RT-6.12 step 2](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)).
+  In a corral session the host process lives on across relay reconnects
+  (`/reload-plugins`, `/mcp`, a plugin update). Each new connection forgets
+  `channel-<uid>.env`, but the process's confirmation stayed set: no new check
+  was sent and nothing wrote the file, so the Stop hook asked for a listener
+  beside a working push. Now a new connection gets a check with a new code and
+  its confirmation writes the file again.
 
 ## 0.71.11
 
