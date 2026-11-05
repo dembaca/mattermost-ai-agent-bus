@@ -68,7 +68,7 @@ class FakeMattermost:
     register_reply: dict | None = None  # the registrar's answer instead of a bot
     register_error: tuple[int, str] | None = None  # the registrar's refusal: status, plain text
     missing: set[str] = field(default_factory=set)  # channel names answered with 404
-    user_props: dict | None = None  # the bot's user props (custom status, attestation; RT-6.24)
+    user_props: dict | None = None  # the bot's user props (custom status)
     registrar_keys: dict | None = None  # GET /register/v1/keys (RT-6.24); None: 404
     url: str = ""
 

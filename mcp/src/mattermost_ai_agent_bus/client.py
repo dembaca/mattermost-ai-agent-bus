@@ -230,10 +230,8 @@ _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 
 # A bot description (its owner and trusted list, ADR-003) is read again after this.
 DESCRIPTION_TTL_SEC = 600.0
-# The bot's own user prop that carries the registrar's attestation (RT-6.24). Nobody
-# writes it since 0.71.19 (a bot's patch of its own user is a 403); the read path is the
-# seam for the registrar endpoint.
-# The most the registrar's answer with a home's ask-mode record may hold (RT-6.25 step 8).
+# The most a registrar's answer with a signed record may hold (an ask mode, a
+# mandate, an attestation: RT-6.25 step 8, RT-6.26 step 8, RT-6.24 step 5).
 MODE_RECORD_MAX = 8192
 # The registrar's own 404 for a home without a mandate (RT-6.26 step 8).
 NO_MANDATE_ERROR = "no mandate set"
@@ -736,7 +734,7 @@ class MattermostAdapter:
             self._attestations[user_id] = (now + ATTESTATION_TTL_SEC / 10, None)
             return None
         ttl = ATTESTATION_TTL_SEC if token is None else min(
-            ATTESTATION_TTL_SEC, max(0.0, attest.expires_in(token)))
+            ATTESTATION_TTL_SEC, max(ATTESTATION_TTL_SEC / 10, attest.expires_in(token)))
         self._attestations[user_id] = (now + ttl, token or "")
         return token or ""
 
@@ -751,7 +749,7 @@ class MattermostAdapter:
         mandate_record: only a 404 with the registrar's own body `{"error":"no
         attestation"}` means none; any other 404 raises NoAttestationEndpoint."""
         return await self._registrar_record(self.attestations_url(bot_id),
-                                            none_error=NO_ATTESTATION_ERROR,
+                                            name="attestation", none_error=NO_ATTESTATION_ERROR,
                                             missing=NoAttestationEndpoint)
 
     def modes_url(self, channel_id: str) -> str:
@@ -773,7 +771,7 @@ class MattermostAdapter:
         `GET …/modes/<id>` → `{"record": "<JWS>"}`, None on 404. No
         Authorization header (the bot's token never goes there), 5 s, at
         most MODE_RECORD_MAX bytes; anything else raises."""
-        return await self._registrar_record(self.modes_url(channel_id))
+        return await self._registrar_record(self.modes_url(channel_id), name="ask mode record")
 
     async def mandate_record(self, channel_id: str) -> str | None:
         """The registrar's signed mandate record of a home (RT-6.26 step 8):
@@ -783,22 +781,22 @@ class MattermostAdapter:
         in front of it) raises NoMandateEndpoint, so that a rollout never reads
         it as `off`."""
         return await self._registrar_record(self.mandates_url(channel_id),
-                                            none_error=NO_MANDATE_ERROR)
+                                            name="mandate", none_error=NO_MANDATE_ERROR)
 
-    async def _registrar_record(self, url: str, *, none_error: str = "",
+    async def _registrar_record(self, url: str, *, name: str, none_error: str = "",
                                 missing: type[ValueError] = NoMandateEndpoint) -> str | None:
         out = bytearray()
         async with self._http().stream("GET", url, timeout=5.0,
                                        headers={"Accept": "application/json"}) as resp:
             if resp.status_code == 404:
                 if none_error and _error_of(await resp.aread()) != none_error:
-                    raise missing(f"registrar has no {none_error!r} endpoint")
+                    raise missing(f"registrar has no {name} endpoint")
                 return None
             resp.raise_for_status()
             async for chunk in resp.aiter_bytes():
                 out += chunk
                 if len(out) > MODE_RECORD_MAX:
-                    raise ValueError(f"ask mode record over {MODE_RECORD_MAX} bytes")
+                    raise ValueError(f"{name} over {MODE_RECORD_MAX} bytes")
         data = json.loads(out.decode("utf-8"))
         record = data.get("record") if isinstance(data, dict) else None
         if not isinstance(record, str) or not record:

@@ -322,7 +322,7 @@ async def test_the_registrars_own_404_is_none_and_any_other_failure_is_unreadabl
     assert await c.agent_attestation(SELF) == ""                # the registrar's own: none
     for _ in range(5):                                           # cached as none, no further read
         assert await c.agent_attestation(SELF) == ""
-    for other in ("b" * 26, "c" * 26, "d" * 26, "e" * 26):
+    for other in ("b" * 26, "c" * 26, "d" * 26, "e" * 26, "f" * 26):  # the last: a 200 with no record
         assert await c.agent_attestation(other) is None        # a foreign 404, a 500: not readable
     with pytest.raises(NoAttestationEndpoint):
         await _registrar_adapter([httpx.Response(404)]).attestation_record(SELF)
@@ -357,6 +357,8 @@ async def test_the_cache_ends_with_the_records_exp(monkeypatch):
     c = _registrar_adapter([httpx.Response(200, json={"record": short}),
                             httpx.Response(200, json={"record": fresh})], seen)
     assert await c.agent_attestation(SELF) == short
+    clock[0] += 31.0
+    assert await c.agent_attestation(SELF) == short and len(seen) == 1   # floor: a tenth of the TTL
     clock[0] += 31.0
     assert await c.agent_attestation(SELF) == fresh and len(seen) == 2
 
