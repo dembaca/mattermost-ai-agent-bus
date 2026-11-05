@@ -287,24 +287,26 @@ async def current(client: ChatPort, now: float | None = None,
     return m, ""
 
 
-async def held(client: ChatPort, now: float | None = None) -> list[dict[str, str]]:
+async def held(client: ChatPort, now: float | None = None) -> tuple[list[dict[str, str]], set[str]]:
     """Step 9, the holder's side: the guest channels (`id`, `name`) where a
     mandate names this session's own home, so its coordinator watches them
     (stall.check). Each guest's record is read as that home's server reads its
     own (refresh, REFRESH_SEC apart, kept in memory) and counts under the same
     rules: verified, set by a trusted human of this session, not expired. A
-    guest that cannot be read, or whose mandate names another home, is left
-    out. Never raises."""
+    guest whose mandate names another home, or none, is left out. Second: the
+    guests not judged this time (a read that failed, a record gone stale, an
+    error): the caller keeps what it knows of them. Raises when the guest
+    channels cannot be listed at all (then nothing is judged)."""
     now = time.time() if now is None else now
     try:
         home_id = await client.work_channel_id()
         mine = client.work_channel_name.lower()
-        guests = getattr(client, "guest_channel_ids", None)
-        ids = sorted(set(await guests())) if guests is not None else []
-    except Exception as exc:  # noqa: BLE001 — no guests known: none held
+        ids = sorted(await client.guest_channel_ids())
+    except Exception as exc:
         log.info("mandate: guest channels not read: %s", exc)
-        return []
+        raise
     out: list[dict[str, str]] = []
+    unsure: set[str] = set()
     for cid in ids:
         if cid == home_id:
             continue
@@ -312,13 +314,19 @@ async def held(client: ChatPort, now: float | None = None) -> list[dict[str, str
             fetched = _fetched.get(cid)
             if fetched is None or now - fetched >= REFRESH_SEC:
                 await refresh(client, now, cid)
+            got = _reads.get(cid)
+            if got is None or (got.mandate is not None and got.mandate.source == SIGNED
+                               and now - got.at > STALE_PERIODS * REFRESH_SEC):
+                unsure.add(cid)  # never read, or the registrar's record gone stale
+                continue
             m, _ = await current(client, now, cid)
             if m is None or not (m.home_id == home_id or (not m.home_id and m.home.lower() == mine)):
                 continue
             out.append({"id": cid, "name": (await client.get_channel(cid)).name or cid})
-        except Exception as exc:  # noqa: BLE001 — that guest is left out
+        except Exception as exc:  # noqa: BLE001 — that guest is not judged this time
             log.info("mandate: guest %s not judged: %s", cid, exc)
-    return out
+            unsure.add(cid)
+    return out, unsure
 
 
 async def holder(client: ChatPort, m: Mandate) -> tuple[str, str]:
@@ -438,7 +446,7 @@ async def holds(client: ChatPort, uid: str, now: float | None = None) -> list[st
     """bus_info's `mandate_holds` (step 9): the guest channels, as `~name`,
     this coordinator watches under a mandate; none without the crown."""
     try:
-        return [f"~{c['name']}" for c in await held(client, now)] if lease.crown_held(uid) else []
+        return [f"~{c['name']}" for c in (await held(client, now))[0]] if lease.crown_held(uid) else []
     except Exception as exc:  # noqa: BLE001 — diagnostic only
         log.info("mandate: holds not read: %s", exc)
         return []

@@ -66,6 +66,12 @@ class ChatPort(Protocol):
 
     async def get_channel(self, channel_id: str) -> Channel: ...
 
+    async def guest_channel_ids(self) -> set[str]:
+        """The guest channels (RT-6.22): every channel the bot is a member of
+        other than its home, the lobby and the stats channel; raises when the
+        memberships cannot be read."""
+        ...
+
     async def get_channel_id(self, channel_name: str | None = None,
                              team_name: str | None = None) -> str:
         """The id of the team's channel `channel_name` (default: the home),

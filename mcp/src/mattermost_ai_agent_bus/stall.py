@@ -78,10 +78,9 @@ def stall_sec() -> int:
     return remind._sec("MM_STALL_SEC", 600)
 
 
-def backoff(wakes: int, base: float = 0.0) -> float:
-    """The gap after the wakes so far in one quiet period: 10, 20, 40 … min,
-    capped (`base`: the channel's first gap, MM_STALL_SEC by default)."""
-    return min((base or stall_sec()) * 2.0 ** min(wakes, 32), remind.remind_max_sec())
+def backoff(wakes: int) -> float:
+    """The gap after the wakes so far in one quiet period: 10, 20, 40 … min, capped."""
+    return min(stall_sec() * 2.0 ** min(wakes, 32), remind.remind_max_sec())
 
 
 # --- what is open ------------------------------------------------------------------
@@ -202,8 +201,9 @@ def digest(found: Sequence[Mapping[str, Any]], quiet_ms: int, now: float,
     head = (f"Stall: no post by another agent or a trusted human{since} ({quiet} min; "
             f"your own posts do not count), no agent working, {len(found)} open:"
             ) if quiet_ms else f"Stall: {len(found)} open, nobody working:"
-    if guests:
-        head = head[:-1] + f" (mandate in {', '.join('~' + g for g in guests)}):"
+    if guests:  # the quiet times differ per channel: none in the head
+        head = (f"Stall: {len(found)} open, items marked ~channel are in the guest channels of "
+                f"your mandate ({', '.join('~' + g for g in guests)}), the others in your home:")
     lines = [head]
     for i in found[:MAX_ITEMS]:
         t = str(i.get("title") or "")
@@ -251,8 +251,9 @@ def _read(uid: str, chan: str = "") -> dict[str, float]:
 
 def _save(uid: str, quiet_ms: int, wakes: int, nxt: float, frm: float, chan: str = "") -> None:
     raw, sfx = _raw(uid), f"@{chan}" if chan else ""
-    raw.update({"QUIET" + sfx: str(quiet_ms), "WAKES" + sfx: str(wakes),
-                "NEXT" + sfx: f"{nxt:.3f}", "FROM" + sfx: f"{frm:.3f}"})
+    raw.update({"QUIET" + sfx: str(quiet_ms), "WAKES" + sfx: str(wakes), "NEXT" + sfx: f"{nxt:.3f}"})
+    if not chan:  # a guest inherits the home's FROM (a fresh crown, RT-6.19 step 4)
+        raw["FROM"] = f"{frm:.3f}"
     _write(uid, raw)
 
 
@@ -285,9 +286,9 @@ class _Look:
     """What one channel shows at a check: its open items and its place in
     the quiet period (RT-6.19 steps 2 to 4)."""
 
-    def __init__(self, uid: str, chan: str, name: str, gap: float, found: list[dict[str, Any]],
+    def __init__(self, uid: str, chan: str, name: str, found: list[dict[str, Any]],
                  quiet: int, wakes: int, nxt: float, frm: float) -> None:
-        self.uid, self.chan, self.name, self.gap, self.found = uid, chan, name, gap, found
+        self.uid, self.chan, self.name, self.found = uid, chan, name, found
         self.quiet, self.wakes, self.nxt, self.frm = quiet, wakes, nxt, frm
 
     def save(self) -> None:
@@ -295,19 +296,20 @@ class _Look:
 
 
 async def _look(client: ChatPort, uid: str, now: float, chan: str = "", name: str = "",
-                frm: float = 0.0) -> _Look:
+                frm: float = 0.0) -> _Look | None:
     """One channel: the home (`chan` empty) or a guest where this coordinator's
-    mandate stands (step 6). A guest whose home has a live crown of its own
-    is looked at second in line: its gap is twice MM_STALL_SEC."""
+    mandate stands (step 6). None for a guest whose home has a live crown of
+    its own: that coordinator looks first, this one only steps in when it is gone."""
     now_ms = int(now * 1000)
+    roster = await lease.roster_in(client, chan, name) if chan else await lease.roster(client)
+    if chan and lease.crown_in(roster):
+        return None
     st = _read(uid, chan)
     posts = await (client.posts_after(tasks.since_ms(now), channel_id=chan) if chan
                    else client.posts_after(tasks.since_ms(now)))
     reactors = {r.user_id for p in posts for r in p.reactions}
     names = await client.usernames(({p.user_id for p in posts} | reactors | {uid}) - {""})
     classes = await gate.author_classes(client, posts)
-    roster = await lease.roster_in(client, chan, name) if chan else await lease.roster(client)
-    gap = stall_sec() * (2 if chan and lease.crown_in(roster) else 1)
     # The crown holder's own posts (its nudges) and own `working` (its wake
     # turn) start no quiet period: only someone else's activity does.
     quiet, own = quiet_since(posts, classes, uid)
@@ -331,12 +333,12 @@ async def _look(client: ChatPort, uid: str, now: float, chan: str = "", name: st
         quiet = int(st["QUIET"]) or min((i["at"] for i in found if i["at"]), default=now_ms)
     wakes, nxt = int(st["WAKES"]), st["NEXT"]
     if quiet > st["QUIET"]:
-        wakes, nxt = 0, quiet / 1000 + gap  # activity: a new quiet period
+        wakes, nxt = 0, quiet / 1000 + stall_sec()  # activity: a new quiet period
     else:
         quiet = int(st["QUIET"])
     # Own posts and a fresh crown only push the next wake out; the backoff goes on.
-    nxt = max(nxt, own / 1000 + gap if own else 0.0, frm)
-    return _Look(uid, chan, name, gap, found, quiet, wakes, nxt, frm)
+    nxt = max(nxt, own / 1000 + stall_sec() if own else 0.0, frm)
+    return _Look(uid, chan, name, found, quiet, wakes, nxt, frm)
 
 
 async def check(client: ChatPort, uid: str, now: float | None = None) -> float | None:
@@ -347,17 +349,20 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
     event for all channels that are due; each keeps its own quiet period."""
     now = now or time.time()
     frm = _read(uid)["FROM"]
-    looks = [await _look(client, uid, now, frm=frm)]
+    looks = [lk for lk in [await _look(client, uid, now, frm=frm)] if lk is not None]
     try:
-        guests = await mandate.held(client, now)
-    except Exception as exc:  # noqa: BLE001 — the home alone
+        guests, unsure = await mandate.held(client, now)
+        # Only a guest whose mandate is known to be gone loses its state: one
+        # not judged this time (a failed read) keeps it (RT-6.19 step 6).
+        _forget(uid, {g["id"] for g in guests} | unsure)
+    except Exception as exc:  # noqa: BLE001 — the home alone, nothing forgotten
         log.info("stall: mandated guests not read: %s", exc)
         guests = []
-    _forget(uid, {g["id"] for g in guests})
     for g in guests:
         try:
-            looks.append(await _look(client, uid, now, g["id"], g["name"], frm))
-        except Exception as exc:  # noqa: BLE001 — that guest is left out
+            if (lk := await _look(client, uid, now, g["id"], g["name"], frm)) is not None:
+                looks.append(lk)
+        except Exception as exc:  # noqa: BLE001 — that guest is left out, its state kept
             log.info("stall: ~%s not read: %s", g["name"], exc)
     waits: list[float] = []
     due: list[_Look] = []
@@ -381,7 +386,7 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
         return None  # nobody to wake yet: look again at the next tick
     for lk in due:
         lk.wakes += 1
-        gap = backoff(lk.wakes, lk.gap)
+        gap = backoff(lk.wakes)
         _save(uid, lk.quiet, lk.wakes, now + gap, lk.frm, lk.chan)
         waits.append(gap)
     return min(waits)

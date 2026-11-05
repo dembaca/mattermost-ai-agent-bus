@@ -686,23 +686,26 @@ GUEST = "j" * 26
 
 @pytest.fixture
 def guest(bus, monkeypatch):
-    """~proj-b is a guest where a mandate names this coordinator's home; its own
-    coordinator `agent-pm` is live unless the test says `no_crown`."""
+    """~proj-b is a guest where a mandate names this coordinator's home. Its own
+    coordinator `agent-pm` is gone unless the test brings it back (`crowned`)."""
     held = [{"id": GUEST, "name": "proj-b"}]
-    crowned = {"agent-pm": True}
+    unsure: set[str] = set()
+    crowned = {"agent-pm": False}
+    looked: list[str] = []
 
     async def fake_held(_client, now=None):
-        return list(held)
+        return list(held), set(unsure)
 
     async def fake_roster_in(_client, channel_id, name):
         assert (channel_id, name) == (GUEST, "proj-b")
+        looked.append(channel_id)
         return [RosterEntry(username="agent-bob", status="listening"),
                 *([RosterEntry(username="agent-pm", status="listening", coordinator=True, crown=True)]
                   if crowned["agent-pm"] else [])]
 
     monkeypatch.setattr(mandate, "held", fake_held)
     monkeypatch.setattr(lease, "roster_in", fake_roster_in)
-    bus.held, bus.crowned = held, crowned
+    bus.held, bus.unsure, bus.crowned, bus.looked = held, unsure, crowned, looked
     return bus
 
 
@@ -716,7 +719,7 @@ async def test_a_stalled_mandated_guest_wakes_the_holder_with_the_channel_named(
     _guest_task(guest)
     await look(guest, 30)
     [text] = guest.woken
-    assert "(mandate in ~proj-b)" in text and "- ~proj-b: task active" in text
+    assert "~proj-b" in text.splitlines()[0] and "- ~proj-b: task active" in text
     assert "in the channel the item is from" in text
 
 
@@ -735,40 +738,84 @@ async def test_each_channel_keeps_its_own_quiet_period(guest):
     [text] = guest.woken
     assert "~proj-b: task" in text
     guest.woken.clear()
-    guest.guest_posts.append(post(23, EVE, "PROGRESS · fresh", -29))
+    guest.guest_posts.append(post(23, EVE, "PROGRESS · fresh", -39))
     _open(guest, "task")                       # the home stalls, the guest has just seen activity
     await look(guest, 40)
     [text] = guest.woken
-    assert "task active" in text and "~proj-b" not in text
+    assert "task active" in text and "~proj-b:" not in text
+
+
+async def test_a_guest_with_a_live_crown_of_its_own_is_not_watched(guest):
+    """RT-6.19 step 6: second in line, taken literally: the guest's own coordinator looks."""
+    _guest_task(guest)
+    guest.crowned["agent-pm"] = True
+    await look(guest, 60)
+    assert guest.woken == [] and guest.looked == [GUEST]
+    assert "@" not in stall._path(ME).read_text()      # nothing saved for it
+    guest.crowned["agent-pm"] = False                  # it is gone: the holder steps in
+    await look(guest, 61)
+    [text] = guest.woken
+    assert "~proj-b: task" in text
 
 
 async def test_the_state_is_one_file_with_a_key_per_guest_and_is_forgotten_with_the_mandate(guest):
     _guest_task(guest)
     await look(guest, 30)
     raw = stall._path(ME).read_text()
-    assert f"WAKES@{GUEST}=1" in raw and "WAKES=" in raw
+    assert f"WAKES@{GUEST}=1" in raw and "WAKES=" in raw and f"FROM@{GUEST}" not in raw
     assert len(list(stall._path(ME).parent.glob("stall-*.env"))) == 1
     guest.held.clear()
     await look(guest, 31)
     assert "@" not in stall._path(ME).read_text()
 
 
-async def test_second_in_line_behind_the_guests_own_crown(guest):
-    """RT-6.19 step 6: with a live crown of its own the guest waits twice MM_STALL_SEC."""
-    _guest_task(guest, 60)
-    guest.guest_posts.append(post(23, BOB, "PROGRESS · still on it", 15))
-    await look(guest, 0)                       # 15 min quiet: past 10, short of 20
-    assert guest.woken == []
-    await look(guest, 6)                       # 21 min
-    assert len(guest.woken) == 1
+async def test_a_guest_not_judged_this_time_keeps_its_state(guest):
+    """RT-6.19 step 6: a failed read is no end of the mandate: no backoff lost, no early wake."""
+    _guest_task(guest)
+    await look(guest, 30)
+    before = stall._read(ME, GUEST)
+    assert before["WAKES"] == 1
+    guest.held.clear()
+    guest.unsure.add(GUEST)
+    await look(guest, 31)
+    assert stall._read(ME, GUEST) == before
+    guest.unsure.clear()
+    guest.held.append({"id": GUEST, "name": "proj-b"})
     guest.woken.clear()
-    guest.guest_posts.clear()
-    guest.crowned["agent-pm"] = False          # no coordinator of its own: one gap
-    _guest_task(guest, 60)
-    guest.guest_posts.append(post(23, BOB, "PROGRESS · still on it", 15))
-    stall._save(ME, 0, 0, 0.0, 0.0, GUEST)     # a fresh quiet period for the channel
-    await look(guest, 0)
-    assert len(guest.woken) == 1
+    await look(guest, 32)
+    assert guest.woken == [] and stall._read(ME, GUEST)["WAKES"] == 1
+
+
+async def test_mandate_read_failing_keeps_the_state_and_the_home_is_still_looked_at(guest, monkeypatch):
+    _guest_task(guest)
+    await look(guest, 30)
+    before = stall._read(ME, GUEST)
+
+    async def broken(_client, now=None):
+        raise RuntimeError("memberships unreadable")
+
+    monkeypatch.setattr(mandate, "held", broken)
+    _open(guest, "task")
+    guest.woken.clear()
+    await look(guest, 45)      # the home's own quiet period, begun at the first look, is due
+    assert stall._read(ME, GUEST) == before
+    assert len(guest.woken) == 1 and "~proj-b" not in guest.woken[0]
+
+
+async def test_a_guest_that_cannot_be_read_leaves_the_home_and_keeps_its_state(guest, monkeypatch):
+    _guest_task(guest)
+    await look(guest, 30)
+    before = stall._read(ME, GUEST)
+
+    async def denied(_client, channel_id, name):
+        raise PermissionError("403")
+
+    monkeypatch.setattr(lease, "roster_in", denied)
+    _open(guest, "task")
+    guest.woken.clear()
+    await look(guest, 45)      # the home's own quiet period, begun at the first look, is due
+    assert stall._read(ME, GUEST) == before
+    assert len(guest.woken) == 1 and "~proj-b" not in guest.woken[0]
 
 
 async def test_one_event_for_all_due_channels_the_home_first_and_capped(guest):
@@ -787,7 +834,7 @@ async def test_only_the_crown_holder_reads_the_guests(bus, monkeypatch):
 
     async def fake_held(_client, now=None):
         reads.append(1)
-        return []
+        return [], set()
 
     monkeypatch.setattr(mandate, "held", fake_held)
     monkeypatch.setattr(lease, "crown_held", lambda uid: False)

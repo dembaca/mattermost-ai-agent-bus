@@ -13,8 +13,9 @@ before 0.5.0 are described in the git history.
   record there (or the pinned post without pinned keys), set by a trusted
   human of the session, not ended. Each channel keeps its own quiet period in
   `stall-<uid>.env` (keys with `@<channel id>`, no new file); a guest with a
-  live coordinator of its own waits twice `MM_STALL_SEC`, so that coordinator
-  nudges first. One stall event for all channels due; the text marks the
+  live coordinator of its own is not looked at (second in line: that
+  coordinator nudges, the holder steps in when its crown lapses). A guest not
+  judged at a check (failed read) keeps its saved state. One stall event for all channels due; the text marks the
   guests and their items. `bus_info` shows `mandate_holds`. No new trust, no
   approval; no registrar change.
 
