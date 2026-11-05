@@ -15,9 +15,13 @@ before 0.5.0 are described in the git history.
   neither pushed nor in the inbox, and the Stop hook did not count it. Now an
   event is handed over only once the pusher dealt with it (pushed on a live
   connection, held for the digest, dropped on purpose); the rest goes back to
-  the front of the inbox for the next connection or `wait_for_events`. A push
+  the front of the inbox for the next connection or `wait_for_events`. The
+  inbox keeps what the pusher took in a list (`take` / `ack` / `nack`) that the
+  read watermark and the counters count as waiting, so a newer post handed over
+  meanwhile cannot move the watermark past events that come back. A push
   cancelled while on its way may be pushed again (at least once). A digest or a
-  held post that cannot go out stays held.
+  held post that cannot go out stays held (the run waits before it tries again),
+  in order; the bookkeeping after a hand-over never ends the run.
 
 ## 0.71.13
 

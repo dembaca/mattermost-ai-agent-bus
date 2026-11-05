@@ -352,15 +352,19 @@ class Pusher:
         if not self.confirmed.is_set():
             return 0  # a reconnect not confirmed yet: the held posts stay, the digest sends them once it is
         sent = 0
-        for item in list(self.held):
+        before = list(self.held)
+        gone: list[dict[str, Any]] = []
+        for item in before:
             if item.get("gated") or not await wakes(item):
                 continue
             if not any(h is item for h in self.held):
                 continue  # gone into a digest meanwhile
             self.held = [h for h in self.held if h is not item]
             if not await self.send(notification(item)):
-                self.held.insert(0, item)  # not out: held still, for the next try
+                # Not out: held still, where it was, for the next try.
+                self.held = [h for h in before if not any(h is g for g in gone)]
                 break
+            gone.append(item)
             sent += 1
         return sent
 
@@ -464,6 +468,7 @@ class Pusher:
                 held, self.held = self.held, []
                 if not await self.send(digest(held, self.held_since)):
                     self.held = held + self.held  # not out: the digest waits
+                    await asyncio.sleep(retry_sec)  # held_since is old: no tight loop
 
     @staticmethod
     def _give_back(batch: list[dict[str, Any]], give_back: Callable[[list[dict[str, Any]]], None] | None) -> None:

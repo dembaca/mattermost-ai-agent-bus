@@ -114,6 +114,9 @@ class WebSocketInbox:
     _derived: bool = field(default=False, repr=False, init=False)
     _ws: Any = field(default=None, repr=False, init=False)
     _seq: int = field(default=1, repr=False, init=False)
+    # Events the channel pusher took and has not acknowledged (take / ack / nack):
+    # still unhandled, so they count as waiting for the watermark and the counters.
+    _out: list[ClassifiedEvent] = field(default_factory=list, repr=False, init=False)
     _queue: asyncio.Queue[ClassifiedEvent] = field(
         default_factory=asyncio.Queue, repr=False, init=False
     )
@@ -653,7 +656,7 @@ class WebSocketInbox:
     def waits(self, kind: str) -> bool:
         """Whether an event of that kind waits in the queue."""
         # asyncio.Queue keeps its items in a private deque that typeshed omits.
-        return any(e.kind == kind for e in list(self._queue._queue))  # type: ignore[attr-defined]
+        return any(e.kind == kind for e in self._waiting())
 
     def holds(self, channel_id: str) -> bool | None:
         """Whether events of this channel wait in the queue; None while the
@@ -661,8 +664,7 @@ class WebSocketInbox:
         A gated post (RT-6.16) does not count: it keeps no counter up."""
         if self._ws is None:
             return None
-        return any(e.post.channel_id == channel_id and not e.gated
-                   for e in list(self._queue._queue))  # type: ignore[attr-defined]  # see waits()
+        return any(e.post.channel_id == channel_id and not e.gated for e in self._waiting())
 
     def edits(self) -> list[unread.Pending]:
         """The queued edits that made a post name this bot (RT-6.12 step 3),
@@ -670,7 +672,7 @@ class WebSocketInbox:
         count reads from (RT-6.2 step 1), so the hooks' count adds them
         (hookapi.counted): the Stop hook drains them, the listener wakes."""
         found: dict[str, list[ClassifiedEvent]] = {}
-        for e in list(self._queue._queue):  # type: ignore[attr-defined]  # see waits()
+        for e in self._waiting():
             if e.edited and not e.gated:
                 found.setdefault(e.post.channel_id, []).append(e)
         return [unread.Pending(UnreadChannel(cid, _channel_type(events[0])), len(events),
@@ -679,7 +681,7 @@ class WebSocketInbox:
     def _first_waiting(self, channel_id: str) -> int | None:
         """create_at of the oldest post of the channel that waits in the queue
         unhandled (not gated), None for none."""
-        ats = [e.post.create_at for e in list(self._queue._queue)  # type: ignore[attr-defined]
+        ats = [e.post.create_at for e in self._waiting()
                if e.post.channel_id == channel_id and not e.gated and e.kind != "reaction"
                and not e.edited]
         return min(ats) if ats else None
@@ -731,18 +733,54 @@ class WebSocketInbox:
         timeout_sec: float = 60.0,
         max_events: int = 10,
         agent: bool = True,
-        deliver: bool = True,
     ) -> list[ClassifiedEvent]:
-        """Block until at least one classified event or timeout.
+        """Block until at least one classified event or timeout, and hand what
+        comes to the agent (`deliver`).
 
         A newer call supersedes one still waiting: the older returns [].
         A delivered mention or DM starts the typing indicator in its thread.
-        agent=False is the channel pusher (RT-6.12): its next read says nothing
-        about whether the agent has answered yet. deliver=False takes the events
-        out of the queue without handing them over: the caller does that with
-        `deliver` once they are out, or puts them back with `requeue` (the pusher,
-        whose connection may end between the read and the push, RT-6.12 step 3).
+        agent=False is the channel pusher's way of reading (RT-6.12): its next
+        read says nothing about whether the agent has answered yet; the pusher
+        itself uses `take`, `ack` and `nack`.
         """
+        events = await self._take(timeout_sec, max_events, agent)
+        await self.deliver(events)
+        return events
+
+    async def take(self, *, timeout_sec: float = 60.0, max_events: int = 10) -> list[ClassifiedEvent]:
+        """The channel pusher's read (RT-6.12 step 3): the events wait_for_events
+        would return, taken out of the queue but not handed over. They stay
+        in `_out`, unhandled and counted as waiting, until the pusher says
+        what became of them: `ack` (pushed or dealt with: handed over now) or
+        `nack` (not pushed: back into the queue, in front)."""
+        events = await self._take(timeout_sec, max_events, False)
+        self._out.extend(events)
+        return events
+
+    async def ack(self, events: list[ClassifiedEvent], *, typing: bool = True) -> None:
+        """Taken events that were dealt with: handed over now."""
+        self._release(events)
+        await self.deliver(events, typing=typing)
+
+    def nack(self, events: list[ClassifiedEvent]) -> None:
+        """Taken events that did not go out: back to the front of the queue, still
+        unhandled, for the next connection's pusher or wait_for_events."""
+        self._release(events)
+        for e in events:
+            self._queue.put_nowait(e)  # wakes a waiting getter
+        self._queue._queue.rotate(len(events))  # type: ignore[attr-defined]  # see waits()
+        self.pending = self._queue.qsize()
+
+    def _release(self, events: list[ClassifiedEvent]) -> None:
+        ids = {id(e) for e in events}
+        self._out = [e for e in self._out if id(e) not in ids]
+
+    def _waiting(self) -> list[ClassifiedEvent]:
+        """The events that have not reached the agent: queued, or taken by the pusher
+        and not acknowledged."""
+        return [*self._queue._queue, *self._out]  # type: ignore[attr-defined]  # see waits()
+
+    async def _take(self, timeout_sec: float, max_events: int, agent: bool) -> list[ClassifiedEvent]:
         # Waiting again means the agent is done with what it was given.
         if agent:
             self.stop_typing()
@@ -775,11 +813,9 @@ class WebSocketInbox:
         for e in rest:
             self._queue.put_nowait(e)
         self.pending = len(rest)
-        if deliver:
-            await self.deliver(events)
         return events
 
-    async def deliver(self, events: list[ClassifiedEvent]) -> None:
+    async def deliver(self, events: list[ClassifiedEvent], *, typing: bool = True) -> None:
         """The events reached the agent (or what stands for it): the listener
         must not wake it for them again, the read watermark passes their posts
         (up to the oldest post still queued in that channel, which keeps counting
@@ -791,19 +827,9 @@ class WebSocketInbox:
         # Posts from watched channels often need no answer, so only a mention or
         # DM, which does, promises one; a gated one promises nothing (RT-6.16).
         addressed = next((e for e in events if e.kind in ("mention", "dm") and not e.gated), None)
-        if addressed is not None:
+        if typing and addressed is not None:
             post = addressed.post
             self.start_typing(post.channel_id, post.thread)
-
-    def requeue(self, events: list[ClassifiedEvent]) -> None:
-        """Events taken with deliver=False that did not go out: back to the front
-        of the queue, still unhandled, for the next connection's pusher or
-        wait_for_events (RT-6.12 step 3)."""
-        for e in events:
-            self._queue.put_nowait(e)  # wakes a waiting getter
-        q = self._queue._queue  # type: ignore[attr-defined]  # see waits()
-        q.rotate(len(events))
-        self.pending = self._queue.qsize()
 
     async def _hand_over(self, events: list[ClassifiedEvent]) -> None:
         """Handing an event to the agent is what "handled" means (RT-6.2): the
