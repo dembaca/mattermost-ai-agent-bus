@@ -2218,19 +2218,78 @@ async def _compact_bystander(payload: list[dict[str, Any]]) -> None:
             item["post"]["message"] = short
 
 
+class _Batch:
+    """One read of the pusher: the events taken and their items, and whether the
+    typing indicator of the batch was decided yet (once, at its first delivered item)."""
+
+    def __init__(self, events: list[Any]) -> None:
+        self.events = events
+        self.items: list[dict[str, Any]] = []
+        self.typed = False
+
+
+class _PushItem(dict[str, Any]):
+    """An item for the pusher with the inbox event it came from and its batch."""
+
+    event: Any
+    batch: _Batch
+
+
 async def _push_wait(timeout: float) -> list[dict[str, Any]]:
-    """The pusher's read of the inbox: the same events wait_for_events returns."""
+    """The pusher's read of the inbox: the events wait_for_events returns, taken
+    but not handed over (`take`): each is acknowledged once the pusher dealt with
+    it (_push_delivered), or given back (_push_give_back), so a connection that
+    ends meanwhile loses nothing and no later hand-over passes them."""
     await _tool_idle.wait()
-    events = await _get_inbox().wait_for_events(timeout_sec=timeout, max_events=10, agent=False)
-    items = await _event_items(events)
-    await _typing_for_task(events, items)
-    await _note_delivered(events, items)
-    for item in items:
-        stats.record("push", name=item["kind"], chars=len(json.dumps(item, ensure_ascii=False)))
-    for e, item in zip(events, items, strict=True):
+    inbox = _get_inbox()
+    events = await inbox.take(timeout_sec=timeout, max_events=10)
+    try:
+        items = await _event_items(events)
+    except BaseException:
+        inbox.nack(events)
+        raise
+    batch = _Batch(events)
+    for e, plain in zip(events, items, strict=True):
+        item = _PushItem(plain)
+        item.event, item.batch = e, batch
         # For the digest's "+N more" line (RT-6.12 step 3); never pushed.
         item[channel.CHANNEL_ID], item[channel.CREATE_AT] = e.post.channel_id, e.post.create_at
-    return items
+        batch.items.append(item)
+    return list(batch.items)
+
+
+async def _push_delivered(item: dict[str, Any]) -> None:
+    """The pusher dealt with an item (pushed, held for the digest, dropped): it
+    counts as delivered now (RT-6.12 step 3, RT-6.2 step 2): handed over to the
+    read watermark first, then the bookkeeping, which never ends the pusher's
+    run: typing (once per batch, for its first mention or DM, else RT-6.5), the
+    sign-off, the stats."""
+    if not isinstance(item, _PushItem):
+        return
+    inbox = _get_inbox()
+    await inbox.ack([item.event], typing=False)
+    try:
+        batch = item.batch
+        if not batch.typed:
+            batch.typed = True
+            first = next((e for e in batch.events if e.kind in ("mention", "dm") and not e.gated), None)
+            if first is not None:
+                inbox.start_typing(first.post.channel_id, first.post.thread)
+            else:
+                await _typing_for_task(batch.events, batch.items)
+        await _note_delivered([item.event], [item])
+        stats.record("push", name=item["kind"], chars=len(json.dumps(item, ensure_ascii=False)))
+    except Exception as exc:  # noqa: BLE001 — the item is delivered; its bookkeeping is cosmetic
+        log.warning("push bookkeeping of %s failed: %s", item.get("kind"), exc)
+
+
+def _push_give_back(items: list[dict[str, Any]]) -> None:
+    """Items the pusher did not deal with before its connection ended or a push
+    failed: back into the inbox, unhandled, for the next connection or
+    wait_for_events."""
+    events = [i.event for i in items if isinstance(i, _PushItem)]
+    if events:
+        _get_inbox().nack(events)
 
 
 _relay = permission.Relay()
@@ -2352,7 +2411,8 @@ async def serve(read_stream: Any, write_stream: Any) -> None:
         await decided.wait()
         if PUSH:
             await _pusher.run(_push_wait, prepare=_push_prepare, addressed=_push_addressed,
-                              intercept=_push_intercept if RELAY else None)
+                              intercept=_push_intercept if RELAY else None,
+                              delivered=_push_delivered, give_back=_push_give_back)
 
     async with low.lifespan(low) as state:
         await channel.serve_handshake_only(

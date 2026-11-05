@@ -157,8 +157,9 @@ async def test_a_humans_plain_post_shows_the_crown_typing_in_both_paths(crowned,
     monkeypatch.setattr(server, "_compact_bystander", nothing)
     await inbox._queue.put(ClassifiedEvent(
         kind="watched_channel", post=post_of({"id": "p7", "channel_id": WORK, "root_id": "r7"})))
-    if path == "push":
-        await server._push_wait(1)
+    if path == "push":  # the pusher hands over, and shows typing, once it dealt with an item
+        for pushed in await server._push_wait(1):
+            await server._push_delivered(pushed)
     else:
         await server.wait_for_events(timeout_sec=1)
     await asyncio.sleep(0)
@@ -234,8 +235,9 @@ async def test_a_trusted_answer_on_an_ask_shows_typing_in_its_thread(crowned, mo
     monkeypatch.setattr(server, "_compact_bystander", nothing)
     monkeypatch.setattr(asks, "mark_seen", lambda uid, key: None)
     await inbox._queue.put(_reaction())
-    if path == "push":
-        await server._push_wait(1)
+    if path == "push":  # the pusher hands over, and shows typing, once it dealt with an item
+        for pushed in await server._push_wait(1):
+            await server._push_delivered(pushed)
     else:
         await server.wait_for_events(timeout_sec=1)
     await asyncio.sleep(0)

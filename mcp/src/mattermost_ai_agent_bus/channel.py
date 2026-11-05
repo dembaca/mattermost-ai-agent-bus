@@ -323,9 +323,20 @@ class Pusher:
         self.confirmed.set()
         return True
 
-    async def send(self, params: dict[str, Any]) -> None:
-        if self.connection is not None:
-            await self.connection.notify(METHOD, params)
+    async def send(self, params: dict[str, Any]) -> bool:
+        """Push `params` on the live connection; True once the connection took
+        it, False when there is none or it failed: then nothing went out."""
+        conn = self.connection
+        if conn is None:
+            return False
+        try:
+            await conn.notify(METHOD, params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a dropped connection
+            log.info("push not sent: %s", exc)
+            return False
+        return True
 
     async def verdict(self, request_id: str, behavior: str) -> None:
         """Answer a relayed permission prompt (RT-6.13)."""
@@ -341,13 +352,21 @@ class Pusher:
         if not self.confirmed.is_set():
             return 0  # a reconnect not confirmed yet: the held posts stay, the digest sends them once it is
         sent = 0
-        for item in list(self.held):
+        before = list(self.held)
+        for item in before:
             if item.get("gated") or not await wakes(item):
                 continue
             if not any(h is item for h in self.held):
                 continue  # gone into a digest meanwhile
             self.held = [h for h in self.held if h is not item]
-            await self.send(notification(item))
+            if not await self.send(notification(item)):
+                # Not out: back into the held list as it is now (the run may have
+                # added to it or sent a digest meanwhile), at its place among the
+                # entries of `before` that are still held.
+                ahead = before[:next(i for i, h in enumerate(before) if h is item)]
+                at = sum(1 for h in self.held if any(h is a for a in ahead))
+                self.held.insert(at, item)
+                break
             sent += 1
         return sent
 
@@ -363,6 +382,8 @@ class Pusher:
         prepare: Callable[[], Awaitable[None]] | None = None,
         addressed: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
         intercept: Callable[[dict[str, Any]], Awaitable[bool]] | None = None,
+        delivered: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        give_back: Callable[[list[dict[str, Any]]], None] | None = None,
         retry_sec: float = 5.0,
         wait_cap: float = 300.0,
         check_after: tuple[float, ...] = (3.0, 30.0, 120.0),
@@ -374,7 +395,12 @@ class Pusher:
         is not reachable yet; both are retried. `addressed` says whether an
         event wakes the agent now; the rest goes into the next digest.
         `intercept` takes an event out before that: a verdict on a permission
-        prompt is for Claude Code, not the agent (RT-6.13).
+        prompt is for Claude Code, not the agent (RT-6.13). An item counts as
+        delivered only once it is dealt with: pushed on a live connection,
+        held for the digest, or dropped on purpose; then `delivered(item)` hands
+        it over (the read watermark). What is not dealt with when the connection
+        ends or a push fails goes to `give_back(items)`, back into the inbox
+        (RT-6.12 step 3): nothing is lost, and nothing pushed is pushed twice.
         """
         conn = self.connection
         if conn is None:
@@ -409,32 +435,48 @@ class Pusher:
             except asyncio.TimeoutError:
                 await self.send(check(self.code))
         while True:
+            batch: list[dict[str, Any]] = []
             try:
-                items = await wait(self._timeout(wait_cap))
-                for item in items:
+                batch = list(await wait(self._timeout(wait_cap)))
+                while batch:
+                    item = batch[0]
                     if (item.get("post") or {}).get("type"):
                         # "… joined the channel": Mattermost names the human who
                         # added a bot as its author, so it would wake as theirs.
-                        continue
-                    if intercept is not None and await intercept(item):
-                        continue
-                    if addressed is None or await addressed(item):
-                        await self.send(notification(item))
+                        pass
+                    elif intercept is not None and await intercept(item):
+                        pass
+                    elif addressed is None or await addressed(item):
+                        if not await self.send(notification(item)):
+                            raise ConnectionError("push not sent")
                     elif item.get("guest") or item.get("lobby"):
-                        continue  # RT-6.22: a guest channel and the lobby: no digest
+                        pass  # RT-6.22: a guest channel and the lobby: no digest
                     else:
                         if not self.held:
                             self.held_since = time.time()
                         self.held.append(item)
+                    batch.pop(0)  # dealt with: before anything can end the loop
+                    if delivered is not None:
+                        await delivered(item)
             except asyncio.CancelledError:
+                self._give_back(batch, give_back)
                 raise
             except Exception as exc:  # noqa: BLE001 — no bus yet, or a dropped socket
+                self._give_back(batch, give_back)
                 log.info("channel push waits for the bus: %s", exc)
                 await asyncio.sleep(retry_sec)
                 continue
             if self.held and time.time() - self.held_since >= self.digest_sec:
                 held, self.held = self.held, []
-                await self.send(digest(held, self.held_since))
+                if not await self.send(digest(held, self.held_since)):
+                    self.held = held + self.held  # not out: the digest waits
+                    await asyncio.sleep(retry_sec)  # held_since is old: no tight loop
+
+    @staticmethod
+    def _give_back(batch: list[dict[str, Any]], give_back: Callable[[list[dict[str, Any]]], None] | None) -> None:
+        """What a run did not deal with goes back where it came from."""
+        if batch and give_back is not None:
+            give_back(batch)
 
 
 async def serve_handshake_only(
