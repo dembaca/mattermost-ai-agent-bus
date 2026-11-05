@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.16
+
+### Fixed
+
+- **Events are no longer lost when the channel connection ends mid-push**
+  ([RT-6.12 step 3](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)).
+  The pusher took a batch of events out of the inbox and the inbox handed them
+  over (the read watermark passed their posts) at the read; when the relay
+  connection ended, or a push failed, before the batch was pushed, the rest was
+  neither pushed nor in the inbox, and the Stop hook did not count it. Now an
+  event is handed over only once the pusher dealt with it (pushed on a live
+  connection, held for the digest, dropped on purpose); the rest goes back to
+  the front of the inbox for the next connection or `wait_for_events`. A push
+  cancelled while on its way may be pushed again (at least once). A digest or a
+  held post that cannot go out stays held.
+
 ## 0.71.13
 
 ### Changed
