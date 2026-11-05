@@ -1,7 +1,8 @@
 """Mattermost's symbols for the bus's meanings (arc42 §5.1).
 
 The core speaks in meanings (model.Mark, Answer, StatusMark) and gets the
-characters from the adapter through the port; this is the only Python module
+characters from the adapter through `a2a`, the wire door (no port signature,
+arc42 §5.1); this is the only Python module
 that knows which emoji or shortcode stands for which meaning. The characters
 are written as escapes with their name beside them, so no source line carries
 an emoji. What the channel shows is unchanged, byte for byte.

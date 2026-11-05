@@ -1,4 +1,4 @@
-"""No emoji or shortcode literal below the adapter (RT-6.6, arc42 §5.1).
+"""No emoji or shortcode literal below the adapter (RT-6.2 step 6, arc42 §5.1).
 
 Mattermost shows symbols; the code names meanings (model.Mark, Answer,
 StatusMark) and symbols.py, the one Python module that knows the characters,
@@ -10,12 +10,21 @@ code, and stay as they are.
 
 import ast
 import re
+import subprocess
 from pathlib import Path
 
+from mattermost_ai_agent_bus import symbols
+
 ROOT = Path(__file__).resolve().parents[2]
-EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿⬀-⯿️⃣]")
+EMOJI = re.compile("[\\U0001F000-\\U0001FAFF\\u2194-\\u2199\\u21a9\\u21aa\\u2300-\\u23ff\\u25a0-\\u25ff"
+                   "\\u2600-\\u27BF\\u2B00-\\u2BFF\\ufe0f\\u20e3]")
+# The shortcodes symbols.py knows, as a string literal. "x", "crown" and the
+# numbers are left out: ordinary words and roster keys the bus uses as well.
+SHORTCODES = ({*symbols._YES, *symbols._NO, *symbols._STATUS.values(), symbols._DONE}
+              - {"x", "crown"}) | {":crown:"}
 # The hooks.json description is read by humans in the plugin list, not code.
-SHELL = [*sorted((ROOT / "bin").glob("*.sh")), *sorted((ROOT / "hooks").glob("*.sh"))]
+SHELL = [ROOT / f for f in subprocess.run(
+    ["git", "ls-files", "*.sh", "*.sh.example"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()]
 TS = [*sorted((ROOT / "opencode").rglob("*.ts"))]
 TS = [f for f in TS if "node_modules" not in f.parts]
 
@@ -30,19 +39,20 @@ def python_literals(source: str) -> list[str]:
     for n in ast.walk(tree):
         if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs:
             segment = ast.get_source_segment(source, n) or ""
-            if EMOJI.search(segment):
+            if EMOJI.search(segment) or any(code in n.value for code in SHORTCODES if code.startswith(":")) \
+                    or n.value in SHORTCODES:
                 out.append(f"{n.lineno}: {segment[:40]!r}")
     return out
 
 
 def code_lines(source: str, comment: str) -> list[str]:
     return [f"{i}: {line.strip()[:60]}" for i, line in enumerate(source.split("\n"), 1)
-            if EMOJI.search(line) and not line.lstrip().startswith(comment)]
+            if (EMOJI.search(line) or any(code in line for code in SHORTCODES if code.startswith(":"))) and not line.lstrip().startswith(comment)]
 
 
 def test_the_sources_hold_no_emoji_literal():
     src = ROOT / "mcp" / "src" / "mattermost_ai_agent_bus"
-    found = {f.name: python_literals(f.read_text()) for f in sorted(src.glob("*.py"))}
+    found = {f.name: python_literals(f.read_text()) for f in sorted(src.glob("*.py")) if f.name != "symbols.py"}
     found |= {f.name: code_lines(f.read_text(), "#") for f in SHELL if f.name != "mm-agent-symbols.sh"}
     found |= {f.name: code_lines(f.read_text(), "//") for f in TS}
     assert {name: hits for name, hits in found.items() if hits} == {}

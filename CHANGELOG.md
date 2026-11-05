@@ -7,7 +7,7 @@ before 0.5.0 are described in the git history.
 
 ### Changed
 
-- **No emoji in the code** ([RT-6.6](docs/arc42/06-runtime-view.md), arc42 §5.1).
+- **No emoji in the code** ([RT-6.2 step 6](docs/arc42/06-runtime-view.md), arc42 §5.1).
   The core speaks in meanings (`Mark`, `Answer`, `StatusMark`, `Head` in
   `model.py`) and asks `a2a` for what Mattermost shows; `symbols.py` is the one
   Python module that knows the characters and shortcodes (written as escapes),

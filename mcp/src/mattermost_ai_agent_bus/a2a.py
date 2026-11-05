@@ -22,7 +22,7 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from . import symbols
+from . import symbols as _symbols
 from .model import Head
 
 if TYPE_CHECKING:
@@ -72,30 +72,30 @@ _OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE)
 # The wire door of the core (arc42 §5.1): the meanings the core speaks in
 # (model.Mark, Answer, StatusMark) and what they look like in Mattermost
 # (symbols.py, the one place that knows the characters and shortcodes).
-symbol = symbols.symbol
-strip_crown = symbols.strip_crown
-with_crown = symbols.with_crown
-ask_head = symbols.ask_head
-answer_of = symbols.answer_of
-choice_of = symbols.choice_of
-clean_answer_mark = symbols.clean_answer_mark
-answer_marks = symbols.answer_marks
-status_emoji = symbols.status_emoji
-status_of = symbols.status_of
-done_reaction = symbols.done_reaction
-is_done = symbols.is_done
-mandate_crown = symbols.mandate_crown
+symbol = _symbols.symbol
+strip_crown = _symbols.strip_crown
+with_crown = _symbols.with_crown
+ask_head = _symbols.ask_head
+answer_of = _symbols.answer_of
+choice_of = _symbols.choice_of
+clean_answer_mark = _symbols.clean_answer_mark
+answer_marks = _symbols.answer_marks
+status_emoji = _symbols.status_emoji
+status_of = _symbols.status_of
+done_reaction = _symbols.done_reaction
+is_done = _symbols.is_done
+mandate_crown = _symbols.mandate_crown
 
 
 def head(message: str) -> Head:
     """What a post's text opens with: the crown, an ask mark, an ask link line."""
-    return symbols.parse_head(message)
+    return _symbols.parse_head(message)
 
 
 def status_word(message: str) -> str | None:
     """The bus word a status post starts with, after an optional crown, plain
     or in backticks (RT-6.14 step 2); None when it starts with none."""
-    m = symbols.status_head(message or "")
+    m = _symbols.status_head(message or "")
     return m[3] if m else None
 # props.a2a.to: the post is for every agent in the channel (RT-6.11, RT-6.2).
 ALL = "all"
@@ -124,7 +124,7 @@ def styled(message: str) -> str:
     """A status post as the server writes it (RT-6.14 step 2): its bus word
     in backticks, and a blank line after the headline when more lines
     follow. Any other text stays as it is; a styled one too."""
-    m = symbols.status_head(message or "")
+    m = _symbols.status_head(message or "")
     if not m or m[3] not in WORDS or m[2] != m[4]:
         return message
     out = message if m[2] else f"{m[1] or ''}`{m[3]}`{message[m.end():]}"
@@ -269,7 +269,7 @@ def kind_of(post: Mapping[str, Any]) -> str | None:
         k = str(a2a["kind"])
         return k if k in _OWN else k.upper()
     message = str(post.get("message", ""))
-    opening = symbols.parse_head(message)
+    opening = _symbols.parse_head(message)
     if opening.ask_link:
         return ASK_LINK
     if opening.ask:
