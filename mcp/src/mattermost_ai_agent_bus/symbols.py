@@ -22,26 +22,27 @@ _MARKS: dict[Mark, str] = {
     Mark.ASK: "\U0001F64B",           # person raising hand
     Mark.QUESTION: "\u2753",          # red question mark
     Mark.REMINDER: "\U0001F514",      # bell
-    Mark.BUS: "\U0001F68C",           # bus
+    Mark.HEADER: "\U0001F68C",         # bus (the channel header)
     Mark.INBOX: "\U0001F4E8",         # incoming envelope
     Mark.SIGNOFF: "\u270b",           # raised hand
     Mark.LOCK: "\U0001F510",          # locked with key
     Mark.DESKTOP: "\U0001F5A5" + _SELECTOR,  # desktop computer
     Mark.ALLOWED: "\u2705",           # white heavy check mark
     Mark.DENIED: "\u26d4",            # no entry
-    Mark.YES: "\U0001F44D",           # thumbs up
-    Mark.NO: "\U0001F44E",            # thumbs down
-    Mark.ONE: "1" + _SELECTOR + _KEYCAP,
-    Mark.TWO: "2" + _SELECTOR + _KEYCAP,
-    Mark.THREE: "3" + _SELECTOR + _KEYCAP,
-    Mark.FOUR: "4" + _SELECTOR + _KEYCAP,
 }
-CHOICE_MARKS = (Mark.ONE, Mark.TWO, Mark.THREE, Mark.FOUR)
+_ANSWERS: dict[Answer, str] = {
+    Answer.YES: "\U0001F44D",           # thumbs up
+    Answer.NO: "\U0001F44E",            # thumbs down
+    Answer.ONE: "1" + _SELECTOR + _KEYCAP,
+    Answer.TWO: "2" + _SELECTOR + _KEYCAP,
+    Answer.THREE: "3" + _SELECTOR + _KEYCAP,
+    Answer.FOUR: "4" + _SELECTOR + _KEYCAP,
+}
 
 # Reaction names (shortcodes) that answer an ask, and the one that closes it.
 _YES = frozenset({"+1", "thumbsup", "white_check_mark", "heavy_check_mark", "ballot_box_with_check"})
 _NO = frozenset({"-1", "thumbsdown", "x", "no_entry", "no_entry_sign"})
-_CHOICES = ("one", "two", "three", "four")
+_CHOICE_NAMES = ("one", "two", "three", "four")
 _DONE = "white_check_mark"
 
 # The custom status emoji (a shortcode) of each state.
@@ -50,7 +51,7 @@ _STATUS: dict[StatusMark, str] = {
     StatusMark.LISTENING: "ear",
     StatusMark.IDLE: "zzz",
     StatusMark.BUS: "satellite_antenna",
-    StatusMark.CROWN: "crown",
+    StatusMark.COORDINATOR: "crown",
 }
 
 _CROWN = _MARKS[Mark.CROWN]
@@ -59,7 +60,7 @@ _ASK, _QUESTION = _MARKS[Mark.ASK], _MARKS[Mark.QUESTION]
 # server gives the marks by position (RT-6.11 step 1).
 _TONE = "[\U0001F3FB-\U0001F3FF]?"
 _ANSWER_MARK = re.compile(
-    rf"^\s*(?:(?:{_MARKS[Mark.YES]}|{_MARKS[Mark.NO]}){_TONE}|\u2705|\u274c|\u2714{_SELECTOR}?"
+    rf"^\s*(?:(?:{_ANSWERS[Answer.YES]}|{_ANSWERS[Answer.NO]}){_TONE}|\u2705|\u274c|\u2714{_SELECTOR}?"
     rf"|\u2611{_SELECTOR}?|[1-4]{_SELECTOR}?{_KEYCAP})\s*[=:\-–]?\s*")
 _ASK_LINK = re.compile(rf"{_ASK}\s*asked\s+(?:[a-z0-9]{{26}}|\[[^\]]*\]\([^)\s]*/[a-z0-9]{{26}}\))\s*")
 _ASK_HEAD = re.compile(rf"({_ASK}|{_QUESTION})\s*@([\w.-]*\w)")
@@ -70,6 +71,11 @@ _MANDATE_CROWN = rf"(?:{_CROWN}|:crown:)"
 def symbol(mark: Mark) -> str:
     """The characters Mattermost shows for a meaning."""
     return _MARKS[mark]
+
+
+def answer_symbol(answer: Answer) -> str:
+    """The characters Mattermost shows for an answer."""
+    return _ANSWERS[answer]
 
 
 def with_crown(message: str) -> str:
@@ -133,7 +139,7 @@ def answer_of(emoji: str) -> Answer | None:
 
 def choice_of(emoji: str) -> int | None:
     """The 1-based alternative a keycap reaction picks, None for anything else."""
-    return _CHOICES.index(emoji) + 1 if emoji in _CHOICES else None
+    return _CHOICE_NAMES.index(emoji) + 1 if emoji in _CHOICE_NAMES else None
 
 
 def clean_answer_mark(text: str) -> str:
@@ -145,6 +151,6 @@ def answer_marks(count: int) -> list[str]:
     """The characters by position for `count` answers: yes (the go) and no for
     two, the keycaps for three or four."""
     if count == 2:
-        return [_MARKS[Mark.YES], _MARKS[Mark.NO]]
-    return [_MARKS[m] for m in CHOICE_MARKS[:count]]
+        return [answer_symbol(Answer.YES), answer_symbol(Answer.NO)]
+    return [answer_symbol(Answer.choice(i)) for i in range(1, count + 1)]
 

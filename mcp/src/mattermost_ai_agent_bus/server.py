@@ -24,7 +24,7 @@ from . import (
     profile, remind, session_file, slim, stall, stats, tasks, unread, usage,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
-from .model import Mark, Post
+from .model import Answer, Mark, Post
 from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox
 
 log = logging.getLogger(__name__)
@@ -1485,7 +1485,7 @@ async def ask_human(
         # alternatives with their keycaps are for a question.
         return _out("ask_human", {
             "posted": False,
-            "hint": f"an approval has two alternatives, go / no-go ({a2a.symbol(Mark.YES)} and {a2a.symbol(Mark.NO)}): write answers as "
+            "hint": f"an approval has two alternatives, go / no-go ({a2a.answer_symbol(Answer.YES)} and {a2a.answer_symbol(Answer.NO)}): write answers as "
                     "['go', 'no-go'], or ask a question with kind=question (and no action with "
                     "effect) for a choice among three or four"})
     if _questions(f"{need} {context}") > 1:

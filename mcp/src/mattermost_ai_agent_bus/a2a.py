@@ -73,6 +73,7 @@ _OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE)
 # (model.Mark, Answer, StatusMark) and what they look like in Mattermost
 # (symbols.py, the one place that knows the characters and shortcodes).
 symbol = _symbols.symbol
+answer_symbol = _symbols.answer_symbol
 strip_crown = _symbols.strip_crown
 with_crown = _symbols.with_crown
 ask_head = _symbols.ask_head

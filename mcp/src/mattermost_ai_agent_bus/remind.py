@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import a2a, askroute, asks, lease, session_file, stats, tasks
-from .model import Mark
+from .model import Answer, Mark
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -115,7 +115,7 @@ def text(human: str, title: str, waited: float, more: int = 0) -> str:
     head = f"**{title}**" if title else "your answer to the ask above"
     tail = f" · {more} more waiting" if more else ""
     return (f"{a2a.symbol(Mark.REMINDER)} @{human} — reminder: {head} · waiting {_ago(waited)} · "
-            f"{a2a.symbol(Mark.YES)}/{a2a.symbol(Mark.NO)} on the ask, or reply here{tail}")
+            f"{a2a.answer_symbol(Answer.YES)}/{a2a.answer_symbol(Answer.NO)} on the ask, or reply here{tail}")
 
 
 async def _answered(client: ChatPort, uid: str, pid: str, root: str,

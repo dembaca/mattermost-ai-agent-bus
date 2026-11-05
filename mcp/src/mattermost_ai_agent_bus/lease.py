@@ -59,7 +59,7 @@ def _state_word(emoji: str) -> str:
     """The lease's status emoji as a word, for a status without text (the
     crown's is none)."""
     mark = a2a.status_of(emoji)
-    return mark.value if mark and mark is not StatusMark.CROWN else ""
+    return mark.value if mark and mark is not StatusMark.COORDINATOR else ""
 
 
 def heartbeat_sec() -> float:
@@ -270,7 +270,7 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     if state != "offline" and crown > now:
         if reachable:
             crown = now + lease
-        emoji, text, until = a2a.status_emoji(StatusMark.CROWN), f"coordinator · {text}", crown
+        emoji, text, until = a2a.status_emoji(StatusMark.COORDINATOR), f"coordinator · {text}", crown
     else:
         crown = 0
     if text:
@@ -414,7 +414,7 @@ async def _rows(client: ChatPort, channel_id: str) -> list[dict[str, Any]]:
                      "create_at": u.create_at, "presence": presence,
                      "emoji": emoji, "text": text, "home": home_of(text), "live": on,
                      "until_ms": int(until.timestamp() * 1000) if until else 0,
-                     "reachable": reachable, "crown": reachable and emoji == a2a.status_emoji(StatusMark.CROWN)})
+                     "reachable": reachable, "crown": reachable and emoji == a2a.status_emoji(StatusMark.COORDINATOR)})
     return rows
 
 
@@ -671,7 +671,7 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
 # --- the work channel's header (RT-6.6 step 7) ---------------------------------------
 
 HEADER_MAX = 1024  # Mattermost's limit, in characters
-HEADER_MARK = f"{a2a.symbol(Mark.BUS)} agent bus"
+HEADER_MARK = f"{a2a.symbol(Mark.HEADER)} agent bus"
 HEADER_RULE = (f"plain post → {a2a.symbol(Mark.CROWN)} routes it · @agent → that agent · "
                f"{a2a.symbol(Mark.ASK)} = a question for you")
 # The bus part: how to address the agents. It names no holder, so a crown

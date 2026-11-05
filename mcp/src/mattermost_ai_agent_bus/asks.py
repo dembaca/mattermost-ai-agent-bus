@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from . import a2a, session_file
-from .model import Mark
+from .model import MAX_CHOICES, Answer
 
 MAX_AGE_SEC = 7 * 86400
 # A yes approves only this long after the ask (RT-6.11): a day later the
@@ -55,9 +55,6 @@ APPROVAL_SEC = 86400
 TITLES = 50
 # Asks that wait behind an open ask to the same target, per target (RT-6.11).
 QUEUE_MAX = 5
-
-# A choice among three or four alternatives (RT-6.11 step 1).
-MAX_CHOICES = 4
 
 
 def answer_of(emoji: str) -> str | None:
@@ -108,7 +105,7 @@ def answer_line(answers: list[str], decision: bool) -> str:
     if alts:
         parts = [f"{m} = {a}" for m, a in zip(marks(len(alts)), alts, strict=True)]
     else:
-        yes, no = a2a.symbol(Mark.YES), a2a.symbol(Mark.NO)
+        yes, no = a2a.answer_symbol(Answer.YES), a2a.answer_symbol(Answer.NO)
         parts = [f"{yes} = yes to the decision" if decision else f"{yes} = yes", f"{no} = no"]
     return " · ".join(parts) + " · or reply in this thread"
 
