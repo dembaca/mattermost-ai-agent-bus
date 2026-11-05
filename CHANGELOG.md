@@ -23,6 +23,52 @@ before 0.5.0 are described in the git history.
   held post that cannot go out stays held (the run waits before it tries again),
   in order; the bookkeeping after a hand-over never ends the run.
 
+## 0.71.15
+
+### Changed
+
+- **`ask_human` takes `answers` as a list of plain texts, the server gives the
+  emojis**
+  ([RT-6.11 step 1](docs/arc42/06-runtime-view.md)). `answers` was one string
+  cut at every `/`: `👍 = ja, 5h/7d sind sichtbar · 👎 = nein` became
+  `👍 = 👍 = ja, 5h · 👎 = 7d sind sichtbar · …`. Now it is two to four texts
+  (`["go", "no-go"]`), the emojis come by position (2: 👍 the go, 👎; 3 to 4:
+  1️⃣ to 4️⃣), so `choice: n` is always `answers[n - 1]`. A mark an agent wrote
+  first (👍 ✅ 👎 ❌ 1️⃣–4️⃣ with `=`, `:` or `-`) is stripped, the cleaned list
+  comes back as `answers` (also skin tones of 👍/👎 and ✔️ ☑️ count as marks), an
+  entry of nothing but a mark is refused with a hint, not dropped, and so is a
+  list of one or of five or more, an approval with more than two too. A `str`
+  is no longer taken; an ask queued with one before this version has no answers
+  (a queued `go/no-go` becomes free text). The ask keeps the list
+  (`ANSWERS=` in `asks-<uid>.env`), and a reaction event names the answer as
+  `chosen` beside `choice` (👍/👎 on two answers too).
+
+## 0.71.14
+
+### Added
+
+- **The cost where there are no limits**
+  ([ADR-008 amendment](docs/arc42/09-architecture-decisions.md),
+  [RT-6.10 step 3](docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent),
+  [RT-6.6 step 1](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
+  Behind a gateway (`ANTHROPIC_BASE_URL`) Claude Code reports no `rate_limits`,
+  only the cost. The statusline tap also sends `cost.total_cost_usd` as
+  `cost_usd` (moved by $0.10 or more, else every 60 s); where no 5-hour window
+  is reported the bot's status shows it in the place of `5h` (`ctx 62% · $4.20`)
+  and the roster row carries `cost_usd`. The gateway limit is written into
+  ADR-008 as a known limit.
+- **Why the numbers do not reach the roster becomes visible**: a failing write
+  or read of the usage report in the bot's props is logged as a warning (once
+  per failure) and `bus_info` has a `usage` block: the report held, `write`
+  (`written 40 s ago`, or the last failure as `PUT <path> → <status>`) and
+  `read` (how many reads of another bot's report found one, found none or
+  failed, and the last failure). The cause of `ctx` showing only in the own
+  roster row is not found yet; this is the way to see it.
+- The usage report is written into the props with every status write (a turn's
+  start or end), under the same lock, at most once a minute; before, a `ctx`
+  below the first band (50 %) reached the roster only with the heartbeat, up to
+  five minutes later, and nothing proves yet that this was the cause.
+
 ## 0.71.13
 
 ### Changed

@@ -80,7 +80,7 @@ async def _ask(**kw):
 async def test_a_second_ask_is_queued_with_all_its_fields(bus):
     first = await _ask(need="Merge #61?")
     out = await _ask(need="Archive #60?", context="Nothing uses it.", recommendation="Yes.",
-                     decision="Archive 60", where="#60", blocking=True, answers="go / no-go",
+                     decision="Archive 60", where="#60", blocking=True, answers=["go", "no-go"],
                      root_id="t" * 26)
     assert out["posted"] is False and out["queued"] is True and out["position"] == 1
     assert out["behind"] == first["ask"] and len(bus.posted) == 1
@@ -110,7 +110,7 @@ async def test_one_question_and_the_approval_floor_are_checked_when_queued(bus):
     await _ask(need="Merge #61?")
     out = await _ask(need="Three open points", context="1. Merge #62 now? 2. Keep VM 399?")
     assert out["posted"] is False and "one question per ask" in out["hint"] and "queued" not in out
-    out = await _ask(need="Install 02dadca on hogan?", answers="A / B / C")
+    out = await _ask(need="Install 02dadca on hogan?", answers=["A", "B", "C"])
     assert out["posted"] is False and "go / no-go" in out["hint"] and "queued" not in out
     assert asks.queued(BOT) == []
 

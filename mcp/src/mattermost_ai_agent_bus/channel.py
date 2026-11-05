@@ -284,7 +284,7 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
     meta["from_agent"] = "true" if item.get("from_agent") else "false"
     for key in ("trusted_human", "ask", "emoji", "answer", "to", "intent", "departed",
                 "not_here", "owner", "root_from_trusted_human", "advice", "mandated",
-                "mandated_by", "choice"):
+                "mandated_by", "choice", "chosen"):
         if item.get(key):
             meta[key] = str(item[key])
     if item.get("guest"):
