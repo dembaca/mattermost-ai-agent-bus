@@ -85,6 +85,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_my_roots", set())
     pusher = channel.Pusher()
     pusher.connection = Conn()
+    pusher.confirm(pusher.code)  # a confirmed channel: an unconfirmed one pushes nothing (RT-6.12)
     monkeypatch.setattr(server, "_pusher", pusher)
     # The machine slept past the lease: CROWN_UNTIL lies in the past.
     lease._save_coord(BOT, int(time.time()) - 60, 0, 0)

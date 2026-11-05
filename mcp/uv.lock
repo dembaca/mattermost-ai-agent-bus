@@ -536,7 +536,7 @@ wheels = [
 
 [[package]]
 name = "mattermost-ai-agent-bus"
-version = "0.71.11"
+version = "0.71.12"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

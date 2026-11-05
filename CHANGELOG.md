@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.12
+
+### Fixed
+
+- **A reconnect is confirmed again**
+  ([RT-6.12 step 2](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)).
+  In a corral session the host process lives on across relay reconnects
+  (`/reload-plugins`, `/mcp`, a plugin update). Each new connection forgets
+  `channel-<uid>.env`, but the process's confirmation stayed set: no new check
+  was sent and nothing wrote the file, so the Stop hook asked for a listener
+  beside a working push. Now a new connection gets a check with a new code and
+  its confirmation writes the file again.
+
 ## 0.71.11
 
 ### Added
