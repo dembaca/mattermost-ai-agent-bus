@@ -343,8 +343,8 @@ def test_roster_rows_become_status_words():
 def test_coordinator_posts_start_with_the_crown(tmp_path, monkeypatch):
     """RT-6.6: bot posts never show a status, so the crown goes into the post."""
     _coord_file(tmp_path, monkeypatch, CROWN_UNTIL=int(time.time()) + 600)
-    assert lease.with_crown("ACK", UID) == "👑 ACK"
-    assert lease.with_crown("👑 ACK", UID) == "👑 ACK"
+    assert lease.with_crown("ACK", UID) == "\U0001F451 ACK"
+    assert lease.with_crown("\U0001F451 ACK", UID) == "\U0001F451 ACK"
 
 
 def test_no_prefix_without_a_live_crown(tmp_path, monkeypatch):
@@ -399,13 +399,13 @@ async def test_idle_in_a_channel_session_is_reachable_and_keeps_the_crown(mm, cl
 
 # --- the work channel's header (RT-6.6 step 7) ---------------------------------------
 
-BUS = "🚌 agent bus · plain post → 👑 routes it · @agent → that agent · 🙋 = a question for you"
+BUS = "\U0001F68C agent bus · plain post → \U0001F451 routes it · @agent → that agent · \U0001F64B = a question for you"
 
 
 def _old_bus(name: str, at: str) -> str:
     """The bus part before 0.65.4: it named the holder and the time."""
     return (f"🚌 agent bus · 👑 @{name} since {at}\n"
-            "plain post → 👑 routes it · @agent → that agent · 🙋 = a question for you")
+            "plain post → \U0001F451 routes it · @agent → that agent · \U0001F64B = a question for you")
 
 
 @pytest.fixture(autouse=True)

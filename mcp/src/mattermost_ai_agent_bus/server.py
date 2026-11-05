@@ -1702,7 +1702,7 @@ async def _ask_fallback(_port: Any, question: str, human: str, coord: str) -> st
         _get_inbox().notify(askroute.KIND, (
             f"No answer from the {CROWN} {coord} to your question {question} within {wait} min: "
             f"your server asked {human} instead (ask {out['ask']}) and closed the question. "
-            "Their answer comes as usual; a late answer of the 👑 is advice."))
+            f"Their answer comes as usual; a late answer of the {CROWN} is advice."))
     except Exception as exc:  # noqa: BLE001 — the human is asked all the same
         log.info("question %s: %s", question, exc)
     return str(out["ask"])

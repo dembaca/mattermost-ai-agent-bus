@@ -275,7 +275,7 @@ async def test_the_crown_confirms_a_new_record_once(pinned, monkeypatch):
     assert len(c.posted) == 1
     got = c.posted[0]
     assert got["root_id"] is None and got["channel_id"] == WORK
-    assert got["message"].startswith("👑 ask-mode coordinator, set by dembaca with /agent-ask-mode "
+    assert got["message"].startswith("\U0001F451 ask-mode coordinator, set by dembaca with /agent-ask-mode "
                                      "(signed by the registrar):")
     assert got["props"]["a2a"]["kind"] == "ask_mode"
     kept_at = int(_kept().split("AT=")[1].split()[0])
@@ -323,7 +323,7 @@ async def test_a_switch_kept_without_a_crown_is_confirmed_by_the_next_holder(mon
     monkeypatch.setattr(lease, "crown_held", lambda uid: True)
     await askroute.tick(c, BOT)
     assert len(c.posted) == 1 and c.posted[0]["root_id"] == SWITCH
-    assert c.posted[0]["message"].startswith("👑 ask-mode coordinator, set by dembaca:")
+    assert c.posted[0]["message"].startswith("\U0001F451 ask-mode coordinator, set by dembaca:")
     assert "CONFIRMED=1" in _kept()
     await askroute.tick(c, BOT)
     assert len(c.posted) == 1
@@ -333,7 +333,7 @@ async def test_a_new_holder_finds_the_confirmation_already_there(monkeypatch):
     c = _Client()
     post = _switch()
     done = post_of({"id": "d" * 26, "root_id": SWITCH, "user_id": "k" * 26,
-                    "message": "👑 ask-mode coordinator, set by dembaca: …",
+                    "message": "\U0001F451 ask-mode coordinator, set by dembaca: …",
                     "props": {"a2a": {"kind": "ask_mode"}}})
     c.posts = [post, done]
     await askroute.observe(c, post, BOT)

@@ -133,7 +133,7 @@ async def test_a_dm_with_only_the_bots_own_post_waits_for_nothing(mm, client):
     """RT-6.2, RT-6.13 (0.42.3): Mattermost counts the bot's own post as an
     unread DM for it; the bus never does. Its own, system and gated posts
     right after the mark move it on, so the next check does not read the DM."""
-    own = post("own", "🔐 permission prompt", user=UID)
+    own = post("own", "\U0001F510 permission prompt", user=UID)
     mm.channel(DM, "D", total=1, posts=[post("sys", type_="system_join_channel", at=own["create_at"] - 1), own])
     assert await pending(client) == []
     assert watermark.read(UID)[DM] == ("own", own["create_at"])

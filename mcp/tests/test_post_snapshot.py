@@ -21,7 +21,7 @@ CH = "c" * 26
 POSTS = [
     {"id": "p1" + "0" * 24, "create_at": 1792229058954, "update_at": 1792229058954, "edit_at": 0,
      "delete_at": 0, "is_pinned": False, "user_id": HUMAN, "channel_id": CH, "root_id": "",
-     "original_id": "", "message": "@agent-x TASK · ship it 👂", "type": "",
+     "original_id": "", "message": "@agent-x TASK · ship it \U0001F442", "type": "",
      "props": {"disable_group_highlight": True}, "hashtags": "", "pending_post_id": "",
      "reply_count": 2, "metadata": {"embeds": [], "reactions": [
          {"user_id": AGENT, "post_id": "p1" + "0" * 24, "emoji_name": "+1", "create_at": 1}]}},

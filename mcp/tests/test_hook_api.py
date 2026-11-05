@@ -142,7 +142,7 @@ async def test_last_post_from_the_file_else_the_channel(api):
     """RT-6.17, RT-6.2 step 2: last-<uid>.env first, without a request; else
     the channel's last 100 posts, without the crown; at 0 when none is own."""
     client = FakeClient(posts=[post("a", "hi", at=3000),
-                               post("b", "👑 IDLE · done\nnext: x", user=UID, at=2000)])
+                               post("b", "\U0001F451 IDLE · done\nnext: x", user=UID, at=2000)])
     _, h = await api(client)
     assert (await h.get("/v1/last-post")).json() == {"at": 2000, "message": "IDLE · done next: x",
                                                      "signed_off": True}
@@ -164,13 +164,13 @@ async def test_signed_off_until_something_changes_on_the_bus(api):
     and no addressed event reached the agent after it; a delivery or a new own
     post ends it. A reminder the server sent is no own post."""
     reminder = {"a2a": {"v": 1, "kind": "reminder", "intent": "fyi"}}
-    client = FakeClient(posts=[post("r", "🔔 @dembaca — reminder: **Merge?**", user=UID, at=3000,
+    client = FakeClient(posts=[post("r", "\U0001F514 @dembaca — reminder: **Merge?**", user=UID, at=3000,
                                     props=reminder),
                                post("b", "IDLE · done", user=UID, at=2000)])
     _, h = await api(client)
     assert (await h.get("/v1/last-post")).json()["signed_off"] is True
-    ownpost.record(UID, "c", post_of({"id": "i" * 26, "message": "👑 IDLE · done", "create_at": 4000}))
-    ownpost.record(UID, "c", post_of({"id": "r" * 26, "message": "🔔 reminder", "create_at": 5000,
+    ownpost.record(UID, "c", post_of({"id": "i" * 26, "message": "\U0001F451 IDLE · done", "create_at": 4000}))
+    ownpost.record(UID, "c", post_of({"id": "r" * 26, "message": "\U0001F514 reminder", "create_at": 5000,
                                       "props": reminder}))
     assert (await h.get("/v1/last-post")).json() == {"at": 4000, "message": "IDLE · done",
                                                      "signed_off": True}

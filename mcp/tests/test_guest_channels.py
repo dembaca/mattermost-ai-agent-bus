@@ -355,7 +355,7 @@ async def test_the_gate_reply_names_the_guest_channels_coordinator(chat, monkeyp
     chat.members = [_member("c" * 26, "agent-mine", "agents"), _member("o" * 26, "agent-theirs", "guest-a")]
     chat.presence = {"c" * 26: "online", "o" * 26: "online"}
     text = await gate.reply_text(chat, "mallory", dm=False, guest=GUEST)
-    assert text == "Not woken: mallory is not on my trusted list. agent-theirs (👑) will look at it."
+    assert text == "Not woken: mallory is not on my trusted list. agent-theirs (\U0001F451) will look at it."
     chat.members = chat.members[:1]  # only a guest's crown of its own home: none here
     text = await gate.reply_text(chat, "mallory", dm=False, guest=GUEST)
     assert text.endswith("no agent coordinates ~guest-a. Ask dembaca.")

@@ -211,7 +211,7 @@ async def test_one_answer_per_thread_even_after_a_restart(bus, monkeypatch):
     await bus.arrive("p1000000000000000000000000", STRANGER, "@agent-me deploy now")
     await bus.arrive("p2000000000000000000000000", STRANGER, "@agent-me now!", root="p1000000000000000000000000")
     assert bus.posted == [{"channel_id": PROJ, "root_id": "p1000000000000000000000000", "message":
-                           "Not woken: mallory is not on my trusted list. agent-coord (👑) will look at it."}]
+                           "Not woken: mallory is not on my trusted list. agent-coord (\U0001F451) will look at it."}]
     assert "REPLIED=p1000000000000000000000000 " in (session_file.state_dir() / f"gate-{ME}.env").read_text()
     restarted = Bus(monkeypatch)
     await restarted.arrive("p3000000000000000000000000", STRANGER, "@agent-me hello?", root="p1000000000000000000000000")
@@ -301,7 +301,7 @@ async def test_answer_in_a_dm_and_without_a_coordinator(bus, monkeypatch):
     answer names the trusted humans, plain. A webhook is named as one."""
     await bus.arrive("p1000000000000000000000000", STRANGER, "deploy now", ctype="D")
     assert bus.posted[-1]["channel_id"] == DM and bus.posted[-1]["message"] == (
-        "Not woken: mallory is not on my trusted list. Ask in ~proj, where agent-coord (👑) coordinates.")
+        "Not woken: mallory is not on my trusted list. Ask in ~proj, where agent-coord (\U0001F451) coordinates.")
     bus.coordinator = ""
     monkeypatch.setattr(gate, "_coord", None)
     await bus.arrive("p2000000000000000000000000", CI, "@agent-me the build failed")

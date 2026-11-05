@@ -11,7 +11,7 @@ from fakes import FakeChat
 
 POST = {
     "id": "p1", "root_id": "r1", "channel_id": "c1", "user_id": "u1",
-    "create_at": 1792229058954, "message": "Listener-Test 👂", "type": "",
+    "create_at": 1792229058954, "message": "Listener-Test \U0001F442", "type": "",
     "props": {"from_bot": "true"}, "metadata": {"embeds": []}, "hashtags": "",
     "file_ids": [], "pending_post_id": "x", "reply_count": 0, "edit_at": 0,
 }
@@ -33,7 +33,7 @@ class _Client(FakeChat):
 async def test_slim_post_keeps_what_an_agent_needs():
     p = await slim.post(_Client(), post_of(POST))
     assert p == {"id": "p1", "root_id": "r1", "channel": "agents", "author": "dembaca",
-                 "at": p["at"], "message": "Listener-Test 👂"}
+                 "at": p["at"], "message": "Listener-Test \U0001F442"}
     assert len(json.dumps(p)) < len(json.dumps(POST)) / 2
 
 
@@ -41,7 +41,7 @@ async def test_slim_post_keeps_what_an_agent_needs():
 async def test_list_recent_drops_system_messages_and_is_compact(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: _Client())
     out = await server.list_recent()
-    assert "added to the channel" not in out and "👂" in out and "\\u" not in out
+    assert "added to the channel" not in out and "\U0001F442" in out and "\\u" not in out
     assert ": " not in out and "\n" not in out
     raw = json.loads(await server.list_recent(raw=True))
     assert raw == [SYSTEM, POST]
@@ -54,4 +54,4 @@ async def test_names_are_optional(monkeypatch):
             raise RuntimeError("down")
 
     p = await slim.post(_Broken(), post_of(POST))
-    assert p["author"] == "u1" and p["message"] == "Listener-Test 👂"
+    assert p["author"] == "u1" and p["message"] == "Listener-Test \U0001F442"

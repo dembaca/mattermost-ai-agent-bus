@@ -8,7 +8,7 @@ from mattermost_ai_agent_bus import a2a, ownpost, tasks, turnend
 
 @pytest.mark.parametrize("given, written", [
     ("IDLE · done: x", "`IDLE` · done: x"),
-    ("👑 IDLE · done: x", "👑 `IDLE` · done: x"),
+    ("\U0001F451 IDLE · done: x", "\U0001F451 `IDLE` · done: x"),
     ("IDLE · gist\ndone: x\nnext: y", "`IDLE` · gist\n\ndone: x\nnext: y"),
     ("IDLE · gist\n\ndone: x", "`IDLE` · gist\n\ndone: x"),          # already blank
     ("`IDLE` · gist\ndone: x", "`IDLE` · gist\n\ndone: x"),          # backticked by the agent
@@ -32,7 +32,7 @@ def test_other_text_stays_as_it_is(text):
 
 @pytest.mark.parametrize("old, new", [
     ("IDLE · done: x", "`IDLE` · done: x"),
-    ("👑 BYE · task done", "👑 `BYE` · task done"),
+    ("\U0001F451 BYE · task done", "\U0001F451 `BYE` · task done"),
     ("HELLO · **x**", "`HELLO` · **x**"),
     ("TASK · relay", "`TASK` · relay"),
 ])
@@ -43,12 +43,12 @@ def test_the_first_word_reads_the_same_in_both_forms(old, new):
 def test_sign_off_and_listen_gates_take_both_forms():
     """RT-6.2 steps 2-3 with RT-6.14 step 2: `IDLE` and `BYE` sign off, a
     crowned `BYE` ends the listen window."""
-    for msg in ("IDLE · x", "`IDLE` · x", "👑 `IDLE` · x", "`BYE` · done", "BYE"):
+    for msg in ("IDLE · x", "`IDLE` · x", "\U0001F451 `IDLE` · x", "`BYE` · done", "BYE"):
         assert ownpost.signed_off(msg), msg
         assert not turnend.needs_signoff(msg, asked=False, by_bus=False, push=False), msg
     assert not ownpost.signed_off("`PROGRESS` · x")
     assert turnend.needs_signoff("`PROGRESS` · x", asked=False, by_bus=False, push=False)
-    for msg in ("BYE · done", "`BYE` · done", "👑 `BYE` · done"):
+    for msg in ("BYE · done", "`BYE` · done", "\U0001F451 `BYE` · done"):
         assert not turnend.listens(msg, project=True), msg
     assert turnend.listens("`IDLE` · x", project=True)
 

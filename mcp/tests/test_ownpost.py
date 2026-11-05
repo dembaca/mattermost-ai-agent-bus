@@ -42,7 +42,7 @@ async def test_the_work_channel_post_is_remembered_with_its_hello(client):
     await client.post("HELLO @agent-me\nproject: x", props={"a2a": a2a.annotate("HELLO")})
     assert ownpost.read(UID) == {"CHANNEL": WORK, "ID": "p1000000000000000000000000", "AT": "1026",
                                  "MSG": "HELLO @agent-me project: x", "HELLO": "p1000000000000000000000000"}
-    await client.post("👑 ACK · on it", root_id="p1000000000000000000000000", channel_id=WORK)
+    await client.post("\U0001F451 ACK · on it", root_id="p1000000000000000000000000", channel_id=WORK)
     last = ownpost.read(UID)
     assert (last["ID"], last["MSG"], last["HELLO"]) == ("p2".ljust(26, "0"), "ACK · on it", "p1000000000000000000000000")
 
@@ -94,7 +94,7 @@ def test_bye_goes_to_the_hello_thread_with_its_props(monkeypatch):
     assert len(seen) == 1
 
 
-@pytest.mark.parametrize("msg", ["IDLE · done: x", "BYE · done", "👑 IDLE · next: y"])
+@pytest.mark.parametrize("msg", ["IDLE · done: x", "BYE · done", "\U0001F451 IDLE · next: y"])
 def test_no_bye_after_a_sign_off(monkeypatch, msg):
     seen = []
     _file(msg)
@@ -159,7 +159,7 @@ async def test_a_reminder_is_not_the_agents_post(client):
     leaves the agent's latest post, its IDLE, as it was."""
     await client.post("IDLE · done: x", props={"a2a": a2a.annotate("IDLE")})
     before = ownpost.read(UID)
-    await client.post("🔔 @dembaca — reminder: **Merge?**", root_id="p1".ljust(26, "0"),
+    await client.post("\U0001F514 @dembaca — reminder: **Merge?**", root_id="p1".ljust(26, "0"),
                       props=a2a.props(kind=a2a.REMINDER))
     assert ownpost.read(UID) == before and ownpost.signed_off(before["MSG"], before)
 

@@ -90,7 +90,7 @@ async def test_announce_stores_the_card_in_props(monkeypatch):
     from_text = a2a.card_of(post_of({"message": c.posted[0]["message"]}), "agent-vtpm-hogan-1")
     assert {k: from_text[k] for k in ("name", "description", "skills", "meta")} == {
         k: card[k] for k in ("name", "description", "skills", "meta")}
-    crowned = a2a.card_of(post_of({"message": "👑 " + c.posted[0]["message"]}))
+    crowned = a2a.card_of(post_of({"message": "\U0001F451 " + c.posted[0]["message"]}))
     assert crowned["name"] == "" and crowned["description"] == "hogan"
 
 

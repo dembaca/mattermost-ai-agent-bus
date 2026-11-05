@@ -141,7 +141,7 @@ async def test_bye_is_answered_once_by_the_coordinator_and_wakes_it(bus):
     e = await bus.arrive("q" * 26, "ACK @agent-old over to you", user=WORKER, props={"a2a": {"intent": "fyi"}})
     assert e.departed == "agent-old"
     [reply] = bus.posted
-    assert reply["root_id"] == "q" * 26 and reply["message"].startswith("👑 agent-old is gone since ")
+    assert reply["root_id"] == "q" * 26 and reply["message"].startswith("\U0001F451 agent-old is gone since ")
     assert f"(BYE), see its handoff: {BASE}{BYE}. I route this instead." in reply["message"]
     [item] = await server._event_items([e])
     assert item["departed"] == "agent-old"
@@ -202,7 +202,7 @@ async def test_gone_from_the_channel_counts_unknown_names_do_not(bus):
     bus.posts.pop(1)  # no BYE: the lease decides, and there is none
     await bus.arrive("q" * 26, "@agent-old and @agent-nobody?")
     [reply] = bus.posted
-    assert reply["message"].startswith("👑 agent-old is gone since ") and "nobody" not in reply["message"]
+    assert reply["message"].startswith("\U0001F451 agent-old is gone since ") and "nobody" not in reply["message"]
     assert f"its last post: {BASE}{HELLO}." in reply["message"]
 
 
@@ -216,7 +216,7 @@ async def test_gone_from_the_channel_found_by_its_hellos_author(bus):
     bus.posts[-1]["message"] = "HELLO · **x**\n`bus` · `–` · Opus · member\nfor h · trusts – · can: –"
     await bus.arrive("q" * 26, "@agent-old?")
     [reply] = bus.posted
-    assert reply["message"].startswith("👑 agent-old is gone since ")
+    assert reply["message"].startswith("\U0001F451 agent-old is gone since ")
     assert f"its last post: {BASE}{HELLO}." in reply["message"]
 
 
@@ -272,7 +272,7 @@ async def test_a_live_agent_not_in_the_channel_is_told_with_its_home(bus):
     assert e.not_here == "agent-far (~bgl-infra)" and not e.departed
     [reply] = bus.posted
     assert reply["root_id"] == "q" * 26
-    assert reply["message"] == ("👑 agent-far is not in ~proj (home ~bgl-infra): "
+    assert reply["message"] == ("\U0001F451 agent-far is not in ~proj (home ~bgl-infra): "
                                 "add it to the channel, or I forward it.")
     assert bus.calls.count(NAMED) == 1 and bus.calls.count(MEMBERS + FAR) == 1
     [item] = await server._event_items([e])
@@ -326,7 +326,7 @@ async def test_gone_keeps_its_answer_beside_one_not_here(bus):
     e = await bus.arrive("q" * 26, "@agent-old and @agent-far?")
     assert e.departed == "agent-old" and e.not_here == "agent-far (~bgl-infra)"
     [reply] = bus.posted
-    assert reply["message"].startswith("👑 agent-old is gone since ")
+    assert reply["message"].startswith("\U0001F451 agent-old is gone since ")
     assert reply["message"].endswith(
         f"(BYE), see its handoff: {BASE}{BYE}. I route this instead. "
         "agent-far is not in ~proj (home ~bgl-infra): add it to the channel, or I forward it.")

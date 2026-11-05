@@ -45,14 +45,14 @@ async def test_ask_is_one_post_with_the_mention_and_a_callout(monkeypatch):
         need="Go to install 02dadca on hogan", where="#50, hogan", blocking=True,
         answers=["go", "not now"]))
     post = c.posted[0]
-    assert post["message"] == "🙋 @dembaca — **Go to install 02dadca on hogan**"
+    assert post["message"] == "\U0001F64B @dembaca — **Go to install 02dadca on hogan**"
     assert post["root_id"] is None  # stands on its own
     box = post["props"]["attachments"][0]
     fields = {f["title"]: f["value"] for f in box["fields"]}
     # RT-6.11 step 1: the field titles start with a capital letter.
     assert fields == {"From": "@agent-vtpm-hogan-1", "Blocking": "yes",
                       "Where": "#50, hogan",
-                      "Answer": "👍 = go · 👎 = not now · or reply in this thread"}
+                      "Answer": "\U0001F44D = go · \U0001F44E = not now · or reply in this thread"}
     assert box["color"] == "#d24b4e"
     assert out["ask"] == ASK and asks.open_asks(BOT) == [ASK]
 
@@ -187,7 +187,7 @@ async def test_an_ask_never_notifies_everyone(monkeypatch):
     text = json.dumps([c.posted[0]["message"], c.posted[0]["props"]])
     for word in ("@channel", "@here", "@all"):
         assert word not in text
-    assert c.posted[0]["message"] == "🙋 @dembaca — **Merge #61 channel?**"
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **Merge #61 channel?**"
     assert out["unmentioned"] == ["all", "channel", "here"]
 
 
@@ -261,7 +261,7 @@ async def test_ask_human_still_mentions(monkeypatch):
     c = _NamingClient()
     monkeypatch.setattr(server, "_get_client", lambda: c)
     await server.ask_human(need="Merge #61")
-    assert c.posted[0]["message"].startswith("🙋 @dembaca — ")
+    assert c.posted[0]["message"].startswith("\U0001F64B @dembaca — ")
 
 
 @pytest.mark.asyncio
@@ -297,7 +297,7 @@ async def test_a_decision_comes_with_context_recommendation_and_wording(monkeypa
     titles = [t for t, _ in fields]
     assert titles == ["From", "Blocking", "Where", "Context", "Recommendation", "Decision", "Answer"]
     assert dict(fields)["Decision"] == "Install 02dadca on hogan now; VM 399 stays up."
-    assert dict(fields)["Answer"].startswith("👍 = yes to the decision")
+    assert dict(fields)["Answer"].startswith("\U0001F44D = yes to the decision")
 
 
 @pytest.mark.asyncio
@@ -350,7 +350,7 @@ def test_only_a_question_mark_that_ends_a_sentence_counts():
     q = server._questions
     assert q("Merge #62 now? Keep VM 399?") == 2
     assert q("1. Merge #62 now? 2. Keep VM 399? 3. Who reviews #63?") == 3
-    assert q('The link reads "🙋 Merge PR #1?" now. Keep it?') == 1
+    assert q('The link reads "\U0001F64B Merge PR #1?" now. Keep it?') == 1
     assert q("„Merge PR #1?“ und «Deploy?» stehen dort. Passt das?") == 1
     assert q("Isn't the headline 'Merge PR #1?' too short? Don't you think so") == 1
     assert q("The log is at https://ci.example/run?id=7&x=y. Rerun it?") == 1
@@ -368,7 +368,7 @@ async def test_a_quoted_question_is_no_second_question(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.ask_human(
         need="Shorten the ask link line?",
-        context='It reads "🙋 Merge PR #1?" now (https://mm.example/pl/x?a=b, `ask?`).'))
+        context='It reads "\U0001F64B Merge PR #1?" now (https://mm.example/pl/x?a=b, `ask?`).'))
     assert out["ask"] and len(c.posted) == 1
 
 
@@ -415,7 +415,7 @@ async def test_an_ask_from_a_thread_stands_on_its_own_and_is_linked_there(monkey
     task, day = "t" * 26, asks.APPROVAL_SEC
     out = json.loads(await server.ask_human(need="Merge #61?", root_id=task))
     ask, link = c.posted
-    assert ask["root_id"] is None and ask["message"] == "🙋 @dembaca — **Merge #61?**"
+    assert ask["root_id"] is None and ask["message"] == "\U0001F64B @dembaca — **Merge #61?**"
     # A pointer, not an ask (RT-6.19): its own kind keeps it out of the open asks.
     # Humans read it as the ask's headline, linked (RT-6.15 step 2): asks-<uid>.env keeps it.
     assert link == {"message": f"🙋 ask {ASK}", "channel_id": None, "root_id": task,
@@ -597,10 +597,10 @@ async def test_every_alternative_has_its_own_emoji(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: c)
     await server.ask_human(need="Which order?", kind="question", answers=["A", "B", "C"])
     answer = {f["title"]: f["value"] for f in c.posted[0]["props"]["attachments"][0]["fields"]}["Answer"]
-    assert answer == "1️⃣ = A · 2️⃣ = B · 3️⃣ = C · or reply in this thread"
-    assert asks.answer_line([], False) == "👍 = yes · 👎 = no · or reply in this thread"
-    assert asks.answer_line([], True).startswith("👍 = yes to the decision · 👎 = no")
-    assert asks.answer_line(["go", "no-go"], False).startswith("👍 = go · 👎 = no-go")
+    assert answer == "1\uFE0F\u20E3 = A · 2\uFE0F\u20E3 = B · 3\uFE0F\u20E3 = C · or reply in this thread"
+    assert asks.answer_line([], False) == "\U0001F44D = yes · \U0001F44E = no · or reply in this thread"
+    assert asks.answer_line([], True).startswith("\U0001F44D = yes to the decision · \U0001F44E = no")
+    assert asks.answer_line(["go", "no-go"], False).startswith("\U0001F44D = go · \U0001F44E = no-go")
 
 
 @pytest.mark.asyncio
@@ -612,14 +612,14 @@ async def test_answers_are_plain_texts_and_the_server_gives_the_emojis(monkeypat
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.ask_human(
         need="Siehst du 5h und 7d?", kind="question",
-        answers=["👍 = ja, 5h/7d sind sichtbar", "👎 nein, keine Limits"]))
+        answers=["\U0001F44D = ja, 5h/7d sind sichtbar", "\U0001F44E nein, keine Limits"]))
     answer = {f["title"]: f["value"] for f in c.posted[0]["props"]["attachments"][0]["fields"]}["Answer"]
-    assert answer == "👍 = ja, 5h/7d sind sichtbar · 👎 = nein, keine Limits · or reply in this thread"
+    assert answer == "\U0001F44D = ja, 5h/7d sind sichtbar · \U0001F44E = nein, keine Limits · or reply in this thread"
     assert out["answers"] == ["ja, 5h/7d sind sichtbar", "nein, keine Limits"]
     assert asks.answers_of(BOT, ASK) == out["answers"]
-    assert asks.clean_answer("2️⃣: B / C") == "B / C" and asks.clean_answer("✅ - go") == "go"
+    assert asks.clean_answer("2\uFE0F\u20E3: B / C") == "B / C" and asks.clean_answer("\u2705 - go") == "go"
     assert asks.clean_answer("1 thing") == "1 thing"  # a digit alone is no mark
-    for mark in ("👍🏽", "✔️", "☑️", "✅", "❌", "👎🏿", "4️⃣"):
+    for mark in ("\U0001F44D\U0001F3FD", "\u2714\uFE0F", "\u2611\uFE0F", "\u2705", "\u274C", "\U0001F44E\U0001F3FF", "4\uFE0F\u20E3"):
         assert asks.clean_answer(f"{mark} = text") == "text"
     assert asks.normalize_answers("go / no-go") == []  # an ask queued before 0.71.15: free text
 
@@ -640,7 +640,7 @@ async def test_an_answer_of_nothing_but_a_mark_is_refused_not_dropped(monkeypatc
     into a plain yes / no; `["👍 go", "👎"]` is not a lone answer either."""
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)
-    for bad in (["👍", "👎"], ["👍 go", "👎"], ["go", "  "]):
+    for bad in (["\U0001F44D", "\U0001F44E"], ["\U0001F44D go", "\U0001F44E"], ["go", "  "]):
         out = json.loads(await server.ask_human(need="Which?", kind="question", answers=bad))
         assert out["posted"] is False and "empty" in out["hint"]
     assert not c.posted
@@ -684,7 +684,7 @@ async def test_an_approval_has_two_alternatives_only(monkeypatch):
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.ask_human(
-        need="Merge PR 12?", decision="Merge PR 12", answers=["1️⃣ merge", "wait", "close"]))
+        need="Merge PR 12?", decision="Merge PR 12", answers=["1\uFE0F\u20E3 merge", "wait", "close"]))
     assert out["posted"] is False and "go / no-go" in out["hint"] and not c.posted
 
 
