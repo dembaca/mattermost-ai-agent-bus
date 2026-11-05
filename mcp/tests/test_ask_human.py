@@ -598,21 +598,70 @@ async def test_every_alternative_has_its_own_emoji(monkeypatch):
     await server.ask_human(need="Which order?", kind="question", answers="A / B / C")
     answer = {f["title"]: f["value"] for f in c.posted[0]["props"]["attachments"][0]["fields"]}["Answer"]
     assert answer == "1️⃣ = A · 2️⃣ = B · 3️⃣ = C · or reply in this thread"
-    assert asks.answer_line("", False) == "👍 = yes · 👎 = no · or reply in this thread"
-    assert asks.answer_line("one thing", True).startswith("👍 = yes to the decision · 👎 = no")
-    assert asks.answer_line("a / b / c / d / e", False).startswith("👍 = yes")  # free text
+    assert asks.answer_line([], False) == "👍 = yes · 👎 = no · or reply in this thread"
+    assert asks.answer_line([], True).startswith("👍 = yes to the decision · 👎 = no")
+    assert asks.answer_line(["go", "no-go"], False).startswith("👍 = go · 👎 = no-go")
 
 
-def test_a_slash_inside_an_alternative_does_not_split_and_own_emojis_are_kept():
-    """RT-6.11 step 1: a separator has a space on both sides, so `5h/7d` stays
-    in its alternative; an emoji the agent put first is taken over, not given twice."""
-    line = asks.answer_line("👍 = ja, 5h/7d sind sichtbar · 👎 = nein, keine Limits", True)
-    assert line == "👍 = ja, 5h/7d sind sichtbar · 👎 = nein, keine Limits · or reply in this thread"
-    assert asks.alternatives("ja, 5h/7d sichtbar / nein") == ["ja, 5h/7d sichtbar", "nein"]
-    assert asks.answer_line("👎 no / go", False).startswith("👎 = no · 👍 = go")
-    assert asks.answer_line("go/no-go", False).startswith("👍 = go · 👎 = no-go")  # bare slash, no spaces
-    assert asks.answer_line("1️⃣ = A / B / C", False).startswith("1️⃣ = A · 2️⃣ = B · 3️⃣ = C")
-    assert asks.answer_line("one 5h/7d thing", True).startswith("👍 = yes to the decision")  # free text
+@pytest.mark.asyncio
+async def test_answers_are_plain_texts_and_the_server_gives_the_emojis(monkeypatch):
+    """RT-6.11 step 1: a list of plain texts; an emoji the agent put first is
+    stripped (never given twice), a `/` inside a text stays, the cleaned list
+    comes back."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(
+        need="Siehst du 5h und 7d?", kind="question",
+        answers=["👍 = ja, 5h/7d sind sichtbar", "👎 nein, keine Limits"]))
+    answer = {f["title"]: f["value"] for f in c.posted[0]["props"]["attachments"][0]["fields"]}["Answer"]
+    assert answer == "👍 = ja, 5h/7d sind sichtbar · 👎 = nein, keine Limits · or reply in this thread"
+    assert out["answers"] == ["ja, 5h/7d sind sichtbar", "nein, keine Limits"]
+    assert asks.answers_of(BOT, ASK) == out["answers"]
+    assert asks.clean_answer("2️⃣: B / C") == "B / C" and asks.clean_answer("✅ - go") == "go"
+    assert asks.clean_answer("1 thing") == "1 thing"  # a digit alone is no mark
+
+
+@pytest.mark.asyncio
+async def test_a_str_is_split_at_a_spaced_slash_for_one_version(monkeypatch):
+    """RT-6.11 step 1 (0.71.15): the old `A / B` string still works, split only at
+    ` / `, emojis stripped; one or five parts are free text as before."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(
+        need="Which?", kind="question", answers="👍 = ja, 5h/7d sichtbar / nein"))
+    assert out["answers"] == ["ja, 5h/7d sichtbar", "nein"]
+    assert asks.normalize_answers("go/no-go") == ["go/no-go"] and asks.normalize_answers(None) == []
+    assert asks.normalize_answers("a / b / c / d / e") == ["a", "b", "c", "d", "e"]
+    assert not asks.valid_answers(asks.normalize_answers("a / b / c / d / e"))
+
+
+@pytest.mark.asyncio
+async def test_a_list_of_one_or_five_answers_is_refused(monkeypatch):
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    for bad in (["only one"], list("abcde")):
+        out = json.loads(await server.ask_human(need="Which?", kind="question", answers=bad))
+        assert out["posted"] is False and "two to four" in out["hint"]
+    assert not c.posted
+
+
+@pytest.mark.asyncio
+async def test_a_reaction_names_its_answer_as_chosen(monkeypatch):
+    """RT-6.11: `choice: n` is always answers[n - 1]; 👍 is the first, 👎 the second."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    inbox = _inbox(c)
+    monkeypatch.setattr(server, "_get_inbox", lambda: inbox)
+    await server.ask_human(need="Which order?", kind="question", answers=["A", "B", "C"])
+    await inbox._on_reaction_event(_reaction_event("two"))
+    item = json.loads(await server.wait_for_events(timeout_sec=1))[0]
+    assert item["choice"] == 2 and item["chosen"] == "B"
+    asks.resolve(BOT, ASK)
+    c.posted.clear()
+    await server.ask_human(need="Merge?", decision="Merge it", answers=["go", "wait"])
+    await inbox._on_reaction_event(_reaction_event("-1", at=2))
+    item = json.loads(await server.wait_for_events(timeout_sec=1))[0]
+    assert item["answer"] == "no" and item["chosen"] == "wait" and "choice" not in item
 
 
 @pytest.mark.asyncio
@@ -621,7 +670,7 @@ async def test_an_approval_has_two_alternatives_only(monkeypatch):
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.ask_human(
-        need="Merge PR 12?", decision="Merge PR 12", answers="merge / wait / close"))
+        need="Merge PR 12?", decision="Merge PR 12", answers=["1️⃣ merge", "wait", "close"]))
     assert out["posted"] is False and "go / no-go" in out["hint"] and not c.posted
 
 

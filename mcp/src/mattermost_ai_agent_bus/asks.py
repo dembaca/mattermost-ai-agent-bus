@@ -13,6 +13,9 @@ look at. It lives next to the other per-bot state, asks-<uid>.env:
     TITLE=<post_id> <headline>         the ask's bold title: its links show it
                                        (RT-6.15 step 2); kept after resolve for
                                        the newest TITLES asks, open or not
+    ANSWERS=<post_id> <base64 of json>  the answers as posted, by position: a
+                                       reaction's choice or yes/no names one
+                                       (RT-6.11); kept like TITLE
     QUESTION=<post_id> <human> <0|1>   a question to the home's 👑 (RT-6.25): the
                                        human asked if it does not answer in time
                                        (- once settled), whether it blocks; kept
@@ -80,57 +83,47 @@ def is_answer(emoji: str) -> bool:
     return answer_of(emoji) is not None or choice_of(emoji) is not None
 
 
-# The emojis an agent may already put in front of an alternative, `👍 = yes`.
-_MARKS = ("👍", "✅", "👎", "❌", *KEYCAPS)
-_SEP = re.compile(r"\s+/\s+|\s+·\s+")
+# An emoji an agent put in front of an answer, `👍 = yes`: stripped, the server
+# gives the emojis by position (RT-6.11 step 1).
+_MARK = re.compile(r"^\s*(?:👍|✅|👎|❌|[1-4]\ufe0f?\u20e3)\s*[=:\-–]?\s*")
+_SPACED_SLASH = re.compile(r"\s+/\s+")
 
 
-def split_answers(answers: str) -> list[tuple[str, str]]:
-    """The ask's alternatives as (emoji the agent put first, text), written
-    `A / B / C` or `A · B`: a separator has a space on both sides, so a `/` inside
-    an alternative (`5h/7d`) does not split. Without a spaced separator and
-    without any space, a bare `/` separates (`go/no-go`)."""
-    text = answers.strip()
-    parts = _SEP.split(text) if _SEP.search(text) else (
-        text.split("/") if " " not in text else [text])
-    out = []
-    for p in parts:
-        p = p.strip()
-        mark = next((m for m in _MARKS if p.startswith(m)), "")
-        rest = p[len(mark):].lstrip() if mark else p
-        if mark and rest[:1] in ("=", ":", "-", "–"):
-            rest = rest[1:].lstrip()
-        out.append((mark, rest))
-    return [a for a in out if a[1]]
+def clean_answer(text: str) -> str:
+    """One answer as plain text: no leading emoji mark, one line."""
+    return " ".join(_MARK.sub("", str(text), count=1).split())
 
 
-def alternatives(answers: str) -> list[str]:
-    """The ask's alternatives' texts; empty when it names fewer than two or
-    more than four, which stays free text."""
-    parts = [a[1] for a in split_answers(answers)]
-    return parts if 2 <= len(parts) <= len(CHOICES) else []
+def normalize_answers(answers: list[str] | str | None) -> list[str]:
+    """The answers of an ask as a list of plain texts (RT-6.11 step 1). A list
+    is taken as it is; a `str` (one version only, 0.71.15) is split at ` / ` with
+    a space on both sides, never at a bare `/`. Marks are stripped in both."""
+    if answers is None:
+        return []
+    items = _SPACED_SLASH.split(answers) if isinstance(answers, str) else list(answers)
+    return [c for c in (clean_answer(x) for x in items) if c]
 
 
-def answer_line(answers: str, decision: bool) -> str:
-    """The `Answer` field's text: every alternative with its own emoji, no
-    emoji twice; one the agent already put first is taken over. Two alternatives
-    are 👍 (go) and 👎 (no go), three or four the keycaps; none given, 👍 yes
-    (to the decision) and 👎 no."""
-    alts = split_answers(answers)
-    if not 2 <= len(alts) <= len(CHOICES):
-        alts = []
-    if len(alts) == 2 and not any(m in KEYCAPS for m, _ in alts):
-        pool = [e for e in ("👍", "👎")
-                if e not in {"👍" if m == "✅" else "👎" if m == "❌" else m for m, _ in alts}]
-        marks = [m or (pool.pop(0) if pool else "") for m, _ in alts]
-        marks = [f"{m} = {a[1]}" if m else a[1] for m, a in zip(marks, alts, strict=True)]
-    elif alts:
-        used = {m for m, _ in alts if m in KEYCAPS}
-        free = [k for k in KEYCAPS if k not in used]
-        marks = [f"{(m if m in KEYCAPS else free.pop(0))} = {a}" for m, a in alts]
+def valid_answers(answers: list[str]) -> bool:
+    """None or two to four of them; anything else is no choice."""
+    return len(answers) in (0, 2, 3, 4)
+
+
+def marks(count: int) -> list[str]:
+    """The emojis the server gives `count` answers by position: 👍 (the go) and
+    👎 for two, the keycaps for three or four."""
+    return ["👍", "👎"] if count == 2 else list(KEYCAPS[:count])
+
+
+def answer_line(answers: list[str], decision: bool) -> str:
+    """The `Answer` field's text: every answer with its own emoji, by position,
+    none twice; none given, 👍 yes (to the decision) and 👎 no."""
+    alts = answers if 2 <= len(answers) <= len(CHOICES) else []
+    if alts:
+        parts = [f"{m} = {a}" for m, a in zip(marks(len(alts)), alts, strict=True)]
     else:
-        marks = ["👍 = yes to the decision" if decision else "👍 = yes", "👎 = no"]
-    return " · ".join(marks) + " · or reply in this thread"
+        parts = ["👍 = yes to the decision" if decision else "👍 = yes", "👎 = no"]
+    return " · ".join(parts) + " · or reply in this thread"
 
 
 def _path(uid: str) -> Path:
@@ -193,6 +186,29 @@ def titles(uid: str) -> dict[str, str]:
     return out
 
 
+def answers_of(uid: str, post_id: str) -> list[str]:
+    """The answers an ask was posted with, in order (RT-6.11); empty when it
+    had none or is forgotten."""
+    for v in reversed(_lines(uid, "ANSWERS")):
+        pid, _, blob = v.partition(" ")
+        if pid == post_id:
+            try:
+                data = json.loads(base64.b64decode(blob))
+            except (ValueError, TypeError):
+                return []
+            return [str(x) for x in data] if isinstance(data, list) else []
+    return []
+
+
+def _all_answers(uid: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for v in _lines(uid, "ANSWERS"):
+        pid, _, blob = v.partition(" ")
+        out.pop(pid, None)
+        out[pid] = blob
+    return out
+
+
 def questions(uid: str) -> dict[str, str]:
     """The questions to the 👑 (RT-6.25), open or not: "<human> <0|1>" each,
     oldest first."""
@@ -206,6 +222,7 @@ def questions(uid: str) -> dict[str, str]:
 def _write(uid: str, asks: dict[str, float], seen: set[str],
            whom: dict[str, str] | None = None, done: set[str] | None = None,
            title: dict[str, str] | None = None, question: dict[str, str] | None = None,
+           answers: dict[str, str] | None = None,
            queue: list[dict[str, Any]] | None = None) -> None:
     if whom is None:
         whom = _read_all(uid)[2]
@@ -215,6 +232,10 @@ def _write(uid: str, asks: dict[str, float], seen: set[str],
     for pid, head in (title or {}).items():
         heads.pop(pid, None)
         heads[pid] = head
+    ans = _all_answers(uid)
+    for pid, blob in (answers or {}).items():
+        ans.pop(pid, None)
+        ans[pid] = blob
     qs = questions(uid)
     for pid, val in (question or {}).items():
         qs.pop(pid, None)
@@ -225,6 +246,7 @@ def _write(uid: str, asks: dict[str, float], seen: set[str],
     lines += [f"SEEN={s}" for s in sorted(seen)]
     lines += [f"ANSWERED={p}" for p in sorted(done) if p in asks]
     lines += [f"TITLE={p} {t}" for p, t in list(heads.items())[-TITLES:]]
+    lines += [f"ANSWERS={p} {b}" for p, b in list(ans.items())[-TITLES:]]
     lines += [f"QUESTION={p} {v}" for p, v in list(qs.items())[-TITLES:]]
     lines += [f"QUEUED={e['target']} " + base64.b64encode(json.dumps(e).encode()).decode()
               for e in (queued(uid) if queue is None else queue)]
@@ -260,7 +282,8 @@ def is_open(uid: str, post_id: str) -> bool:
 
 
 def add(uid: str, post_id: str, human: str = "", root_id: str = "", title: str = "",
-        *, question: str = "", blocking: bool = False) -> None:
+        *, question: str = "", blocking: bool = False,
+        answers: list[str] | None = None) -> None:
     """An open ask to `human`; with question, a question to the 👑 `human`
     that falls back to the human `question` names (RT-6.25)."""
     asks, seen, whom = _read_all(uid)
@@ -268,7 +291,9 @@ def add(uid: str, post_id: str, human: str = "", root_id: str = "", title: str =
     if human or root_id:
         whom[post_id] = f"{human.lower() or '-'} {root_id}".rstrip()
     _write(uid, asks, seen, whom, title={post_id: " ".join(title.split())} if title.strip() else None,
-           question={post_id: f"{question.lower()} {int(blocking)}"} if question else None)
+           question={post_id: f"{question.lower()} {int(blocking)}"} if question else None,
+           answers={post_id: base64.b64encode(json.dumps(answers).encode()).decode()}
+           if answers else None)
 
 
 def questions_open(uid: str) -> list[tuple[str, float, str, str]]:

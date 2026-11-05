@@ -5,16 +5,21 @@ before 0.5.0 are described in the git history.
 
 ## 0.71.15
 
-### Fixed
+### Changed
 
-- **Answers of an ask are no longer cut at a `/` inside an alternative**
-  ([RT-6.11 step 1](docs/arc42/06-runtime-view.md)). `answers` was split at
-  every `/`, so `👍 = ja, 5h/7d sind sichtbar · 👎 = nein` became three
-  alternatives and the emoji line read `👍 = 👍 = ja, 5h · 👎 = 7d sind sichtbar
-  · …`. A separator is now ` / ` or ` · ` with a space on both sides (a bare `/`
-  only when the whole text has no space, `go/no-go`), and an emoji the agent put
-  in front of an alternative (`👍 = …`, `👎 …`, a keycap) is taken over; the
-  others get the free one. Two alternatives stay go / no-go with 👍/👎.
+- **`ask_human` takes `answers` as a list of plain texts, the server gives the
+  emojis**
+  ([RT-6.11 step 1](docs/arc42/06-runtime-view.md)). `answers` was one string
+  cut at every `/`: `👍 = ja, 5h/7d sind sichtbar · 👎 = nein` became
+  `👍 = 👍 = ja, 5h · 👎 = 7d sind sichtbar · …`. Now it is two to four texts
+  (`["go", "no-go"]`), the emojis come by position (2: 👍 the go, 👎; 3 to 4:
+  1️⃣ to 4️⃣), so `choice: n` is always `answers[n - 1]`. A mark an agent wrote
+  first (👍 ✅ 👎 ❌ 1️⃣–4️⃣ with `=`, `:` or `-`) is stripped, the cleaned list
+  comes back as `answers`, a list of one or of five or more is refused, an
+  approval with more than two still too. For one version a `str` is still
+  taken, split only at ` / ` with spaces. The ask keeps the list
+  (`ANSWERS=` in `asks-<uid>.env`), and a reaction event names the answer as
+  `chosen` beside `choice` (👍/👎 on two answers too).
 
 ## 0.71.13
 
