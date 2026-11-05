@@ -13,21 +13,21 @@ import re
 
 from .model import Answer, Head, Mark, StatusMark
 
-_SELECTOR = "️"  # VARIATION SELECTOR-16: emoji presentation
-_KEYCAP = "⃣"    # COMBINING ENCLOSING KEYCAP
+_SELECTOR = "\ufe0f"  # VARIATION SELECTOR-16: emoji presentation
+_KEYCAP = "\u20e3"    # COMBINING ENCLOSING KEYCAP
 
 _MARKS: dict[Mark, str] = {
     Mark.CROWN: "\U0001F451",         # crown
     Mark.ASK: "\U0001F64B",           # person raising hand
-    Mark.QUESTION: "❓",          # red question mark
+    Mark.QUESTION: "\u2753",          # red question mark
     Mark.REMINDER: "\U0001F514",      # bell
     Mark.BUS: "\U0001F68C",           # bus
     Mark.INBOX: "\U0001F4E8",         # incoming envelope
-    Mark.SIGNOFF: "✋",           # raised hand
+    Mark.SIGNOFF: "\u270b",           # raised hand
     Mark.LOCK: "\U0001F510",          # locked with key
     Mark.DESKTOP: "\U0001F5A5" + _SELECTOR,  # desktop computer
-    Mark.ALLOWED: "✅",           # white heavy check mark
-    Mark.DENIED: "⛔",            # no entry
+    Mark.ALLOWED: "\u2705",           # white heavy check mark
+    Mark.DENIED: "\u26d4",            # no entry
     Mark.YES: "\U0001F44D",           # thumbs up
     Mark.NO: "\U0001F44E",            # thumbs down
     Mark.ONE: "1" + _SELECTOR + _KEYCAP,
@@ -58,8 +58,8 @@ _ASK, _QUESTION = _MARKS[Mark.ASK], _MARKS[Mark.QUESTION]
 # server gives the marks by position (RT-6.11 step 1).
 _TONE = "[\U0001F3FB-\U0001F3FF]?"
 _ANSWER_MARK = re.compile(
-    rf"^\s*(?:(?:{_MARKS[Mark.YES]}|{_MARKS[Mark.NO]}){_TONE}|✅|❌|✔{_SELECTOR}?"
-    rf"|☑{_SELECTOR}?|[1-4]{_SELECTOR}?{_KEYCAP})\s*[=:\-–]?\s*")
+    rf"^\s*(?:(?:{_MARKS[Mark.YES]}|{_MARKS[Mark.NO]}){_TONE}|\u2705|\u274c|\u2714{_SELECTOR}?"
+    rf"|\u2611{_SELECTOR}?|[1-4]{_SELECTOR}?{_KEYCAP})\s*[=:\-–]?\s*")
 _ASK_LINK = re.compile(rf"{_ASK}\s*asked\s+(?:[a-z0-9]{{26}}|\[[^\]]*\]\([^)\s]*/[a-z0-9]{{26}}\))\s*")
 _ASK_HEAD = re.compile(rf"({_ASK}|{_QUESTION})\s*@([\w.-]*\w)")
 _STATUS_HEAD = re.compile(rf"^({_CROWN}\s*)?(`?)([A-Z]{{2,11}})(`?)(?![A-Za-z])")

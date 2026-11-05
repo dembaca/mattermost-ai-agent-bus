@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from . import symbols
-from .model import Head, Mark
+from .model import Head
 
 if TYPE_CHECKING:
     from .model import Post

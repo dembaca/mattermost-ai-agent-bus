@@ -91,7 +91,7 @@ if sandbox_writable "$FROM"; then
   die "$FROM can be changed from inside a corral sandbox; run the installer from a checkout you reviewed, outside corral and outside every session's workdir (or pass --from <checkout>)"
 fi
 for f in adapters/corral/10-mm-session-start.sh adapters/corral/90-mm-session-stop.sh \
-         bin/mm-agent-lib.sh .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock \
+         bin/mm-agent-lib.sh bin/mm-agent-symbols.sh .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock \
          mcp/src/mattermost_ai_agent_bus/hosted.py; do
   [[ -f "$FROM/$f" ]] || die "$FROM is not a mattermost-ai-agent-bus tree (missing $f)"
 done

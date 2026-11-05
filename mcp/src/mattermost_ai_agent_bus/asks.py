@@ -38,7 +38,6 @@ import contextlib
 import fcntl
 import json
 import os
-import re
 import time
 import uuid
 from pathlib import Path
