@@ -8,8 +8,8 @@ Register with the MCP tool `session_start`, end with `session_end` when the work
 done. The registration secret is in the MCP server's environment, never in your
 shell; there is no shell way to register (0.40.0): without the MCP server there is no
 bus, so tell your human to start it. Under Claude Code
-the bot you registered survives the end of the process: after `claude --continue`
-(same session id) the MCP server takes it over, so try `get_me` before
+the bot you registered survives the end of the process: after `claude --resume <id>`
+(same session id; `--continue` too) the MCP server takes it over, so try `get_me` before
 `session_start` — which would return the same bot anyway (`reused`). A bot whose
 session never resumes is removed by a later session's start after 24 h; call
 `session_end` when the work is done (RT-6.10). Elsewhere (Cursor, OpenCode, Codex)
@@ -22,7 +22,7 @@ registrar answers 409 for a name already used — also one whose bot was removed
 so a second session, or a restart, would be locked out. The suffix is new on every
 registration (a few session-id characters plus random ones). Use the name that comes back.
 `session_start` also joins `MM_PROJECT_CHANNEL` and writes a 0600 session file
-(for `claude --continue`). The hooks and the shell scripts ask this MCP server (RT-6.17):
+(for `claude --resume <id>`). The hooks and the shell scripts ask this MCP server (RT-6.17):
 until the bot exists they stay inert. A `warning` in its result about another MCP
 server of this workspace means your shell scripts reach that one: tell your human. Read the
 `project_channel` field of its result: `joined: false` carries the reason (a

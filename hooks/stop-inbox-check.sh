@@ -131,8 +131,9 @@ update_note() {
   uf="$(mm_bot_state_file update 2>/dev/null)" || return 1
   [[ "$(sed -n 's/^NOTIFIED=//p' "$uf" 2>/dev/null)" != "$newer" ]] || return 1
   printf 'NOTIFIED=%s\n' "$newer" >"$uf" 2>/dev/null || return 1
-  printf '⬆ plugin %s is installed, this session runs %s — to switch: quit, then claude --resume <session-id> (not --continue: several sessions share the directory)' \
-    "$newer" "$(mm_tree_version "$BIN/..")"
+  # mm_read_hook_input took the id from the hook's JSON; without it, the picker.
+  printf '⬆ plugin %s is installed, this session runs %s — to switch: quit, then claude --resume %s (not --continue: several sessions share the directory)' \
+    "$newer" "$(mm_tree_version "$BIN/..")" "${CLAUDE_CODE_SESSION_ID:-<session-id>}"
 }
 
 # The turn really is ending: flip the status back to idle and forget the turn.
