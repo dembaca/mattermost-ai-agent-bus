@@ -69,7 +69,7 @@ def record(uid: str, channel_id: str, post: Post) -> None:
     """Remember `post`, the bot's latest in the work channel."""
     if not uid or not post.id or post.kind == a2a.REMINDER:
         return
-    message = post.message.removeprefix("👑").strip()
+    message = a2a.strip_crown(post.message).strip()
     prev = read(uid)
     hello = post.id if not post.root_id and a2a.word(message) == "HELLO" else (
         prev.get("HELLO", "") if prev.get("CHANNEL") == channel_id else "")
@@ -104,7 +104,7 @@ def signed_off(message: str, rec: dict[str, str] | None = None) -> bool:
     """Nothing changed on the bus since the agent's sign-off (RT-6.2 step 2):
     its latest own post in the work channel is an IDLE or BYE (the 👑 before
     it aside) and no addressed event reached it after that post."""
-    return (bool(_SIGNED_OFF.match(message.removeprefix("👑").strip()))
+    return (bool(_SIGNED_OFF.match(a2a.strip_crown(message).strip()))
             and (rec or {}).get("DELIVERED") != "1")
 
 
@@ -145,7 +145,7 @@ def record_guest(uid: str, channel_name: str, post: Post) -> None:
         return
     rows = guest_threads(uid)
     rows.pop(root, None)
-    rows[root] = (channel_name or "-", a2a.word(post.message.removeprefix("👑").strip()) or "-")
+    rows[root] = (channel_name or "-", a2a.word(a2a.strip_crown(post.message).strip()) or "-")
     kept = list(rows.items())[-GUEST_THREADS_MAX:]
     try:
         session_file.write_private(threads_path(uid), "".join(

@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import a2a, channel, lease, owners, session_file
-from .model import Post
+from .model import Mark, Post
 
 log = logging.getLogger(__name__)
 
@@ -143,9 +143,9 @@ async def reply_text(client: ChatPort, author: str, *, dm: bool, guest: str = ""
     head = f"Not woken: {author} is not on my trusted list"
     if coord and dm:
         # The coordinator cannot see a DM.
-        return f"{head}. Ask in ~{client.work_channel_name}, where {coord} ({lease.CROWN}) coordinates."
+        return f"{head}. Ask in ~{client.work_channel_name}, where {coord} ({a2a.symbol(Mark.CROWN)}) coordinates."
     if coord:
-        return f"{head}. {coord} ({lease.CROWN}) will look at it."
+        return f"{head}. {coord} ({a2a.symbol(Mark.CROWN)}) will look at it."
     where = f"~{(await client.get_channel(guest)).name}" if guest else "right now"
     trusted = await client.trusted_humans()
     names = [n for n in trusted.values() if n] or sorted(

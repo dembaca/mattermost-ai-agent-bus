@@ -23,8 +23,6 @@ from . import a2a, files
 # as stale (MAX_DRAIN in the Stop hook).
 MAX_DRAIN = 3
 # After an optional 👑, plain or in backticks (RT-6.14 step 2).
-_SIGNED_OFF = re.compile(r"^(?:👑\s*)?`?(IDLE|BYE)([^A-Za-z]|$)")
-_BYE = re.compile(r"^(?:👑\s*)?`?BYE([^A-Za-z]|$)")
 # The listen window after a turn (RT-6.2 step 3): the Stop hook's defaults and
 # cap, so an agent stays reachable as long in every harness.
 LISTEN_SEC = 5400
@@ -63,7 +61,7 @@ def needs_signoff(last_message: str, *, asked: bool, by_bus: bool, push: bool,
     if asked or not last_message or (by_bus and push):
         return False
     if signed_off is None:
-        signed_off = bool(_SIGNED_OFF.match(last_message))
+        signed_off = a2a.status_word(last_message) in ("IDLE", "BYE")
     return not signed_off
 
 
@@ -78,7 +76,7 @@ def listen_sec(*, coordinator: bool) -> int:
 def listens(last_message: str, *, project: bool) -> bool:
     """The listen gates (RT-6.2 step 3): a project channel, the agent has
     posted in the work channel, and its latest post there is no BYE."""
-    return project and bool(last_message) and not _BYE.match(last_message)
+    return project and bool(last_message) and a2a.status_word(last_message) != "BYE"
 
 
 def listen_window(last_message: str, last_at_ms: int, *, project: bool, coordinator: bool,

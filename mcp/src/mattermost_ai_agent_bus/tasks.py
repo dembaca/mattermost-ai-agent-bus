@@ -14,7 +14,7 @@ from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 from . import a2a, asks, session_file
-from .model import Post, Reaction, RosterEntry
+from .model import Mark, Post, Reaction, RosterEntry
 
 WINDOW_DAYS = 14
 DONE_KEEP_MS = 24 * 3600 * 1000
@@ -152,7 +152,7 @@ def _crown(p: Post, author: str, coordinators: Collection[str]) -> bool:
         return True
     if not author.startswith(session_file.agent_prefix()):
         return False
-    legacy = p.create_at < LEGACY_CROWN_BEFORE_MS and p.message.lstrip().startswith("👑")
+    legacy = p.create_at < LEGACY_CROWN_BEFORE_MS and a2a.head(p.message).crowned
     return p.crowned or legacy
 
 
@@ -234,17 +234,17 @@ def open_asks(posts: Sequence[Post], names: Mapping[str, str],
             continue
         msg = p.message
         # ❓ @<agent>: a question to the home's 👑 (RT-6.25), which answers it.
-        human = re.search(r"(🙋|❓)\s*@([\w.-]*\w)", msg)
-        question = human is not None and human[1] == "❓"
+        human = a2a.ask_head(msg)
+        question = human is not None and human[0] == "question"
         need = re.search(r"\*\*(.+?)\*\*", msg)
-        if (ask_answered(p, order, p.reactions, names, human[2] if human else "", trusted)
+        if (ask_answered(p, order, p.reactions, names, human[1] if human else "", trusted)
                 or resolved(p.reactions, names, foreign)
                 # A trusted human's reply answers a question to the 👑 as well.
                 or (question and any(q.thread == p.id and q.create_at > p.create_at
                                      and not q.delete_at and q.user_id in trusted for q in order))):
             continue
         row = {"ask": p.id, "by": names.get(p.user_id, ""),
-               "human": human[2] if human else None,
+               "human": human[1] if human else None,
                "question": question,
                "need": _first_line(need[1] if need else msg, TITLE),
                "at": _when(p.create_at)}
@@ -277,7 +277,7 @@ def roster(rows: list[RosterEntry], posts: Sequence[Post], names: Mapping[str, s
         row = {"agent": r.username, "status": r.status,
                "coordinator": r.coordinator or None,
                # A guest that holds its own home's crown (ADR-002).
-               "crown": f"👑 of ~{r.crown_of}" if r.crown_of else None,
+               "crown": f"{a2a.symbol(Mark.CROWN)} of ~{r.crown_of}" if r.crown_of else None,
                "model": meta.get("model"), "role": meta.get("role"),
                "task": _first_line(str(card.get("description", "")), TITLE),
                "branch": meta.get("branch"),

@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import channel, owners, session_file, usage
+from . import a2a, channel, owners, session_file, usage
 from .model import ChannelUser, RosterEntry
 
 if TYPE_CHECKING:
@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-CROWN = "👑"
 PENDING_POLL_SEC = 30.0
 STATES = ("working", "listening", "idle", "bus", "offline")
 ACTIONS = ("who", "take", "release", "tick")
@@ -135,8 +134,8 @@ def with_crown(message: str, user_id: str, *, here: bool = True) -> str:
     """Prefix the coordinator's posts: bot posts never show a custom status.
     here: the post goes where the crown shows (crown_here); False leaves it
     plain, as a guest's post (ADR-002)."""
-    if here and user_id and crown_held(user_id) and not message.startswith(CROWN):
-        return f"{CROWN} {message}"
+    if here and user_id and crown_held(user_id):
+        return a2a.with_crown(message)
     return message
 
 
