@@ -423,6 +423,8 @@ def posting(bus, monkeypatch):
             return {"id": "t" * 26, "name": "team"}
         if path == "/api/v4/users/me/channels" or path.endswith("/channels"):
             return []
+        if path == "/api/v4/channels/" + "d" * 26:
+            return {"id": "d" * 26, "type": "D"}
         if "/channels/name/" in path:
             return {"id": PROJ, "name": "proj", "type": "O"}
         return await inner(method, path, json=json, params=params, **kw)
@@ -451,3 +453,40 @@ async def test_a_reply_checks_the_channel_of_its_thread_and_a_dm_not_at_all(post
     assert [n.split(" ")[0] for n in out["not_reachable"]] == ["agent-old"]
     out = await server.post_as_bot(bus.client, "TASK @agent-old go", to="agent-w")
     assert "not_reachable" not in out
+
+
+GUEST = "g" * 26
+
+
+@pytest.mark.asyncio
+async def test_a_channel_that_is_not_the_home_decides_by_its_own_roster(bus):
+    """A guest channel or the lobby: the agents of that channel count, not the home's."""
+    everyone = await bus.client.channel_users(PROJ)
+    only_w = [u for u in everyone if u.username == "agent-w"]
+
+    async def users(channel_id):
+        return only_w if channel_id == GUEST else everyone
+    bus.client.channel_users = users
+
+    async def member(channel_id, user_id):
+        return channel_id != GUEST
+    bus.client.is_member = member
+    got = await departed.unreachable(bus.client, "TASK @agent-w @agent-idle", "agent-me", GUEST)
+    assert got == ["agent-idle (live in another channel, not in this channel)"]
+    assert await departed.unreachable(bus.client, "TASK @agent-w @agent-idle", "agent-me", PROJ) == [
+        "agent-idle (idle, until its human resumes)"]
+
+
+@pytest.mark.asyncio
+async def test_a_member_beyond_the_first_page_of_a_big_channel_is_reachable(bus):
+    """A channel of more than 200 accounts lists a page: a live member the page lacks is no absent one."""
+    everyone = await bus.client.channel_users(PROJ)
+
+    async def page(channel_id):
+        return [u for u in everyone if u.username != "agent-w"]
+    bus.client.channel_users = page
+
+    async def member(channel_id, user_id):
+        return True
+    bus.client.is_member = member
+    assert await departed.unreachable(bus.client, "TASK @agent-w", "agent-me", PROJ) == []

@@ -1102,30 +1102,31 @@ def _with_unmentioned(result: dict[str, Any], removed: list[str],
     return result
 
 
-async def _unreachable(client: MattermostAdapter, message: str, uid: str, channel_id: str,
-                       root_id: str, dm: bool) -> list[str]:
-    """Agents a TASK or DELEGATE names that the roster does not show as reachable
-    (RT-6.14 step 10); the post is out already. Not for a DM; fails open."""
-    if dm or a2a.word(message) not in ("TASK", "DELEGATE"):
-        return []
+async def _unreachable(client: MattermostAdapter, message: str, post: Post) -> tuple[list[str], bool]:
+    """Agents a TASK or DELEGATE names that the roster of the channel it went to
+    does not show as reachable (RT-6.14 step 10), and whether that channel is
+    not the home; the post is out already. Not for a DM; fails open."""
+    if a2a.word(message) not in ("TASK", "DELEGATE"):
+        return [], False
     try:
-        cid = channel_id or (await client.post_channel_id(root_id) if root_id
-                             else await client.work_channel_id())
-        if await lease.is_direct(client, cid):
-            return []
-        me = (await client.usernames({uid})).get(uid, "")
-        return await departed.unreachable(client, message, me, cid)
+        me = (await client.get_me()).username
+        if not departed.mentioned(message, me) or await lease.is_direct(client, post.channel_id):
+            return [], False
+        return (await departed.unreachable(client, message, me, post.channel_id),
+                post.channel_id != await client.work_channel_id())
     except Exception as exc:  # noqa: BLE001 — never block a post over this
         log.info("reachability check skipped: %s", exc)
-        return []
+        return [], False
 
 
-def _with_unreachable(result: dict[str, Any], names: list[str], word: str) -> dict[str, Any]:
+def _with_unreachable(result: dict[str, Any], found: tuple[list[str], bool], word: str) -> dict[str, Any]:
+    names, guest = found
     if names:
         result["not_reachable"] = names
+        scope = ', scope="all"' if guest else ""
         result["warning"] = (
             f"this {word} names agents the roster does not show as reachable: {', '.join(names)}. "
-            "It is posted, but nobody may pick it up: choose another from coordinator(\"roster\")")
+            f"It is posted, but nobody may pick it up: choose another from coordinator(\"roster\"{scope})")
     return result
 
 
@@ -1346,7 +1347,7 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
     word = a2a.word(message) or ""
     return await _claimed(client, post.root_id or root_id, message, uid, _with_unreachable(
         _with_unmentioned(await slim.post(client, post), removed, await _unasked(client, message, uid), word),
-        await _unreachable(client, message, uid, channel_id, root_id, bool(to.strip()) and not everyone),
+        await _unreachable(client, message, post),
         word))
 
 
@@ -1403,7 +1404,7 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
     word = a2a.word(message) or ""
     return await _claimed(client, post.root_id or root_id, message, uid, _with_unreachable(
         _with_unmentioned(await slim.post(client, post), removed, await _unasked(client, message, uid), word),
-        await _unreachable(client, message, uid, channel_id, root_id, False), word))
+        await _unreachable(client, message, post), word))
 
 
 # Task threads this bot holds: its next claim there needs no thread read.

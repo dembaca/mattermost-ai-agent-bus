@@ -192,6 +192,16 @@ def reply_text(found: list[Absent], permalink_base: str, channel: str = "") -> s
     return " ".join(lines + away)
 
 
+async def _present(client: ChatPort, channel_id: str, names: list[str]) -> list[str]:
+    """Of the names the channel's page of agents lacks, the live ones that are
+    members after all (a channel of more than 200 accounts)."""
+    if not names:
+        return []
+    bots = await client.bots_named(set(names))
+    return [n for n in names if (u := bots.get(n)) is not None and lease.live_home(u) is not None
+            and await client.is_member(channel_id, u.id)]
+
+
 async def unreachable(client: ChatPort, message: str, me: str, channel_id: str) -> list[str]:
     """The agents an outgoing task names (@, not me) that the roster of
     `channel_id` does not show as reachable, each `<name> (<why>)` (RT-6.14
@@ -205,6 +215,9 @@ async def unreachable(client: ChatPort, message: str, me: str, channel_id: str) 
     try:
         rows = await _members(client, channel_id)
         why_not = {n: lease.not_reachable(rows.get(n)) for n in names}
+        # A channel's agents are read up to a page: one beyond it is no absent one.
+        for n in await _present(client, channel_id, [n for n in names if why_not[n] == "absent"]):
+            why_not[n] = ""
         bad = [n for n in names if why_not[n]]
         if not bad:
             return []
