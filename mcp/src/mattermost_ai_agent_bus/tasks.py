@@ -258,7 +258,7 @@ def roster(rows: list[RosterEntry], posts: Sequence[Post], names: Mapping[str, s
     """One row per reachable agent: its lease status (lease.roster, RT-6.6),
     its newest card (HELLO props, else the HELLO text) and, from its bot
     description, `owner`, `trusts` and `foreign` (ADR-001; `owners`, by name).
-    `usage` (by name, usage.from_props): `ctx`, `limit_5h`, `limit_7d` of an
+    `usage` (by name, usage.from_status): `ctx`, `limit_5h`, `limit_7d` of an
     agent that reports them (ADR-008); agents with one `limit_5h.resets_at`
     are on one subscription and get the same `limit_shared`
     {group, agents} (group: 1, 2, … in row order; agents: how many)."""

@@ -137,18 +137,6 @@ class ChatPort(Protocol):
         read on the port: it is about a chat channel, and the tests fake it."""
         ...
 
-    async def publish_usage(self, value: str) -> bool:
-        """Put this bot's usage report (ADR-008 step 3, usage.py) on its own
-        account as `agent_usage`, keeping the rest, like publish_attestation;
-        False when it is there already. The caller holds lease.status_lock()."""
-        ...
-
-    async def agent_usage(self, user_id: str) -> str | None:
-        """The `agent_usage` a bot published on its account (ADR-008 step 3);
-        '' when it carries none, None when it cannot be read. Cached about a
-        minute."""
-        ...
-
     # --- posting and replying ------------------------------------------------
     async def post(self, message: str, *, channel_id: str | None = None,
                    root_id: str | None = None, props: dict[str, Any] | None = None) -> Post:

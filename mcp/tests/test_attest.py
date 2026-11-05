@@ -237,7 +237,7 @@ def _mine(**over) -> str:
 
 
 async def test_start_checks_and_logs_but_writes_nothing_on_the_account(monkeypatch, caplog):
-    """Step 2/3 (0.71.18): the own attestation is checked and logged once; it is not written onto the
+    """Step 2/3 (0.71.19): the own attestation is checked and logged once; it is not written onto the
     account (a bot's patch of its own user props is a 403): no write, no warning at every start."""
     seen: list = []
     c = _adapter(seen, {"customStatus": "{}"})

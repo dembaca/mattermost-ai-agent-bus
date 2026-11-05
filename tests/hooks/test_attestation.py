@@ -146,7 +146,7 @@ def _for_me() -> str:
 @pytest.mark.skipif(not PY.exists(), reason="needs mcp/.venv: uv run --directory mcp")
 def test_corral_hands_it_to_the_host_process_which_checks_it_and_writes_nothing(mm, run):
     """Step 1 in a keyless corral session: the export lines carry it into the host process's
-    start line, not into the sandbox; step 2: the host process checks and logs it; since 0.71.18 it
+    start line, not into the sandbox; step 2: the host process checks and logs it; since 0.71.19 it
     does not write it into the bot's props (a bot's patch of its own user is a 403): no PUT."""
     signed = _for_me()
     mm.user_props = {"customStatus": json.dumps({"emoji": "zzz", "text": "idle · ~proj-x"})}

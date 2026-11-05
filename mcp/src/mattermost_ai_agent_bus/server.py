@@ -533,19 +533,14 @@ async def _owners_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, di
 
 
 async def _usage_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, dict[str, Any]]:
-    """Per roster row's username: the context and limits its bot published in
-    its props (ADR-008 step 3), not read from its status text. An agent
-    without them, or one that cannot be read, gives nothing."""
+    """Per roster row's username: the context, limits and cost its status text
+    carries (ADR-008 step 3; the roster read holds the text anyway: no lookup
+    per agent). This agent's own row is what it holds in memory, exact. An agent
+    whose text carries none gives nothing."""
     out: dict[str, dict[str, Any]] = {}
     own = (await client.get_me()).id
     for r in rows:
-        try:
-            # This agent's own row is what it holds in memory, no lookup.
-            got = (usage.from_props(usage.props_value()) if r.user_id == own
-                   else usage.from_props(await client.agent_usage(r.user_id)) if r.user_id else {})
-        except Exception as exc:  # noqa: BLE001 — the roster without its numbers
-            log.info("roster without usage of %s: %s", r.username, exc)
-            continue
+        got = usage.own() if r.user_id == own else r.usage
         if got:
             out[r.username] = got
     return out
@@ -860,10 +855,7 @@ async def bus_info() -> str:
            if (failed := getattr(client, "guest_join_failures", None)) else {}),
         "crown": lease.crown_held(me.id),
         # ADR-008 step 3: the last report, and why it does or does not reach the roster.
-        "usage": usage.info(getattr(client, "usage_written_at", 0.0),
-                            getattr(client, "usage_write_error", ""),
-                            getattr(client, "usage_read_error", ""),
-                            reads=getattr(client, "usage_reads", None)),
+        "usage": usage.info(),
         # RT-6.25: direct or coordinator, from MM_ASK_ROUTE ("env"), the switching post,
         # or the registrar's signed record ("registrar", with set_by; step 8).
         "ask_mode": await askroute.info(client, me.id),

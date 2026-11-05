@@ -226,7 +226,6 @@ async def set_status(client: ChatPort, state: str, label: str = "") -> None:
         return
     async with _lock():
         await _set_status(client, state, label)
-        await _write_usage_locked(client)  # the numbers arrive with the status, not at the next beat
 
 
 async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
@@ -496,7 +495,8 @@ def entry(row: Mapping[str, Any], crown_of: str = "") -> RosterEntry:
     status = text[0] if text and text[0] else _STATUS.get(str(row.get("emoji", "")), "")
     return RosterEntry(username=str(row.get("username") or ""), status=status,
                        coordinator=bool(row.get("coordinator")), crown=bool(row.get("crown")),
-                       crown_of=crown_of, user_id=str(row.get("id") or ""))
+                       crown_of=crown_of, user_id=str(row.get("id") or ""),
+                       usage=usage.from_status(str(row.get("text", ""))))
 
 
 # --- the crown --------------------------------------------------------------------------
@@ -730,32 +730,9 @@ async def _header(client: ChatPort, cid: str) -> None:
             log.debug("channel header: %s", exc)
 
 
-async def write_usage(client: ChatPort) -> None:
-    """The last usage report into the bot's props as `agent_usage` (ADR-008
-    step 3), when it changed and a minute passed since the last attempt. Like
-    the attestation: under the status lock, the other props kept. Never raises."""
-    async with _lock():
-        await _write_usage_locked(client)
-
-
-async def _write_usage_locked(client: ChatPort) -> None:
-    """write_usage under the status lock, which the caller holds."""
-    value = usage.props_due()
-    if not value or not client.token:
-        return
-    usage.props_tried()
-    try:
-        await client.publish_usage(value)
-        usage.props_written(value)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:  # noqa: BLE001 — cosmetic, tried again by a later beat
-        log.debug("usage props: %s", exc)
-
-
 async def usage_crossed(client: ChatPort) -> None:
-    """A report crossed a band (ADR-008 step 2): the status text and the props
-    now, once; usage.take_band keeps it rare. A normal beat never comes here
+    """A report crossed a band (ADR-008 step 2): the status text now, once;
+    usage.take_band keeps it rare. A normal beat never comes here
     (the heartbeat's own renewal carries the numbers). Never raises."""
     try:
         if not client.token or not usage.take_band():
@@ -764,7 +741,6 @@ async def usage_crossed(client: ChatPort) -> None:
         if not _read(_file("presence", uid)).get("STATE"):
             return  # no status to renew (offline, or none yet)
         await set_status(client, "renew")
-        await write_usage(client)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -783,7 +759,6 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
             client = await get_client()
             if client is not None and client.token:
                 await command(client, "tick")
-                await write_usage(client)
                 if take_pending(await _user_id(client)):
                     delay = PENDING_POLL_SEC
                 if watch is not None:

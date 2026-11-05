@@ -160,6 +160,8 @@ class RosterEntry:
     crown_of: str = ""
     # Its bot's id, to read its description by (ADR-001); not the row's identity.
     user_id: str = field(default="", compare=False)
+    # The numbers its status text carries (usage.from_status, ADR-008 step 3).
+    usage: dict[str, Any] = field(default_factory=dict, compare=False)
 
 
 @dataclass(frozen=True)
