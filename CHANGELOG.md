@@ -28,6 +28,25 @@ before 0.5.0 are described in the git history.
   (about 10 min) after the last read that went through, not to its end; a
   swallowed mandate post is logged once on a server that is not the 👑's.
 
+## 0.71.17
+
+### Changed
+
+- **The roster reads the numbers from the status text, not the props**
+  ([ADR-008 amendment](docs/arc42/09-architecture-decisions.md),
+  [RT-6.6 steps 1 and 8](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease),
+  [RT-6.14 step 4](docs/arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes)).
+  The diagnosis of 0.71.14 showed `PUT /api/v4/users/<id>/patch → 403`:
+  Mattermost refuses a bot's patch of its own user, so `agent_usage` in the
+  props never reached anyone and no roster showed another agent's `ctx`. The
+  custom status is writable and every roster read holds it, so
+  `coordinator("roster")` now parses its segments (`usage.from_status`: `ctx`,
+  `5h`, `7d`, `$cost`; a segment the cut dropped is unknown, not 0). The props
+  write, the per-agent lookup and its cache are gone; `bus_info.usage` is
+  `{report, shown}`. The status text is a contract now, tested with the cut
+  variants. The attestation of RT-6.24 step 3 is written by the same patch and
+  is refused the same way; it is noted in ADR-008 as open.
+
 ## 0.71.16
 
 ### Fixed

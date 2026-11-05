@@ -28,15 +28,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def describe_failure(exc: Exception) -> str:
-    """A failed call as `METHOD /path → status` (no host, no query, no body: no
-    secret can be in it), else the exception's type and a short text."""
-    if isinstance(exc, httpx.HTTPStatusError):
-        req = exc.request
-        return f"{req.method} {req.url.path} → {exc.response.status_code}"
-    return f"{type(exc).__name__}: {str(exc)[:120]}"
-
-
 def from_webhook(post: Mapping[str, Any]) -> bool:
     """Anyone with a hook's URL posts as the account that made the hook."""
     return str((post.get("props") or {}).get("from_webhook", "")) == "true"
@@ -241,9 +232,6 @@ _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 DESCRIPTION_TTL_SEC = 600.0
 # The bot's own user prop that carries the registrar's attestation (RT-6.24).
 ATTESTATION_PROP = "agent_attestation"
-# The bot's own usage report (ADR-008 step 3), compact JSON in its user props.
-USAGE_PROP = "agent_usage"
-USAGE_TTL_SEC = 60.0
 # The most the registrar's answer with a home's ask-mode record may hold (RT-6.25 step 8).
 MODE_RECORD_MAX = 8192
 # The registrar's own 404 for a home without a mandate (RT-6.26 step 8).
@@ -451,20 +439,6 @@ class MattermostAdapter:
     # user id -> the attestation its user props carry ('' none), read with
     # its description (RT-6.24); missing: its user object was not read.
     _attestations: dict[str, str] = field(default_factory=dict, repr=False, init=False)
-    # user id -> (when read, the agent_usage its props carry, '' none; None:
-    # not readable), ADR-008 step 3.
-    # The last outcome of the usage report's way through the bot's props (ADR-008
-    # step 3, bus_info `usage`): when it was written, and the last failure of
-    # writing it and of reading another bot's, each with endpoint and status.
-    usage_written_at: float = field(default=0.0, repr=False, init=False)
-    usage_write_error: str = field(default="", repr=False, init=False)
-    usage_read_error: str = field(default="", repr=False, init=False)
-    # How the reads of other bots' reports went: one with a value, a readable
-    # account without one (never written, or overwritten), a failed read.
-    usage_reads: dict[str, int] = field(
-        default_factory=lambda: {"found": 0, "empty": 0, "failed": 0}, repr=False, init=False)
-    _usages: dict[str, tuple[float, str | None]] = field(
-        default_factory=dict, repr=False, init=False)
     # RT-6.21: lower-case username -> (when read, its bot account; None: none),
     # and (channel id, user id) -> (when read, a member).
     _named: dict[str, tuple[float, ChannelUser | None]] = field(
@@ -738,11 +712,6 @@ class MattermostAdapter:
         props = user.get("props")
         signed = props.get(ATTESTATION_PROP) if isinstance(props, Mapping) else None
         self._attestations[user_id] = signed if isinstance(signed, str) else ""
-        # The same object carries the usage report: the roster reads it next
-        # (ADR-008 step 3) without a second GET.
-        raw = props.get(USAGE_PROP) if isinstance(props, Mapping) else None
-        self._usages[user_id] = (time.monotonic(), raw if isinstance(raw, str) else "")
-        self.usage_reads["found" if isinstance(raw, str) and raw else "empty"] += 1
 
     async def agent_attestation(self, user_id: str) -> str | None:
         """The registrar's attestation the bot put into its own user props
@@ -814,27 +783,6 @@ class MattermostAdapter:
         self._owners.pop(uid, None)
         return True
 
-    async def publish_usage(self, value: str) -> bool:
-        """Put this bot's usage report (usage.props_value) into its own user
-        props as `agent_usage` (ADR-008 step 3), the way publish_attestation
-        does, the caller holding the lease's lock. False when it is there."""
-        try:
-            changed = await self._publish_prop(USAGE_PROP, value)
-        except Exception as exc:
-            self._usage_failed("write", exc)
-            raise
-        self.usage_written_at, self.usage_write_error = time.time(), ""
-        return changed
-
-    def _usage_failed(self, which: str, exc: Exception) -> None:
-        """The usage report's way through the props failed: kept for bus_info and
-        logged as a warning once per distinct failure, so a session sees for itself
-        why its numbers do not reach the roster."""
-        text = describe_failure(exc)
-        if getattr(self, f"usage_{which}_error") != text:
-            log.warning("usage report %s failed: %s", which, text)
-        setattr(self, f"usage_{which}_error", text)
-
     async def _publish_prop(self, key: str, value: str) -> bool:
         me = await self.get_me()
         uid = mm_id(me.id, "user")
@@ -847,41 +795,11 @@ class MattermostAdapter:
         await self._api("PUT", f"/api/v4/users/{uid}/patch", json={"props": props})
         return True
 
-    async def agent_usage(self, user_id: str) -> str | None:
-        """The `agent_usage` a bot carries in its user props (ADR-008 step 3):
-        '' when it has none, None when its user object cannot be read. One
-        lookup per agent, cached for USAGE_TTL_SEC."""
-        now = time.monotonic()
-        hit = self._usages.get(user_id)
-        if hit and now - hit[0] < USAGE_TTL_SEC:
-            return hit[1]
-        try:
-            mm_id(user_id, "user")
-        except InvalidId:
-            return None
-        value: str | None = None
-        try:
-            data = await self._api("GET", f"/api/v4/users/{user_id}")
-        except Exception as exc:  # noqa: BLE001 — the roster without its numbers
-            self._usage_failed("read", exc)
-            self.usage_reads["failed"] += 1
-            data = None
-        else:
-            self.usage_read_error = ""
-        if isinstance(data, dict):
-            props = data.get("props")
-            raw = props.get(USAGE_PROP) if isinstance(props, Mapping) else None
-            value = raw if isinstance(raw, str) else ""
-            self.usage_reads["found" if value else "empty"] += 1
-        self._usages[user_id] = (now, value)
-        return value
-
     def _take(self, info: SessionInfo) -> None:
         """Make ``info`` this process's bot and hand it to the hooks."""
         self._descriptions.clear()
         self._owners.clear()
         self._attestations.clear()
-        self._usages.clear()
         self.base_url = info.url
         self.token = info.bot_token
         self.session = info

@@ -748,7 +748,9 @@ async def presence(client: MattermostAdapter, query: Mapping[str, str],
         label = body.get("label") or ""
         if not isinstance(label, str):
             raise BadRequest("label: a string")
-        arg = label.strip()
+        # " · " separates the segments of the status text, which another agent's roster
+        # reads back (usage.from_status): a label never carries one.
+        arg = label.strip().replace(" · ", " ")
         if len(arg) > MAX_LABEL or any(c < " " or c == "\x7f" for c in arg):
             raise BadRequest(f"label: one line, at most {MAX_LABEL} characters")
     await lease.set_status(client, state, arg)

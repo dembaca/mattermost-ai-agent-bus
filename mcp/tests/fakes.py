@@ -71,9 +71,6 @@ class FakeChat:
         self.attestations = dict(attestations or {})
         self.props: dict[str, str] = {}
         self.published: list[str] = []
-        # ADR-008: other agents' agent_usage by user id, and the own writes.
-        self.usages: dict[str, str] = {}
-        self.usage_writes: list[str] = []
         self.channel = channel
         self.channels = list(channels)
         self.post_id = post_id
@@ -217,18 +214,6 @@ class FakeChat:
         self.props = {**self.props, "agent_attestation": token}
         self.published.append(token)
         return True
-
-    async def publish_usage(self, value: str) -> bool:
-        """Kept in `props` like the attestation, each write in `usage_writes`."""
-        if self.props.get("agent_usage") == value:
-            return False
-        self.props = {**self.props, "agent_usage": value}
-        self.usage_writes.append(value)
-        return True
-
-    async def agent_usage(self, user_id: str) -> str | None:
-        """`usages` (user id -> agent_usage); '' for an agent without one."""
-        return self.usages.get(user_id, "")
 
     async def clear_custom_status(self) -> None:
         self.status = None
