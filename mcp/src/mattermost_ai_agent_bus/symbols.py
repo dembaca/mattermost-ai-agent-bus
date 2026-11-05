@@ -38,7 +38,6 @@ _ANSWERS: dict[Answer, str] = {
     Answer.THREE: "3" + _SELECTOR + _KEYCAP,
     Answer.FOUR: "4" + _SELECTOR + _KEYCAP,
 }
-CHOICES = (Answer.ONE, Answer.TWO, Answer.THREE, Answer.FOUR)
 
 # Reaction names (shortcodes) that answer an ask, and the one that closes it.
 _YES = frozenset({"+1", "thumbsup", "white_check_mark", "heavy_check_mark", "ballot_box_with_check"})
@@ -152,6 +151,6 @@ def answer_marks(count: int) -> list[str]:
     """The characters by position for `count` answers: yes (the go) and no for
     two, the keycaps for three or four."""
     if count == 2:
-        return [_ANSWERS[Answer.YES], _ANSWERS[Answer.NO]]
-    return [_ANSWERS[a] for a in CHOICES[:count]]
+        return [answer_symbol(Answer.YES), answer_symbol(Answer.NO)]
+    return [answer_symbol(Answer.choice(i)) for i in range(1, count + 1)]
 

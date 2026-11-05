@@ -3,7 +3,7 @@
 import pytest
 
 from mattermost_ai_agent_bus import a2a, symbols
-from mattermost_ai_agent_bus.model import Answer, Mark, StatusMark
+from mattermost_ai_agent_bus.model import MAX_CHOICES, Answer, Mark, StatusMark
 
 KEYCAP = chr(0xFE0F) + chr(0x20E3)
 
@@ -23,8 +23,9 @@ def test_every_member_has_its_characters():
 
 def test_a_choice_is_an_answer():
     assert [Answer.choice(n) for n in (1, 2, 3, 4)] == [Answer.ONE, Answer.TWO, Answer.THREE, Answer.FOUR]
-    with pytest.raises(IndexError):
-        Answer.choice(5)
+    for bad in (0, -1, MAX_CHOICES + 1):
+        with pytest.raises(ValueError):
+            Answer.choice(bad)
 
 
 def test_the_wire_form_is_unchanged():

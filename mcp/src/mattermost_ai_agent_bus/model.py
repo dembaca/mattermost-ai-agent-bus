@@ -36,6 +36,10 @@ class Mark(Enum):
     DENIED = "denied"
 
 
+# The most alternatives an ask offers (RT-6.11 step 1): Answer.ONE to FOUR.
+MAX_CHOICES = 4
+
+
 class Answer(Enum):
     """What a reaction on an ask answers (RT-6.11): yes or no, or the choice of
     one of up to four alternatives (`Answer.choice(n)`)."""
@@ -49,7 +53,9 @@ class Answer(Enum):
 
     @classmethod
     def choice(cls, n: int) -> Answer:
-        """The answer that picks the n-th alternative, 1 to 4."""
+        """The answer that picks the n-th alternative, 1 to MAX_CHOICES."""
+        if not 1 <= n <= MAX_CHOICES:
+            raise ValueError(f"a choice is 1 to {MAX_CHOICES}, not {n}")
         return (cls.ONE, cls.TWO, cls.THREE, cls.FOUR)[n - 1]
 
 
