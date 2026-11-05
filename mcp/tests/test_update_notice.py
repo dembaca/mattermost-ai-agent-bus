@@ -29,3 +29,14 @@ def test_newer_installed_version_is_found(monkeypatch, tmp_path):
 def test_no_registry_no_update(monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     assert server._newer_installed() is None
+
+
+def test_the_restart_is_by_resume_with_the_own_session_id(monkeypatch):
+    """RT-6.2 step 8: `--continue` takes the directory's newest session, which
+    may be another one's; `update.how` names `--resume` and this session's id."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "529416e5-aaaa")
+    how = server._restart_how()
+    assert "claude --resume 529416e5-aaaa" in how
+    assert "corral run -- --resume 529416e5-aaaa" in how
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+    assert "claude --resume and pick this session" in server._restart_how()

@@ -76,11 +76,23 @@ def _version_key(v: str) -> tuple[int, ...]:
     return tuple(int(x) for x in re.findall(r"\d+", v)[:3]) or (0,)
 
 
+def _restart_how() -> str:
+    """How to restart onto the installed plugin (RT-6.2 step 8): by `--resume`
+    with this session's id, since `--continue` takes the newest session of a
+    directory several sessions share and may start another one's transcript."""
+    sid = session_file.session_id()
+    if not sid:
+        return "quit, then claude --resume and pick this session (not --continue)"
+    return (f"quit, then claude --resume {sid} (corral: corral run -- --resume {sid}); "
+            "not --continue: it takes the newest session of the directory")
+
+
 def _newer_installed() -> str | None:
     """A newer plugin version installed than this server runs, if any (RT-6.2).
 
     A running session keeps the plugin it started with; an update (also an
-    automatic one) applies after a restart: quit, then `claude --continue`.
+    automatic one) applies after a restart: quit, then `claude --resume <session-id>`
+    (not `--continue`: it takes the newest session of the directory).
     Not on the host side of a keyless session (RT-6.18): its plugin list is
     the host's, which the sandbox may write; the Stop hook tells the sandbox's.
     """
@@ -268,8 +280,8 @@ def _instructions() -> str:
            if HOST_MANAGED else "" if UNAVAILABLE else
            "No bot yet: with MM_PROJECT_CHANNEL set, register with session_start "
            "(MM_REG_SECRET in this server's environment) and session_end when done; "
-           "without it, stay off the bus unless your human asks. After `claude "
-           "--continue` your bot is taken over automatically: try get_me first. ")
+           "without it, stay off the bus unless your human asks. After "
+           "`--resume <id>` your bot is taken over automatically: try get_me first. ")
         + ("" if UNAVAILABLE and not HOST_MANAGED else
            "The bin/ scripts (mm-agent-post.sh, -poll, -status, -listen) are clients "
            "of this server; your shell holds no token (RT-6.17). ")
@@ -790,7 +802,7 @@ async def session_end(name: str = "") -> str:
 async def bus_info() -> str:
     """This bus session at a glance: plugin/MCP version, bot, responsible and
     trusted humans, channels (home, guests, lobby, with ids in `channels`; RT-6.22); update names a newer installed plugin, which
-    takes a restart (quit, then `claude --continue`). ask_mode: RT-6.25. mandate: RT-6.26.
+    takes a restart (quit, then `claude --resume <id>`). ask_mode: RT-6.25. mandate: RT-6.26.
 
     responsible names who answers for you and kind is "session" or
     "autonomous" — announce puts both into your HELLO (for / trusts). trusted_humans says
@@ -853,7 +865,7 @@ async def bus_info() -> str:
         # RT-6.26 step 6: the home's mandate for a role, or why none holds.
         "mandate": await mandate.info(client),
         "permission_relay": RELAY,
-        **({"update": {"installed": newer, "how": "quit, then claude --continue"}}
+        **({"update": {"installed": newer, "how": _restart_how()}}
            if (newer := _newer_installed()) else {}),
         **({"warning": "; ".join(warnings)} if warnings else {}),
     })

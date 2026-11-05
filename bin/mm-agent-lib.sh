@@ -682,7 +682,7 @@ mm_version_newer() {
 
 # A newer installed plugin than the tree these scripts run from: prints its
 # version, else fails. A running session keeps the plugin it started with, so a
-# plugin update applies only after a restart (quit, then `claude --continue`).
+# plugin update applies only after a restart (quit, then `claude --resume <id>`).
 mm_newer_plugin() {
   local have want
   have="$(mm_tree_version "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")"

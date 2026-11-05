@@ -46,7 +46,7 @@ sandbox and teardown survives a crash. See [adapters/corral.md](corral.md).
 
 Without host hooks the plugin's MCP server registers the bot: the agent calls the MCP
 tool `session_start` (and `session_end` when done; the bot outlives the process for
-`claude --continue`, [arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
+`claude --resume <id>` (or `--continue`), [arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
 The server is required: the shell scripts in `bin/` are its clients and hold no token
 ([arc42 §6.17](../docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
 The plugin's server takes its settings from Claude Code's environment:
@@ -93,7 +93,7 @@ without that variable is it keyed on the directory the server runs in
 `session_end` removes the file. The turn hooks and the background listener do not read
 it: they hold no token and ask the MCP server over a local API
 ([arc42 §6.17](../docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)). When the process ends the server keeps its bot, so that
-`claude --continue` — which keeps the session id — takes the same bot over instead of
+`claude --resume <id>` — which keeps the session id — takes the same bot over instead of
 starting under a new name; a bot whose session does not resume is unregistered by a
 later session's `session_start` after `MM_SESSION_KEEP_SEC` (24 h), or by
 `bin/mm-agent-sweep.sh` ([arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)). The hooks run under `bash` (the scripts use bash syntax; `sh` is dash

@@ -645,9 +645,17 @@ def test_a_newer_installed_plugin_is_named_once_when_the_turn_ends(mm, run, tmp_
     newer_plugin(tmp_path)
     r = run(STOP)
     assert r.passed and "plugin 99.0.0 is installed" in r.banner
-    assert "quit, then claude --continue" in r.banner
+    assert "quit, then claude --resume <session-id>" in r.banner
     again = run(STOP)
     assert again.passed and again.banner == ""
+
+
+def test_the_update_note_names_the_sessions_own_id(mm, run, tmp_path):
+    """RT-6.2 step 8: the hook's JSON carries the session id; the note says
+    `--resume <that id>`, not a placeholder."""
+    newer_plugin(tmp_path)
+    r = run(STOP, stdin='{"session_id": "529416e5-aaaa"}')
+    assert r.passed and "claude --resume 529416e5-aaaa" in r.banner
 
 
 def test_no_update_note_when_the_session_runs_the_newest(mm, run, tmp_path):
