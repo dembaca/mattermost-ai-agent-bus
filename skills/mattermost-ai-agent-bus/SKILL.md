@@ -118,8 +118,8 @@ whoever starts the run); reviewers and the coordinator link its ask
 **Decisions: one at a time, each answerable in a word.** For every decision
 give the situation in one to three sentences (`context`), your recommendation
 and why (`recommendation`), and the decision written out (`decision`), so a 👍
-or a "yes" settles it. **An approval is go / no-go** (`answers="go / no-go"`, 👍 / 👎); a choice of
-three or four is a question (`A / B / C`, 1️⃣ 2️⃣ 3️⃣, RT-6.11). **One question per ask**, the most important first, the next once it is
+or a "yes" settles it. **An approval is go / no-go** (`answers=["go", "no-go"]`, plain texts, the
+server sets 👍/👎); 3–4 are a question (`["A", "B", "C"]`, 1️⃣ 2️⃣ 3️⃣, RT-6.11). **One question per ask**, the most important first, the next once it is
 answered; `ask_human` refuses a list; a second ask to that human queues (RT-6.11). In the
 terminal too: one decision per message.
 

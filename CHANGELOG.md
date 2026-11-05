@@ -3,6 +3,26 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.15
+
+### Changed
+
+- **`ask_human` takes `answers` as a list of plain texts, the server gives the
+  emojis**
+  ([RT-6.11 step 1](docs/arc42/06-runtime-view.md)). `answers` was one string
+  cut at every `/`: `👍 = ja, 5h/7d sind sichtbar · 👎 = nein` became
+  `👍 = 👍 = ja, 5h · 👎 = 7d sind sichtbar · …`. Now it is two to four texts
+  (`["go", "no-go"]`), the emojis come by position (2: 👍 the go, 👎; 3 to 4:
+  1️⃣ to 4️⃣), so `choice: n` is always `answers[n - 1]`. A mark an agent wrote
+  first (👍 ✅ 👎 ❌ 1️⃣–4️⃣ with `=`, `:` or `-`) is stripped, the cleaned list
+  comes back as `answers` (also skin tones of 👍/👎 and ✔️ ☑️ count as marks), an
+  entry of nothing but a mark is refused with a hint, not dropped, and so is a
+  list of one or of five or more, an approval with more than two too. A `str`
+  is no longer taken; an ask queued with one before this version has no answers
+  (a queued `go/no-go` becomes free text). The ask keeps the list
+  (`ANSWERS=` in `asks-<uid>.env`), and a reaction event names the answer as
+  `chosen` beside `choice` (👍/👎 on two answers too).
+
 ## 0.71.14
 
 ### Added

@@ -73,7 +73,8 @@ def test_static_is_per_turn_text_and_the_skill_its_own_field():
     # + get_file (RT-6.23), channel names (RT-6.22); + ask_human's kind, advice, ask_mode (RT-6.25)
     # + coordinator's scope (RT-6.14 step 9); + mandated on events, the instructions (RT-6.26)
     # + ask_human's alternatives and `choice` on reactions (RT-6.11)
-    assert s["skill"] == f.skill > 11_000 and s["static"] < 11_300
+    # + answers as a list of texts and `chosen` on reactions (RT-6.11, 0.71.15)
+    assert s["skill"] == f.skill > 11_000 and s["static"] < 11_380
 
 
 _REAL_CLIENT = httpx.Client
