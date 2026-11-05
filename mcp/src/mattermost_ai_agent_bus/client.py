@@ -19,7 +19,8 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, stats, watermark
-from .model import Channel, ChannelUser, FileInfo, Me, Post, Reaction, Thread, UnreadChannel
+from .model import (Channel, ChannelUser, FileInfo, Me, NoMandateEndpoint, Post, Reaction, Thread,
+                    UnreadChannel)
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -233,6 +234,18 @@ DESCRIPTION_TTL_SEC = 600.0
 ATTESTATION_PROP = "agent_attestation"
 # The most the registrar's answer with a home's ask-mode record may hold (RT-6.25 step 8).
 MODE_RECORD_MAX = 8192
+# The registrar's own 404 for a home without a mandate (RT-6.26 step 8).
+NO_MANDATE_ERROR = "no mandate set"
+
+
+def _error_of(body: bytes) -> str:
+    """The `error` of a registrar's JSON answer, '' when it has none."""
+    try:
+        data = json.loads(body[:MODE_RECORD_MAX].decode("utf-8"))
+    except ValueError:
+        return ""
+    value = data.get("error") if isinstance(data, dict) else ""
+    return value if isinstance(value, str) else ""
 # Three base64url segments, as the registrar sends it (attest.py checks the rest).
 _ATTESTATION_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 _ID = re.compile(r"[a-z0-9]{26}")
@@ -717,15 +730,35 @@ class MattermostAdapter:
         root = reg.removesuffix("/agents")
         return f"{root}/modes/{mm_id(channel_id, 'channel')}"
 
+    def mandates_url(self, channel_id: str) -> str:
+        """Where the registrar publishes a home's mandate (RT-6.26 step 8), found
+        like modes_url: `…/mandates/<id>`."""
+        return self.modes_url(channel_id).replace("/modes/", "/mandates/")
+
     async def ask_mode_record(self, channel_id: str) -> str | None:
         """The registrar's signed ask-mode record of a home (RT-6.25 step 8):
         `GET …/modes/<id>` → `{"record": "<JWS>"}`, None on 404. No
         Authorization header (the bot's token never goes there), 5 s, at
         most MODE_RECORD_MAX bytes; anything else raises."""
+        return await self._registrar_record(self.modes_url(channel_id))
+
+    async def mandate_record(self, channel_id: str) -> str | None:
+        """The registrar's signed mandate record of a home (RT-6.26 step 8):
+        `GET …/mandates/<id>`, read like ask_mode_record, except that only a 404
+        with the registrar's own body `{"error":"no mandate set"}` means none:
+        any other 404 (a registrar without the endpoint, before 0.6.0, or a proxy
+        in front of it) raises NoMandateEndpoint, so that a rollout never reads
+        it as `off`."""
+        return await self._registrar_record(self.mandates_url(channel_id),
+                                            none_error=NO_MANDATE_ERROR)
+
+    async def _registrar_record(self, url: str, *, none_error: str = "") -> str | None:
         out = bytearray()
-        async with self._http().stream("GET", self.modes_url(channel_id), timeout=5.0,
+        async with self._http().stream("GET", url, timeout=5.0,
                                        headers={"Accept": "application/json"}) as resp:
             if resp.status_code == 404:
+                if none_error and _error_of(await resp.aread()) != none_error:
+                    raise NoMandateEndpoint("registrar has no mandate endpoint")
                 return None
             resp.raise_for_status()
             async for chunk in resp.aiter_bytes():

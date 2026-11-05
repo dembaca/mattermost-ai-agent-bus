@@ -137,6 +137,14 @@ class ChatPort(Protocol):
         read on the port: it is about a chat channel, and the tests fake it."""
         ...
 
+    async def mandate_record(self, channel_id: str) -> str | None:
+        """The registrar's signed mandate record of a home (RT-6.26 step 8),
+        unverified (attest.verify_mandate checks it): the compact JWS, None when
+        no mandate is set there (the registrar's 404 `no mandate set`, also after
+        `/agent-mandate off`). Raises on any other failure, a 404 without that
+        answer too (a registrar without the endpoint), like ask_mode_record."""
+        ...
+
     # --- posting and replying ------------------------------------------------
     async def post(self, message: str, *, channel_id: str | None = None,
                    root_id: str | None = None, props: dict[str, Any] | None = None) -> Post:

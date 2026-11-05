@@ -408,7 +408,7 @@ async def test_bus_info_shows_the_mandate(chat, monkeypatch):
     got = json.loads(await server.bus_info())["mandate"]
     assert got == {"role": "👑 of ~hub", "by": "dembaca",
                    "until": time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime((NOW_MS - 60_000 + 7 * DAY) / 1000)),
-                   "holder": "agent-hub", "post": MPOST}
+                   "holder": "agent-hub", "post": MPOST, "source": "post"}
     mandate._fetched.clear()
     c.pinned = []
     assert json.loads(await server.bus_info())["mandate"] == {"why": "none pinned in this home"}

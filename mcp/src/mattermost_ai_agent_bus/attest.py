@@ -56,6 +56,9 @@ TYP = "mm-agent-attestation+jwt"
 # and the modes such a record may name here.
 MODE_TYP = "mm-agent-mode+jwt"
 MODE_MODES = ("direct", "coordinator")
+# The registrar's signed mandate of a home (RT-6.26 step 8, ADR-006 phase 2).
+MANDATE_TYP = "mm-agent-mandate+jwt"
+MANDATE_NOTE_MAX = 200
 ENV = "MM_BOT_ATTESTATION"
 KEYS_ENV = "MM_REGISTRAR_KEYS"
 ENROLLMENT, SECRET = "enrollment", "secret"
@@ -308,6 +311,66 @@ def verify_mode(token: object, keys: Mapping[str, Ed25519PublicKey], *, channel_
                                   now=time.time() if now is None else now, parse=_mode_record)
     except Exception as exc:  # noqa: BLE001 — strict: malformed is invalid, never an error
         log.debug("ask mode record not verified: %s", type(exc).__name__)
+        return None, "malformed"
+    if record is not None and record.channel_id != channel_id:
+        return None, "channel_id mismatch"
+    return record, why
+
+
+# --- the mandate of a home (RT-6.26 step 8, ADR-006 phase 2) -------------------
+
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+@dataclass(frozen=True)
+class MandateRecord:
+    """A verified mandate record: what a human set with the registrar's
+    `/agent-mandate` in the home `channel_id`: the coordinator of the channel
+    `home` (a channel id) gives tasks and priorities for them there. `until`
+    is `YYYY-MM-DD` or empty, `note` free text."""
+
+    channel_id: str
+    home: str
+    set_by: str
+    set_by_id: str
+    set_at_ms: int  # when the human set it, unix ms
+    until: str
+    note: str
+    iat: int
+    exp: int
+    kid: str
+
+
+def _mandate_record(payload: Mapping[str, Any], kid: str) -> MandateRecord | str:
+    """The record's claims, typed; why not when one is missing or malformed."""
+    channel_id, home = payload.get("channel_id"), payload.get("home")
+    set_by_id, set_by = payload.get("set_by_id"), _handle(payload.get("set_by"))
+    set_at, until, note = _int(payload.get("set_at_ms")), payload.get("until", ""), payload.get("note", "")
+    if not (isinstance(channel_id, str) and _ID.fullmatch(channel_id)
+            and isinstance(home, str) and _ID.fullmatch(home)
+            and isinstance(set_by_id, str) and _ID.fullmatch(set_by_id)
+            and set_by is not None and set_at is not None and set_at > 0
+            and isinstance(until, str) and (not until or _DAY.fullmatch(until))
+            and isinstance(note, str) and len(note) <= MANDATE_NOTE_MAX):
+        return "bad claims"
+    return MandateRecord(channel_id=channel_id, home=home, set_by=set_by,
+                         set_by_id=set_by_id, set_at_ms=set_at, until=until, note=note,
+                         iat=payload["iat"], exp=payload["exp"], kid=kid)
+
+
+def verify_mandate(token: object, keys: Mapping[str, Ed25519PublicKey], *, channel_id: str,
+                   now: float | None = None) -> tuple[MandateRecord | None, str]:
+    """The registrar's mandate record for the home `channel_id` when it is
+    sound (RT-6.26 step 8): a pinned key signed it, EdDSA and the mandate type
+    (a mode record or an attestation is refused here), not expired, issued not
+    later than now (both with SKEW_SEC), for this home. Else (None, why). Never
+    raises."""
+    try:
+        record, why = _verify_jws(token, keys, typ=MANDATE_TYP,
+                                  now=time.time() if now is None else now,
+                                  parse=_mandate_record)
+    except Exception as exc:  # noqa: BLE001 — strict: malformed is invalid, never an error
+        log.debug("mandate record not verified: %s", type(exc).__name__)
         return None, "malformed"
     if record is not None and record.channel_id != channel_id:
         return None, "channel_id mismatch"

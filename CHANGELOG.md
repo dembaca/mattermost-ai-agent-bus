@@ -19,6 +19,34 @@ before 0.5.0 are described in the git history.
   deciding all along. The carrier is open: the direction is the registrar serving
   it, as it serves the ask-mode record.
 
+## 0.71.18
+
+### Added
+
+- **`/agent-mandate`: the mandate as a signed record**
+  ([RT-6.26 step 8](docs/arc42/06-runtime-view.md), ADR-006 phase 2). With the
+  registrar's keys pinned (`MM_REGISTRAR_KEYS`) only a record the registrar
+  signed mandates: a trusted human types `/agent-mandate set ~<home> [until
+  YYYY-MM-DD] [note]` in the target home (`off`, `status`), and each server
+  reads `GET <registrar>/register/v1/mandates/<channel id>` at its first look
+  and then every 120 s, verifies it (`attest.verify_mandate`, type
+  `mm-agent-mandate+jwt`) and counts it only when `set_by_id` is one of its
+  trusted humans. A 404 (none, or `off`) means none; a failed read, a record
+  that does not verify and an older one keep the last good one to its expiry.
+  A pinned mandate post then counts nothing (a hard cut, decided 2026-11-05), and the 👑's server
+  answers a trusted human's one once with the command; `bus_info`'s `mandate`
+  names `source` (`registrar` or `post`) and the `note`. Without pinned keys
+  phase 1 holds, the pinned post. Needs the registrar 0.6.0, deployed first,
+  and the slash command `/agent-mandate` created in Mattermost. Only the
+  registrar's own 404 `{"error":"no mandate set"}` means none: any other 404 (a
+  registrar before 0.6.0, a proxy) is a failed read, so a rollout never reads
+  it as `off`; a failed read holds the last record for 5 refresh periods
+  (about 10 min) after the last read that went through, not to its end; a
+  swallowed mandate post is logged once on a server that is not the 👑's. The
+  command is `/agent-mandate set ~<home> [until YYYY-MM-DD] [note]` (no emoji in
+  the syntax), the record's claim `home`, `bus_info.mandate.role` reads
+  `coordinator of ~<home>`; a test checks the registrar's interop vector.
+
 ## 0.71.17
 
 ### Changed
