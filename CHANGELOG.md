@@ -10,7 +10,7 @@ before 0.5.0 are described in the git history.
 - **`/agent-mandate`: the mandate as a signed record**
   ([RT-6.26 step 8](docs/arc42/06-runtime-view.md), ADR-006 phase 2). With the
   registrar's keys pinned (`MM_REGISTRAR_KEYS`) only a record the registrar
-  signed mandates: a trusted human types `/agent-mandate 👑 of ~<home> [until
+  signed mandates: a trusted human types `/agent-mandate set ~<home> [until
   YYYY-MM-DD] [note]` in the target home (`off`, `status`), and each server
   reads `GET <registrar>/register/v1/mandates/<channel id>` at its first look
   and then every 120 s, verifies it (`attest.verify_mandate`, type

@@ -62,7 +62,7 @@ REMINDER = "reminder"
 ASK_LINK = "ask_link"
 # The 👑's acknowledgement of an ask mode switch (RT-6.25 step 2): fyi.
 ASK_MODE = "ask_mode"
-# The 👑's one hint under a pinned mandate post when the registrar's keys are
+# The coordinator's one hint under a pinned mandate post when the registrar's keys are
 # pinned and the post mandates nothing (RT-6.26 step 8): fyi.
 MANDATE = "mandate"
 _OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE)

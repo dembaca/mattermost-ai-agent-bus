@@ -737,11 +737,11 @@ Naming a bot in that word does not last: bot names change with every session.
       trusted human on 2026-11-05: a hard cut, a pinned post counts nothing
       once the keys are pinned, and the 👑's server answers one with the
       command), as ADR-005 phase 2. A trusted
-      human types `/agent-mandate 👑 of ~<home> [until YYYY-MM-DD] [note]` in the
+      human types `/agent-mandate set ~<home> [until YYYY-MM-DD] [note]` in the
       target home (`off`, `status`); the registrar accepts it only from a
       member of that channel and publishes it signed
       (`GET <registrar>/register/v1/mandates/<channel id>`, JWS type
-      `mm-agent-mandate+jwt`, claims `channel_id`, `crown_of` (the named
+      `mm-agent-mandate+jwt`, claims `channel_id`, `home` (the named
       home's id), `set_by`, `set_by_id`, `set_at_ms`, `until`, `note`,
       `iat`, `exp`). Each server verifies it like the mode (`attest.verify_mandate`
       beside `verify_mode`) and counts it only when `set_by_id` is one of its

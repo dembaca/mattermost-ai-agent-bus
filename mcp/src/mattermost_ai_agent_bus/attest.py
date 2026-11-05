@@ -324,12 +324,12 @@ _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 @dataclass(frozen=True)
 class MandateRecord:
     """A verified mandate record: what a human set with the registrar's
-    `/agent-mandate` in the home `channel_id`: the holder of the crown of
-    `crown_of` (a channel id) gives tasks and priorities for them there. `until`
+    `/agent-mandate` in the home `channel_id`: the coordinator of the channel
+    `home` (a channel id) gives tasks and priorities for them there. `until`
     is `YYYY-MM-DD` or empty, `note` free text."""
 
     channel_id: str
-    crown_of: str
+    home: str
     set_by: str
     set_by_id: str
     set_at_ms: int  # when the human set it, unix ms
@@ -342,17 +342,17 @@ class MandateRecord:
 
 def _mandate_record(payload: Mapping[str, Any], kid: str) -> MandateRecord | str:
     """The record's claims, typed; why not when one is missing or malformed."""
-    channel_id, crown_of = payload.get("channel_id"), payload.get("crown_of")
+    channel_id, home = payload.get("channel_id"), payload.get("home")
     set_by_id, set_by = payload.get("set_by_id"), _handle(payload.get("set_by"))
     set_at, until, note = _int(payload.get("set_at_ms")), payload.get("until", ""), payload.get("note", "")
     if not (isinstance(channel_id, str) and _ID.fullmatch(channel_id)
-            and isinstance(crown_of, str) and _ID.fullmatch(crown_of)
+            and isinstance(home, str) and _ID.fullmatch(home)
             and isinstance(set_by_id, str) and _ID.fullmatch(set_by_id)
             and set_by is not None and set_at is not None and set_at > 0
             and isinstance(until, str) and (not until or _DAY.fullmatch(until))
             and isinstance(note, str) and len(note) <= MANDATE_NOTE_MAX):
         return "bad claims"
-    return MandateRecord(channel_id=channel_id, crown_of=crown_of, set_by=set_by,
+    return MandateRecord(channel_id=channel_id, home=home, set_by=set_by,
                          set_by_id=set_by_id, set_at_ms=set_at, until=until, note=note,
                          iat=payload["iat"], exp=payload["exp"], kid=kid)
 

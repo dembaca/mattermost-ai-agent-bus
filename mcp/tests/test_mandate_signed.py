@@ -23,11 +23,11 @@ from mattermost_ai_agent_bus import gate
 DAY = mandate.DAY_MS
 
 
-def record(*, set_at=NOW_MS - 60_000, by=HUMAN, name="dembaca", channel=WORK, crown=HUB,
+def record(*, set_at=NOW_MS - 60_000, by=HUMAN, name="dembaca", channel=WORK, home=HUB,
            until="", note="", typ=attest.MANDATE_TYP, iat=None, **over) -> str:
     """A record as the registrar signs it, fresh (iat now, exp an hour later)."""
     iat = int(time.time()) if iat is None else iat
-    claims = {"channel_id": channel, "crown_of": crown, "set_by": name, "set_by_id": by,
+    claims = {"channel_id": channel, "home": home, "set_by": name, "set_by_id": by,
               "set_at_ms": set_at, "until": until, "note": note, "iat": iat,
               "exp": iat + 3600} | over
     header = {"alg": "EdDSA", "typ": typ, "kid": "Vkdap1RjR0wChd9d"}
@@ -57,7 +57,7 @@ def test_a_mandate_record_verifies_and_is_strict():
     got, why = attest.verify_mandate(record(until="2099-01-02", note="for #141"), keys,
                                      channel_id=WORK)
     assert why == "" and got is not None
-    assert (got.crown_of, got.set_by, got.set_by_id, got.until, got.note) == (
+    assert (got.home, got.set_by, got.set_by_id, got.until, got.note) == (
         HUB, "dembaca", HUMAN, "2099-01-02", "for #141")
     assert attest.verify_mandate(record(), keys, channel_id=HUB) == (None, "channel_id mismatch")
     # A mode record or an attestation is no mandate, and a mandate no mode.
@@ -70,7 +70,7 @@ def test_a_mandate_record_verifies_and_is_strict():
 
 
 @pytest.mark.parametrize("over", [
-    {"crown_of": "H" * 26}, {"crown": "short"}, {"set_by_id": "u" * 25}, {"set_by": "no handle"},
+    {"home": "H" * 26}, {"home": "short"}, {"set_by_id": "u" * 25}, {"set_by": "no handle"},
     {"set_at_ms": 0}, {"until": "soon"}, {"until": 20990102}, {"note": "x" * 201},
     {"note": 5}, {"channel": "C" * 26},
 ])
@@ -203,7 +203,7 @@ async def test_a_foreign_holder_is_never_mandated_from_a_record_either(chat):
 
 # --- the hint under a pinned post ---------------------------------------------------------
 
-def _pinned_post(text="mandate: 👑 of ~hub until 2099-01-02", **kw):
+def _pinned_post(text="mandate: :crown: of ~hub until 2099-01-02", **kw):
     return post_of({"id": MPOST, "user_id": HUMAN, "channel_id": WORK, "message": text,
                     "create_at": NOW_MS, **kw})
 
@@ -213,7 +213,7 @@ async def test_a_mandate_post_with_keys_pinned_gets_the_hint_once(chat, monkeypa
     assert await mandate.observe(chat, _pinned_post(), BOT) is True
     [sent] = chat.posted
     assert sent["root_id"] == MPOST and sent["props"]["a2a"]["kind"] == "mandate"
-    assert "/agent-mandate 👑 of ~hub until 2099-01-02" in sent["message"]
+    assert "/agent-mandate set ~hub until 2099-01-02" in sent["message"]
     assert "mandates nothing" in sent["message"]
     chat.posts = [_pinned_post(), post_of({"id": "r" * 26, "user_id": BOT, "channel_id": WORK,
                                            "root_id": MPOST, "message": "x",
@@ -223,7 +223,7 @@ async def test_a_mandate_post_with_keys_pinned_gets_the_hint_once(chat, monkeypa
 
 
 async def test_other_servers_stay_quiet_and_other_posts_are_no_mandate_posts(chat, monkeypatch):
-    assert await mandate.observe(chat, _pinned_post(), BOT) is True    # not the 👑: no word
+    assert await mandate.observe(chat, _pinned_post(), BOT) is True    # not the coordinator: no word
     assert chat.posted == []
     monkeypatch.setattr(lease, "crown_held", lambda uid: True)
     for post in (_pinned_post(user_id=OTHER), _pinned_post(root_id="r" * 26),
@@ -248,7 +248,7 @@ async def test_bus_info_names_the_source_and_the_note(chat, monkeypatch):
     chat.mandate_records[WORK] = record(note="for #141")
     got = await mandate.info(chat, NOW)
     assert got["source"] == "registrar" and got["note"] == "for #141"
-    assert got["role"] == "👑 of ~hub" and got["by"] == "dembaca"
+    assert got["role"] == "coordinator of ~hub" and got["by"] == "dembaca"
     chat.mandate_records.clear()
     await mandate.refresh(chat, NOW + 200)
     assert "/agent-mandate" in (await mandate.info(chat, NOW + 200))["why"]

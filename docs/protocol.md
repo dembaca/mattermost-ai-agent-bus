@@ -186,7 +186,7 @@ each server reads `GET <registrar>/register/v1/modes/<channel id>`
 A trusted human's pinned post `mandate: 👑 of ~<home>` in a home marks the
 tasks that crown's holder posts there `mandated`; they approve nothing. With the
 registrar's keys pinned the post counts nothing: the mandate is set with
-`/agent-mandate 👑 of ~<home>` and read from the registrar's signed record
+`/agent-mandate set ~<home>` and read from the registrar's signed record
 ([arc42 §6.26](arc42/06-runtime-view.md#626-mandate-for-a-role)).
 
 ## Inbox classification

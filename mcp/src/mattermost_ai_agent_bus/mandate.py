@@ -10,7 +10,7 @@ a bot's or an agent's post, never a reply (step 2).
 With the registrar's keys pinned (MM_REGISTRAR_KEYS, ADR-006 phase 2, step 8)
 only the registrar's signed record counts, which a trusted human sets with
 `/agent-mandate` (`off` removes it): a pinned post mandates nothing, and the
-👑's server answers a trusted human's one with how it is set (observe).
+coordinator's server answers a trusted human's one with how it is set (observe).
 Without pinned keys, as follows.
 
 Each server reads its home's pinned posts at its first look and then every
@@ -81,6 +81,8 @@ class Mandate:
 
     @property
     def role(self) -> str:
+        if self.source == SIGNED:
+            return f"coordinator of ~{self.home}"
         return f"{lease.CROWN} of ~{self.home}"
 
 
@@ -215,13 +217,13 @@ async def _signed(client: ChatPort, home: str, old: _Read | None, now: float) ->
         _note(("until", home, record.until), "mandate record: until %r is no date", record.until)
         return _Read(None, f"mandate record: until {record.until!r} is no date", at=now)
     try:
-        name = (await client.get_channel(record.crown_of)).name
+        name = (await client.get_channel(record.home)).name
     except Exception as exc:  # noqa: BLE001 — not readable: the id names it
-        _note(("home", record.crown_of), "mandate: the crown's home %s not read: %s",
-              record.crown_of, exc)
-        name = record.crown_of
+        _note(("home", record.home), "mandate: the home %s not read: %s",
+              record.home, exc)
+        name = record.home
     return _Read(Mandate(post=f"registrar-{record.set_at_ms}", home=name,
-                         home_id=record.crown_of, by=record.set_by, by_id=record.set_by_id,
+                         home_id=record.home, by=record.set_by, by_id=record.set_by_id,
                          at_ms=record.set_at_ms, until_ms=end, source=SIGNED,
                          note=record.note), "", at=now)
 
@@ -405,7 +407,7 @@ async def observe(client: ChatPort, post: Post, uid: str) -> bool:
     """A post the inbox sees, live or in its backfill: True when it is a
     mandate post by a trusted human in the home while the registrar's keys are
     pinned (step 8). It mandates nothing and goes to no agent's model; the
-    👑's server answers it once in its thread with how a mandate is set. False
+    coordinator's server answers it once in its thread with how a mandate is set. False
     for any other post, without pinned keys (phase 1: a post is the mandate)
     and on any error: the post goes on as any post."""
     try:
@@ -420,12 +422,12 @@ async def observe(client: ChatPort, post: Post, uid: str) -> bool:
             return False
         if not lease.crown_held(uid):
             _note(("swallowed", post.id), "mandate post %s by a trusted human goes to no agent "
-                  "(the registrar's keys are pinned); only the 👑's server answers it", post.id)
+                  "(the registrar's keys are pinned); only the coordinator's server answers it", post.id)
         else:
             name, until = got
             posts = (await client.thread(post.id)).posts
             if not any(p.kind == a2a.MANDATE for p in posts):
-                command = f"👑 of ~{name}" + (f" until {until}" if until else "")
+                command = f"set ~{name}" + (f" until {until}" if until else "")
                 await client.post(lease.with_crown(_HINT.format(command=command), uid),
                                   root_id=post.id, props=a2a.props(kind=a2a.MANDATE))
         return True
