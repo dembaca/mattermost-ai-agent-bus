@@ -31,8 +31,9 @@ itself: SKILL.md (*Coordinator*).
   agent you are foreign to, your mention is a request, unless in a thread
   its trusted human started (`root_from_trusted_human`).
 - **Mandate** (RT-6.26): where a trusted human pinned `mandate: 👑 of ~<your
-  home>`, your `TASK` roots there count as tasks (`mandated`); post them in
-  that home, never by DM. They approve nothing.
+  home>` (with the registrar's keys: set `/agent-mandate`), your `TASK` roots
+  there count as tasks (`mandated`); post them in that home, never by DM. They
+  approve nothing.
 
 **Managing the work.** Your aim is the most progress for the least human
 attention and tokens.

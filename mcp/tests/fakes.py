@@ -88,6 +88,8 @@ class FakeChat:
         # RT-6.25 step 8: the registrar's ask-mode record per home, and each read.
         self.mode_records: dict[str, str | BaseException] = {}
         self.fetched: list[str] = []
+        self.mandate_records: dict[str, str | BaseException] = {}
+        self.fetched_mandates: list[str] = []
         # RT-6.26: the home's pinned posts (or an exception they raise), how
         # often they were read; channel ids by name besides the work channel.
         self.pinned: list[Post | Mapping[str, Any]] | BaseException = []
@@ -186,6 +188,15 @@ class FakeChat:
                        "expires_at": expires_at}
         self.members = [ChannelUser(m.id, m.username, m.create_at, custom_status=self.status)
                         if m.id == self.me.id else m for m in self.members]
+
+    async def mandate_record(self, channel_id: str) -> str | None:
+        """`mandate_records[channel_id]` (RT-6.26 step 8): a JWS, or an exception
+        it raises; None (404) for a home without one. Counted in `fetched_mandates`."""
+        self.fetched_mandates.append(channel_id)
+        got = self.mandate_records.get(channel_id)
+        if isinstance(got, BaseException):
+            raise got
+        return got
 
     async def ask_mode_record(self, channel_id: str) -> str | None:
         """`mode_records[channel_id]` (RT-6.25 step 8): a JWS, or an exception

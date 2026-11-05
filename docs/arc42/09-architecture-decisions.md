@@ -14,7 +14,7 @@ code does today and point here where a decision will change them.
 | ADR-003 | An agent's owner comes from its registrar-bound bot description, or from the registrar's signed claim where its keys are pinned | Decided 2026-10-29, built (WP2, 0.60.0; WP3, 0.61.0; WP6, 0.64.0); the signed claim (#83) built on the bus side in 0.66.0 (RT-6.24) | WP2, WP3, WP6, #83 |
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-ask-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
-| ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phase 1 built (0.71.0): the pinned post, RT-6.26; phase 2 (a signed record) depends on the registrar (#83) | #141 |
+| ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phases 1 (0.71.0: the pinned post) and 2 (0.71.18: the registrar's signed `/agent-mandate` record) built, RT-6.26 | #141 |
 | ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); amendment phases B (0.71.9: the crown only for peers) and C (0.71.11: stale copies stay off the bus) built, the rest not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; D, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 open | – |
@@ -506,7 +506,8 @@ post, RT-6.26: the read of the home's pinned posts, the trust check by
 author id, expiry, the role resolved per event with the peer check,
 `mandated` and `mandated_by` on events and push attributes, `mandated` on
 task rows and `mandate` in `bus_info`, with RT-6.16, RT-6.14 and RT-6.22
-changed as step 12 names; phase 2 open (the registrar's signed record).
+changed as step 12 names; phase 2 built (0.71.18): the registrar's signed
+`/agent-mandate` record (RT-6.26 step 8), the only source with pinned keys.
 Decides #141 point 3 and settles point 4;
 points 6 and 8 bear on it. Builds on ADR-001 (trust), ADR-002 (a crown per
 (agent, home)) and the overview across homes (RT-6.14 step 9, 0.70.0).
@@ -732,14 +733,17 @@ Naming a bot in that word does not last: bot names change with every session.
       and a post in another channel get no marker; a mandated event stays
       `from_trusted_human: false` and its 👍 approves nothing; without a pin
       every event is as before (parity).
-    - **Phase 2: a registrar-signed record**, as ADR-005 phase 2. A trusted
-      human types `/agent-mandate 👑 of ~<home> [--until <date>]` in the
+    - **Phase 2: a registrar-signed record** (built, 0.71.18; decided by a
+      trusted human on 2026-11-05: a hard cut, a pinned post counts nothing
+      once the keys are pinned, and the 👑's server answers one with the
+      command), as ADR-005 phase 2. A trusted
+      human types `/agent-mandate set ~<home> [until YYYY-MM-DD] [note]` in the
       target home (`off`, `status`); the registrar accepts it only from a
       member of that channel and publishes it signed
       (`GET <registrar>/register/v1/mandates/<channel id>`, JWS type
-      `mm-agent-mandate+jwt`, claims `channel_id`, `crown_of` (the named
-      home's id), `set_by`, `set_by_id`, `set_at_ms`, `until`, `iat`,
-      `exp`). Each server verifies it like the mode (`attest.verify_mandate`
+      `mm-agent-mandate+jwt`, claims `channel_id`, `home` (the named
+      home's id), `set_by`, `set_by_id`, `set_at_ms`, `until`, `note`,
+      `iat`, `exp`). Each server verifies it like the mode (`attest.verify_mandate`
       beside `verify_mode`) and counts it only when `set_by_id` is one of its
       trusted humans. With the registrar's keys pinned the record is the only
       source and a pinned post mandates nothing; without them phase 1 holds.
