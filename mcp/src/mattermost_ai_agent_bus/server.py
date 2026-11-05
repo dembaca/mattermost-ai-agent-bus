@@ -1468,7 +1468,7 @@ async def ask_human(
         return _refused("ask_human", "no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
     # RT-6.25: the server's floor decides the class, then the mode whom it goes to.
     effective, floored = askroute.classify(kind, need, decision, answers)
-    if effective == askroute.APPROVAL and len([a for a in answers.split("/") if a.strip()]) > 2:
+    if effective == askroute.APPROVAL and len(asks.split_answers(answers)) > 2:
         # RT-6.11 step 1: an approval is go / no-go, 👍 and 👎; three or four
         # alternatives with their keycaps are for a question.
         return _out("ask_human", {

@@ -603,6 +603,18 @@ async def test_every_alternative_has_its_own_emoji(monkeypatch):
     assert asks.answer_line("a / b / c / d / e", False).startswith("👍 = yes")  # free text
 
 
+def test_a_slash_inside_an_alternative_does_not_split_and_own_emojis_are_kept():
+    """RT-6.11 step 1: a separator has a space on both sides, so `5h/7d` stays
+    in its alternative; an emoji the agent put first is taken over, not given twice."""
+    line = asks.answer_line("👍 = ja, 5h/7d sind sichtbar · 👎 = nein, keine Limits", True)
+    assert line == "👍 = ja, 5h/7d sind sichtbar · 👎 = nein, keine Limits · or reply in this thread"
+    assert asks.alternatives("ja, 5h/7d sichtbar / nein") == ["ja, 5h/7d sichtbar", "nein"]
+    assert asks.answer_line("👎 no / go", False).startswith("👎 = no · 👍 = go")
+    assert asks.answer_line("go/no-go", False).startswith("👍 = go · 👎 = no-go")  # bare slash, no spaces
+    assert asks.answer_line("1️⃣ = A / B / C", False).startswith("1️⃣ = A · 2️⃣ = B · 3️⃣ = C")
+    assert asks.answer_line("one 5h/7d thing", True).startswith("👍 = yes to the decision")  # free text
+
+
 @pytest.mark.asyncio
 async def test_an_approval_has_two_alternatives_only(monkeypatch):
     """RT-6.11 step 1: three alternatives naming an action with effect: nothing is posted."""

@@ -35,6 +35,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -79,22 +80,54 @@ def is_answer(emoji: str) -> bool:
     return answer_of(emoji) is not None or choice_of(emoji) is not None
 
 
+# The emojis an agent may already put in front of an alternative, `👍 = yes`.
+_MARKS = ("👍", "✅", "👎", "❌", *KEYCAPS)
+_SEP = re.compile(r"\s+/\s+|\s+·\s+")
+
+
+def split_answers(answers: str) -> list[tuple[str, str]]:
+    """The ask's alternatives as (emoji the agent put first, text), written
+    `A / B / C` or `A · B`: a separator has a space on both sides, so a `/` inside
+    an alternative (`5h/7d`) does not split. Without a spaced separator and
+    without any space, a bare `/` separates (`go/no-go`)."""
+    text = answers.strip()
+    parts = _SEP.split(text) if _SEP.search(text) else (
+        text.split("/") if " " not in text else [text])
+    out = []
+    for p in parts:
+        p = p.strip()
+        mark = next((m for m in _MARKS if p.startswith(m)), "")
+        rest = p[len(mark):].lstrip() if mark else p
+        if mark and rest[:1] in ("=", ":", "-", "–"):
+            rest = rest[1:].lstrip()
+        out.append((mark, rest))
+    return [a for a in out if a[1]]
+
+
 def alternatives(answers: str) -> list[str]:
-    """The ask's alternatives, written `A / B / C`; empty when it names fewer
-    than two or more than four, which stays free text."""
-    parts = [a.strip() for a in answers.split("/")]
-    return parts if 2 <= len(parts) <= len(CHOICES) and all(parts) else []
+    """The ask's alternatives' texts; empty when it names fewer than two or
+    more than four, which stays free text."""
+    parts = [a[1] for a in split_answers(answers)]
+    return parts if 2 <= len(parts) <= len(CHOICES) else []
 
 
 def answer_line(answers: str, decision: bool) -> str:
     """The `Answer` field's text: every alternative with its own emoji, no
-    emoji twice. Two alternatives are 👍 (go) and 👎 (no go), three or four the
-    keycaps; none given, 👍 yes (to the decision) and 👎 no."""
-    alts = alternatives(answers)
-    if len(alts) == 2:
-        marks = [f"👍 = {alts[0]}", f"👎 = {alts[1]}"]
+    emoji twice; one the agent already put first is taken over. Two alternatives
+    are 👍 (go) and 👎 (no go), three or four the keycaps; none given, 👍 yes
+    (to the decision) and 👎 no."""
+    alts = split_answers(answers)
+    if not 2 <= len(alts) <= len(CHOICES):
+        alts = []
+    if len(alts) == 2 and not any(m in KEYCAPS for m, _ in alts):
+        pool = [e for e in ("👍", "👎")
+                if e not in {"👍" if m == "✅" else "👎" if m == "❌" else m for m, _ in alts}]
+        marks = [m or (pool.pop(0) if pool else "") for m, _ in alts]
+        marks = [f"{m} = {a[1]}" if m else a[1] for m, a in zip(marks, alts, strict=True)]
     elif alts:
-        marks = [f"{KEYCAPS[i]} = {a}" for i, a in enumerate(alts)]
+        used = {m for m, _ in alts if m in KEYCAPS}
+        free = [k for k in KEYCAPS if k not in used]
+        marks = [f"{(m if m in KEYCAPS else free.pop(0))} = {a}" for m, a in alts]
     else:
         marks = ["👍 = yes to the decision" if decision else "👍 = yes", "👎 = no"]
     return " · ".join(marks) + " · or reply in this thread"

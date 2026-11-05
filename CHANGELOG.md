@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.15
+
+### Fixed
+
+- **Answers of an ask are no longer cut at a `/` inside an alternative**
+  ([RT-6.11 step 1](docs/arc42/06-runtime-view.md)). `answers` was split at
+  every `/`, so `👍 = ja, 5h/7d sind sichtbar · 👎 = nein` became three
+  alternatives and the emoji line read `👍 = 👍 = ja, 5h · 👎 = 7d sind sichtbar
+  · …`. A separator is now ` / ` or ` · ` with a space on both sides (a bare `/`
+  only when the whole text has no space, `go/no-go`), and an emoji the agent put
+  in front of an alternative (`👍 = …`, `👎 …`, a keycap) is taken over; the
+  others get the free one. Two alternatives stay go / no-go with 👍/👎.
+
 ## 0.71.13
 
 ### Changed
