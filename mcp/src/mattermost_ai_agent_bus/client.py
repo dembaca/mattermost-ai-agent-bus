@@ -446,6 +446,10 @@ class MattermostAdapter:
     usage_written_at: float = field(default=0.0, repr=False, init=False)
     usage_write_error: str = field(default="", repr=False, init=False)
     usage_read_error: str = field(default="", repr=False, init=False)
+    # How the reads of other bots' reports went: one with a value, a readable
+    # account without one (never written, or overwritten), a failed read.
+    usage_reads: dict[str, int] = field(
+        default_factory=lambda: {"found": 0, "empty": 0, "failed": 0}, repr=False, init=False)
     _usages: dict[str, tuple[float, str | None]] = field(
         default_factory=dict, repr=False, init=False)
     # RT-6.21: lower-case username -> (when read, its bot account; None: none),
@@ -725,6 +729,7 @@ class MattermostAdapter:
         # (ADR-008 step 3) without a second GET.
         raw = props.get(USAGE_PROP) if isinstance(props, Mapping) else None
         self._usages[user_id] = (time.monotonic(), raw if isinstance(raw, str) else "")
+        self.usage_reads["found" if isinstance(raw, str) and raw else "empty"] += 1
 
     async def agent_attestation(self, user_id: str) -> str | None:
         """The registrar's attestation the bot put into its own user props
@@ -826,6 +831,7 @@ class MattermostAdapter:
             data = await self._api("GET", f"/api/v4/users/{user_id}")
         except Exception as exc:  # noqa: BLE001 — the roster without its numbers
             self._usage_failed("read", exc)
+            self.usage_reads["failed"] += 1
             data = None
         else:
             self.usage_read_error = ""
@@ -833,6 +839,7 @@ class MattermostAdapter:
             props = data.get("props")
             raw = props.get(USAGE_PROP) if isinstance(props, Mapping) else None
             value = raw if isinstance(raw, str) else ""
+            self.usage_reads["found" if value else "empty"] += 1
         self._usages[user_id] = (now, value)
         return value
 

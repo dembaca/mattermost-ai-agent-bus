@@ -63,7 +63,7 @@ usage_tap() {
     | def moved(k; step): (($cur[k] == null) != ($o[k] == null))
         or ($cur[k] != null and $o[k] != null and (($cur[k] - $o[k]) | fabs) >= step);
       if ($b | length) == 0 then empty
-      elif moved("ctx"; 1) or moved("five"; 1) or moved("seven"; 1) or moved("cost"; 0.1)
+      elif moved("ctx"; 1) or moved("five"; 1) or moved("seven"; 1) or moved("cost"; 0.0999)
            or (($o.at // 0) + 60 <= $now)
       then ($b, ($cur + {at: $now})) else empty end' <<<"$input" 2>/dev/null)
   [[ -n "${body:-}" && -n "${st:-}" ]] || return 0

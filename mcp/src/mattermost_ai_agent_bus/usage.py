@@ -55,7 +55,7 @@ def _percent(value: Any) -> float | None:
 
 def _cost(value: Any) -> float | None:
     """The session's cumulative cost in dollars: a number from 0 up to
-    MAX_COST_USD, in cents; anything else is none."""
+    MAX_COST_USD, rounded to cents; anything else is none."""
     if type(value) not in (int, float) or not 0 <= value <= MAX_COST_USD:  # also not NaN
         return None
     return float(round(value, 2))
@@ -266,12 +266,14 @@ def from_props(raw: str | None, now: float | None = None) -> dict[str, Any]:
     return out
 
 
-def info(written_at: float, write_error: str, read_error: str, now: float | None = None) -> dict[str, Any]:
+def info(written_at: float, write_error: str, read_error: str, now: float | None = None,
+         reads: dict[str, int] | None = None) -> dict[str, Any]:
     """bus_info's `usage` (ADR-008 step 3): the last report this server holds,
     and whether it reaches the bot's props and the other bots' props can be
     read: `write` is "written <n> s ago", "not written yet" or the last
-    failure ("PUT /api/v4/users/<id>/patch → 403"), `read` is "ok" or the last
-    failure of reading another bot's report."""
+    failure ("PUT /api/v4/users/<id>/patch → 403"); `read` counts the reads of
+    other bots' reports that `found` one, found `empty` (nothing written, or
+    overwritten) or `failed`, with the `last_error` if one failed."""
     now = time.time() if now is None else now
     if write_error:
         state = f"failed: {write_error}"
@@ -280,4 +282,6 @@ def info(written_at: float, write_error: str, read_error: str, now: float | None
     else:
         state = "not written yet" if _last is not None else "no report yet"
     return {"report": ({k: v for k, v in _last.items() if k != "at"} if _last else None),
-            "write": state, "read": f"failed: {read_error}" if read_error else "ok"}
+            "write": state,
+            "read": {**(reads or {"found": 0, "empty": 0, "failed": 0}),
+                     **({"last_error": read_error} if read_error else {})}}

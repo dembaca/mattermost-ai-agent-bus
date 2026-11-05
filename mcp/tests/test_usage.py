@@ -456,15 +456,18 @@ async def test_a_write_the_server_refuses_is_named_with_endpoint_and_status(capl
     with caplog.at_level(logging.WARNING), pytest.raises(httpx.HTTPStatusError):
         await c.publish_usage('{"ctx":5.0}')
     assert caplog.text == ""  # the same failure is logged once
-    info = usage.info(c.usage_written_at, c.usage_write_error, c.usage_read_error, NOW)
-    assert info["write"] == f"failed: PUT /api/v4/users/{UID}/patch → 403" and info["read"] == "ok"
+    info = usage.info(c.usage_written_at, c.usage_write_error, c.usage_read_error, NOW, c.usage_reads)
+    assert info["write"] == f"failed: PUT /api/v4/users/{UID}/patch → 403"
+    assert info["read"] == {"found": 0, "empty": 0, "failed": 0}
 
 
 async def test_a_read_that_fails_is_named_and_a_write_that_works_clears_the_failure():
     c = _failing(403, ("GET", f"/api/v4/users/{OTHER}"))
     assert await c.agent_usage(OTHER) is None  # the roster without its numbers
     assert c.usage_read_error == f"GET /api/v4/users/{OTHER} → 403"
-    assert usage.info(0.0, "", c.usage_read_error, NOW)["read"] == f"failed: GET /api/v4/users/{OTHER} → 403"
+    assert c.usage_reads == {"found": 0, "empty": 0, "failed": 1}
+    assert usage.info(0.0, "", c.usage_read_error, NOW, c.usage_reads)["read"] == {
+        "found": 0, "empty": 0, "failed": 1, "last_error": f"GET /api/v4/users/{OTHER} → 403"}
     ok = _failing(500, ("GET", "/nowhere"))
     assert await ok.publish_usage('{"ctx":1.0}') is True
     assert ok.usage_write_error == "" and ok.usage_written_at > 0
@@ -473,8 +476,38 @@ async def test_a_read_that_fails_is_named_and_a_write_that_works_clears_the_fail
 
 def test_the_usage_info_without_a_report_or_a_write():
     usage.reset()
-    assert usage.info(0.0, "", "", NOW) == {"report": None, "write": "no report yet", "read": "ok"}
+    assert usage.info(0.0, "", "", NOW) == {"report": None, "write": "no report yet",
+                                            "read": {"found": 0, "empty": 0, "failed": 0}}
     usage.record({"ctx": 5}, now=NOW)
     assert usage.info(0.0, "", "", NOW)["write"] == "not written yet"
     assert usage.info(0.0, "", "", NOW)["report"] == {"ctx": 5.0}
+    usage.reset()
+
+
+async def test_reads_of_other_bots_are_counted_as_found_empty_or_failed():
+    """bus_info `usage.read` tells "never written" (empty) from "overwritten" and from a failed read."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        uid = req.url.path.rsplit("/", 1)[-1]
+        if uid == "a" * 26:
+            return httpx.Response(200, json={"id": uid, "props": {"agent_usage": '{"ctx":5.0}'}})
+        if uid == "b" * 26:
+            return httpx.Response(200, json={"id": uid, "props": {}})
+        return httpx.Response(403, json={})
+
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    for who in ("a", "b", "c"):
+        await c.agent_usage(who * 26)
+    assert c.usage_reads == {"found": 1, "empty": 1, "failed": 1}
+
+
+async def test_the_numbers_are_written_with_the_status_not_only_at_the_next_beat():
+    """RT-6.6 step 8: a status write (a turn's start or end) carries the report into the props
+    under the same lock, so the roster sees a ctx below the bands at once."""
+    c = _Counting()
+    usage.reset()
+    usage.record({"ctx": 20})
+    await lease.set_status(c, "working")
+    assert c.locked == [True]  # written under the status lock, with the status
+    assert c.usage_writes and '"ctx":20' in c.usage_writes[-1]
     usage.reset()

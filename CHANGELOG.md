@@ -21,8 +21,13 @@ before 0.5.0 are described in the git history.
   or read of the usage report in the bot's props is logged as a warning (once
   per failure) and `bus_info` has a `usage` block: the report held, `write`
   (`written 40 s ago`, or the last failure as `PUT <path> → <status>`) and
-  `read`. The cause of `ctx` showing only in the own roster row is not found
-  yet; this is the way to see it.
+  `read` (how many reads of another bot's report found one, found none or
+  failed, and the last failure). The cause of `ctx` showing only in the own
+  roster row is not found yet; this is the way to see it.
+- The usage report is written into the props with every status write (a turn's
+  start or end), under the same lock, at most once a minute; before, a `ctx`
+  below the first band (50 %) reached the roster only with the heartbeat, up to
+  five minutes later, and nothing proves yet that this was the cause.
 
 ## 0.71.13
 

@@ -1466,8 +1466,8 @@ the trusted human dembaca on 2026-11-05 (bus post `89j8k7sf7jfifc46r85wm1rfew`),
 built in 0.71.14. It changes decision step 1's "Not `cost`": behind a gateway
 Claude Code reports no `rate_limits` (open question below), so there is no
 limit to show, and the session's cumulative cost is an indicator of its own.
-The tap also sends `cost.total_cost_usd` as `cost_usd` (a number from 0, in
-cents), when it moved by $0.10 or more, else with the 60 s beat. Where no
+The tap also sends `cost.total_cost_usd` as `cost_usd` (dollars from 0,
+rounded to cents), when it moved by $0.10 or more, else with the 60 s beat. Where no
 5-hour window is reported the status text shows it in the place of `5h`
 (`ctx 62% · $4.20`: the cut order of RT-6.6 step 1 is unchanged) and the roster
 row carries `cost_usd`; where a window is reported, `5h` and `7d` show as
