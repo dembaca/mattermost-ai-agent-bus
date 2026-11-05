@@ -131,7 +131,7 @@ update_note() {
   uf="$(mm_bot_state_file update 2>/dev/null)" || return 1
   [[ "$(sed -n 's/^NOTIFIED=//p' "$uf" 2>/dev/null)" != "$newer" ]] || return 1
   printf 'NOTIFIED=%s\n' "$newer" >"$uf" 2>/dev/null || return 1
-  printf '⬆ plugin %s is installed, this session runs %s — to switch: quit, then claude --continue' \
+  printf '⬆ plugin %s is installed, this session runs %s — to switch: quit, then claude --resume <session-id> (not --continue: several sessions share the directory)' \
     "$newer" "$(mm_tree_version "$BIN/..")"
 }
 

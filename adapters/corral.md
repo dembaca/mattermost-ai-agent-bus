@@ -12,8 +12,8 @@ scripts around a session. That is the best place for the bus lifecycle:
   offline and unregisters again as a safety net — a 404 counts as done. If corral is
   killed, the server notices within 5 s and does the same.
 - A Claude Code session that ended by itself keeps its bot instead, offline, for
-  `MM_SESSION_KEEP_SEC` (24 h): the next `corral run -- --continue` (or
-  `--resume <id>`) in the same workdir takes it over — same name, threads and DMs —
+  `MM_SESSION_KEEP_SEC` (24 h): the next `corral run -- --resume <id>` (or
+  `--continue`, which takes the workdir's newest session) in the same workdir takes it over — same name, threads and DMs —
   and a plain `corral run` registers a new one. The token stays in the host state
   directory meanwhile ([arc42 §6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session),
   steps 9–10).
@@ -224,7 +224,7 @@ While a session's MCP server still runs on the host, the sweep leaves that sessi
 alone (it ends with its watchdog); the files of host processes whose session ended
 (`<session>.host.json`, `.host.log`, `hosted/<session>/`) go with `--apply`.
 A bot an agent registered itself (`mcp-*.env`, outside corral) is kept for
-`claude --continue`; the sweep reports it as `KEPT` until its file is untouched for
+`claude --resume <id>` (or `--continue`); the sweep reports it as `KEPT` until its file is untouched for
 `MM_SESSION_KEEP_SEC` (24 h), and `--force` includes it sooner
 ([arc42 §6.10](../docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent)).
 So is a corral session's bot that `postEnd` kept: `KEPT` for `MM_SESSION_KEEP_SEC`

@@ -3,6 +3,20 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.13
+
+### Changed
+
+- **Restart texts name `--resume <id>`, not `--continue`**
+  ([RT-6.2 step 8](docs/arc42/06-runtime-view.md), RT-6.10 step 5). In a
+  directory several sessions share, `claude --continue` takes the newest
+  transcript, which may be another session's (it ran the coordinator's twice,
+  once under another bot). The update note of the Stop hook, `bus_info`'s
+  `update.how` and the docstrings now say `claude --resume <session-id>`
+  (`corral run -- --resume <session-id>`), with the session's own id when the
+  server knows it, else "pick this session" in the `--resume` picker. Texts that
+  only describe the takeover name `--resume <id>` first.
+
 ## 0.71.11
 
 ### Added
