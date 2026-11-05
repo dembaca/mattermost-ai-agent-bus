@@ -18,6 +18,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from . import a2a, files
+from .model import Mark
 
 # Drain rounds per turn before a counter wait_for_events cannot clear counts
 # as stale (MAX_DRAIN in the Stop hook).
@@ -48,7 +49,7 @@ def drain(pending: int, channels: Iterable[Mapping[str, Any]]) -> dict[str, Any]
         reason += "\n\nPending per channel:\n" + "\n".join(lines)
     reason += "\n\nIf wait_for_events returns nothing, the counter is stale — say so and finish."
     return {"action": "drain", "reason": reason,
-            "banner": f"📨 Collecting {pending} unread Mattermost message(s)", "pending": pending}
+            "banner": f"{a2a.symbol(Mark.INBOX)} Collecting {pending} unread Mattermost message(s)", "pending": pending}
 
 
 def needs_signoff(last_message: str, *, asked: bool, by_bus: bool, push: bool,
@@ -114,7 +115,7 @@ def signoff(*, push: bool) -> dict[str, Any]:
                "first. You are asked because you posted or were sent something on the bus since "
                "your last IDLE; this check will not block you again this turn.")
     return {"action": "signoff", "reason": reason,
-            "banner": "✋ Signing off on Mattermost before going idle"}
+            "banner": f"{a2a.symbol(Mark.SIGNOFF)} Signing off on Mattermost before going idle"}
 
 
 def named(post: Mapping[str, Any], username: str) -> bool:

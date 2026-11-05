@@ -211,7 +211,7 @@ def resolved(reactions: Collection[Reaction], names: Mapping[str, str],
     closes nothing. It answers nothing: no approval comes of it, and the
     reminders (RT-6.19) stop only with the asker's own resolve_ask."""
     prefix = session_file.agent_prefix()
-    return any(r.emoji_name == "white_check_mark" and r.user_id not in foreign
+    return any(a2a.is_done(r.emoji_name) and r.user_id not in foreign
                and names.get(r.user_id, "").startswith(prefix) for r in reactions)
 
 
@@ -219,7 +219,7 @@ def ask_closers(posts: Sequence[Post]) -> set[str]:
     """Who put a ✅ on an ask: the accounts to sort into peer and foreign
     (owners.foreign) before open_asks."""
     return {r.user_id for p in posts if p.kind == a2a.ASK
-            for r in p.reactions if r.emoji_name == "white_check_mark" and r.user_id}
+            for r in p.reactions if a2a.is_done(r.emoji_name) and r.user_id}
 
 
 def open_asks(posts: Sequence[Post], names: Mapping[str, str],

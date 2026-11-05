@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import a2a, asks, gate, lease, mandate, owners, remind, session_file, tasks
-from .model import Post
+from .model import Mark, Post
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -157,7 +157,7 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
         elif a.get("question"):
             # RT-6.25 step 7: a question to the 👑 wakes it; its human is
             # asked by the asking agent's server once the wait is over.
-            what, nxt = "question", f"{a.get('human', '–')} (👑: answer it, or ask the human)"
+            what, nxt = "question", f"{a.get('human', '–')} ({a2a.symbol(Mark.CROWN)}: answer it, or ask the human)"
             reminded = False
         elif reminded:
             what, nxt = "ask", f"{a.get('human', '–')} (human; reminded automatically)"
