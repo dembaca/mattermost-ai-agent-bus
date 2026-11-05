@@ -316,6 +316,53 @@ async def test_a_reconnect_is_checked_again_and_confirmed_anew():
     assert pusher.confirm(pusher.code) and pusher.confirmed.is_set()
 
 
+@pytest.mark.anyio
+async def test_the_old_code_confirms_nothing_while_prepare_waits():
+    """RT-6.12 step 2: prepare waits for the network and forgets the file; in
+    that time the confirmation is already reset, so channel_ok with the old code
+    cannot write the file beside an unconfirmed pusher."""
+    pusher = _pusher()
+    pusher.confirm(pusher.code)
+    old = pusher.code
+    in_prepare = asyncio.Event()
+    release = asyncio.Event()
+
+    async def prepare():
+        in_prepare.set()
+        await release.wait()
+
+    async def wait(timeout):
+        await asyncio.sleep(3600)
+
+    async def during():
+        await in_prepare.wait()
+        assert not pusher.confirmed.is_set() and not pusher.confirm(old)
+        assert not pusher.confirmed.is_set()
+        release.set()
+
+    with anyio.move_on_after(0.3):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(during)
+            await pusher.run(wait, prepare=prepare, check_after=(0.01,), check_every=10)
+    assert pusher.connection.sent == [channel.check(pusher.code)] and pusher.code != old
+
+
+@pytest.mark.anyio
+async def test_the_crown_back_pushes_nothing_while_unconfirmed():
+    """RT-6.12 step 3: held posts of a reconnect that is not confirmed yet stay
+    held (they would go to a session that may not see them, already marked
+    read); once it is confirmed the crown's return pushes them."""
+    pusher = _pusher()
+    pusher.held = [_post("IDLE a"), _post("hello", kind="mention")]
+
+    async def wakes(item):
+        return item["kind"] == "mention"
+
+    assert await pusher.recheck(wakes) == 0 and len(pusher.held) == 2 and pusher.connection.sent == []
+    pusher.confirm(pusher.code)
+    assert await pusher.recheck(wakes) == 1 and len(pusher.held) == 1
+
+
 def _post(message, kind="watched_channel", trusted=False, root=""):
     return {"kind": kind, "from_trusted_human": trusted,
             "post": {"id": "p", "root_id": root, "author": "agent-x", "at": "09:00",

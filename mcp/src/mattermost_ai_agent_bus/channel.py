@@ -338,6 +338,8 @@ class Pusher:
         in their order, the held posts that `wakes` now says wake the agent;
         the rest stay for the digest. A gated item is never pushed. Each goes
         out once: taken from the held list before it is sent. The number sent."""
+        if not self.confirmed.is_set():
+            return 0  # a reconnect not confirmed yet: the held posts stay, the digest sends them once it is
         sent = 0
         for item in list(self.held):
             if item.get("gated") or not await wakes(item):
@@ -378,6 +380,13 @@ class Pusher:
         if conn is None:
             return
         await conn.initialized.wait()
+        # A connection is confirmed by its own check, also one of a process that
+        # lived on (a relay reconnect: /reload-plugins, /mcp; RT-6.18). Reset
+        # before prepare, which waits for the network and forgets the
+        # confirmation file: in that time the old code must confirm nothing,
+        # or channel_ok would write the file again beside an unconfirmed pusher.
+        self.confirmed.clear()
+        self.code = secrets.token_hex(4)
         while prepare is not None:
             try:
                 await prepare()
@@ -387,13 +396,6 @@ class Pusher:
             except Exception as exc:  # noqa: BLE001 — no bus yet
                 log.info("channel check waits for the bus: %s", exc)
                 await asyncio.sleep(retry_sec)
-        # A connection is confirmed by its own check, also one of a process that
-        # lived on (a relay reconnect: /reload-plugins, /mcp; RT-6.18): prepare
-        # has forgotten the confirmation file, so an earlier confirmation that
-        # stays set would send no check and nothing would write the file again,
-        # and the hooks would ask for a listener beside a working push.
-        self.confirmed.clear()
-        self.code = secrets.token_hex(4)
         # Unconfirmed, the session may not see a single push: leave the inbox
         # to wait_for_events and the listener, which mark read what they hand over.
         # Claude Code drops a push that comes before it registered the channel
