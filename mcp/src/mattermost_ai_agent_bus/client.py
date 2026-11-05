@@ -230,7 +230,9 @@ _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 
 # A bot description (its owner and trusted list, ADR-003) is read again after this.
 DESCRIPTION_TTL_SEC = 600.0
-# The bot's own user prop that carries the registrar's attestation (RT-6.24).
+# The bot's own user prop that carries the registrar's attestation (RT-6.24). Nobody
+# writes it since 0.71.19 (a bot's patch of its own user is a 403); the read path is the
+# seam for the registrar endpoint.
 ATTESTATION_PROP = "agent_attestation"
 # The most the registrar's answer with a home's ask-mode record may hold (RT-6.25 step 8).
 MODE_RECORD_MAX = 8192

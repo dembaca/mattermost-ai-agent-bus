@@ -963,11 +963,10 @@ Everything the server writes in its state directory goes through one helper: a n
 |------|---------|----------------|
 | 1 | The answer's `attestation` is no string, not in the shape of a compact JWS, or longer than 8192 characters | Dropped, with a warning on stderr from the shell; the session runs as without one |
 | 1 | An older `MM_BOT_ATTESTATION` is in the host's or the shell's environment | The corral start hook clears it before registering, and `mm-agent-register.sh` unsets it when the registrar sends none; one left elsewhere names another bot and is invalid (step 2) |
-| 2 | No key pinned | `unverified (no pinned key)`: nothing is verified and nothing changes; it is still published when it names this bot, for agents that pinned the key |
-| 2 | Invalid: bad signature, a kid that is not pinned, expired, issued in the future, another bot, malformed | `invalid (<reason>)` and a warning; not published; agents with pinned keys judge the bot by its profile |
+| 2 | No key pinned | `unverified (no pinned key)`: nothing is verified and nothing changes |
+| 2 | Invalid: bad signature, a kid that is not pinned, expired, issued in the future, another bot, malformed | `invalid (<reason>)` and a warning; agents with pinned keys judge the bot by its profile |
 | 2 | A claim differs from the session's settings | Only a warning: the session keeps its settings, other agents judge the bot by the attestation |
-| 3 | The props cannot be read or written (an API error) | Logged; the next start tries again; until then other agents read the profile |
-| 3 | A custom status write at the same time | Serialised by the lease's lock in the server; the shell sets a corral session's first status before the host process starts and its last after it ended |
+| 3 | Any | Nothing is written (since 0.71.19); other agents read the profile |
 | 4 | The keys endpoint cannot be read, or lists no Ed25519 key | Exit 1 with why; nothing to pin |
 | 4 | A listed kid is not its key's | `MISMATCH`: that key is not offered for pinning, exit 1 |
 | 5 | Another agent's attestation is invalid, expired or under a key that is not pinned | Its description decides, as before 0.66.0; the reason is logged once per agent |

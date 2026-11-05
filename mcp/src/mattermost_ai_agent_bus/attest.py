@@ -384,7 +384,7 @@ def _unverified_payload(token: str) -> dict[str, Any] | None:
     return _json(parts[1]) if len(parts) == 3 and all(_SEGMENT.fullmatch(p) for p in parts) else None
 
 
-# --- the own session (RT-6.24 steps 1–3) ---------------------------------------
+# --- the own session (RT-6.24 steps 1–2) ---------------------------------------
 
 @dataclass(frozen=True)
 class Own:

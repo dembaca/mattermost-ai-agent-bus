@@ -1373,7 +1373,7 @@ about once a second, so nothing there may block or call the API.
    windows with `used` and `resets_at`, and `at` (when it was taken). It is
    written like the attestation (RT-6.24 step 3): the props are read first and
    sent back whole, since Mattermost's user patch replaces the map, under
-   `lease.status_lock`, on the heartbeat and when a number crosses a band
+   `lease.status_lock` (removed in 0.71.19), on the heartbeat and when a number crosses a band
    (step 2), not more often. The status text of step 2 is only a display,
    cut and incomplete by design; **nothing parses it**. `coordinator("roster")`
    reads the props of the agents it lists (one lookup each, cached like the

@@ -221,7 +221,7 @@ async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
 
 
 async def _attest_start() -> None:
-    """RT-6.24 steps 1–3 for a bot this server was handed (a token in its
+    """RT-6.24 steps 1–2 for a bot this server was handed (a token in its
     environment); session_start does it for one it registers. Never raises."""
     client = await _bus_client()
     if client is not None and client.token:

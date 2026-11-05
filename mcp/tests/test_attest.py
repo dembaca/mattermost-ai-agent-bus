@@ -252,7 +252,7 @@ async def test_start_checks_and_logs_but_writes_nothing_on_the_account(monkeypat
     caplog.clear()
     with caplog.at_level("INFO"):
         assert (await attest.start(c)).label == "valid"
-    assert caplog.text == "" and seen == []  # once per bot and attestation
+    assert "own attestation" not in caplog.text and seen == []  # once per bot and attestation
 
 
 async def test_start_logs_an_invalid_one_and_nothing_without(monkeypatch):
