@@ -178,3 +178,9 @@ class UnreadChannel:
     unread: int = field(default=0, compare=False)
     # Its name (town-square, …), where Mattermost gives it (RT-6.22 step 1).
     name: str = field(default="", compare=False)
+
+
+class NoMandateEndpoint(ValueError):
+    """A 404 on the registrar's mandate route that is not its own `no mandate
+    set` (RT-6.26 step 8): that registrar does not serve mandates (yet), which
+    is no `off`. Raised by the port's mandate_record."""

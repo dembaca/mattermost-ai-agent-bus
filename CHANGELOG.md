@@ -21,7 +21,12 @@ before 0.5.0 are described in the git history.
   answers a trusted human's one once with the command; `bus_info`'s `mandate`
   names `source` (`registrar` or `post`) and the `note`. Without pinned keys
   phase 1 holds, the pinned post. Needs the registrar 0.6.0, deployed first,
-  and the slash command `/agent-mandate` created in Mattermost.
+  and the slash command `/agent-mandate` created in Mattermost. Only the
+  registrar's own 404 `{"error":"no mandate set"}` means none: any other 404 (a
+  registrar before 0.6.0, a proxy) is a failed read, so a rollout never reads
+  it as `off`; a failed read holds the last record for 5 refresh periods
+  (about 10 min) after the last read that went through, not to its end; a
+  swallowed mandate post is logged once on a server that is not the 👑's.
 
 ## 0.71.16
 

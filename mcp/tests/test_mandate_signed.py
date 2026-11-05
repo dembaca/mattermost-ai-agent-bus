@@ -7,10 +7,12 @@ import calendar
 import json
 import time
 
+import httpx
 import pytest
 
 from mattermost_ai_agent_bus import attest, lease, mandate, server
-from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
+from mattermost_ai_agent_bus.model import NoMandateEndpoint
 
 from fakes import BOT, WORK
 from test_ask_mode_signed import _key, _sign, _x, record as mode_record
@@ -250,3 +252,78 @@ async def test_bus_info_names_the_source_and_the_note(chat, monkeypatch):
     chat.mandate_records.clear()
     await mandate.refresh(chat, NOW + 200)
     assert "/agent-mandate" in (await mandate.info(chat, NOW + 200))["why"]
+
+
+# --- the fetch (client.mandate_record) --------------------------------------------------
+
+@pytest.mark.parametrize("register,url", [
+    ("https://reg.example/register/v1/agents", f"https://reg.example/register/v1/mandates/{WORK}"),
+    (None, f"https://mm.example/register/v1/mandates/{WORK}"),
+])
+async def test_the_fetch_finds_the_registrar_and_sends_no_token(register, url):
+    c = MattermostAdapter(base_url="https://mm.example", token="t", register_url=register)
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"record": "a.b.c"})
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    assert await c.mandate_record(WORK) == "a.b.c"
+    assert str(seen[0].url) == url and "authorization" not in seen[0].headers
+
+
+async def test_only_the_registrars_own_404_means_none():
+    """RT-6.26 step 8: a 404 without `{"error":"no mandate set"}` (a registrar
+    before 0.6.0, a proxy) is a failed read, never `off`; other failures raise."""
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
+    answers = iter([httpx.Response(404, json={"error": "no mandate set"}),
+                    httpx.Response(404), httpx.Response(404, text="404 page not found"),
+                    httpx.Response(404, json={"error": "no mode set"}),
+                    httpx.Response(500),
+                    httpx.Response(200, content=b'{"record":"' + b"x" * 9000 + b'"}'),
+                    httpx.Response(200, json={"nothing": 1})])
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: next(answers)))
+    assert await c.mandate_record(WORK) is None
+    for _ in range(3):
+        with pytest.raises(NoMandateEndpoint):
+            await c.mandate_record(WORK)
+    for _ in range(3):
+        with pytest.raises((httpx.HTTPStatusError, ValueError)):
+            await c.mandate_record(WORK)
+
+
+async def test_a_registrar_without_the_endpoint_keeps_the_mandate_and_logs_once(chat, caplog):
+    assert (await mandate.current(chat, NOW))[0] is not None
+    chat.mandate_records[WORK] = NoMandateEndpoint("registrar has no mandate endpoint")
+    with caplog.at_level("INFO"):
+        assert await mandate.refresh(chat, NOW + 130) is False
+        assert await mandate.refresh(chat, NOW + 260) is False
+    assert caplog.text.count("no mandate endpoint") == 1
+    assert (await mandate.current(chat, NOW + 260))[0] is not None
+
+
+# --- a record that cannot be read again ---------------------------------------------------
+
+async def test_a_failed_read_holds_only_a_few_refresh_periods(chat, caplog):
+    """RT-6.26 step 8: the last good record counts for STALE_PERIODS refresh
+    periods after the last read that went through, not to its end; a read that
+    goes through renews it."""
+    assert (await mandate.current(chat, NOW))[0] is not None
+    chat.mandate_records[WORK] = RuntimeError("502 Bad Gateway")
+    limit = mandate.STALE_PERIODS * mandate.REFRESH_SEC
+    await mandate.refresh(chat, NOW + limit - 10)
+    assert (await mandate.current(chat, NOW + limit - 5))[0] is not None
+    with caplog.at_level("INFO"):
+        m, why = await mandate.current(chat, NOW + limit + 5)
+        await mandate.current(chat, NOW + limit + 6)
+    assert m is None and "not read for" in why and caplog.text.count("not read for") == 1
+    chat.mandate_records[WORK] = record()
+    await mandate.refresh(chat, NOW + limit + 10)
+    assert (await mandate.current(chat, NOW + limit + 20))[0] is not None
+
+
+async def test_the_swallowed_post_is_logged_without_the_crown(chat, caplog):
+    with caplog.at_level("INFO"):
+        assert await mandate.observe(chat, _pinned_post(), BOT) is True
+        assert await mandate.observe(chat, _pinned_post(), BOT) is True
+    assert caplog.text.count("goes to no agent") == 1

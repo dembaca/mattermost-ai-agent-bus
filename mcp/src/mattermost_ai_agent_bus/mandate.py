@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from . import a2a, attest, gate, lease, owners
-from .model import Post
+from .model import NoMandateEndpoint, Post
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -49,6 +49,10 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 REFRESH_SEC = 120
+# A registrar's record that could not be read again counts for this many
+# refresh periods after the last read that went through (step 8); a pinned
+# post's last read holds to its expiry (step 1).
+STALE_PERIODS = 5
 DEFAULT_DAYS, MAX_DAYS = 7, 30
 DAY_MS = 86_400_000
 TASK = "TASK"
@@ -84,6 +88,7 @@ class Mandate:
 class _Read:
     mandate: Mandate | None
     why: str  # why none holds, '' with one
+    at: float = 0.0  # when the registrar's record was last read (step 8), 0 for a post
 
 
 _reads: dict[str, _Read] = {}     # home id -> the last good read
@@ -172,7 +177,7 @@ def signed() -> bool:
     return bool(attest.pinned())
 
 
-async def _signed(client: ChatPort, home: str, old: _Read | None) -> _Read | None:
+async def _signed(client: ChatPort, home: str, old: _Read | None, now: float) -> _Read | None:
     """Step 8: the registrar's record of the home, verified against the pinned
     keys. A record set by a trusted human of this session (by id: authority from
     trust, ADR-001) is the mandate; none set (404, also after `off`) means none;
@@ -180,30 +185,35 @@ async def _signed(client: ChatPort, home: str, old: _Read | None) -> _Read | Non
     a record that does not verify, one older than the kept."""
     try:
         token = await client.mandate_record(home)
-    except Exception as exc:  # noqa: BLE001 — the last good read holds, to its expiry
+    except NoMandateEndpoint:
+        _note(("endpoint", home), "mandate: the registrar has no mandate endpoint (a 404 "
+              "without `no mandate set`: older than 0.6.0?): the last record holds for a while")
+        return None
+    except Exception as exc:  # noqa: BLE001 — the last good read holds, for a while
         log.info("mandate: the registrar's record not read: %s", exc)
         return None
     if token is None:
         return _Read(None, "none set with /agent-mandate (the registrar's keys are pinned: "
-                           "a pinned post mandates nothing)")
+                           "a pinned post mandates nothing)", at=now)
     record, why = attest.verify_mandate(token, attest.pinned(), channel_id=home)
     if record is None:
         _note(("refused", home, why), "mandate: the registrar's record for %s refused: %s", home, why)
         return None
     trusted = await client.trusted_humans()
     if not trusted:
-        return _Read(None, "no trusted humans: no mandate counts")
+        return _Read(None, "no trusted humans: no mandate counts", at=now)
     if record.set_by_id not in trusted:
         _note(("untrusted", home, record.set_by_id, str(record.set_at_ms)),
               "mandate by %s ignored: not a trusted human of this session", record.set_by)
-        return _Read(None, f"set by {record.set_by}, not a trusted human of this session")
+        return _Read(None, f"set by {record.set_by}, not a trusted human of this session",
+                     at=now)
     if (old is not None and old.mandate is not None and old.mandate.source == SIGNED
             and old.mandate.at_ms > record.set_at_ms):
-        return None  # older than the kept record: a replay
+        return None  # older than the kept record: a replay (it does not renew the kept one)
     end = until_ms(record.set_at_ms, record.until)
     if end is None:  # the record's shape allows a date that is none, `2026-13-01`
         _note(("until", home, record.until), "mandate record: until %r is no date", record.until)
-        return _Read(None, f"mandate record: until {record.until!r} is no date")
+        return _Read(None, f"mandate record: until {record.until!r} is no date", at=now)
     try:
         name = (await client.get_channel(record.crown_of)).name
     except Exception as exc:  # noqa: BLE001 — not readable: the id names it
@@ -213,7 +223,7 @@ async def _signed(client: ChatPort, home: str, old: _Read | None) -> _Read | Non
     return _Read(Mandate(post=f"registrar-{record.set_at_ms}", home=name,
                          home_id=record.crown_of, by=record.set_by, by_id=record.set_by_id,
                          at_ms=record.set_at_ms, until_ms=end, source=SIGNED,
-                         note=record.note), "")
+                         note=record.note), "", at=now)
 
 
 async def refresh(client: ChatPort, now: float | None = None) -> bool:
@@ -230,7 +240,7 @@ async def refresh(client: ChatPort, now: float | None = None) -> bool:
     _fetched[home] = now
     old = _reads.get(home)
     try:
-        got = (await _signed(client, home, old) if signed()
+        got = (await _signed(client, home, old, now) if signed()
                else await _newest(client, home, await client.pinned_posts(home)))
     except Exception as exc:  # noqa: BLE001 — the last good read holds, to its expiry
         log.info("mandate: not read: %s", exc)
@@ -266,6 +276,11 @@ async def current(client: ChatPort, now: float | None = None) -> tuple[Mandate |
         _note(("expired", m.post, str(m.until_ms)), "mandate %s by %s (post %s) expired at %s",
               m.role, m.by, m.post, _iso(m.until_ms))
         return None, f"mandate post {m.post} expired at {_iso(m.until_ms)}"
+    if m.source == SIGNED and now - got.at > STALE_PERIODS * REFRESH_SEC:
+        _note(("stale", m.post, str(got.at)), "mandate %s by %s: the registrar's record was not "
+              "read for %d min: none holds until it is", m.role, m.by, int((now - got.at) // 60))
+        return None, (f"the registrar's record was not read for "
+                      f"{int((now - got.at) // 60)} min: none holds until it is")
     return m, ""
 
 
@@ -403,7 +418,10 @@ async def observe(client: ChatPort, post: Post, uid: str) -> bool:
                 or post.user_id not in await client.trusted_humans()
                 or post.user_id in await client.agents({post.user_id})):
             return False
-        if lease.crown_held(uid):
+        if not lease.crown_held(uid):
+            _note(("swallowed", post.id), "mandate post %s by a trusted human goes to no agent "
+                  "(the registrar's keys are pinned); only the 👑's server answers it", post.id)
+        else:
             name, until = got
             posts = (await client.thread(post.id)).posts
             if not any(p.kind == a2a.MANDATE for p in posts):
