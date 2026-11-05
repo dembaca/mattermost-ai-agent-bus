@@ -3,16 +3,16 @@ RT-6.10 step 3, RT-6.6 step 1, RT-6.14).
 
 bin/mm-agent-statusline.sh posts what Claude Code's status line JSON says
 (`POST /v1/usage`, hookapi.py); the server keeps the last report of its one
-session here, in memory. lease.py shows it in the bot's status text and writes
-it into the bot's props (`agent_usage`); the roster reads it back from there
-for the agents it lists. Numbers only, in range: anything else is ignored. A
+session here, in memory. lease.py shows it in the bot's status text; the
+roster reads it back from the status text of the agents it lists (the props of
+a bot cannot carry it: Mattermost refuses its own patch with a 403). Numbers only, in range: anything else is ignored. A
 display and a hint to the coordinator, never a permission (ADR-001).
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -26,7 +26,7 @@ CTX_BANDS = (50, 70, 85, 95)
 LIMIT_BANDS = (70, 90, 100)
 SHOW_RESET_FROM = 90  # a window's reset time and the 7-day segment show from here
 BAND_GAP_SEC = 60.0  # a band write never comes sooner than this after the last
-PROPS_GAP_SEC = 60.0
+FIVE_HOURS_SEC = 5 * 3600
 MAX_COST_USD = 1_000_000.0  # a sanity bound, not a limit
 
 _last: dict[str, Any] | None = None
@@ -34,15 +34,13 @@ _limits_logged = False
 _logged = False
 _bands_written: tuple[int, int, int] | None = None
 _band_at = 0.0
-_props_at = 0.0
-_props_sent = ""
 
 
 def reset() -> None:
     """Forget everything (tests)."""
-    global _last, _limits_logged, _logged, _bands_written, _band_at, _props_at, _props_sent
+    global _last, _limits_logged, _logged, _bands_written, _band_at
     _last, _limits_logged, _logged = None, False, False
-    _bands_written, _band_at, _props_at, _props_sent = None, 0.0, 0.0, ""
+    _bands_written, _band_at = None, 0.0
 
 
 def _percent(value: Any) -> float | None:
@@ -199,89 +197,74 @@ def segments(now: float | None = None) -> list[str]:
     return out
 
 
-def props_value(now: float | None = None) -> str:
-    """The `agent_usage` the bot's props carry: compact JSON, the last report
-    (without a reset window), '' without one."""
+# The segments of a status text (segments() above writes them; RT-6.6 step 1):
+# `ctx 62%`, `5h 40%` or `5h 93% ↻21:40Z`, `7d 92%` or `7d 92% ↻21:40Z`, `$4.20`.
+_SEGMENT = re.compile(
+    r"^(?:ctx (?P<ctx>\d{1,3})%"
+    r"|5h (?P<h5>\d{1,3})%(?: ↻(?P<hh>\d\d):(?P<mm>\d\d)Z)?"
+    r"|7d (?P<d7>\d{1,3})%(?: ↻\d\d:\d\dZ)?"
+    r"|\$(?P<cost>\d{1,7}\.\d\d))$")
+
+
+def from_status(text: str, now: float | None = None) -> dict[str, Any]:
+    """What the roster shows of an agent from its custom status text, which every
+    roster read holds anyway (ADR-008 step 3, as amended 2026-11-05): `ctx`, `cost_usd`,
+    `limit_5h` and `limit_7d` as {used[, resets_at]}. A segment the text lacks is
+    unknown, not 0 (the cut of RT-6.6 step 1 drops `7d`, `5h`, `ctx` in that order, and
+    the label first). `resets_at` of the 5-hour window is the next time of day its
+    `↻HH:MMZ` names (shown only from 90 %). {} for a text without a number. Validated
+    like a report: the agent writes its own status."""
+    now = time.time() if now is None else now
+    out: dict[str, Any] = {}
+    for piece in text.split(" · "):
+        m = _SEGMENT.match(piece.strip())
+        if m is None:
+            continue
+        if m["ctx"]:
+            out["ctx"] = _percent(int(m["ctx"]))
+        elif m["h5"]:
+            window: dict[str, Any] = {"used": _percent(int(m["h5"]))}
+            if m["hh"] and int(m["hh"]) < 24 and int(m["mm"]) < 60:
+                day = now - now % 86400
+                at = day + int(m["hh"]) * 3600 + int(m["mm"]) * 60
+                at = at if at > now else at + 86400
+                # A 5-hour window never ends more than 5 hours ahead (a minute of slack):
+                # a later time of day means the text is old and the window is over.
+                if at - now <= FIVE_HOURS_SEC + 60:
+                    window["resets_at"] = int(at)
+            out["limit_5h"] = window
+        elif m["d7"]:
+            out["limit_7d"] = {"used": _percent(int(m["d7"]))}
+        elif m["cost"]:
+            cost = _cost(float(m["cost"]))
+            if cost is not None:
+                out["cost_usd"] = cost
+    return {k: v for k, v in out.items() if v is not None and v != {"used": None}}
+
+
+def own(now: float | None = None) -> dict[str, Any]:
+    """The roster's numbers for this agent itself, from the report in memory (the
+    same shape as from_status): `ctx`, `cost_usd`, `limit_5h`, `limit_7d`; a window
+    that has reset is left out."""
     now = time.time() if now is None else now
     if _last is None:
-        return ""
-    return json.dumps(_live(_last, now), separators=(",", ":"), sort_keys=True)
-
-
-def props_due(now: float | None = None) -> str:
-    """The value to write into the props now, '' when none is due: the
-    numbers changed since the last write and PROPS_GAP_SEC passed."""
-    now = time.time() if now is None else now
-    value = props_value(now)
-    if not value or now - _props_at < PROPS_GAP_SEC:
-        return ""
-    return "" if _same(value, _props_sent) else value
-
-
-def _same(a: str, b: str) -> bool:
-    def bare(s: str) -> Any:
-        try:
-            d = json.loads(s)
-        except ValueError:
-            return s
-        return {k: v for k, v in d.items() if k != "at"} if isinstance(d, dict) else s
-
-    return bool(b) and bare(a) == bare(b)
-
-
-def props_tried(now: float | None = None) -> None:
-    """A props write is attempted now: it counts against the gap either way."""
-    global _props_at
-    _props_at = time.time() if now is None else now
-
-
-def props_written(value: str) -> None:
-    """`value` is in the props; a failed write leaves the old one, tried again
-    by the next beat after the gap."""
-    global _props_sent
-    _props_sent = value
-
-
-def from_props(raw: str | None, now: float | None = None) -> dict[str, Any]:
-    """What the roster shows of an agent's `agent_usage`: `ctx`, `limit_5h`,
-    `limit_7d` ({used, resets_at}); {} for none, an unreadable value or a
-    window that has reset. Validated again: the bot writes it itself."""
-    now = time.time() if now is None else now
-    try:
-        data = json.loads(raw) if raw else None
-    except ValueError:
         return {}
-    got = parse(data, now) if isinstance(data, dict) else {}
-    out: dict[str, Any] = {}
-    if "ctx" in got:
-        out["ctx"] = got["ctx"]
-    if "cost_usd" in got:
-        out["cost_usd"] = got["cost_usd"]
+    r = _live(_last, now)
+    out: dict[str, Any] = {k: r[k] for k in ("ctx", "cost_usd") if k in r}
     for name, key in (("five_hour", "limit_5h"), ("seven_day", "limit_7d")):
-        window = (got.get(name) or {}) if isinstance(data, dict) else {}
-        if window.get("resets_at", now + 1) <= now:
-            continue
-        if "used" in window or "resets_at" in window:
+        if r.get(name):
+            window = dict(r[name])
+            if "resets_at" in window:
+                # The status text names it to the minute: the same value as an agent
+                # reading that text gets, so `limit_shared` (exact equality) counts this one too.
+                window["resets_at"] = window["resets_at"] // 60 * 60
             out[key] = window
     return out
 
 
-def info(written_at: float, write_error: str, read_error: str, now: float | None = None,
-         reads: dict[str, int] | None = None) -> dict[str, Any]:
-    """bus_info's `usage` (ADR-008 step 3): the last report this server holds,
-    and whether it reaches the bot's props and the other bots' props can be
-    read: `write` is "written <n> s ago", "not written yet" or the last
-    failure ("PUT /api/v4/users/<id>/patch → 403"); `read` counts the reads of
-    other bots' reports that `found` one, found `empty` (nothing written, or
-    overwritten) or `failed`, with the `last_error` if one failed."""
+def info(now: float | None = None) -> dict[str, Any]:
+    """bus_info's `usage` (ADR-008 step 3): the last report this server holds, and
+    the segments of the status text it shows (`shown`, what the other agents' rosters read)."""
     now = time.time() if now is None else now
-    if write_error:
-        state = f"failed: {write_error}"
-    elif written_at:
-        state = f"written {int(now - written_at)} s ago"
-    else:
-        state = "not written yet" if _last is not None else "no report yet"
     return {"report": ({k: v for k, v in _last.items() if k != "at"} if _last else None),
-            "write": state,
-            "read": {**(reads or {"found": 0, "empty": 0, "failed": 0}),
-                     **({"last_error": read_error} if read_error else {})}}
+            "shown": " · ".join(segments(now))}
