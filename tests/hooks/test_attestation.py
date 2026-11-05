@@ -144,14 +144,12 @@ def _for_me() -> str:
 
 
 @pytest.mark.skipif(not PY.exists(), reason="needs mcp/.venv: uv run --directory mcp")
-def test_corral_hands_it_to_the_host_process_which_publishes_it(mm, run):
-    """Step 1 in a keyless corral session: the export lines carry it into the
-    host process's start line, not into the sandbox; step 3: the host process
-    writes it into the bot's props, the custom status kept."""
+def test_corral_hands_it_to_the_host_process_which_checks_it_and_writes_nothing(mm, run):
+    """Step 1 in a keyless corral session: the export lines carry it into the host process's
+    start line, not into the sandbox; step 2: the host process checks and logs it; since 0.71.18 it
+    does not write it into the bot's props (a bot's patch of its own user is a 403): no PUT."""
     signed = _for_me()
-    status = json.dumps({"emoji": "zzz", "text": "idle · ~proj-x", "duration": "date_and_time",
-                         "expires_at": "2026-11-01T12:00:00Z"})
-    mm.user_props = {"customStatus": status}
+    mm.user_props = {"customStatus": json.dumps({"emoji": "zzz", "text": "idle · ~proj-x"})}
     mm.register_reply = {"username": "agent-test", "bot_token": "bot-token-for-tests",
                          "user_id": ME, "attestation": signed}
     r = run(START, CORRAL_SESSION_ID="sess-attest", MM_BOT_ATTESTATION="stale.left.over", **HOST)
@@ -159,18 +157,14 @@ def test_corral_hands_it_to_the_host_process_which_publishes_it(mm, run):
     out = json.loads(r.stdout)
     assert "MM_BUS_UNAVAILABLE" not in out["env"] and "MM_BOT_ATTESTATION" not in out["env"]
     assert signed not in r.stdout + r.stderr and "stale.left.over" not in r.stdout
-    patch = f"/api/v4/users/{ME}/patch"
+    logfile = run.state_dir / "sess-attest.host.log"
     for _ in range(150):
-        sent = [b for m, p, b in mm.writes if m == "PUT" and p == patch]
-        if sent:
+        if logfile.exists() and "own attestation: unverified (no pinned key)" in logfile.read_text():
             break
         time.sleep(0.1)
-    assert sent, "the host process wrote no props"
-    props = sent[0]["props"]
-    assert props["customStatus"] == status
-    published = _digest(props["agent_attestation"])
-    assert published == _digest(signed)
-    log = (run.state_dir / "sess-attest.host.log").read_text()
+    log = logfile.read_text()
     assert "own attestation: unverified (no pinned key)" in log
-    assert signed not in log
+    assert signed not in log and "not published" not in log
+    patch = f"/api/v4/users/{ME}/patch"
+    assert not [b for m, p, b in mm.writes if m == "PUT" and p == patch]
     assert not os.environ.get("MM_BOT_ATTESTATION")

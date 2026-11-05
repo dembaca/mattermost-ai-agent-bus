@@ -732,9 +732,10 @@ class MattermostAdapter:
         self.usage_reads["found" if isinstance(raw, str) and raw else "empty"] += 1
 
     async def agent_attestation(self, user_id: str) -> str | None:
-        """The registrar's attestation the bot put into its own user props
-        (RT-6.24 step 5), read with its description and cached alike; '' when
-        it carries none, None when its user object cannot be read."""
+        """The registrar's attestation its user props carry (RT-6.24 step 5),
+        read with its description and cached alike; '' when it carries none
+        (every bot, while a bot cannot write its own props: 0.71.18), None when
+        its user object cannot be read."""
         await self.bot_description(user_id)
         return self._attestations.get(user_id)
 
@@ -767,19 +768,6 @@ class MattermostAdapter:
         if not isinstance(record, str) or not record:
             raise ValueError("the registrar's answer holds no record")
         return record
-
-    async def publish_attestation(self, token: str) -> bool:
-        """Put this bot's attestation into its own user props (RT-6.24 step 3).
-        Mattermost's user patch replaces the whole props map, so the props as
-        they are now are read first and sent back with it: the custom status
-        (the lease, lease.py) is one of them, and the caller holds the lease's
-        lock. False when the props carry it already."""
-        if not await self._publish_prop(ATTESTATION_PROP, token):
-            return False
-        uid = mm_id((await self.get_me()).id, "user")
-        self._descriptions.pop(uid, None)
-        self._owners.pop(uid, None)
-        return True
 
     async def publish_usage(self, value: str) -> bool:
         """Put this bot's usage report (usage.props_value) into its own user

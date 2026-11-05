@@ -36,8 +36,7 @@ class FakeChat:
     (missing: not readable, ADR-003); native_owners: user id -> username of
     the bot's native owner (missing: not readable, WP3); attestations: user
     id -> the attestation its account carries (RT-6.24); channel: every
-    channel's name. props: the own account's props as publish_attestation
-    keeps them; published: what it wrote.
+    channel's name. props: the own account's props as publish_usage keeps them.
     members, presence: the accounts in every channel with their custom
     status, and who is online (the lease's roster); status: the own custom
     status written last; header: the channel header. bots: the bot accounts
@@ -70,7 +69,6 @@ class FakeChat:
         self.native_owners = dict(native_owners or {})
         self.attestations = dict(attestations or {})
         self.props: dict[str, str] = {}
-        self.published: list[str] = []
         # ADR-008: other agents' agent_usage by user id, and the own writes.
         self.usages: dict[str, str] = {}
         self.usage_writes: list[str] = []
@@ -198,14 +196,6 @@ class FakeChat:
         if isinstance(got, BaseException):
             raise got
         return got
-
-    async def publish_attestation(self, token: str) -> bool:
-        """Recorded in `published`; the account's props (`props`) keep the rest."""
-        if self.props.get("agent_attestation") == token:
-            return False
-        self.props = {**self.props, "agent_attestation": token}
-        self.published.append(token)
-        return True
 
     async def publish_usage(self, value: str) -> bool:
         """Kept in `props` like the attestation, each write in `usage_writes`."""

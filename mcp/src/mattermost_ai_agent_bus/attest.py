@@ -417,9 +417,11 @@ _started: set[tuple[str, str]] = set()
 
 
 async def start(client: ChatPort) -> Own:
-    """At session start (RT-6.24 steps 1–3): check the own attestation, log
-    what differs, and publish it in the bot's own user props unless it is
-    invalid. Once per bot and attestation; never raises."""
+    """At session start (RT-6.24 steps 1–2): check the own attestation and log
+    what differs. It is not written onto the bot's account: Mattermost refuses
+    a bot's patch of its own user props with a 403 (measured 2026-11-05), so
+    the only carrier left is the HELLO card (a2a). Once per bot and
+    attestation; never raises."""
     token = os.environ.get(ENV, "")
     if not token or not client.token:
         return Own(NONE)
@@ -432,16 +434,10 @@ async def start(client: ChatPort) -> Own:
         for w in own.warnings:
             log.warning("own attestation: %s", w)
         log.info("own attestation: %s", own.label)
-        if own.publish:
-            from . import lease  # the custom status lease writes the same props
-
-            async with lease.status_lock():
-                written = await client.publish_attestation(token)
-            log.info("attestation %s in the bot's props", "written" if written else "already")
-        _started.add(key)  # a failed write is tried again by the next start
+        _started.add(key)
         return own
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 — the bus works without it
-        log.warning("own attestation not published: %s", exc)
+        log.warning("own attestation not checked: %s", exc)
         return Own(NONE)

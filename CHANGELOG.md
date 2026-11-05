@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.18
+
+### Fixed
+
+- **The attestation is no longer written to the bot's own props**
+  ([RT-6.24 steps 3 and 5](docs/arc42/06-runtime-view.md#624-owner-attestation)).
+  `attest.start` wrote it into the bot's user props with `PUT /api/v4/users/<id>/patch`,
+  which Mattermost answers with a 403 for a bot's own user (measured with the
+  diagnosis of 0.71.14): it never reached another agent, and every start logged a
+  warning and tried again. The server now checks and logs the own attestation once
+  and writes nothing; `publish_attestation` is gone from the port and the adapter,
+  the HELLO card still carries it. Other agents get an owner from the bot
+  description (and the native owner) as without one, which is what has been
+  deciding all along. The carrier is open: the direction is the registrar serving
+  it, as it serves the ask-mode record.
+
 ## 0.71.16
 
 ### Fixed
