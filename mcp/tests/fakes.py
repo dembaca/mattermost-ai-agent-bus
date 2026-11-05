@@ -36,7 +36,7 @@ class FakeChat:
     (missing: not readable, ADR-003); native_owners: user id -> username of
     the bot's native owner (missing: not readable, WP3); attestations: user
     id -> the attestation its account carries (RT-6.24); channel: every
-    channel's name. props: the own account's props as publish_usage keeps them.
+    channel's name. props: the own account's props.
     members, presence: the accounts in every channel with their custom
     status, and who is online (the lease's roster); status: the own custom
     status written last; header: the channel header. bots: the bot accounts

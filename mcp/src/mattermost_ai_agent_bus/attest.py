@@ -19,8 +19,9 @@ pinned key nothing here changes what the bus does.
 ``verify`` is strict: whatever is malformed gives no claim and a reason,
 never an exception. ``check_own`` compares the session's own attestation with
 its configuration (the environment stays authoritative for the own session);
-``start`` publishes it in the bot's own user props, where every other agent's
-owner read finds it (owners.attested).
+``start`` checks and logs it; it is not written to the bot's account (a bot's
+patch of its own user props is a 403, so no other agent's owner read found it
+there, owners.attested), the HELLO card carries it.
 """
 
 from __future__ import annotations
@@ -330,7 +331,7 @@ class Own:
     reason: str = ""
     claim: Claim | None = None
     warnings: tuple[str, ...] = ()
-    publish: bool = False  # worth putting into the bot's props and HELLO card
+    publish: bool = False  # worth carrying on the HELLO card
 
     @property
     def label(self) -> str:

@@ -760,7 +760,7 @@ class MattermostAdapter:
         os.environ["MM_BOT_USER_ID"] = info.user_id
         os.environ["MM_BOT_TOKEN"] = info.bot_token
         os.environ["MATTERMOST_TOKEN"] = info.bot_token
-        if info.attestation:  # RT-6.24: the server checks and publishes it
+        if info.attestation:  # RT-6.24: the server checks and logs it
             os.environ[attest.ENV] = info.attestation
         else:
             os.environ.pop(attest.ENV, None)
