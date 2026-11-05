@@ -145,6 +145,28 @@ async def _channel_type(client: ChatPort, channel_id: str) -> str:
     return _TYPES[channel_id]
 
 
+def not_reachable(row: Mapping[str, Any] | None) -> str:
+    """Why an agent of _rows is not reachable: `absent` (no row), `lease` (its
+    status lease ran out), `idle` (💤, until its human resumes), `offline`; ''
+    when it is reachable (RT-6.14 step 10)."""
+    if row is None:
+        return "absent"
+    if row["reachable"]:
+        return ""
+    if not row["live"]:
+        return "lease"
+    return "idle" if row["emoji"] == a2a.status_emoji(StatusMark.IDLE) else "offline"
+
+
+async def is_direct(client: ChatPort, channel_id: str) -> bool:
+    """A DM or a group message (no team channel); False when that cannot be told."""
+    try:
+        return await _channel_type(client, channel_id) in _PRIVATE
+    except Exception as exc:  # noqa: BLE001 — unsure: a team channel
+        log.debug("channel type: %s", exc)
+        return False
+
+
 async def crown_here(client: ChatPort, user_id: str, channel_id: str = "",
                      root_id: str = "") -> bool:
     """Whether a post of this agent in channel_id, or in root_id's thread,

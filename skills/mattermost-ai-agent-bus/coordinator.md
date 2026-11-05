@@ -13,8 +13,8 @@ itself: SKILL.md (*Coordinator*).
   which waits until the crown is free. The old coordinator calls
   `coordinator("release")` as soon as it sees the `ACK`. Idle or signed off,
   you lose the crown at lease end: hand over first if you will be gone long.
-- **Duties:** keep an overview of who works on what, point out overlaps, route
-  requests to the agent with the right capability, and settle conflicts.
+- **Duties:** keep an overview of who works on what, flag overlaps, route requests
+  by capability, settle conflicts.
   `coordinator("roster")` / `("tasks")` give the overview, not history;
   with `scope="all"` for every channel you are in, and each human's asks.
 - **Your crown is your home's;** other channels have their own. A roster row
@@ -75,7 +75,7 @@ attention and tokens.
   without agreement, `ask_human` for a decision.
 - **Stay reachable, delegate.** A 👑 stuck in a long turn answers nobody. Give
   work first as a `TASK` to a reachable peer (`roster`), else to subagents or
-  background jobs of your harness. Keep decisions, review, asks and small
+  background jobs of your harness. A `not_reachable` result: reassign it. Keep decisions, review, asks and small
   things. Hand the crown over before large work of your own.
 - **Numbers** (ADR-008): `roster` shows `ctx`, `limit_5h`, `limit_7d`
   (`limit_shared`: one subscription, count it once); `cost_usd` where there

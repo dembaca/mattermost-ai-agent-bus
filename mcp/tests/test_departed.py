@@ -79,6 +79,8 @@ class Bus:
                                             response=httpx.Response(404, request=request))
             if path == "/api/v4/users":
                 return [dict(u, delete_at=0) for u in self.users.values()]
+            if path == "/api/v4/channels/direct":
+                return {"id": "d" * 26, "type": "D"}
             if path == "/api/v4/users/status/ids":
                 return [{"user_id": i, "status": "online"} for i in json]
             if path == "/api/v4/users/ids":  # accounts outlive their channel membership
@@ -374,3 +376,78 @@ async def test_not_here_takes_a_live_lease_and_no_membership():
     assert await departed.elsewhere(client, WORK, ["agent-far"]) == []
     client.members, client.bots = [], {"agent-far": user(-1)}
     assert await departed.elsewhere(client, WORK, ["agent-far"]) == []
+
+
+# --- RT-6.14 step 10: a task to an agent that is not reachable --------------------
+
+@pytest.mark.asyncio
+async def test_an_outgoing_task_names_who_is_not_reachable(bus):
+    got = await departed.unreachable(
+        bus.client, "TASK for @agent-old, @agent-idle, @agent-w, @agent-far, @agent-nobody, @agent-me, @dembaca",
+        "agent-me", PROJ)
+    assert got[0].startswith("agent-old (gone since ") and "BYE" in got[0]
+    assert got[1:] == ["agent-idle (idle, until its human resumes)",
+                       "agent-far (live in ~bgl-infra, not in this channel)",
+                       "agent-nobody (not in this channel, no agent of this bus by that name that I can see)"]
+
+
+@pytest.mark.asyncio
+async def test_an_offline_agent_and_one_with_no_mention_or_only_reachable_ones(bus, monkeypatch):
+    async def offline(ids):
+        return {i: ("offline" if i == WORKER else "online") for i in ids}
+    monkeypatch.setattr(bus.client, "presences", offline)
+    assert await departed.unreachable(bus.client, "TASK @agent-w", "agent-me", PROJ) == ["agent-w (offline)"]
+    monkeypatch.undo()
+    assert await departed.unreachable(bus.client, "TASK for nobody", "agent-me", PROJ) == []
+    assert await departed.unreachable(bus.client, "TASK @agent-w", "agent-me", PROJ) == []
+
+
+@pytest.mark.asyncio
+async def test_unreadable_agents_give_no_warning(bus):
+    bus.fail = False
+    async def broken(channel_id):
+        raise RuntimeError("down")
+    bus.client.channel_users = broken
+    assert await departed.unreachable(bus.client, "TASK @agent-old", "agent-me", PROJ) == []
+
+
+@pytest.fixture
+def posting(bus, monkeypatch):
+    """The bus, with what a tool's post reads besides the roster: the bot, its team and channels."""
+    inner = bus.client._api
+
+    async def api(method, path, json=None, params=None, **kw):
+        if path == "/api/v4/users/me":
+            return {"id": ME, "username": "agent-me", "is_bot": True}
+        if path == "/api/v4/teams/name/team":
+            return {"id": "t" * 26, "name": "team"}
+        if path == "/api/v4/users/me/channels" or path.endswith("/channels"):
+            return []
+        if "/channels/name/" in path:
+            return {"id": PROJ, "name": "proj", "type": "O"}
+        return await inner(method, path, json=json, params=params, **kw)
+
+    monkeypatch.setattr(bus.client, "_api", api)
+    return bus
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("word, warned", [("TASK", True), ("DELEGATE", True), ("ACK", False), ("RESULT", False),
+                                          ("IDLE", False), ("", False)])
+async def test_only_a_task_or_delegate_is_checked_and_it_is_posted_anyway(posting, word, warned):
+    bus = posting
+    out = await server.post_as_bot(bus.client, f"{word} @agent-idle please look".strip(), kind="")
+    assert bus.posted, "the post goes out in every case"
+    assert ("not_reachable" in out) == warned
+    if warned:
+        assert out["not_reachable"] == ["agent-idle (idle, until its human resumes)"]
+        assert out["warning"].startswith(f"this {word} names agents the roster does not show as reachable")
+
+
+@pytest.mark.asyncio
+async def test_a_reply_checks_the_channel_of_its_thread_and_a_dm_not_at_all(posting):
+    bus = posting
+    out = await server.reply_as_bot(bus.client, HELLO, "TASK @agent-old go")
+    assert [n.split(" ")[0] for n in out["not_reachable"]] == ["agent-old"]
+    out = await server.post_as_bot(bus.client, "TASK @agent-old go", to="agent-w")
+    assert "not_reachable" not in out
