@@ -409,6 +409,13 @@ class HookAPI:
         async with self._heavy:  # each makes several Mattermost calls: a few at a time
             return await route(client, query, payload)
 
+    async def _wake_check(self, client: MattermostAdapter, query: Mapping[str, str],
+                          payload: Mapping[str, Any]) -> Reply:
+        """One check of a long poll: the inbox connected first (it is the one
+        that rings the next), then wake() in its slot."""
+        await _inbox_open()
+        return await self._run(wake, client, query, payload)
+
     async def _long_poll(self, client: MattermostAdapter, query: Mapping[str, str],
                          payload: Mapping[str, Any], reader: asyncio.StreamReader) -> Reply:
         """GET /v1/wake?wait=S (ADR-009 phase 1, RT-6.17 step 7): hold the
@@ -448,7 +455,7 @@ class HookAPI:
                     await _first(min(at, end) - now, gone, poll.over, *(() if bell.is_set() else (bell,)))
                     continue
                 bell.clear()  # a ring from now on, during the check too, asks again
-                check = asyncio.ensure_future(self._run(wake, client, query, payload))
+                check = asyncio.ensure_future(self._wake_check(client, query, payload))
                 await _first(end - now, gone, poll.over, check)
                 if not check.done():  # replaced, gone or the deadline
                     await _give_up(check)
@@ -619,6 +626,25 @@ def _no_edits() -> list[unread.Pending]:
 # the inbox (WebSocketInbox.edits, RT-6.12 step 3). Their posts are behind the
 # read watermark, which unread.channels reads from.
 edits: Callable[[], list[unread.Pending]] = _no_edits
+
+# Set by server.py: opens the inbox's WebSocket if it is not open, so a post
+# rings a waiting long poll (ADR-009 phase 2, RT-6.17 step 7). Called before a
+# check of a long poll, never raises into it.
+connect: Callable[[], Awaitable[None]] | None = None
+
+
+async def _inbox_open() -> None:
+    """The inbox connected for a long poll, as far as it can be: the poll
+    still looks without it (the check every RECHECK_SEC finds what the socket
+    would have rung)."""
+    if connect is None:
+        return
+    try:
+        await connect()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — no bus yet, no token, Mattermost down: the check goes on
+        log.info("wake long poll: inbox not connected: %s", exc)
 
 
 async def counted(client: MattermostAdapter) -> list[unread.Pending]:

@@ -12,8 +12,8 @@ import { dirname, join } from "node:path"
 import { after, afterEach, before, beforeEach, mock, test } from "node:test"
 import { fileURLToPath } from "node:url"
 
-import plugin, { addMcp, busFile, busRoot, MARK, pollMs, SERVER, setup, SKILL, skillInfo, WAKE_BACKOFF_MAX_MS,
-  WAKE_BACKOFF_MS, wakeBackoffMs } from "../plugin/mattermost-agent-bus.ts"
+import plugin, { addMcp, busFile, busRoot, MARK, RETRY_SEC, retryMs, SERVER, setup, SKILL, skillInfo, timing, WAIT_SEC,
+  WAKE_BACKOFF_MAX_MS, WAKE_BACKOFF_MS, wakeBackoffMs, waitSec } from "../plugin/mattermost-agent-bus.ts"
 import entry from "../server.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -31,16 +31,32 @@ let endpoint = ""
 
 const settle = (ms = 60) => new Promise((r) => setTimeout(r, ms))
 const nowSec = () => Math.floor(Date.now() / 1000)
-// The timer and the clock are mocked: one poll is 5 s of the plugin's time.
-const poll = async (times = 1, ms = 5000) => {
-  for (let i = 0; i < times; i++) {
-    mock.timers.tick(ms)
-    await settle()
-  }
+// The clock is mocked (the wake-up backoff): time passes by tick(). The long
+// poll has no timer: a request held by the fake server is the plugin's wait.
+const tick = (ms: number) => mock.timers.tick(ms)
+// Until the condition holds (real time, the plugin's loop runs on its own).
+const until = async (cond: () => boolean, what: string, ms = 3000) => {
+  // Date is mocked: count real 5 ms steps instead of the clock.
+  for (let i = 0; i < ms / 5 && !cond(); i++) await new Promise((r) => setTimeout(r, 5))
+  assert.ok(cond(), what)
 }
+// The fake server holds /v1/wake until the test answers it (or the client leaves).
+const HOLD = Symbol("hold")
+// A server before 0.71.8: a wake without `until` is a 400.
+const OLD = Symbol("old")
+let held: Array<{ res: ServerResponse; path: string }> = []
+let dropped = 0 // held requests the client aborted
+const answerWake = (body: any) => {
+  const h = held.shift()
+  assert.ok(h, "no request is held")
+  h!.res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body))
+}
+// The server's gates hold (a window opened): the plugin's long poll runs. Its length is not used.
 const idleIn = (window = 5400) => () => ({ action: "idle", listen_since: nowSec(), listen_until: nowSec() + window })
-const paths = () => calls.map((c) => c.method + " " + c.path)
+const paths = () => rest().map((c) => c.method + " " + c.path)
 const wakes = () => calls.filter((c) => c.path.startsWith("/v1/wake"))
+// The calls but the long poll, which runs on between turns.
+const rest = () => calls.filter((c) => !c.path.startsWith("/v1/wake"))
 
 before(async () => {
   for (const v of ["CLAUDE_CODE_SESSION_ID", "CLAUDE_PROJECT_DIR", "CURSOR_PROJECT_DIR", "MM_WORKSPACE",
@@ -59,6 +75,23 @@ before(async () => {
       calls.push({ method: req.method || "", path, body: raw ? JSON.parse(raw) : null })
       const route = path.split("?")[0]
       const answer = typeof answers[route] === "function" ? answers[route](path) : answers[route]
+      if (answer === HOLD) {
+        const h = { res, path }
+        held.push(h)
+        res.on("close", () => {
+          if (held.includes(h)) {
+            held = held.filter((x) => x !== h)
+            dropped += 1
+          }
+        })
+        return
+      }
+      if (answer === OLD) {
+        const ok = path.includes("until=")
+        res.writeHead(ok ? 200 : 400, { "Content-Type": "application/json" })
+          .end(JSON.stringify(ok ? { wake: false } : { error: "until: epoch s" }))
+        return
+      }
       if (answer === undefined) res.writeHead(503).end('{"error":"no bus session"}')
       else res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(answer))
     })
@@ -74,17 +107,29 @@ after(() => {
 
 beforeEach(() => {
   calls = []
+  held = []
+  dropped = 0
   answers = { "/v1/presence": { ok: true }, "/v1/stat": { ok: true }, "/v1/turn-end": idleIn(),
-              "/v1/wake": { wake: false }, "/v1/handoff": { context: "" } }
+              "/v1/wake": HOLD, "/v1/handoff": { context: "" } }
   const dir = join(tmp, "state", "mm-agent-bus")
   rmSync(dir, { recursive: true, force: true })
   mkdirSync(dir, { recursive: true })
   process.env.XDG_STATE_HOME = join(tmp, "state")
   writeFileSync(join(dir, `endpoint-${sha16(ws)}.env`), `MM_BUS_ENDPOINT=${endpoint}\nMM_BUS_KEY=${KEY}\nMM_BUS_PID=1\n`)
-  mock.timers.enable({ apis: ["setInterval", "Date"], now: Date.now() })
+  timing.minRetrySec = 0.01 // the tests' pauses are short; the clamp is tested apart
+  mock.timers.enable({ apis: ["Date"], now: Date.now() })
 })
 
-afterEach(() => mock.timers.reset())
+// Every plugin a test started is unloaded when it ends, red or green: one
+// failing test must not leave a poller that takes the next tests' requests.
+const live: Array<() => Promise<void>> = []
+
+afterEach(async () => {
+  for (const stop of live.splice(0)) await stop().catch(() => {})
+  mock.timers.reset()
+  for (const h of held) h.res.destroy()
+  held = []
+})
 
 // A fake V2 plugin context: transforms, the prompt hook, the event stream,
 // session input and storage, as OpenCode 2.x hands them to setup().
@@ -99,7 +144,7 @@ function fakeCtx(opts: Record<string, unknown> = {}, sessions: Record<string, { 
   let handled: Array<() => void> = []
   const ctx: any = {
     location: { directory: ws },
-    options: { pollSec: 5, ...opts },
+    options: { retrySec: 0.05, ...opts },
     mcp: {
       transform: async (cb: any) => {
         cb({ list: () => [...mcpServers.entries()], get: (n: string) => mcpServers.get(n),
@@ -164,8 +209,14 @@ async function start(opts: Record<string, unknown> = {}, sessions: Record<string
                      store?: Map<string, any>) {
   const fx = fakeCtx(opts, sessions, store)
   const cleanup = await setup(fx.ctx)
+  live.push(cleanup as () => Promise<void>)
   const prompt = async (id = "s1", text = "hi") => {
+    const working = () => calls.filter((c) => c.path === "/v1/presence" && c.body?.state === "working").length
+    const before = working()
     await fx.hooks.prompt({ sessionID: id, messageID: "m", prompt: { text }, delivery: "steer" })
+    // The turn has started when its presence is posted (a session the plugin
+    // ignores posts none: a bounded wait, load-proof, then on).
+    for (let i = 0; i < 100 && working() === before; i++) await new Promise((r) => setTimeout(r, 5))
     await settle()
   }
   const ended = (id = "s1") => fx.emit("session.execution.succeeded", { sessionID: id })
@@ -196,11 +247,25 @@ test("RT-6.20: finds only its own server: the file keyed on OpenCode's directory
   assert.equal(shell, want)
 })
 
-test("RT-6.20: an idle session asks at most every 5 s; the same counter backs off to 30 min", () => {
-  assert.equal(pollMs({}, {}), 15_000)
-  assert.equal(pollMs({}, { MM_LISTEN_POLL_SEC: "20" }), 20_000)
-  assert.equal(pollMs({ pollSec: 0.05 }, {}), 5000)
-  assert.equal(pollMs({}, { MM_LISTEN_POLL_SEC: "x" }), 15_000)
+test("RT-6.20: the long poll waits 50 s by default (1 to 55), a failed poll is asked again after 15 s", () => {
+  assert.equal(WAIT_SEC, 50)
+  assert.equal(waitSec({}), 50)
+  assert.equal(waitSec({ waitSec: 20 }), 20)
+  assert.equal(waitSec({ waitSec: 500 }), 55)
+  assert.equal(waitSec({ waitSec: 0 }), 50)
+  assert.equal(waitSec({ waitSec: 3 }), 10) // never so short that the pause for a server that answers at once is lost
+  assert.equal(waitSec({ waitSec: "x" as any }), 50)
+  assert.equal(RETRY_SEC, 15)
+  assert.equal(retryMs({}), 15_000)
+  assert.equal(retryMs({ retrySec: 2 }), 2000)
+  assert.equal(retryMs({ retrySec: -1 }), 15_000)
+  // Never a tight loop: at least the old pollSec's 5 s (the tests lower it).
+  timing.minRetrySec = 5
+  assert.equal(retryMs({ retrySec: 0.01 }), 5000)
+  assert.equal(retryMs({ retrySec: 2 }), 5000)
+})
+
+test("RT-6.20: the same counter backs off to 30 min", () => {
   assert.deepEqual([0, 1, 2, 3, 10].map(wakeBackoffMs), [WAKE_BACKOFF_MS, 2 * WAKE_BACKOFF_MS, 4 * WAKE_BACKOFF_MS,
     8 * WAKE_BACKOFF_MS, WAKE_BACKOFF_MAX_MS])
 })
@@ -251,12 +316,12 @@ test("RT-6.20: mcp.transform adds the server and skill.transform the skill, neve
 test("RT-6.20: a turn: working, drain at the end as synthetic input, then listening", async () => {
   const fx = await start()
   await fx.prompt()
-  assert.deepEqual(calls.map((c) => c.body), [{ k: "turn", by: "human" }, { state: "working", label: "ws" }])
+  assert.deepEqual(rest().map((c) => c.body), [{ k: "turn", by: "human" }, { state: "working", label: "ws" }])
   calls = []
   answers["/v1/turn-end"] = { action: "drain", reason: "You have 1 unread …", banner: "📨 Collecting 1" }
   await fx.ended()
-  assert.match(calls[0].path, /^\/v1\/turn-end\?drains=0&signoff_asked=0&by_bus=0&push=1&listen_since=0$/)
-  assert.deepEqual(calls[1].body, { k: "block", kind: "drain" })
+  assert.match(rest()[0].path, /^\/v1\/turn-end\?drains=0&signoff_asked=0&by_bus=0&push=1$/)
+  assert.deepEqual(rest()[1].body, { k: "block", kind: "drain" })
   assert.deepEqual(fx.sent, [{ sessionID: "s1", text: "You have 1 unread …", description: "📨 Collecting 1",
     metadata: { [MARK]: "drain" }, delivery: "queue", resume: true }])
   // The drain round is the same turn: no prompt hook for synthetic input, no new turn counted.
@@ -264,133 +329,223 @@ test("RT-6.20: a turn: working, drain at the end as synthetic input, then listen
   await fx.ran()
   answers["/v1/turn-end"] = idleIn()
   await fx.ended()
-  assert.match(calls[0].path, /drains=1&.*&listen_since=0$/)
-  // The listen window the server opened: 👂 until its end, as in Claude Code.
-  assert.deepEqual(calls.slice(1).map((c) => c.body), [{ k: "turn_end" }, { state: "listening", until: nowSec() + 5400 }])
+  assert.match(rest()[0].path, /drains=1&signoff_asked=0&by_bus=0&push=1$/)
+  // The server's gates hold: reachable between turns (the status renews with its heartbeat), no end by time.
+  assert.deepEqual(rest().slice(1, 3).map((c) => c.body), [{ k: "turn_end" }, { state: "bus", label: "ws" }])
   assert.equal(fx.sent.length, 1)
   // Should OpenCode run the prompt hook for the plugin's input, its mark tells it apart.
   calls = []
   await fx.hooks.prompt({ sessionID: "s1", prompt: { text: "x" }, metadata: { [MARK]: "wake" }, delivery: "queue" })
   await settle()
-  assert.deepEqual(calls, [])
+  assert.deepEqual(calls.filter((c) => !c.path.startsWith("/v1/wake")), []) // the long poll runs on
   await fx.cleanup()
 })
 
-test("RT-6.20: an idle session is woken when the bus has something, once", async () => {
+test("RT-6.20: an idle session holds one long poll, no timer; a wake starts one turn", async () => {
   const fx = await start()
   await fx.prompt()
   await fx.ended()
-  await poll()
-  assert.ok(calls.some((c) => c.path === `/v1/wake?since=${Date.now() - 5000}&until=${nowSec() - 5 + 5400}`))
+  await until(() => held.length === 1, "one long poll in flight")
+  // One request, with a wait and no listen window, since the turn ended.
+  assert.equal(wakes().length, 1)
+  assert.match(wakes()[0].path, /^\/v1\/wake\?since=\d+&until=\d+&wait=50$/)
   assert.equal(fx.sent.length, 0)
-  answers["/v1/wake"] = { wake: true, reason: "dm", count: 1, text: "Mattermost: 1 unread mention(s) …" }
   calls = []
-  await poll()
-  assert.equal(fx.sent.length, 1)
+  answerWake({ wake: true, reason: "dm", count: 1, text: "Mattermost: 1 unread mention(s) …" })
+  await until(() => fx.sent.length === 1 && rest().length >= 3, "the wake input, its count, its turn and its presence")
   assert.deepEqual(fx.sent[0].metadata, { [MARK]: "wake" })
   assert.equal(fx.sent[0].resume, true)
   // It counts as the bus's turn and sets the presence working.
-  assert.deepEqual(calls.slice(1).map((c) => c.body), [{ k: "wake", reason: "dm" }, { k: "turn", by: "bus" },
+  assert.deepEqual(rest().map((c) => c.body), [{ k: "wake", reason: "dm" }, { k: "turn", by: "bus" },
     { state: "working", label: "ws" }])
-  // Busy now: no second wake while the turn runs.
+  // Busy now: no second request while the turn runs.
   calls = []
   await fx.ran()
-  await poll(2)
+  await settle(150)
   assert.equal(fx.sent.length, 1)
   assert.equal(wakes().length, 0)
-  answers["/v1/wake"] = { wake: false }
   await fx.ended()
-  assert.match(calls[0].path, /by_bus=1/)
-  await fx.cleanup()
+  assert.match(rest()[0].path, /by_bus=1/)
+  await until(() => held.length === 1, "asked again after the turn")
+  // Unloading ends the request in flight and nothing more is asked.
   calls = []
-  await poll(2)
+  await fx.cleanup()
+  await until(() => dropped === 1 && held.length === 0, "the request aborted")
+  await settle(150)
   assert.equal(wakes().length, 0, "stopped by the cleanup")
+})
+
+test("RT-6.20: a wake that arrives while a turn runs is held: asked again after the turn", async () => {
+  const fx = await start()
+  await fx.prompt()
+  await fx.ended()
+  await until(() => held.length === 1, "long poll")
+  // The human types while the request is out: a turn runs when the answer comes.
+  const since = (path: string) => path.match(/since=(\d+)/)![1]
+  const first = since(wakes()[0].path)
+  await fx.prompt()
+  answerWake({ wake: true, reason: "addressed", count: 1, text: "Mattermost: 1 new post(s) …" })
+  await settle(150)
+  assert.equal(fx.sent.length, 0)
+  tick(5000) // the turn ends later than the poll began
+  await fx.ended()
+  await until(() => held.length === 1, "asked again after the turn")
+  assert.equal(fx.sent.length, 0)
+  // A post that wakes by its time only (addressed, digest) is older than the new idle time: the
+  // dropped wake's `since` is kept, or it would never wake.
+  assert.equal(since(wakes().at(-1)!.path), first)
+  answerWake({ wake: true, reason: "addressed", count: 1, text: "Mattermost: 1 new post(s) …" })
+  await until(() => fx.sent.length === 1, "woken once the turn ended")
+  await fx.cleanup()
 })
 
 test("RT-6.20: a counter the woken turn cannot clear wakes again only after 1, 2, 4 … min", async () => {
   const fx = await start()
   await fx.prompt()
-  answers["/v1/turn-end"] = idleIn(7200)
   await fx.ended()
+  calls = []
+  // The server answers at once for a counter that stays: not held.
   answers["/v1/wake"] = { wake: true, reason: "dm", count: 2, text: "Mattermost: 2 unread …" }
   const woken = async () => {
+    // The wake's own calls (count, turn, presence working) are all in first.
+    await until(() => calls.some((c) => c.path === "/v1/presence" && c.body?.state === "working"), "the wake's presence")
     // The woken turn does nothing: the server lets it go idle (its drains are spent).
     await fx.ran()
-    answers["/v1/turn-end"] = { action: "idle", listen_since: 1, listen_until: nowSec() + 3600 }
     calls = []
     await fx.ended()
+    assert.match(rest()[0].path, /by_bus=1&push=1$/)
+    calls = []
   }
-  await poll()
-  assert.equal(fx.sent.length, 1)
+  await until(() => fx.sent.length === 1, "first wake")
   await woken()
-  // A wake-started turn keeps the human turn's drain rounds and window start.
-  assert.match(calls[0].path, /by_bus=1&push=1&listen_since=\d+$/)
-  await poll(11) // 55 s: the same counter again, held back
+  const asked = wakes().length
+  tick(55_000) // the same counter again, held back (each ask is paused, no tight loop)
+  await until(() => wakes().length >= asked + 2, "asked again, not woken")
   assert.equal(fx.sent.length, 1)
-  await poll(1)
-  assert.equal(fx.sent.length, 2) // after a minute
+  assert.ok(wakes().length < asked + 40, "a pause between asks")
+  tick(5_000 + 1)
+  await until(() => fx.sent.length === 2, "after a minute")
   await woken()
-  await poll(23)
+  tick(119_000)
+  await settle(200)
   assert.equal(fx.sent.length, 2)
-  await poll(1)
-  assert.equal(fx.sent.length, 3) // after two
+  tick(2_000)
+  await until(() => fx.sent.length === 3, "after two")
   await woken()
   // Something else (another count) wakes at once.
   answers["/v1/wake"] = { wake: true, reason: "dm", count: 3, text: "Mattermost: 3 unread …" }
-  await poll()
-  assert.equal(fx.sent.length, 4)
+  await until(() => fx.sent.length === 4, "another counter")
   await fx.cleanup()
 })
 
-test("RT-6.20: no wake-up while another session works, outside the window or after an interrupt", async () => {
+test("RT-6.20: nothing is asked while another session works, without gates or after an interrupt", async () => {
   const fx = await start()
-  answers["/v1/wake"] = { wake: true, reason: "addressed", count: 1, text: "Mattermost: 1 new post(s) …" }
   await fx.prompt("s1")
   await fx.prompt("s2")
   await fx.ended("s1")
+  await settle(150)
+  assert.equal(wakes().length, 0) // s2 is at work: its human is there
+  answers["/v1/turn-end"] = { action: "idle" } // no gates (not a project channel, BYE, MM_LISTEN_SEC=0)
   calls = []
-  await poll(2) // s2 is at work: its human is there
-  assert.equal(fx.sent.length, 0)
-  assert.equal(wakes().length, 0)
-  answers["/v1/turn-end"] = { action: "idle" } // no window (not a project channel, BYE, MM_LISTEN_SEC=0)
   await fx.ended("s2")
-  await poll(2)
-  assert.equal(fx.sent.length, 0) // s2 ended its turn last, without a window; s1 is not the one woken
-  assert.equal(wakes().length, 0)
+  assert.deepEqual(rest().slice(-1).map((c) => c.body), [{ state: "idle", label: "ws" }])
+  await settle(150)
+  assert.equal(wakes().length, 0) // s2 ended its turn last, without gates: idle, nothing to wake
   // A prompt makes its session the current one.
   answers["/v1/turn-end"] = idleIn(10)
   await fx.prompt("s1")
   await fx.ended("s1")
-  await poll()
-  assert.equal(fx.sent.length, 1)
+  await until(() => held.length === 1, "s1 is listening")
+  answerWake({ wake: true, reason: "addressed", count: 1, text: "Mattermost: 1 new post(s) …" })
+  await until(() => fx.sent.length === 1, "s1 woken")
   assert.equal(fx.sent[0].sessionID, "s1")
-  // The window ends: no more wake-ups.
+  // The window's length is not used: past it the session is still asked for.
   await fx.ran("s1")
-  answers["/v1/wake"] = { wake: false }
   answers["/v1/turn-end"] = { action: "idle", listen_since: nowSec() - 100, listen_until: nowSec() + 7 }
   await fx.ended("s1")
-  calls = []
-  await poll()
-  assert.equal(wakes().length, 1)
-  calls = []
-  await poll(3)
-  assert.equal(wakes().length, 0)
+  tick(3_600_000)
+  await until(() => held.length === 1, "still asked after the window's time")
   // Interrupted by the human: presence idle once, no checks, nothing wakes it.
   answers["/v1/turn-end"] = idleIn()
   await fx.prompt("s1")
   calls = []
   await fx.emit("session.execution.interrupted", { sessionID: "s1", reason: "user" })
   await fx.ended("s1")
-  await poll(2)
+  await settle(150)
   assert.deepEqual(paths(), ["POST /v1/presence"])
-  assert.deepEqual(calls[0].body, { state: "idle", label: "ws" })
+  assert.deepEqual(rest()[0].body, { state: "idle", label: "ws" })
   assert.equal(fx.sent.length, 1)
   // Superseded: a newer execution takes over, the turn goes on.
   await fx.prompt("s1")
   calls = []
   await fx.emit("session.execution.interrupted", { sessionID: "s1", reason: "superseded" })
   await fx.ended("s1")
-  assert.match(calls[0].path, /^\/v1\/turn-end\?/)
+  assert.match(rest()[0].path, /^\/v1\/turn-end\?/)
+  await fx.cleanup()
+})
+
+test("RT-6.20: a request another poller replaced backs off, a failure is asked again after a pause", async () => {
+  const fx = await start({ retrySec: 0.1 })
+  await fx.prompt()
+  await fx.ended()
+  await until(() => held.length === 1, "long poll")
+  answerWake({ wake: false, reason: "replaced", count: 0, text: "" })
+  await settle(40)
+  assert.equal(wakes().length, 1, "no new ask at once")
+  await until(() => wakes().length === 2, "asked again after the pause")
+  answerWake({ wake: false, reason: "replaced", count: 0, text: "" })
+  await settle(150)
+  assert.equal(wakes().length, 2, "the pause doubles")
+  await until(() => wakes().length === 3, "asked again after twice the pause")
+  // A failure (503: no bus session yet) is asked again after a pause, not at once.
+  answers["/v1/wake"] = undefined
+  answerWake({ wake: false, reason: "", count: 0, text: "" })
+  await settle(20)
+  await until(() => wakes().length >= 4, "the failing ask")
+  const failed = wakes().length
+  await settle(40)
+  assert.equal(wakes().length, failed, "paused after the failure")
+  answers["/v1/wake"] = HOLD
+  await until(() => held.length === 1, "back in flight")
+  await fx.cleanup()
+})
+
+test("RT-6.20: a server before 0.71.8 (a wake without until is a 400) is asked with until, not in a tight loop", async () => {
+  const fx = await start({ retrySec: 0.1 })
+  await fx.prompt()
+  answers["/v1/wake"] = OLD
+  await fx.ended()
+  await until(() => wakes().length >= 1, "asked")
+  // Every request names a window a day ahead: the old server accepts it and holds nothing, the new one ignores it.
+  assert.ok(wakes().every((c) => /&until=\d+&/.test(c.path)))
+  await settle(250)
+  // It answers at once, empty: a pause (the tests' 10 ms) between asks, not a tight loop.
+  assert.ok(wakes().length <= 40, `paused between asks: ${wakes().length}`)
+  await fx.cleanup()
+})
+
+test("RT-6.20: a failed turn-end check leaves a listening session listening", async () => {
+  const fx = await start()
+  await fx.prompt()
+  await fx.ended()
+  await until(() => held.length === 1, "listening")
+  // The next turn: its end check fails (a timeout, a 503): nothing is known, so it keeps listening.
+  await fx.prompt()
+  answers["/v1/turn-end"] = undefined
+  calls = []
+  await fx.ended()
+  await until(() => held.length === 1, "still asked for after a failed check")
+  // The status goes back to "on the bus", not left at the turn's "working".
+  await until(() => rest().some((c) => c.path === "/v1/presence"), "a presence")
+  assert.deepEqual(rest().filter((c) => c.path === "/v1/presence").map((c) => c.body), [{ state: "bus", label: "ws" }])
+  // And the first check that works with no gates (BYE) ends it.
+  answers["/v1/turn-end"] = { action: "idle" }
+  await fx.prompt()
+  await fx.ended()
+  // The request in flight ends as it was (the server's gates decide a wake); no new one is asked.
+  answerWake({ wake: false, reason: "", count: 0, text: "" })
+  await settle(150)
+  assert.equal(held.length, 0)
   await fx.cleanup()
 })
 
@@ -437,7 +592,7 @@ test("RT-6.20: subagent sessions, other locations, refused input and no server c
   calls = []
   await fx.prompt("s1")
   await fx.ended("s1")
-  await poll(2)
+  await settle(150)
   assert.deepEqual(calls, [])
   await fx.cleanup()
 })
@@ -455,21 +610,19 @@ test("RT-6.20 (RT-6.7): after a compaction the own posts come back as context, n
   await fx.emit("session.compaction.ended", { sessionID: "s1", reason: "manual", text: "summary" })
   await fx.ended()
   assert.deepEqual(paths(), ["GET /v1/handoff", "POST /v1/stat"])
-  assert.deepEqual(calls[1].body, { k: "compact", chars: 39 })
+  assert.deepEqual(rest()[1].body, { k: "compact", chars: 39 })
   assert.deepEqual(fx.sent, [{ sessionID: "s1", text: "Your conversation was just compacted. …",
     description: "Mattermost agent bus: your latest posts", metadata: { [MARK]: "context" }, delivery: "steer",
     resume: false }])
-  // The listen window goes on.
-  calls = []
-  await poll()
-  assert.equal(wakes().length, 1)
+  // The long poll goes on.
+  await until(() => held.length === 1, "long poll")
   // Compacted within a turn (auto): the turn still ends with its checks.
   await fx.prompt()
   await fx.emit("session.compaction.started", { sessionID: "s1", reason: "auto" })
   await fx.emit("session.compaction.ended", { sessionID: "s1", reason: "auto", text: "summary" })
   calls = []
   await fx.ended()
-  assert.match(calls[0].path, /^\/v1\/turn-end\?/)
+  assert.match(rest()[0].path, /^\/v1\/turn-end\?/)
   await fx.cleanup()
 })
 
@@ -479,19 +632,26 @@ test("RT-6.20: the turn state survives OpenCode unloading the location", async (
   await first.prompt()
   answers["/v1/turn-end"] = idleIn(600)
   await first.ended()
-  const until = nowSec() + 600
+  await until(() => held.length === 1, "long poll")
   await first.cleanup()
+  await until(() => held.length === 0 && dropped === 1, "aborted on unload")
   calls = []
-  await poll(2)
+  await settle(150)
   assert.equal(wakes().length, 0)
-  // Loaded again: the same session, its idle time and its listen window.
+  // Loaded again: the same session, its idle time, and still listening.
   const second = await start({}, {}, store)
-  await poll()
-  assert.equal(wakes().length, 1)
-  assert.match(wakes()[0].path, new RegExp(`&until=${until}$`))
-  answers["/v1/wake"] = { wake: true, reason: "dm", count: 1, text: "Mattermost: 1 unread …" }
-  await poll()
-  assert.equal(second.sent.length, 1)
+  await until(() => held.length === 1, "asked again")
+  assert.match(wakes()[0].path, /^\/v1\/wake\?since=\d+&until=\d+&wait=50$/)
+  answerWake({ wake: true, reason: "dm", count: 1, text: "Mattermost: 1 unread …" })
+  await until(() => second.sent.length === 1, "woken")
   assert.equal(second.sent[0].sessionID, "s1")
   await second.cleanup()
+})
+
+test("RT-6.20: state kept by a plugin from before ADR-009 (a window going on) keeps listening", async () => {
+  const store = new Map<string, any>()
+  store.set(`${SERVER}/${sha16(ws)}`, { last: "s1", turns: { s1: { idleAt: Date.now() - 1000, listenUntil: nowSec() + 600 } } })
+  const fx = await start({}, {}, store)
+  await until(() => held.length === 1, "asked again")
+  await fx.cleanup()
 })
