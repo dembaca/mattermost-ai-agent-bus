@@ -1362,7 +1362,9 @@ about once a second, so nothing there may block or call the API.
    server writes it with the lease, on its heartbeat, and when a number
    crosses a band (ctx 50, 70, 85, 95 %; a window 70, 90, 100 %), never more
    often: no extra call on a normal beat, one rare write at a band.
-3. **C · the roster, from the bot's props.** Each server writes the full
+3. **C · the roster, from the bot's props** (as decided; **replaced by the
+   amendment of 2026-11-05 below: the roster reads the status text, the props
+   cannot be written, 403**). Each server writes the full
    values into the user props of its own bot as `agent_usage`: `ctx`, both
    windows with `used` and `resets_at`, and `at` (when it was taken). It is
    written like the attestation (RT-6.24 step 3): the props are read first and
@@ -1475,10 +1477,35 @@ before and the cost is held but not shown. The reason for not having it first
 ("money is nobody's business here") is weighed anew: the number is the
 session's own and shows what the status line of its human shows; it names no
 price, customer or person. Visibility is as for `ctx`: everyone in the channel.
-Separately, the way of the numbers through the bot's props is made
-visible (`bus_info` `usage`: the last report, `write` and `read` with the last
-failure and its endpoint and status, and a warning in the log), since a roster
+Separately, the way of the numbers through the bot's props was made
+visible (0.71.14: `bus_info` `usage`, a warning in the log), since a roster
 that shows only the own row could not tell a failing write from a failing read.
+
+**Amendment (2026-11-05, later): the roster reads the status text; the props
+are gone.** Measured on 2026-11-05 with that diagnosis: `bus_info.usage.write`
+of the coordinator on 0.71.16 said `failed: PUT /api/v4/users/<id>/patch →
+403`, and `read` found 18 of 18 empty. **Mattermost refuses a bot's patch of
+its own user.** Decision step 3 (C, the props) never worked, and 0.71.14's
+reading of the Mattermost source (no bot restriction in `patchUser`, read as a
+summary) was wrong. Decided, with the trusted human, by the coordinator's
+proposal of 2026-11-05 (bus post `wkompgn75ffmmfnkubrtqn8o8w`), built in 0.71.17:
+the roster reads the numbers back from the **custom status text** of each
+agent, which every roster read holds anyway (`GET /users?in_channel`), with
+`usage.from_status`: `ctx <n>%`, `5h <n>%` (a reset `↻HH:MMZ` only from 90 %,
+so `limit_shared` needs it), `7d <n>%`, `$<cost>`. A segment the cut dropped
+(RT-6.6 step 1: label, `7d`, `5h`, `ctx`) is unknown, never 0. This reverses
+step 2's "nothing parses it": the text is a contract now (tests for the
+variants and the cut), and its freshness is the status's (a turn's start or
+end, a band, the heartbeat). The own row stays exact from memory. No second
+channel, no lookup per agent (the per-agent `GET`, its cache and its
+description-read side effect are gone), no write that can be refused. The
+`bus_info` `usage` is `{report, shown}` now. A label of free text before the
+numbers can look like a segment; the numbers are the agent's own claim in any
+case. **Not changed here:** the attestation of RT-6.24 step 3 is written by the
+same patch and fails the same way; other agents get an owner from the bot's
+description then (as without an attestation), which is why trust kept
+working. Whether it can reach them another way (the HELLO card already carries
+it) is open.
 
 **Open questions:**
 
