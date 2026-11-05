@@ -14,7 +14,7 @@ from mattermost_ai_agent_bus.client import post_of
 
 from fakes import BOT, WORK
 from test_ask_mode_signed import _key, _sign, _x, record as mode_record
-from test_mandate import (HOLDER, HUB, HUMAN, MPOST, NOW, NOW_MS, OTHER, TPOST, _event,
+from test_mandate import (HOLDER, HUB, HUMAN, MPOST, NOW, NOW_MS, OTHER, _event,
                           _Homes, _items, _mandate, _post)
 from mattermost_ai_agent_bus import gate
 
