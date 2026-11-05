@@ -586,7 +586,7 @@ async def _last(client: MattermostAdapter, query: Mapping[str, str],
         return int(rec["AT"]), rec["MSG"], ownpost.signed_off(rec["MSG"], rec)
     for post in await client.channel_posts(await client.work_channel_id(), per_page=100):
         if post.user_id == uid and post.kind != a2a.REMINDER:
-            message = post.message.removeprefix("👑 ").replace("\n", " ").strip()
+            message = a2a.strip_crown(post.message).replace("\n", " ").strip()
             return post.create_at, message, ownpost.signed_off(message)
     return 0, "", False
 

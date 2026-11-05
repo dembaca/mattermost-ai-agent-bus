@@ -18,13 +18,12 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from . import a2a, files
+from .model import Mark
 
 # Drain rounds per turn before a counter wait_for_events cannot clear counts
 # as stale (MAX_DRAIN in the Stop hook).
 MAX_DRAIN = 3
 # After an optional 👑, plain or in backticks (RT-6.14 step 2).
-_SIGNED_OFF = re.compile(r"^(?:👑\s*)?`?(IDLE|BYE)([^A-Za-z]|$)")
-_BYE = re.compile(r"^(?:👑\s*)?`?BYE([^A-Za-z]|$)")
 # The listen window after a turn (RT-6.2 step 3): the Stop hook's defaults and
 # cap, so an agent stays reachable as long in every harness.
 LISTEN_SEC = 5400
@@ -50,7 +49,7 @@ def drain(pending: int, channels: Iterable[Mapping[str, Any]]) -> dict[str, Any]
         reason += "\n\nPending per channel:\n" + "\n".join(lines)
     reason += "\n\nIf wait_for_events returns nothing, the counter is stale — say so and finish."
     return {"action": "drain", "reason": reason,
-            "banner": f"📨 Collecting {pending} unread Mattermost message(s)", "pending": pending}
+            "banner": f"{a2a.symbol(Mark.INBOX)} Collecting {pending} unread Mattermost message(s)", "pending": pending}
 
 
 def needs_signoff(last_message: str, *, asked: bool, by_bus: bool, push: bool,
@@ -63,7 +62,7 @@ def needs_signoff(last_message: str, *, asked: bool, by_bus: bool, push: bool,
     if asked or not last_message or (by_bus and push):
         return False
     if signed_off is None:
-        signed_off = bool(_SIGNED_OFF.match(last_message))
+        signed_off = a2a.status_word(last_message) in ("IDLE", "BYE")
     return not signed_off
 
 
@@ -78,7 +77,7 @@ def listen_sec(*, coordinator: bool) -> int:
 def listens(last_message: str, *, project: bool) -> bool:
     """The listen gates (RT-6.2 step 3): a project channel, the agent has
     posted in the work channel, and its latest post there is no BYE."""
-    return project and bool(last_message) and not _BYE.match(last_message)
+    return project and bool(last_message) and a2a.status_word(last_message) != "BYE"
 
 
 def listen_window(last_message: str, last_at_ms: int, *, project: bool, coordinator: bool,
@@ -116,7 +115,7 @@ def signoff(*, push: bool) -> dict[str, Any]:
                "first. You are asked because you posted or were sent something on the bus since "
                "your last IDLE; this check will not block you again this turn.")
     return {"action": "signoff", "reason": reason,
-            "banner": "✋ Signing off on Mattermost before going idle"}
+            "banner": f"{a2a.symbol(Mark.SIGNOFF)} Signing off on Mattermost before going idle"}
 
 
 def named(post: Mapping[str, Any], username: str) -> bool:

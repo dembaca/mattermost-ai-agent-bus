@@ -38,13 +38,13 @@ import contextlib
 import fcntl
 import json
 import os
-import re
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
-from . import session_file
+from . import a2a, session_file
+from .model import Mark
 
 MAX_AGE_SEC = 7 * 86400
 # A yes approves only this long after the ask (RT-6.11): a day later the
@@ -56,26 +56,19 @@ TITLES = 50
 # Asks that wait behind an open ask to the same target, per target (RT-6.11).
 QUEUE_MAX = 5
 
-YES = frozenset({"+1", "thumbsup", "white_check_mark", "heavy_check_mark",
-                 "ballot_box_with_check"})
-NO = frozenset({"-1", "thumbsdown", "x", "no_entry", "no_entry_sign"})
-# A choice among three or four alternatives (RT-6.11 step 1): one emoji each.
-CHOICES = ("one", "two", "three", "four")
-KEYCAPS = ("1️⃣", "2️⃣", "3️⃣", "4️⃣")
+# A choice among three or four alternatives (RT-6.11 step 1).
+MAX_CHOICES = 4
 
 
 def answer_of(emoji: str) -> str | None:
-    """yes / no for the agreed emoji, None for anything else (a remark only)."""
-    if emoji in YES:
-        return "yes"
-    if emoji in NO:
-        return "no"
-    return None
+    """yes / no for the agreed reaction, None for anything else (a remark only)."""
+    answer = a2a.answer_of(emoji)
+    return answer.value if answer else None
 
 
 def choice_of(emoji: str) -> int | None:
-    """The 1-based alternative a keycap emoji picks, None for anything else."""
-    return CHOICES.index(emoji) + 1 if emoji in CHOICES else None
+    """The 1-based alternative a choice reaction picks, None for anything else."""
+    return a2a.choice_of(emoji)
 
 
 def is_answer(emoji: str) -> bool:
@@ -83,15 +76,9 @@ def is_answer(emoji: str) -> bool:
     return answer_of(emoji) is not None or choice_of(emoji) is not None
 
 
-# An emoji an agent put in front of an answer, `👍 = yes`: stripped, the server
-# gives the emojis by position (RT-6.11 step 1).
-_MARK = re.compile(r"^\s*(?:(?:👍|👎)[\U0001F3FB-\U0001F3FF]?|✅|❌|✔\ufe0f?|☑\ufe0f?"
-                   r"|[1-4]\ufe0f?\u20e3)\s*[=:\-–]?\s*")
-
-
 def clean_answer(text: str) -> str:
     """One answer as plain text: no leading emoji mark, one line."""
-    return " ".join(_MARK.sub("", str(text), count=1).split())
+    return " ".join(a2a.clean_answer_mark(str(text)).split())
 
 
 def normalize_answers(answers: list[str] | str | None) -> list[str]:
@@ -111,17 +98,18 @@ def valid_answers(answers: list[str]) -> bool:
 def marks(count: int) -> list[str]:
     """The emojis the server gives `count` answers by position: 👍 (the go) and
     👎 for two, the keycaps for three or four."""
-    return ["👍", "👎"] if count == 2 else list(KEYCAPS[:count])
+    return a2a.answer_marks(count)
 
 
 def answer_line(answers: list[str], decision: bool) -> str:
     """The `Answer` field's text: every answer with its own emoji, by position,
     none twice; none given, 👍 yes (to the decision) and 👎 no."""
-    alts = answers if 2 <= len(answers) <= len(CHOICES) else []
+    alts = answers if 2 <= len(answers) <= MAX_CHOICES else []
     if alts:
         parts = [f"{m} = {a}" for m, a in zip(marks(len(alts)), alts, strict=True)]
     else:
-        parts = ["👍 = yes to the decision" if decision else "👍 = yes", "👎 = no"]
+        yes, no = a2a.symbol(Mark.YES), a2a.symbol(Mark.NO)
+        parts = [f"{yes} = yes to the decision" if decision else f"{yes} = yes", f"{no} = no"]
     return " · ".join(parts) + " · or reply in this thread"
 
 

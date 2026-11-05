@@ -80,7 +80,7 @@ async def test_turn_end_drains_signs_off_then_goes_idle(api, unread_rows):
     assert got["reason"].startswith("You have 3 unread message(s) on the Mattermost agent bus, "
                                     "2 needing action, the rest fyi. Call wait_for_events")
     assert "Pending per channel:\ndm\tO\tpending=2\nchan\tO\tpending=1\tfyi=1" in got["reason"]
-    assert got["banner"] == "📨 Collecting 3 unread Mattermost message(s)"
+    assert got["banner"] == "\U0001F4E8 Collecting 3 unread Mattermost message(s)"
     # Stale counters: after MAX_DRAIN rounds the drain lets go.
     got = (await h.get(f"/v1/turn-end?push=1&drains={turnend.MAX_DRAIN}")).json()
     assert got["action"] == "signoff"
@@ -280,7 +280,7 @@ def test_handoff_finds_a_coordinators_hello():
     its thread is still named."""
     posts = [{"id": "a", "user_id": UID, "root_id": "h", "message": "IDLE · waiting", "create_at": 3000},
              {"id": "h", "user_id": UID, "root_id": "", "create_at": 2000,
-              "message": "👑 HELLO · **coordinate**\n`bus` · `–` · Opus · coordinator\nfor h · trusts – · can: –"}]
+              "message": "\U0001F451 HELLO · **coordinate**\n`bus` · `–` · Opus · coordinator\nfor h · trusts – · can: –"}]
     assert "Your HELLO thread: root h; read it with get_thread for more." in turnend.handoff(posts, UID)
 
 

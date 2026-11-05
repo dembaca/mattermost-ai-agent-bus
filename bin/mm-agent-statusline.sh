@@ -82,6 +82,8 @@ if [[ "$usage_only" -eq 1 ]]; then
   usage_tap
   exit 0
 fi
+# shellcheck source=mm-agent-symbols.sh
+source "$(cd "$(dirname "$0")" && pwd)/mm-agent-symbols.sh"
 crown=""
 if [[ "$uid" =~ ^[a-z0-9]{26}$ ]]; then
   if [[ -n "${MM_BUS_MCP_ENDPOINT:-}" ]]; then
@@ -94,7 +96,7 @@ if [[ "$uid" =~ ^[a-z0-9]{26}$ ]]; then
   else
     until_="$(sed -n 's/^CROWN_UNTIL=//p' "${STATE}/coord-${uid}.env" 2>/dev/null | head -1)"
   fi
-  [[ "$until_" =~ ^[0-9]+$ ]] && (( until_ > $(date +%s) )) && crown="👑 "
+  [[ "$until_" =~ ^[0-9]+$ ]] && (( until_ > $(date +%s) )) && crown="$MM_CROWN "
 fi
 printf '%s@%s' "$crown" "$name"
 usage_tap

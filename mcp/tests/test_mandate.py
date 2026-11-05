@@ -70,7 +70,7 @@ class _Homes(FakeChat):
         self.by_channel = {WORK: [_member(BOT, "agents"), *members], HUB: members}
 
 
-def _mandate(text: str = "mandate: 👑 of ~hub", *, pid: str = MPOST, user: str = HUMAN,
+def _mandate(text: str = "mandate: \U0001F451 of ~hub", *, pid: str = MPOST, user: str = HUMAN,
              at: int = NOW_MS - 60_000, edit: int = 0, **over: Any) -> dict[str, Any]:
     return {"id": pid, "user_id": user, "channel_id": WORK, "message": text,
             "create_at": at, "edit_at": edit, "is_pinned": True} | over
@@ -210,11 +210,11 @@ async def test_a_bot_or_an_agent_listed_as_trusted_counts_nothing(chat):
 async def test_the_first_line_decides(chat):
     """RT-6.26 step 2: `mandate: 👑 of ~<home> [until <date>]`, any case, in
     backticks; further lines are a reason; anything else is none."""
-    assert mandate.parse("Mandate: 👑 of ~Hub") == ("hub", "")
+    assert mandate.parse("Mandate: \U0001F451 of ~Hub") == ("hub", "")
     assert mandate.parse("`mandate: :crown: of ~hub until 2026-12-01`\nso agents get work") == (
         "hub", "2026-12-01")
-    for text in ("please: mandate: 👑 of ~hub", "mandate: 👑 of hub", "mandate 👑 of ~hub",
-                 "reason first\nmandate: 👑 of ~hub"):
+    for text in ("please: mandate: \U0001F451 of ~hub", "mandate: \U0001F451 of hub", "mandate \U0001F451 of ~hub",
+                 "reason first\nmandate: \U0001F451 of ~hub"):
         assert mandate.parse(text) is None
 
 
@@ -222,8 +222,8 @@ async def test_the_newest_mandate_wins(chat):
     """RT-6.26 step 3: a newer qualifying pin in the home replaces the older;
     one by someone not trusted replaces nothing."""
     chat.pinned = [_mandate(pid="1" * 26, at=NOW_MS - 3000),
-                   _mandate("mandate: 👑 of ~proj-b", pid="2" * 26, at=NOW_MS - 2000),
-                   _mandate("mandate: 👑 of ~agents", pid="3" * 26, user=OTHER, at=NOW_MS - 1000)]
+                   _mandate("mandate: \U0001F451 of ~proj-b", pid="2" * 26, at=NOW_MS - 2000),
+                   _mandate("mandate: \U0001F451 of ~agents", pid="3" * 26, user=OTHER, at=NOW_MS - 1000)]
     m, _ = await mandate.current(chat)
     assert m is not None and (m.post, m.home, m.home_id) == ("2" * 26, "proj-b", GUEST)
 
@@ -406,7 +406,7 @@ async def test_bus_info_shows_the_mandate(chat, monkeypatch):
     monkeypatch.setattr(server, "_newer_installed", lambda: None)
     c.bots = {"agent-hub": ChannelUser(HOLDER, "agent-hub")}
     got = json.loads(await server.bus_info())["mandate"]
-    assert got == {"role": "👑 of ~hub", "by": "dembaca",
+    assert got == {"role": "\U0001F451 of ~hub", "by": "dembaca",
                    "until": time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime((NOW_MS - 60_000 + 7 * DAY) / 1000)),
                    "holder": "agent-hub", "post": MPOST, "source": "post"}
     mandate._fetched.clear()

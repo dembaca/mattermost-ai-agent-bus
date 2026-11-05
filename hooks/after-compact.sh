@@ -25,7 +25,7 @@ mm_bus GET '/v1/posts?limit=200' || exit 0
 
 # Own posts, newest first: the last three, each cut to 600 characters, then
 # their files as a channel push names them (RT-6.23).
-context="$(jq -r --arg me "$MM_BOT_USER_ID" '
+context="$(jq -r --arg me "$MM_BOT_USER_ID" --arg crown "$MM_CROWN " '
   [.posts[] | select(.user_id == $me and (.type // "") == "")] as $own
   | if ($own | length) == 0 then empty else
       ($own[:3] | map("- [\(.create_at / 1000 | floor | strflocaltime("%Y-%m-%d %H:%M"))] "
@@ -34,7 +34,7 @@ context="$(jq -r --arg me "$MM_BOT_USER_ID" '
                          + ([.files[] | [.id, (.name // empty)] | join(" ")] | join("; ")) end))
                 | join("\n")) as $posts
       | ([$own[] | select((.root_id // "") == ""
-                          and (.message | ltrimstr("👑 ") | ltrimstr("`") | startswith("HELLO")))][0].id // null) as $hello
+                          and (.message | ltrimstr($crown) | ltrimstr("`") | startswith("HELLO")))][0].id // null) as $hello
       | "Your conversation was just compacted. Your own latest posts on the Mattermost agent bus "
         + "(work channel), newest first, are your handoff state:\n" + $posts
         + (if $hello then "\nYour HELLO thread: root \($hello); read it with get_thread for more." else "" end)

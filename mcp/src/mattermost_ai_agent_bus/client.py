@@ -173,7 +173,7 @@ def ask_headline(post: Mapping[str, Any]) -> str:
     note = props.get("a2a") if isinstance(props, Mapping) else None
     message = str(post.get("message") or "")
     asked = (isinstance(note, Mapping) and note.get("kind") == a2a.ASK) \
-        or message.lstrip().removeprefix("👑").lstrip().startswith("🙋 @")
+        or a2a.head(message).ask_at
     bold = _BOLD.search(message) if asked else None
     return _AT.sub("", bold[1]).strip() if bold else ""
 

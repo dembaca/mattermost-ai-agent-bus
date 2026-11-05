@@ -41,7 +41,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from . import a2a, attest, gate, lease, owners
-from .model import NoMandateEndpoint, Post
+from .model import Mark, NoMandateEndpoint, Post
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -58,7 +58,7 @@ DAY_MS = 86_400_000
 TASK = "TASK"
 JUDGED_MAX = 5_000  # task roots judged once (step 5); the oldest go first
 
-_LINE = re.compile(r"`?mandate:\s*(?:👑|:crown:)\s+of\s+~([a-z0-9][a-z0-9_-]{0,63})"
+_LINE = re.compile(rf"`?mandate:\s*{a2a.mandate_crown()}\s+of\s+~([a-z0-9][a-z0-9_-]{{0,63}})"
                    r"(?:\s+until\s+(\S+?))?`?[.!]?", re.I)
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -83,7 +83,7 @@ class Mandate:
     def role(self) -> str:
         if self.source == SIGNED:
             return f"coordinator of ~{self.home}"
-        return f"{lease.CROWN} of ~{self.home}"
+        return f"{a2a.symbol(Mark.CROWN)} of ~{self.home}"
 
 
 @dataclass(frozen=True)

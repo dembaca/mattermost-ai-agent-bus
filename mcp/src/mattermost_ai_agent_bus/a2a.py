@@ -22,6 +22,9 @@ import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from . import symbols as _symbols
+from .model import Head
+
 if TYPE_CHECKING:
     from .model import Post
 
@@ -66,9 +69,34 @@ ASK_MODE = "ask_mode"
 # pinned and the post mandates nothing (RT-6.26 step 8): fyi.
 MANDATE = "mandate"
 _OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE)
-# A link line without props (before 0.64.4, `🙋 asked <ask id>`): the ask's id
-# bare, or as the permalink the server writes (RT-6.15).
-_ASK_LINK = re.compile(r"🙋\s*asked\s+(?:[a-z0-9]{26}|\[[^\]]*\]\([^)\s]*/[a-z0-9]{26}\))\s*")
+# The wire door of the core (arc42 §5.1): the meanings the core speaks in
+# (model.Mark, Answer, StatusMark) and what they look like in Mattermost
+# (symbols.py, the one place that knows the characters and shortcodes).
+symbol = _symbols.symbol
+strip_crown = _symbols.strip_crown
+with_crown = _symbols.with_crown
+ask_head = _symbols.ask_head
+answer_of = _symbols.answer_of
+choice_of = _symbols.choice_of
+clean_answer_mark = _symbols.clean_answer_mark
+answer_marks = _symbols.answer_marks
+status_emoji = _symbols.status_emoji
+status_of = _symbols.status_of
+done_reaction = _symbols.done_reaction
+is_done = _symbols.is_done
+mandate_crown = _symbols.mandate_crown
+
+
+def head(message: str) -> Head:
+    """What a post's text opens with: the crown, an ask mark, an ask link line."""
+    return _symbols.parse_head(message)
+
+
+def status_word(message: str) -> str | None:
+    """The bus word a status post starts with, after an optional crown, plain
+    or in backticks (RT-6.14 step 2); None when it starts with none."""
+    m = _symbols.status_head(message or "")
+    return m[3] if m else None
 # props.a2a.to: the post is for every agent in the channel (RT-6.11, RT-6.2).
 ALL = "all"
 
@@ -92,16 +120,11 @@ def word(message: str) -> str | None:
     return m[1] if m and m[1] in WORDS else None
 
 
-# A status post's bus word at its very start, after an optional 👑, plain or
-# already in backticks (RT-6.14 step 2).
-_STATUS = re.compile(r"^(👑\s*)?(`?)([A-Z]{2,11})(`?)(?![A-Za-z])")
-
-
 def styled(message: str) -> str:
     """A status post as the server writes it (RT-6.14 step 2): its bus word
     in backticks, and a blank line after the headline when more lines
     follow. Any other text stays as it is; a styled one too."""
-    m = _STATUS.match(message or "")
+    m = _symbols.status_head(message or "")
     if not m or m[3] not in WORDS or m[2] != m[4]:
         return message
     out = message if m[2] else f"{m[1] or ''}`{m[3]}`{message[m.end():]}"
@@ -246,10 +269,10 @@ def kind_of(post: Mapping[str, Any]) -> str | None:
         k = str(a2a["kind"])
         return k if k in _OWN else k.upper()
     message = str(post.get("message", ""))
-    text = message.strip().removeprefix("👑").lstrip()
-    if _ASK_LINK.fullmatch(text):
+    opening = _symbols.parse_head(message)
+    if opening.ask_link:
         return ASK_LINK
-    if text.startswith("🙋"):
+    if opening.ask:
         return ASK
     return word(message)
 

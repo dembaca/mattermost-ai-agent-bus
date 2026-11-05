@@ -259,9 +259,9 @@ async def test_another_agents_ask_is_linked_by_its_headline_read_once(monkeypatc
     adapter remembers it, so the next post makes no request."""
     other, crowned, own = "a1" * 13, "c3" * 13, POST_ID
     c, sent, reads = _adapter(monkeypatch, {
-        other: {"id": other, "message": "🙋 @dembaca — **Merge PR #136 now?** see below",
+        other: {"id": other, "message": "\U0001F64B @dembaca — **Merge PR #136 now?** see below",
                 "props": {"a2a": {"kind": "ask"}}},
-        crowned: {"id": crowned, "message": "👑 🙋 @dembaca — **Deploy?**"},
+        crowned: {"id": crowned, "message": "\U0001F451 \U0001F64B @dembaca — **Deploy?**"},
     })
     asks.add("b" * 26, own, "dembaca", own, title="Own one?")
     props = attachment_props([("Context", f"waits on ask {other}", False)],
@@ -288,7 +288,7 @@ async def test_a_post_that_is_no_ask_or_cannot_be_read_reads_input(monkeypatch):
     ids = [f"{i}" + "z" * 25 for i in range(7)]
     c, sent, reads = _adapter(monkeypatch, {
         ids[0]: {"id": ids[0], "message": "**Merge?** said someone"},
-        ids[1]: {"id": ids[1], "message": "🙋 @dembaca — merge?"},
+        ids[1]: {"id": ids[1], "message": "\U0001F64B @dembaca — merge?"},
         ids[2]: httpx.Response(403, json={}),
         # ids[3]: not found
         ids[4]: httpx.Response(500, text="oops"),
@@ -308,7 +308,7 @@ async def test_another_agents_headline_mentions_nobody(monkeypatch):
     are dropped and it notifies nobody."""
     other = "a1" * 13
     c, sent, _ = _adapter(monkeypatch, {other: {
-        "id": other, "message": "🙋 @dembaca — **Tell @dembaca and @channel, @all?**",
+        "id": other, "message": "\U0001F64B @dembaca — **Tell @dembaca and @channel, @all?**",
         "props": {"a2a": {"kind": "ask"}}}})
     await c.post(f"x ask {other}", channel_id="c" * 26)
     assert sent[0]["message"] == f'x [Tell dembaca and channel, all?]({PL}{other} "ask")'
@@ -362,7 +362,7 @@ async def test_an_asks_card_links_post_ids_and_reads_back_bare(monkeypatch):
     props = attachment_props([("context", f"see {POST_ID}", False), ("where", pr, True)],
                              fallback=f"ask {POST_ID}", urgent=False)
     props["attachments"][0]["text"] = f"also {POST_ID}"
-    post = await c.post("🙋 ask", channel_id="c" * 26, props=props)
+    post = await c.post("\U0001F64B ask", channel_id="c" * 26, props=props)
     card = sent[0]["props"]["attachments"][0]
     assert card["fields"][0] == {"title": "context", "value": f"see [Post]({PL}{POST_ID})",
                                  "short": False}

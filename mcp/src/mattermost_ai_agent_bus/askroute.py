@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import a2a, asks, attest, lease, owners, session_file
-from .model import Post
+from .model import Mark, Post
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -62,7 +62,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 QUESTION, APPROVAL = "question", "approval"
-NO_CROWN = "no 👑 reachable in your home: asked the human at once"
+CROWN = a2a.symbol(Mark.CROWN)
+NO_CROWN = f"no {CROWN} reachable in your home: asked the human at once"
 KINDS = (QUESTION, APPROVAL)
 DIRECT, COORDINATOR = "direct", "coordinator"
 MODES = (DIRECT, COORDINATOR)
@@ -242,7 +243,7 @@ async def _switches(client: ChatPort, post: Post, home: str) -> tuple[str, str] 
 
 
 _ACK = {
-    COORDINATOR: ("ask-mode coordinator, set by {who}: the agents here ask the 👑 their "
+    COORDINATOR: (f"ask-mode coordinator, set by {{who}}: the agents here ask the {CROWN} their "
                   "questions first; approvals still go to a human, never to an agent. A "
                   "question unanswered for {wait} min goes to its human."),
     DIRECT: "ask-mode direct, set by {who}: every ask goes to its human again.",
@@ -466,8 +467,8 @@ async def coordinator(client: ChatPort, username: str) -> tuple[str, str]:
     if not holder or holder.lower() == username.lower():
         return "", NO_CROWN
     if not await _peer_holder(client, holder):
-        log.info("ask route: the home's 👑 %s is no peer: the human", holder)
-        return "", f"the home's 👑 {holder} is not a peer of this session: asked the human at once"
+        log.info("ask route: the home's crown holder %s is no peer: the human", holder)
+        return "", f"the home's {CROWN} {holder} is not a peer of this session: asked the human at once"
     return holder, ""
 
 

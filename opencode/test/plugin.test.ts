@@ -318,11 +318,11 @@ test("RT-6.20: a turn: working, drain at the end as synthetic input, then listen
   await fx.prompt()
   assert.deepEqual(rest().map((c) => c.body), [{ k: "turn", by: "human" }, { state: "working", label: "ws" }])
   calls = []
-  answers["/v1/turn-end"] = { action: "drain", reason: "You have 1 unread …", banner: "📨 Collecting 1" }
+  answers["/v1/turn-end"] = { action: "drain", reason: "You have 1 unread …", banner: "\u{1F4E8} Collecting 1" }
   await fx.ended()
   assert.match(rest()[0].path, /^\/v1\/turn-end\?drains=0&signoff_asked=0&by_bus=0&push=1$/)
   assert.deepEqual(rest()[1].body, { k: "block", kind: "drain" })
-  assert.deepEqual(fx.sent, [{ sessionID: "s1", text: "You have 1 unread …", description: "📨 Collecting 1",
+  assert.deepEqual(fx.sent, [{ sessionID: "s1", text: "You have 1 unread …", description: "\u{1F4E8} Collecting 1",
     metadata: { [MARK]: "drain" }, delivery: "queue", resume: true }])
   // The drain round is the same turn: no prompt hook for synthetic input, no new turn counted.
   calls = []

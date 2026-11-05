@@ -139,7 +139,7 @@ async def test_an_ambassador_is_listed_with_its_homes_crown(home):
     assert rows == [RosterEntry("agent-me", "working", coordinator=True),
                     RosterEntry("agent-b", "working", crown_of="team-b")]
     assert [r for r in tasks.roster(rows, [], {}) if r.get("crown")] == [
-        {"agent": "agent-b", "status": "working", "crown": "👑 of ~team-b"}]
+        {"agent": "agent-b", "status": "working", "crown": "\U0001F451 of ~team-b"}]
     gate._coord = None
     assert await gate.coordinator_name(home) == ""
 
@@ -162,8 +162,8 @@ async def test_a_post_outside_the_home_carries_no_crown(home):
     await server.post_as_bot(home, "STATUS · building", channel_id=OTHER)
     await server.post_as_bot(home, "STATUS · building")
     out, here = home.posted
-    assert not out["message"].startswith("👑") and not (out["props"] or {}).get("a2a", {}).get("crown")
-    assert here["message"].startswith("👑 ") and here["props"]["a2a"]["crown"]
+    assert not out["message"].startswith("\U0001F451") and not (out["props"] or {}).get("a2a", {}).get("crown")
+    assert here["message"].startswith("\U0001F451 ") and here["props"]["a2a"]["crown"]
 
 
 # --- the coordinator coordinates only where it routes (RT-6.12 step 3, RT-6.16 step 2) ------

@@ -217,3 +217,50 @@ def test_the_fake_is_a_typed_subset_of_the_port():
     for name in sorted(members):
         if callable(inspect.getattr_static(FakeChat, name)):
             assert _signature(FakeChat, name) == _signature(ChatPort, name), name
+
+
+# Who may import symbols.py, the one Python module that knows Mattermost's
+# characters and shortcodes: the wire door a2a (the core calls a2a.symbol,
+# a2a.head and the like, in meanings from model.py) and the adapter.
+SYMBOL_IMPORTERS = {"a2a.py", "client.py"}
+
+
+def imports_symbols(source: str) -> bool:
+    """Any import of symbols.py: relative or absolute, module or member."""
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            module = (node.module or "").split(".")
+            if module[-1] == "symbols" or any(a.name == "symbols" for a in node.names):
+                return True
+        elif isinstance(node, ast.Import) and any(a.name.split(".")[-1] == "symbols" for a in node.names):
+            return True
+    return False
+
+
+def reaches_symbols_through_a2a(source: str) -> bool:
+    """a2a.symbols or a2a._symbols: the wire door's own import used from outside."""
+    return any(isinstance(n, ast.Attribute) and n.attr in {"symbols", "_symbols"}
+               and isinstance(n.value, ast.Name) and n.value.id == "a2a"
+               for n in ast.walk(ast.parse(source)))
+
+
+def test_only_the_wire_door_and_the_adapter_import_symbols():
+    found = {f.name for f in sorted(SRC.glob("*.py"))
+             if f.name != "symbols.py" and imports_symbols(f.read_text())}
+    assert found <= SYMBOL_IMPORTERS
+
+
+def test_nobody_reaches_symbols_through_a2a():
+    found = {f.name for f in sorted(SRC.glob("*.py")) if reaches_symbols_through_a2a(f.read_text())}
+    assert found == set()
+
+
+def test_the_symbols_guard_sees_an_import():
+    assert imports_symbols("from . import symbols\n")
+    assert imports_symbols("from .symbols import Vocabulary\n")
+    assert imports_symbols("from mattermost_ai_agent_bus import symbols\n")
+    assert imports_symbols("import mattermost_ai_agent_bus.symbols\n")
+    assert imports_symbols("from mattermost_ai_agent_bus.symbols import symbol\n")
+    assert not imports_symbols("from . import a2a\n")
+    assert reaches_symbols_through_a2a("x = a2a._symbols._CROWN\n")
+    assert not reaches_symbols_through_a2a("x = a2a.symbol(Mark.CROWN)\n")

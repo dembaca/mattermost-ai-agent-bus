@@ -113,7 +113,7 @@ def _open(bus, what: str) -> None:
         bus.posts += [post(1, ME, "TASK · Fix the parser · @agent-bob", 60),
                       post(2, BOB, "ACK · on it", 50, root=1)]
     elif what == "ask":
-        bus.posts += [post(1, BOB, "🙋 @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK)]
+        bus.posts += [post(1, BOB, "\U0001F64B @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK)]
     elif what == "post":
         bus.posts += [post(1, HUMAN, "@agent-bob can you look at the build?", 50)]
     else:
@@ -198,7 +198,7 @@ async def test_addressed_posts_count_until_the_addressee_answers(bus):
 async def test_reminders_are_no_activity(bus):
     """RT-6.19: the server's own ask reminders do not end the quiet."""
     _open(bus, "task")
-    bus.posts.append(post(5, BOB, "🔔 @dembaca — reminder: **Merge PR #4?**", 2, root=1, kind=a2a.REMINDER))
+    bus.posts.append(post(5, BOB, "\U0001F514 @dembaca — reminder: **Merge PR #4?**", 2, root=1, kind=a2a.REMINDER))
     await look(bus)
     assert len(bus.woken) == 1
 
@@ -269,7 +269,7 @@ def test_digest_says_what_who_is_next_and_last_activity_and_is_capped():
 
 async def test_an_expired_ask_asks_for_a_new_one(bus):
     """RT-6.19: an ask older than 24 h approves nothing (RT-6.11): its asker opens a new one."""
-    bus.posts += [post(1, BOB, "🙋 @dembaca — **Merge PR #4?**", 25 * 60, kind=a2a.ASK)]
+    bus.posts += [post(1, BOB, "\U0001F64B @dembaca — **Merge PR #4?**", 25 * 60, kind=a2a.ASK)]
     await look(bus)
     assert "ask expired" in bus.woken[0] and "agent-bob: resolve it, open a new ask" in bus.woken[0]
 
@@ -359,7 +359,7 @@ async def test_reminders_follow_the_schedule_in_the_asks_thread(bus):
     thread with the human's @-mention and the ask's title, fyi for agents."""
     _ask(0, root=7)
     bus.posts += [post(7, HUMAN, "deploy plan", 1),
-                  post(1, ME, "🙋 @dembaca — **Go to install on hogan?**", 0, root=7, kind=a2a.ASK)]
+                  post(1, ME, "\U0001F64B @dembaca — **Go to install on hogan?**", 0, root=7, kind=a2a.ASK)]
     at = []
     for minute in range(0, 75):
         before = len(bus.sent)
@@ -369,7 +369,7 @@ async def test_reminders_follow_the_schedule_in_the_asks_thread(bus):
     assert at == [20, 30, 50]
     sent = bus.sent[0]
     assert sent["root_id"] == pid(7)
-    assert sent["message"].startswith("🔔 @dembaca — reminder: **Go to install on hogan?**")
+    assert sent["message"].startswith("\U0001F514 @dembaca — reminder: **Go to install on hogan?**")
     assert "waiting 20 min" in sent["message"]
     assert sent["props"]["a2a"]["kind"] == a2a.REMINDER and sent["props"]["a2a"]["intent"] == a2a.FYI
     assert stats.summary("0")["ask_reminders"] == 3
@@ -377,7 +377,7 @@ async def test_reminders_follow_the_schedule_in_the_asks_thread(bus):
 
 async def test_a_top_level_ask_is_reminded_in_its_own_thread(bus):
     ask_id = _ask(25)
-    bus.posts.append(post(1, ME, "🙋 @dembaca — **Merge?**", 25, kind=a2a.ASK))
+    bus.posts.append(post(1, ME, "\U0001F64B @dembaca — **Merge?**", 25, kind=a2a.ASK))
     await remind.tick(bus, ME, NOW)
     assert [s["root_id"] for s in bus.sent] == [ask_id]
 
@@ -387,7 +387,7 @@ async def test_reminders_stop_once_answered_or_resolved(bus, answer):
     """RT-6.19: a yes/no reaction by someone else, a reply by the human, an
     answer the agent collected or resolve_ask end the reminders."""
     ask_id = _ask(25)
-    bus.posts.append(post(1, ME, "🙋 @dembaca — **Merge?**", 25, kind=a2a.ASK))
+    bus.posts.append(post(1, ME, "\U0001F64B @dembaca — **Merge?**", 25, kind=a2a.ASK))
     if answer == "reaction":
         bus.reacts[ask_id] = [{"user_id": ME, "emoji_name": "+1"}, {"user_id": HUMAN, "emoji_name": "-1"}]
     elif answer == "reply":
@@ -405,7 +405,7 @@ async def test_reminders_stop_once_answered_or_resolved(bus, answer):
 async def test_no_reminder_once_the_ask_is_a_day_old(bus):
     """RT-6.19: a yes approves nothing after 24 h (RT-6.11): no more reminders."""
     _ask(23 * 60)
-    bus.posts.append(post(1, ME, "🙋 @dembaca — **Merge?**", 23 * 60, kind=a2a.ASK))
+    bus.posts.append(post(1, ME, "\U0001F64B @dembaca — **Merge?**", 23 * 60, kind=a2a.ASK))
     remind._write(ME, {pid(1): (8, NOW - 60)}, set())  # the next gap ends after 24 h
     assert await remind.tick(bus, ME, NOW) is None
     assert bus.sent == []
@@ -414,7 +414,7 @@ async def test_no_reminder_once_the_ask_is_a_day_old(bus):
 async def test_a_restart_sends_no_reminder_twice(bus):
     """RT-6.19: remind-<uid>.env survives the server; the next one keeps its time."""
     _ask(20)
-    bus.posts.append(post(1, ME, "🙋 @dembaca — **Merge?**", 20, kind=a2a.ASK))
+    bus.posts.append(post(1, ME, "\U0001F64B @dembaca — **Merge?**", 20, kind=a2a.ASK))
     assert await remind.tick(bus, ME, NOW) == pytest.approx(600)
     assert len(bus.sent) == 1
     assert (remind.session_file.state_dir() / f"remind-{ME}.env").read_text().startswith(f"R={pid(1)} 1 ")
@@ -484,7 +484,7 @@ async def test_the_crown_holders_idle_and_ask_are_no_activity_and_the_text_says_
     _open(bus, "task")                                     # bob's ACK, 50 min ago
     bus.posts += [post(5, ME, "HELLO · coordinating", 55),
                   post(6, ME, "IDLE · waiting for dembaca", 23, root=5),
-                  post(7, ME, "🙋 @dembaca — **Merge PR #4?**", 23, kind=a2a.ASK)]
+                  post(7, ME, "\U0001F64B @dembaca — **Merge PR #4?**", 23, kind=a2a.ASK)]
     assert await _wakes(bus, range(0, 25)) == [0, 20]
     quiet = stall._hhmm(bus.posts[1].create_at)
     assert bus.woken[0].startswith(f"Stall: no post by another agent or a trusted human since {quiet} (50 min;"
@@ -517,7 +517,7 @@ def test_a_reply_in_the_task_thread_answers_the_ask():
     reply anywhere in that thread (the ask's root), as the reminders see it."""
     names = {BOB: "agent-bob", HUMAN: "dembaca"}
     posts = [post(1, BOB, "TASK · Deploy", 60),
-             post(2, BOB, "🙋 @dembaca — **Go?**", 30, root=1, kind=a2a.ASK)]
+             post(2, BOB, "\U0001F64B @dembaca — **Go?**", 30, root=1, kind=a2a.ASK)]
     assert [a["ask"] for a in tasks.open_asks(posts, names)] == [pid(2)]
     posts.append(post(3, HUMAN, "go", 40, root=1))                   # before the ask
     assert [a["ask"] for a in tasks.open_asks(posts, names)] == [pid(2)]
@@ -529,7 +529,7 @@ def test_a_reply_in_the_task_thread_answers_the_ask():
 def test_only_the_humans_reaction_answers_the_ask_in_the_task_list(by, answers):
     """RT-6.19: a 👍 by another agent or a human not trusted leaves the ask open."""
     names = {BOB: "agent-bob", HUMAN: "dembaca", EVE: "agent-eve", UNTRUSTED: "visitor"}
-    ask = post(1, BOB, "🙋 @someone — **Go?**", 30, kind=a2a.ASK,
+    ask = post(1, BOB, "\U0001F64B @someone — **Go?**", 30, kind=a2a.ASK,
                metadata={"reactions": [{"user_id": by, "emoji_name": "+1"}]})
     assert (tasks.open_asks([ask], names, {HUMAN}) == []) == answers
 
@@ -541,7 +541,7 @@ async def test_only_the_human_or_a_trusted_reaction_stops_reminders(bus, by, sto
     resolve_ask of an agent that did not ask) or an untrusted human is no
     answer; only the asker's own resolve_ask ends its reminders."""
     ask_id = _ask(25)
-    bus.posts.append(post(1, ME, "🙋 @dembaca — **Merge?**", 25, kind=a2a.ASK))
+    bus.posts.append(post(1, ME, "\U0001F64B @dembaca — **Merge?**", 25, kind=a2a.ASK))
     bus.reacts[ask_id] = [{"user_id": by, "emoji_name": emoji}]
     await remind.tick(bus, ME, NOW)
     assert (bus.sent == []) == stops
@@ -551,7 +551,7 @@ async def test_a_reply_in_the_task_thread_stops_reminders(bus):
     """RT-6.19: the ask's thread is the task's thread; the human's reply there counts."""
     _ask(25, root=7)
     bus.posts += [post(7, BOB, "TASK · Deploy", 60),
-                  post(1, ME, "🙋 @dembaca — **Go?**", 25, root=7, kind=a2a.ASK),
+                  post(1, ME, "\U0001F64B @dembaca — **Go?**", 25, root=7, kind=a2a.ASK),
                   post(2, HUMAN, "yes go", 5, root=7)]
     await remind.tick(bus, ME, NOW)
     assert bus.sent == []
@@ -564,7 +564,7 @@ async def test_an_ask_from_a_task_thread_is_answered_in_its_own_thread(bus, repl
     and the reminders go on, a reply in the ask's own thread stops them."""
     ask_id = _ask(25, root=1)
     bus.posts += [post(7, BOB, "TASK · Deploy", 60),
-                  post(1, ME, "🙋 @dembaca — **Go?**", 25, kind=a2a.ASK),
+                  post(1, ME, "\U0001F64B @dembaca — **Go?**", 25, kind=a2a.ASK),
                   post(3, ME, f"🙋 asked {pid(1)}", 25, root=7),
                   post(2, HUMAN, "the logs look odd", 5, root=reply_in)]
     await remind.tick(bus, ME, NOW)
@@ -574,7 +574,7 @@ async def test_an_ask_from_a_task_thread_is_answered_in_its_own_thread(bus, repl
 async def test_two_servers_of_one_bot_send_one_reminder(bus):
     """RT-6.19: remind-<uid>.lock: while one server sends, the other sends nothing."""
     _ask(25)
-    bus.posts.append(post(1, ME, "🙋 @dembaca — **Merge?**", 25, kind=a2a.ASK))
+    bus.posts.append(post(1, ME, "\U0001F64B @dembaca — **Merge?**", 25, kind=a2a.ASK))
     path = remind.session_file.state_dir() / f"remind-{ME}.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
@@ -592,7 +592,7 @@ async def test_the_crown_holders_own_ask_alone_wakes_nobody(bus):
     """RT-6.19 (reported 0.51.0): the coordinator's own open ask is nudged by
     its reminders; a stall with only that open does not wake it. Next to
     another open item it is listed for context."""
-    bus.posts += [post(1, ME, "🙋 @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK)]
+    bus.posts += [post(1, ME, "\U0001F64B @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK)]
     await look(bus)
     assert bus.woken == []
     bus.posts += [post(2, HUMAN, "@agent-bob can you look at the build?", 45)]
@@ -605,8 +605,8 @@ async def test_reminded_human_asks_alone_wake_nobody(bus):
     by their servers; with only those open the coordinator is not woken, no
     event, no push. A task that needs an agent, added later, still wakes it,
     and the digest lists the asks beside it."""
-    bus.posts += [post(1, BOB, "🙋 @dembaca — **Merge PR #129?**", 50, kind=a2a.ASK),
-                  post(2, EVE, "🙋 @dembaca — **Deploy?**", 45, kind=a2a.ASK)]
+    bus.posts += [post(1, BOB, "\U0001F64B @dembaca — **Merge PR #129?**", 50, kind=a2a.ASK),
+                  post(2, EVE, "\U0001F64B @dembaca — **Deploy?**", 45, kind=a2a.ASK)]
     assert await look(bus) is None or bus.woken == []
     await look(bus, 60)
     assert bus.woken == []
@@ -619,7 +619,7 @@ async def test_reminded_human_asks_alone_wake_nobody(bus):
 async def test_an_ask_whose_agent_left_still_wakes(bus):
     """RT-6.19 step 2: an ask whose agent is no longer on the roster has no
     reminders any more: it wakes the coordinator and says so."""
-    bus.posts += [post(1, BOB, "🙋 @dembaca — **Merge PR #129?**", 50, kind=a2a.ASK)]
+    bus.posts += [post(1, BOB, "\U0001F64B @dembaca — **Merge PR #129?**", 50, kind=a2a.ASK)]
     del bus.roster["agent-bob"]
     await look(bus)
     assert len(bus.woken) == 1 and "agent-bob left: not reminded" in bus.woken[0]
@@ -627,7 +627,7 @@ async def test_an_ask_whose_agent_left_still_wakes(bus):
 
 async def test_an_own_expired_ask_still_wakes(bus):
     """RT-6.19: after 24 h the ask approves nothing: the coordinator opens a new one."""
-    bus.posts += [post(1, ME, "🙋 @dembaca — **Merge PR #4?**", 25 * 60, kind=a2a.ASK)]
+    bus.posts += [post(1, ME, "\U0001F64B @dembaca — **Merge PR #4?**", 25 * 60, kind=a2a.ASK)]
     await look(bus)
     assert "ask expired" in bus.woken[0]
 
@@ -647,7 +647,7 @@ def test_a_link_line_is_no_ask(text, kind):
     line = post(2, BOB, text, 50, root=7, kind=kind)
     assert line.kind == a2a.ASK_LINK
     assert tasks.open_asks([line], {BOB: "agent-bob"}) == []
-    assert post(1, BOB, "🙋 @dembaca — **Merge PR #4?**", 50).kind == a2a.ASK
+    assert post(1, BOB, "\U0001F64B @dembaca — **Merge PR #4?**", 50).kind == a2a.ASK
 
 
 @pytest.mark.parametrize("kind", LINE_KINDS)
@@ -655,7 +655,7 @@ async def test_the_stall_lists_the_ask_not_its_link_line(bus, kind):
     """RT-6.19: the ask is listed once; its link line is not, and once the ask
     is resolved (✅) nothing is open and nobody is woken."""
     bus.posts += [post(7, HUMAN, "deploy plan", 70),
-                  post(1, BOB, "🙋 @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK),
+                  post(1, BOB, "\U0001F64B @dembaca — **Merge PR #4?**", 50, kind=a2a.ASK),
                   post(2, BOB, f"🙋 asked {pid(1)}", 50, root=7, kind=kind)]
     del bus.roster["agent-bob"]  # its asks are reminded no more: they wake (step 2)
     await look(bus)
@@ -672,7 +672,7 @@ async def test_a_link_line_is_never_reminded(bus):
     """RT-6.19: only the ask is reminded, in its own thread; the link line in
     the task thread gets no reminder."""
     ask_id = _ask(25)
-    bus.posts += [post(1, ME, "🙋 @dembaca — **Merge?**", 25, kind=a2a.ASK),
+    bus.posts += [post(1, ME, "\U0001F64B @dembaca — **Merge?**", 25, kind=a2a.ASK),
                   post(2, ME, f"🙋 asked {ask_id}", 25, root=7, kind=a2a.ASK_LINK)]
     await remind.tick(bus, ME, NOW)
     assert [s["root_id"] for s in bus.sent] == [ask_id]

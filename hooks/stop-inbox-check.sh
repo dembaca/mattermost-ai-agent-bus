@@ -132,8 +132,8 @@ update_note() {
   [[ "$(sed -n 's/^NOTIFIED=//p' "$uf" 2>/dev/null)" != "$newer" ]] || return 1
   printf 'NOTIFIED=%s\n' "$newer" >"$uf" 2>/dev/null || return 1
   # mm_read_hook_input took the id from the hook's JSON; without it, the picker.
-  printf '⬆ plugin %s is installed, this session runs %s — to switch: quit, then claude --resume %s (not --continue: several sessions share the directory)' \
-    "$newer" "$(mm_tree_version "$BIN/..")" "${CLAUDE_CODE_SESSION_ID:-<session-id>}"
+  printf '%s plugin %s is installed, this session runs %s — to switch: quit, then claude --resume %s (not --continue: several sessions share the directory)' \
+    "$MM_UPDATE" "$newer" "$(mm_tree_version "$BIN/..")" "${CLAUDE_CODE_SESSION_ID:-<session-id>}"
 }
 
 # The turn really is ending: flip the status back to idle and forget the turn.
@@ -161,7 +161,7 @@ my_last_post() {
   mm_bus GET /v1/last-post || return 1
   LAST_AT="$(jq -r '.at // 0' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
   LAST_MSG="$(jq -r '.message // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
-  LAST_HEAD="${LAST_MSG#👑}"
+  LAST_HEAD="${LAST_MSG#"$MM_CROWN"}"
   LAST_HEAD="${LAST_HEAD#"${LAST_HEAD%%[![:space:]]*}"}"
   LAST_HEAD="${LAST_HEAD#\`}"
   SIGNED_OFF="$(jq -r 'if has("signed_off") then (if .signed_off == true then 1 else 0 end)
@@ -200,7 +200,7 @@ if [[ "$pending" -gt 0 && "$DRAINS" -lt "$MAX_DRAIN" ]]; then
     reason+=$'\n\nPending per channel:\n'"$detail"
   fi
   reason+=$'\n\nIf wait_for_events returns nothing, the count is stale — say so and finish.'
-  block "$reason" "📨 Collecting ${pending} unread Mattermost message(s)" drain
+  block "$reason" "$MM_INBOX Collecting ${pending} unread Mattermost message(s)" drain
 fi
 
 have_post=0
@@ -234,7 +234,7 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
   reason+=" conversation may be compacted while you are idle, and this post is handed back to you then."
   reason+=" If you coordinate and will be gone for long, hand over first."
   reason+=" You are asked because you posted or were sent something on the bus since your last IDLE; this check will not block you again this turn."
-  block "$reason" "✋ Signing off on Mattermost before going idle" signoff
+  block "$reason" "$MM_SIGNOFF Signing off on Mattermost before going idle" signoff
 fi
 
 # --- 3. listen --------------------------------------------------------------
@@ -280,7 +280,7 @@ if [[ -n "$LF" && "$LISTEN_SEC" -gt 0 && "$have_post" -eq 1 ]] && ! mm_channel_p
     reason+=" as a background command (Bash with run_in_background and timeout ${bg_ms}), then finish your turn without another word."
     reason+=" It waits without using the model and wakes you when a message arrives; its output says what to do."
     reason+=" If you cannot run background commands, just finish; this check will not ask again."
-    banner="👂 Listening on Mattermost until $(mm_epoch_hhmm "$LISTEN_UNTIL") in the background ($(( (remaining + 59) / 60 )) min) · your next prompt ends it"
+    banner="$MM_LISTENING Listening on Mattermost until $(mm_epoch_hhmm "$LISTEN_UNTIL") in the background ($(( (remaining + 59) / 60 )) min) · your next prompt ends it"
     if note="$(update_note)"; then banner+=$'\n'"$note"; fi
     block "$reason" "$banner" listen
   fi

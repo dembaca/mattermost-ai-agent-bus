@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.20
+
+### Changed
+
+- **No emoji in the code** ([RT-6.2 step 6](docs/arc42/06-runtime-view.md), arc42 §5.1).
+  The core speaks in meanings (`Mark`, `Answer`, `StatusMark`, `Head` in
+  `model.py`) and asks `a2a` for what Mattermost shows; `symbols.py` is the one
+  Python module that knows the characters and shortcodes (written as escapes),
+  `bin/mm-agent-symbols.sh` the one shell file. The channel shows the same
+  characters as before. `test_no_emoji_literals` fails on a literal in the
+  Python sources, the shell scripts or the OpenCode plugin, and the boundary test
+  lets only `a2a.py` and `client.py` import `symbols.py`. The tests write their
+  string literals as escapes. Docstrings, comments and the runtime texts
+  (`SKILL.md`, README, arc42) stay text.
+
 ## 0.71.19
 
 ### Fixed

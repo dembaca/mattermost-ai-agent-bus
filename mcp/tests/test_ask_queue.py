@@ -94,10 +94,10 @@ async def test_a_second_ask_is_queued_with_all_its_fields(bus):
 
 def test_the_queue_survives_multi_line_text_and_the_old_file_format(bus):
     asks.add(BOT, "a" * 26, "dembaca", "a" * 26)
-    _, qid = asks.enqueue(BOT, "dembaca", {"need": "x?", "context": "line 1\nline 2 = ü 🙋", "who": "dembaca"})
+    _, qid = asks.enqueue(BOT, "dembaca", {"need": "x?", "context": "line 1\nline 2 = ü \U0001F64B", "who": "dembaca"})
     text = asks._path(BOT).read_text()
     assert text.count("\n") == len(text.splitlines()) and "line 1" not in text
-    assert asks.queued(BOT, "dembaca")[0]["context"] == "line 1\nline 2 = ü 🙋"
+    assert asks.queued(BOT, "dembaca")[0]["context"] == "line 1\nline 2 = ü \U0001F64B"
     assert asks.open_asks(BOT) == ["a" * 26]  # the open ask is read as before
     asks.resolve(BOT, "a" * 26)
     assert asks.queued(BOT, "dembaca")  # resolve keeps the queue
@@ -183,7 +183,7 @@ async def test_the_next_ask_is_routed_when_it_is_posted(bus, monkeypatch):
     assert out["queued"] is True and "route" not in out
     monkeypatch.setenv("MM_ASK_ROUTE", "coordinator")
     await server.resolve_ask(first["ask"])
-    assert bus.posted[1]["message"].startswith("❓ @agent-coord")
+    assert bus.posted[1]["message"].startswith("\u2753 @agent-coord")
     assert asks.questions(BOT)[bus.ids()[1]].startswith("dembaca ")
     # A question to the 👑 is open now: an approval to the human is not behind it.
     assert (await _ask(need="Merge #62?"))["ask"] and len(bus.posted) == 3
@@ -201,7 +201,7 @@ async def test_a_question_queued_for_the_crown_goes_to_the_human_when_the_mode_i
     assert out["queued"] is True and out["behind"] == first["ask"]
     monkeypatch.delenv("MM_ASK_ROUTE")
     await server.resolve_ask(first["ask"])
-    assert bus.posted[1]["message"].startswith("🙋 @dembaca")
+    assert bus.posted[1]["message"].startswith("\U0001F64B @dembaca")
 
 
 @pytest.mark.asyncio
@@ -223,7 +223,7 @@ async def test_an_expired_open_ask_blocks_and_is_not_queued_behind(bus):
 
 def test_the_reminder_says_how_many_wait():
     assert "more waiting" not in remind.text("dembaca", "Merge #61?", 1300)
-    assert remind.text("dembaca", "Merge #61?", 1300).startswith("🔔 @dembaca — reminder: **Merge #61?**")
+    assert remind.text("dembaca", "Merge #61?", 1300).startswith("\U0001F514 @dembaca — reminder: **Merge #61?**")
     assert remind.text("dembaca", "Merge #61?", 1300, 2).endswith("or reply here · 2 more waiting")
 
 

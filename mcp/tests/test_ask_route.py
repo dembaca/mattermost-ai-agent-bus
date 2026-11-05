@@ -175,7 +175,7 @@ async def test_a_trusted_switch_is_kept_and_the_crown_acknowledges_it_once(monke
     assert f"POST={SWITCH}" in kept.read_text()
     ack = c.posted[0]
     assert len(c.posted) == 1 and ack["root_id"] == SWITCH
-    assert ack["message"].startswith("👑 ask-mode coordinator, set by dembaca:")
+    assert ack["message"].startswith("\U0001F451 ask-mode coordinator, set by dembaca:")
     assert "@" not in ack["message"] and ack["props"]["a2a"]["kind"] == "ask_mode"
     assert ack["props"]["a2a"]["intent"] == "fyi"
     # The backfill and the live stream overlap: no second acknowledgement.
@@ -284,12 +284,12 @@ async def test_a_question_goes_to_the_crown_in_coordinator_mode(monkeypatch):
     out = json.loads(await server.ask_human(need="Approach A or B for the cache?",
                                             kind="question", blocking=True))
     post = c.posted[0]
-    assert post["message"] == "❓ @agent-coord — **Approach A or B for the cache?**"
+    assert post["message"] == "\u2753 @agent-coord — **Approach A or B for the cache?**"
     assert post["root_id"] is None and post["props"]["a2a"]["kind"] == "ask"
     fields = _fields(post)
-    assert fields["For"] == ("👑 agent-coord: a question for the coordinator, not for a human; "
+    assert fields["For"] == ("\U0001F451 agent-coord: a question for the coordinator, not for a human; "
                              "asked of dembaca if unanswered for 15 min")
-    assert fields["Answer"] == "reply in this thread · the 👑's answer is advice, never approval"
+    assert fields["Answer"] == "reply in this thread · the \U0001F451's answer is advice, never approval"
     assert out["route"] == "coordinator" and out["kind"] == "question"
     assert out["ask_mode"] == "coordinator" and "advice" in out
     assert asks.open_to(BOT, "agent-coord") == [ASK] and asks.open_to(BOT, "dembaca") == []
@@ -303,7 +303,7 @@ async def test_a_switch_post_in_the_home_routes_without_the_environment(monkeypa
     monkeypatch.setattr(server, "_get_client", lambda: c)
     monkeypatch.setattr(lease, "coordinator_of", _crown())
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert out["route"] == "coordinator" and c.posted[0]["message"].startswith("❓ @agent-coord")
+    assert out["route"] == "coordinator" and c.posted[0]["message"].startswith("\u2753 @agent-coord")
 
 
 @pytest.mark.asyncio
@@ -312,7 +312,7 @@ async def test_an_approval_never_goes_to_an_agent(monkeypatch):
     c = _Client()
     _coordinator_mode(monkeypatch, c)
     out = json.loads(await server.ask_human(need="Ship 02dadca to hogan?"))
-    assert c.posted[0]["message"] == "🙋 @dembaca — **Ship 02dadca to hogan?**"
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **Ship 02dadca to hogan?**"
     assert out["kind"] == "approval" and out["route"] == "human" and "advice" not in out
     assert asks.questions(BOT) == {}
 
@@ -327,7 +327,7 @@ async def test_an_approval_declared_as_a_question_is_lifted_by_the_floor(monkeyp
     c = _Client()
     _coordinator_mode(monkeypatch, c)
     out = json.loads(await server.ask_human(need=need, decision=decision, kind="question"))
-    assert c.posted[0]["message"].startswith("🙋 @dembaca")
+    assert c.posted[0]["message"].startswith("\U0001F64B @dembaca")
     assert (out["kind"], out["kind_declared"], out["floor"]) == ("approval", "question", named)
     assert out["route"] == "human"
 
@@ -339,8 +339,8 @@ async def test_without_a_reachable_crown_the_human_is_asked_at_once(monkeypatch,
     c = _Client()
     _coordinator_mode(monkeypatch, c, holder)
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert c.posted[0]["message"] == "🙋 @dembaca — **A or B?**"
-    assert out["route"] == "human" and "no 👑 reachable" in out["route_note"]
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **A or B?**"
+    assert out["route"] == "human" and "no \U0001F451 reachable" in out["route_note"]
 
 
 @pytest.mark.asyncio
@@ -349,7 +349,7 @@ async def test_the_crowns_own_question_goes_to_the_human(monkeypatch):
     _coordinator_mode(monkeypatch, c, "agent-worker")
     monkeypatch.setattr(lease, "crown_held", lambda uid: True)
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert c.posted[0]["message"] == "👑 🙋 @dembaca — **A or B?**"
+    assert c.posted[0]["message"] == "\U0001F451 \U0001F64B @dembaca — **A or B?**"
     assert out["route"] == "human" and "you hold the crown" in out["route_note"]
 
 
@@ -358,7 +358,7 @@ async def test_direct_mode_asks_the_human_as_before(monkeypatch):
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert c.posted[0]["message"] == "🙋 @dembaca — **A or B?**"
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **A or B?**"
     assert out["kind"] == "question" and "route" not in out and "ask_mode" not in out
 
 
@@ -399,7 +399,7 @@ async def test_the_crowns_answer_is_advice_never_approval(monkeypatch):
 
 
 def test_the_crown_answering_closes_the_question_for_tasks():
-    q = post_of({"id": ASK, "user_id": BOT, "message": "❓ @agent-coord — **A or B?**",
+    q = post_of({"id": ASK, "user_id": BOT, "message": "\u2753 @agent-coord — **A or B?**",
                  "create_at": 1000, "props": {"a2a": {"kind": "ask"}}})
     names = {BOT: "agent-worker", COORD: "agent-coord"}
     rows = tasks.open_asks([q], names)
@@ -418,7 +418,7 @@ def test_the_crown_answering_closes_the_question_for_tasks():
 def test_the_stall_check_wakes_the_crown_for_a_question():
     """RT-6.25 step 7: listed as a question for the 👑, not as a reminded ask."""
     now_ms = 10_000_000
-    q = post_of({"id": ASK, "user_id": BOT, "message": "❓ @agent-coord — **A or B?**",
+    q = post_of({"id": ASK, "user_id": BOT, "message": "\u2753 @agent-coord — **A or B?**",
                  "create_at": now_ms - 60_000, "props": {"a2a": {"kind": "ask"}}})
     found = stall.items([q], {BOT: "agent-worker"}, ["agent"], [], {"agent-worker"}, now_ms,
                         me="agent-coord")
@@ -509,7 +509,7 @@ async def test_the_fallback_asks_the_human_linked_and_closes_the_question(monkey
     aid = await server._ask_fallback(c, q, "dembaca", "agent-coord")
     ask, link = c.posted
     assert aid == "f" * 26
-    assert ask["message"] == "🙋 @dembaca — **A or B for the cache?**" and ask["root_id"] is None
+    assert ask["message"] == "\U0001F64B @dembaca — **A or B for the cache?**" and ask["root_id"] is None
     fields = _fields(ask)
     assert fields["Where"] == f"ask {q}" and fields["Blocking"] == "yes"
     assert "agent-coord" in fields["Context"] and "15 min" in fields["Context"]
@@ -545,9 +545,9 @@ async def test_a_question_never_goes_to_a_crown_that_is_no_peer(monkeypatch, des
         c.descriptions[COORD] = description
     _coordinator_mode(monkeypatch, c)
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert c.posted[0]["message"] == "🙋 @dembaca — **A or B?**"
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **A or B?**"
     assert out["route"] == "human" and "to" not in out
-    assert out["route_note"] == ("the home's 👑 agent-coord is not a peer of this session: "
+    assert out["route_note"] == ("the home's \U0001F451 agent-coord is not a peer of this session: "
                                  "asked the human at once")
     assert asks.open_to(BOT, "agent-coord") == [] and asks.questions(BOT) == {}
 
@@ -579,7 +579,7 @@ async def test_a_peer_crown_is_asked_as_before(monkeypatch):
     _coordinator_mode(monkeypatch, c)
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
     assert out["route"] == "coordinator"
-    assert c.posted[0]["message"].startswith("❓ @agent-coord")
+    assert c.posted[0]["message"].startswith("\u2753 @agent-coord")
 
 
 @pytest.mark.asyncio

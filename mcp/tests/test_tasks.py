@@ -24,7 +24,7 @@ def P(pid, uid, message, *, root="", at=0, **extra):
 
 
 @pytest.mark.parametrize("message,kind", [
-    ("ACK", "ACK"), ("👑 ACK noted, agent-me", "ACK"), ("**DONE** #46 merged", "DONE"),
+    ("ACK", "ACK"), ("\U0001F451 ACK noted, agent-me", "ACK"), ("**DONE** #46 merged", "DONE"),
     ("ACK – on it, ~20 min", "ACK"), ("IDLE · done: x", "IDLE"), ("PR #57 https://…", "RESULT"),
     ("NO – outside my sandbox", "NO"), ("No worries", None), ("ACKNOWLEDGED", None),
     ("OK", None), ("@agent-a ACK?", None), ("plain text", None),
@@ -36,7 +36,7 @@ def test_first_word_is_the_kind(message, kind):
 
 def test_annotation_and_kind_from_props_or_text():
     """RT-6.14 step 2: props say it when there; old posts are read from their text."""
-    assert a2a.annotate("👑 BLOCKED on review of #44") == {
+    assert a2a.annotate("\U0001F451 BLOCKED on review of #44") == {
         "v": 1, "kind": "blocked", "state": "input-required", "intent": "reply"}
     assert a2a.annotate("thanks") is None
     assert a2a.annotate("thanks", "all") == {"v": 1, "to": "all"}  # RT-6.11
@@ -48,7 +48,7 @@ def test_annotation_and_kind_from_props_or_text():
     assert not a2a.to_all({"message": "x"}) and not a2a.to_all({"props": "all"})
     assert a2a.annotate("IDLE · done") == {"v": 1, "kind": "idle", "intent": "fyi"}
     assert a2a.kind_of({"message": "x", "props": {"a2a": {"kind": "result"}}}) == "RESULT"
-    assert a2a.kind_of({"message": "👑 🙋 @dembaca — **Go?**"}) == a2a.ASK
+    assert a2a.kind_of({"message": "\U0001F451 \U0001F64B @dembaca — **Go?**"}) == a2a.ASK
     assert a2a.state(a2a.PERMISSION) == "auth-required"
 
 
@@ -58,11 +58,11 @@ def _leitstand_thread():
         P("hello", ME, "HELLO @agent-me\nproject: bus · branch/PR: –\ntask: relay\n"
                        "model: Claude Code · Opus 5.5\nfor: dembaca · trusts: dembaca\n"
                        "capabilities: –\nrole: member", at=-100),
-        P("t1", LEIT, "👑 TASK · bus · relay Claude Code permission prompts over the bus · "
+        P("t1", LEIT, "\U0001F451 TASK · bus · relay Claude Code permission prompts over the bus · "
                       "requested by dembaca\n\nThis changes arc42 RT-6.8.", at=0),
         P("r1", ME, "ACK · agent-me · branch worktree-permission-relay (PR to follow).",
           root="t1", at=10),
-        P("r2", LEIT, "👑 ACK noted, agent-me. Post the PR link here.", root="t1", at=20),
+        P("r2", LEIT, "\U0001F451 ACK noted, agent-me. Post the PR link here.", root="t1", at=20),
         P("r3", ME, "PR #57 https://github.com/x/y/pull/57 (0.30.0, RT-6.13)", root="t1", at=30),
     ]
 
@@ -103,7 +103,7 @@ def test_done_is_listed_once_and_cancel_never():
         P("1", A, "ACK", root="t", at=1),
         P("2", LEIT, "DONE #46 merged", root="t", at=2),
         P("u", LEIT, "TASK · y", at=3),
-        P("3", B, "👑 CANCEL – not needed", root="u", at=4),
+        P("3", B, "\U0001F451 CANCEL – not needed", root="u", at=4),
     ]
     crown = {"agent-b"}
     assert [(r["task"], r["status"])
@@ -144,10 +144,10 @@ def test_open_asks_need_no_answer_yet():
     """RT-6.14 step 3, RT-6.11: an ask with a yes/no reaction or the human's
     reply is answered; the rest is what needs the human."""
     posts = [
-        P("q1", A, "👑 🙋 @dembaca — **Go to install 02dadca on hogan?**", at=0),
-        P("q2", B, "🙋 @dembaca — **Merge #44?**", at=1,
+        P("q1", A, "\U0001F451 \U0001F64B @dembaca — **Go to install 02dadca on hogan?**", at=0),
+        P("q2", B, "\U0001F64B @dembaca — **Merge #44?**", at=1,
           metadata={"reactions": [{"emoji_name": "+1", "user_id": HUMAN}]}),
-        P("q3", B, "🙋 @dembaca — **Rename the module?**", at=2),
+        P("q3", B, "\U0001F64B @dembaca — **Rename the module?**", at=2),
         P("r", HUMAN, "yes, rename it", root="q3", at=3),
     ]
     assert tasks.open_asks(posts, NAMES) == [{
@@ -233,11 +233,11 @@ def test_the_crown_to_close_comes_from_roster_or_props_not_text():
     def rows(close, **kw):
         return tasks.build([root, close], NAMES, now_ms=NOW, **kw)
 
-    typed = P("1", B, "👑 CANCEL – not needed", root="t", at=1)
+    typed = P("1", B, "\U0001F451 CANCEL – not needed", root="t", at=1)
     assert [r["status"] for r in rows(typed)] == ["open"]
     assert rows(typed, coordinators={"agent-b"}) == []
     assert rows(typed, coordinators={"agent-a"}) != []
-    crowned = P("1", B, "👑 CANCEL", root="t", at=1, **_note(kind="cancel", crown=True))
+    crowned = P("1", B, "\U0001F451 CANCEL", root="t", at=1, **_note(kind="cancel", crown=True))
     assert rows(crowned) == []  # crowned when it posted; the crown moved on since
     by_person = P("1", HUMAN, "CANCEL", root="t", at=1, **_note(kind="cancel", crown=True))
     assert [r["status"] for r in rows(by_person)] == ["open"]
@@ -253,9 +253,9 @@ def test_a_typed_crown_from_before_the_cutover_still_closes():
         close = P("1", uid, message, root="t", create_at=at)
         return tasks.build([root, close], NAMES, now_ms=cut + 1000)
 
-    assert rows(B, "👑 CANCEL – not needed", cut - 1) == []
-    assert [r["status"] for r in rows(B, "👑 CANCEL", cut)] == ["open"]
-    assert [r["status"] for r in rows(HUMAN, "👑 CANCEL", cut - 1)] == ["open"]
+    assert rows(B, "\U0001F451 CANCEL – not needed", cut - 1) == []
+    assert [r["status"] for r in rows(B, "\U0001F451 CANCEL", cut)] == ["open"]
+    assert [r["status"] for r in rows(HUMAN, "\U0001F451 CANCEL", cut - 1)] == ["open"]
 
 
 def test_annotate_names_pr_branch_and_crown():
@@ -305,9 +305,9 @@ async def test_a_status_post_gets_its_word_in_backticks_and_a_blank_line(bus):
     c = bus([], crown=True)
     await server.reply_in_thread(root_id=T26, message="IDLE · waiting\n**done:** x\n**next:** y")
     await server.post_message(message="all green\nsee CI", kind="")
-    assert c.posted[0]["message"] == "👑 `IDLE` · waiting\n\n**done:** x\n**next:** y"
+    assert c.posted[0]["message"] == "\U0001F451 `IDLE` · waiting\n\n**done:** x\n**next:** y"
     assert c.posted[0]["props"]["a2a"]["kind"] == "idle"
-    assert c.posted[1]["message"] == "👑 all green\nsee CI"
+    assert c.posted[1]["message"] == "\U0001F451 all green\nsee CI"
 
 
 @pytest.mark.asyncio
@@ -326,7 +326,7 @@ async def test_posts_carry_pr_branch_and_crown(bus):
 @pytest.mark.asyncio
 async def test_coordinator_reads_tasks_and_asks_not_history(bus):
     """RT-6.14 step 5: one compact row per task instead of the channel."""
-    bus(_leitstand_thread() + [P("q", A, "🙋 @dembaca — **Merge #57?**", at=40)])
+    bus(_leitstand_thread() + [P("q", A, "\U0001F64B @dembaca — **Merge #57?**", at=40)])
     out = json.loads(await server.coordinator("tasks"))
     assert [r["task"] for r in out["tasks"]] == ["t1"] and out["asks"][0]["ask"] == "q"
     assert len(json.dumps(out)) < len(json.dumps([p.json() for p in _leitstand_thread()])) / 2
@@ -353,12 +353,12 @@ async def test_assignments_table_comes_from_the_server(bus):
     c = bus(_leitstand_thread(), crown=True)
     await server.post_message(message="ASSIGNMENTS · #57 in review")
     text = c.posted[0]["message"]
-    assert text.startswith("👑 `ASSIGNMENTS` · #57 in review\n\n| Agent | Task |")
+    assert text.startswith("\U0001F451 `ASSIGNMENTS` · #57 in review\n\n| Agent | Task |")
     assert "| agent-me | bus · relay Claude Code" in text and "| review | RT-6.8 | #57 |" in text
     assert c.posted[0]["props"]["a2a"]["kind"] == "assignments"
     own = "ASSIGNMENTS · mine\n| Agent | Task |\n|---|---|\n| a | b |"
     await server.post_message(message=own)
-    assert c.posted[1]["message"] == "👑 " + a2a.styled(own)
+    assert c.posted[1]["message"] == "\U0001F451 " + a2a.styled(own)
     c = bus(_leitstand_thread(), crown=False)
     await server.post_message(message="ASSIGNMENTS · x")
     assert c.posted[0]["message"] == "`ASSIGNMENTS` · x"
@@ -373,7 +373,7 @@ async def test_assignments_go_out_when_the_channel_cannot_be_read(bus):
         raise RuntimeError("HTTP 500")
     c.posts_after = broken
     await server.post_message(message="ASSIGNMENTS · x")
-    assert c.posted[0]["message"] == "👑 `ASSIGNMENTS` · x"
+    assert c.posted[0]["message"] == "\U0001F451 `ASSIGNMENTS` · x"
 
 
 @pytest.mark.asyncio
@@ -573,9 +573,9 @@ async def test_an_fyi_reply_wakes_the_threads_starter(bus, monkeypatch):
 def test_an_ask_an_agent_resolved_is_not_open():
     """RT-6.11, RT-6.19: resolve_ask's ✅ closes the ask, also one of an earlier
     session of another bot; a ✅ by a human not asked or trusted does not."""
-    posts = [P("q1", A, "🙋 @dembaca — **Merge #44?**", at=0,
+    posts = [P("q1", A, "\U0001F64B @dembaca — **Merge #44?**", at=0,
                metadata={"reactions": [{"emoji_name": "white_check_mark", "user_id": B}]}),
-             P("q2", A, "🙋 @dembaca — **Rename it?**", at=1,
+             P("q2", A, "\U0001F64B @dembaca — **Rename it?**", at=1,
                metadata={"reactions": [{"emoji_name": "white_check_mark", "user_id": "x" * 26}]})]
     assert [a["ask"] for a in tasks.open_asks(posts, {**NAMES, "x" * 26: "someone"})] == ["q2"]
 
@@ -583,7 +583,7 @@ def test_an_ask_an_agent_resolved_is_not_open():
 def test_a_foreign_agents_check_mark_keeps_the_ask_open():
     """RT-6.11, ADR-001: another owner's agent cannot close an ask with ✅;
     tasks.ask_closers names whom to sort into peer and foreign."""
-    posts = [P("q1", A, "🙋 @dembaca — **Merge #44?**", at=0,
+    posts = [P("q1", A, "\U0001F64B @dembaca — **Merge #44?**", at=0,
                metadata={"reactions": [{"emoji_name": "white_check_mark", "user_id": B}]})]
     assert tasks.ask_closers(posts) == {B}
     assert [a["ask"] for a in tasks.open_asks(posts, NAMES, foreign={B})] == ["q1"]

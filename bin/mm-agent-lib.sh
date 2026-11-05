@@ -2,6 +2,10 @@
 # Shared helpers for mm-agent-*.sh (source this file; do not exec).
 # shellcheck shell=bash
 
+# shellcheck source=mm-agent-symbols.sh
+# Pure bash: the hardened callers run it with no command from the workdir (dirname, cd).
+source "${BASH_SOURCE[0]%/*}/mm-agent-symbols.sh"
+
 mm_chat_url() {
   local url="${MM_CHAT_URL:-${MATTERMOST_URL:-}}"
   if [[ -z "$url" ]]; then
@@ -498,7 +502,7 @@ mm_bus_uid() {
 
 # Who this session's bot is, from the hook API: exports MM_BOT_USER_ID and
 # MM_BOT_USERNAME (the per-bot state files key on them), sets MM_BUS_PROJECT
-# (1 in a project channel), MM_CROWN_UNTIL (epoch, 0 without the 👑) and
+# (1 in a project channel), MM_CROWN_UNTIL (epoch, 0 without the crown) and
 # MM_BUS_CHANNEL (1 once the agent confirmed the channel check, RT-6.12). Fails
 # without jq or a bus session: the hook then exits 0 and stays quiet (RT-6.4).
 # shellcheck disable=SC2034  # MM_BUS_PROJECT, MM_CROWN_UNTIL are read by the callers
@@ -551,8 +555,8 @@ mm_record_own_post() {
   [[ "$cid" == "$work" ]] || return 0
   {
     read -r id; read -r root; read -r at; read -r msg
-  } < <(jq -r '.id, (.root_id // ""), (.create_at // 0),
-               (.message | ltrimstr("👑 ") | gsub("\\s+"; " ") | .[0:80])' <<<"$post" 2>/dev/null)
+  } < <(jq -r --arg crown "$MM_CROWN " '.id, (.root_id // ""), (.create_at // 0),
+               (.message | ltrimstr($crown) | gsub("\\s+"; " ") | .[0:80])' <<<"$post" 2>/dev/null)
   [[ -n "$id" ]] || return 0
   if [[ -z "$root" && "$msg" =~ ^[^A-Za-z0-9@#]*HELLO([^A-Za-z]|$) ]]; then
     hello="$id"

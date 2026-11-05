@@ -12,10 +12,65 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from types import MappingProxyType
 from typing import Any
 
 _EMPTY: Mapping[str, Any] = MappingProxyType({})
+
+
+class Mark(Enum):
+    """What a symbol in a post or a hook text means. Which characters show it
+    is the adapter's (symbols.py); the core only names the meaning."""
+
+    CROWN = "crown"
+    ASK = "ask"
+    QUESTION = "question"
+    REMINDER = "reminder"
+    BUS = "bus"
+    INBOX = "inbox"
+    SIGNOFF = "signoff"
+    LOCK = "lock"
+    DESKTOP = "desktop"
+    ALLOWED = "allowed"
+    DENIED = "denied"
+    YES = "yes"
+    NO = "no"
+    ONE = "one"
+    TWO = "two"
+    THREE = "three"
+    FOUR = "four"
+
+
+class Answer(Enum):
+    """What a reaction on an ask answers (RT-6.11)."""
+
+    YES = "yes"
+    NO = "no"
+
+
+class StatusMark(Enum):
+    """The state a custom status shows (lease.py)."""
+
+    WORKING = "working"
+    LISTENING = "listening"
+    IDLE = "idle"
+    BUS = "bus"
+    CROWN = "crown"
+
+
+@dataclass(frozen=True)
+class Head:
+    """What a post's text opens with, as parse_head reads it: body is the text
+    without the crown, crowned says it had one (the text's, no authority),
+    ask a leading ask mark, ask_at that mark with an @, ask_link the line that
+    points at an ask (RT-6.15)."""
+
+    body: str = ""
+    crowned: bool = False
+    ask: bool = False
+    ask_at: bool = False
+    ask_link: bool = False
 
 
 @dataclass(frozen=True)

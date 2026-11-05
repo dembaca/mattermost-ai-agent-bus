@@ -31,7 +31,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from . import asks
+from . import a2a, asks
+from .model import Mark
 
 CAPABILITY = "claude/channel/permission"
 REQUEST = "notifications/claude/channel/permission_request"
@@ -124,10 +125,10 @@ def prompt(params: Mapping[str, Any]) -> str:
     if len(args) > PREVIEW_CHARS:
         args = args[:PREVIEW_CHARS] + " ⋯ cut"
     return "\n".join([
-        f"🔐 **Permission for `{tool}`?** · id `{rid}`",
+        f"{a2a.symbol(Mark.LOCK)} **Permission for `{tool}`?** · id `{rid}`",
         _fenced(str(params.get("description", ""))),
         _fenced(args),
-        f"Reply `yes {rid}` or `no {rid}`, or 👍 / 👎 on this post. "
+        f"Reply `yes {rid}` or `no {rid}`, or {a2a.symbol(Mark.YES)} / {a2a.symbol(Mark.NO)} on this post. "
         "The terminal can answer too; the first answer wins.",
     ])
 
