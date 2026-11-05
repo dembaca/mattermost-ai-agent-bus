@@ -1461,12 +1461,36 @@ tells the helper's second duty.
 **Risks created:** none new beyond the visibility above. A wrong or forged
 number can only hold work back or mark an agent blocked; it grants nothing.
 
+**Amendment (2026-11-05): the cost where there are no limits.** Decided by
+the trusted human dembaca on 2026-11-05 (bus post `89j8k7sf7jfifc46r85wm1rfew`),
+built in 0.71.14. It changes decision step 1's "Not `cost`": behind a gateway
+Claude Code reports no `rate_limits` (open question below), so there is no
+limit to show, and the session's cumulative cost is an indicator of its own.
+The tap also sends `cost.total_cost_usd` as `cost_usd` (dollars from 0,
+rounded to cents), when it moved by $0.10 or more, else with the 60 s beat. Where no
+5-hour window is reported the status text shows it in the place of `5h`
+(`ctx 62% · $4.20`: the cut order of RT-6.6 step 1 is unchanged) and the roster
+row carries `cost_usd`; where a window is reported, `5h` and `7d` show as
+before and the cost is held but not shown. The reason for not having it first
+("money is nobody's business here") is weighed anew: the number is the
+session's own and shows what the status line of its human shows; it names no
+price, customer or person. Visibility is as for `ctx`: everyone in the channel.
+Separately, the way of the numbers through the bot's props is made
+visible (`bus_info` `usage`: the last report, `write` and `read` with the last
+failure and its endpoint and status, and a warning in the log), since a roster
+that shows only the own row could not tell a failing write from a failing read.
+
 **Open questions:**
 
 - **Does `rate_limits` reach us behind the gateway corral sets
-  (`ANTHROPIC_BASE_URL`)?** Not measured. Recommendation: measure in a corral
-  session before phase 3; without it only `ctx` is shown, and the limit
-  reached is found only through the hook below.
+  (`ANTHROPIC_BASE_URL`)?** Measured on 2026-11-05, and no: in a corral session
+  behind the gateway Claude Code gives the status line no `rate_limits`, only
+  `cost` (the tap's state files show `ctx` and `null` for both windows, and the
+  human confirmed it on the bus), so `5h` and `7d` do not show there. On a host
+  with a subscription and no gateway they come with the JSON and show. **Known
+  limit, not a defect:** behind the gateway only `ctx` and, since the
+  amendment below, the cost are shown; the limit reached is found only
+  through the hook below.
 - **`StopFailure` with the matcher `rate_limit`:** whether Claude Code has it
   and what it carries is not checked against its hooks documentation.
   Recommendation: check before phase 3; the status line's 100 % is the

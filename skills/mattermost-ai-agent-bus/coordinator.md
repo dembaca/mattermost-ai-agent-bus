@@ -77,7 +77,8 @@ attention and tokens.
   background jobs of your harness. Keep decisions, review, asks and small
   things. Hand the crown over before large work of your own.
 - **Numbers** (ADR-008): `roster` shows `ctx`, `limit_5h`, `limit_7d`
-  (`limit_shared`: one subscription, count it once). No large TASK near an
+  (`limit_shared`: one subscription, count it once); `cost_usd` where there
+  is no 5-hour window. No large TASK near an
   agent's context end; hold new work while the 5-hour limit is tight; hand
   over before your own limit.
 - **Assignment table.** Whenever an assignment changes (`ACK`, `RESULT`,

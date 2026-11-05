@@ -94,13 +94,13 @@ def _status(ctx=40.0, five=None, seven=None, size=200000):
 
 
 def test_tap_reports_numbers_only_and_output_is_unchanged(run, api):
-    """RT-6.10 step 3: name and 👑 as before; ctx, windows sent, not cost or model."""
+    """RT-6.10 step 3: name and 👑 as before; ctx, windows and the cost sent, not the model."""
     r = run(SCRIPT, stdin=_status(62.5, 40, 12), MM_BOT_USERNAME="agent-x-1", **api.env)
     assert r.code == 0 and r.stdout == "@agent-x-1" and r.stderr == ""
     (got,) = api.wait(1)
     assert got["path"] == "/v1/usage" and got["auth"] == "Bearer " + "k" * 8
     assert {k: v for k, v in got.items() if k not in ("path", "auth")} == {
-        "ctx": 62.5, "ctx_size": 200000,
+        "ctx": 62.5, "ctx_size": 200000, "cost_usd": 1.5,
         "five_hour": {"used": 40, "resets_at": 1900000000},
         "seven_day": {"used": 12, "resets_at": 1900500000}}
 
@@ -112,6 +112,35 @@ def test_tap_without_rate_limits_sends_ctx_only(run, api):
     run(SCRIPT, stdin=stdin, MM_BOT_USERNAME="agent-x-1", **api.env)
     (got,) = api.wait(1)
     assert {k: v for k, v in got.items() if k not in ("path", "auth")} == {"ctx": 10}
+
+
+def test_tap_sends_the_cost_where_there_are_no_limits(run, api):
+    """RT-6.10 step 3 (ADR-008 amendment): behind a gateway the JSON has the cost and no
+    rate_limits; the cumulative cost goes along, a negative or missing one does not."""
+    stdin = json.dumps({"context_window": {"used_percentage": 10}, "cost": {"total_cost_usd": 4.2}})
+    run(SCRIPT, stdin=stdin, MM_BOT_USERNAME="agent-x-1", **api.env)
+    (got,) = api.wait(1)
+    assert {k: v for k, v in got.items() if k not in ("path", "auth")} == {"ctx": 10, "cost_usd": 4.2}
+
+
+def test_tap_drops_a_negative_cost(run, api):
+    stdin = json.dumps({"context_window": {"used_percentage": 10}, "cost": {"total_cost_usd": -1}})
+    run(SCRIPT, stdin=stdin, MM_BOT_USERNAME="agent-x-1", **api.env)
+    (got,) = api.wait(1)
+    assert "cost_usd" not in got
+
+
+def test_tap_throttle_ten_cents(run, api):
+    """RT-6.10 step 3: a cost that moved by less than $0.10 sends nothing within 60 s, $0.10 does."""
+    env = {"MM_BOT_USERNAME": "agent-x-1", **api.env}
+    def at(cost):
+        return json.dumps({"context_window": {"used_percentage": 10}, "cost": {"total_cost_usd": cost}})
+    run(SCRIPT, stdin=at(1.00), **env)
+    api.wait(1)
+    run(SCRIPT, stdin=at(1.05), **env)
+    api.quiet(1)
+    run(SCRIPT, stdin=at(1.12), **env)
+    assert api.wait(2)[1]["cost_usd"] == 1.12
 
 
 def test_tap_sends_nothing_without_numbers(run, api):

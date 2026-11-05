@@ -22,6 +22,31 @@ before 0.5.0 are described in the git history.
   (a queued `go/no-go` becomes free text). The ask keeps the list
   (`ANSWERS=` in `asks-<uid>.env`), and a reaction event names the answer as
   `chosen` beside `choice` (👍/👎 on two answers too).
+## 0.71.14
+
+### Added
+
+- **The cost where there are no limits**
+  ([ADR-008 amendment](docs/arc42/09-architecture-decisions.md),
+  [RT-6.10 step 3](docs/arc42/06-runtime-view.md#610-session-registered-by-the-agent),
+  [RT-6.6 step 1](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)).
+  Behind a gateway (`ANTHROPIC_BASE_URL`) Claude Code reports no `rate_limits`,
+  only the cost. The statusline tap also sends `cost.total_cost_usd` as
+  `cost_usd` (moved by $0.10 or more, else every 60 s); where no 5-hour window
+  is reported the bot's status shows it in the place of `5h` (`ctx 62% · $4.20`)
+  and the roster row carries `cost_usd`. The gateway limit is written into
+  ADR-008 as a known limit.
+- **Why the numbers do not reach the roster becomes visible**: a failing write
+  or read of the usage report in the bot's props is logged as a warning (once
+  per failure) and `bus_info` has a `usage` block: the report held, `write`
+  (`written 40 s ago`, or the last failure as `PUT <path> → <status>`) and
+  `read` (how many reads of another bot's report found one, found none or
+  failed, and the last failure). The cause of `ctx` showing only in the own
+  roster row is not found yet; this is the way to see it.
+- The usage report is written into the props with every status write (a turn's
+  start or end), under the same lock, at most once a minute; before, a `ctx`
+  below the first band (50 %) reached the roster only with the heartbeat, up to
+  five minutes later, and nothing proves yet that this was the cause.
 
 ## 0.71.13
 

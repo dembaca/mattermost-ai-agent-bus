@@ -859,6 +859,11 @@ async def bus_info() -> str:
         **({"guests_not_joined": failed}
            if (failed := getattr(client, "guest_join_failures", None)) else {}),
         "crown": lease.crown_held(me.id),
+        # ADR-008 step 3: the last report, and why it does or does not reach the roster.
+        "usage": usage.info(getattr(client, "usage_written_at", 0.0),
+                            getattr(client, "usage_write_error", ""),
+                            getattr(client, "usage_read_error", ""),
+                            reads=getattr(client, "usage_reads", None)),
         # RT-6.25: direct or coordinator, from MM_ASK_ROUTE ("env"), the switching post,
         # or the registrar's signed record ("registrar", with set_by; step 8).
         "ask_mode": await askroute.info(client, me.id),
