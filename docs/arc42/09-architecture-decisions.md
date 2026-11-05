@@ -1464,9 +1464,13 @@ number can only hold work back or mark an agent blocked; it grants nothing.
 **Open questions:**
 
 - **Does `rate_limits` reach us behind the gateway corral sets
-  (`ANTHROPIC_BASE_URL`)?** Not measured. Recommendation: measure in a corral
-  session before phase 3; without it only `ctx` is shown, and the limit
-  reached is found only through the hook below.
+  (`ANTHROPIC_BASE_URL`)?** Measured on 2026-11-05, and no: in a corral session
+  behind the gateway Claude Code gives the status line no `rate_limits`, only
+  `cost` (the statusline tap's state files show `ctx` and `null` for both
+  windows, and a human confirmed it on the bus), so `5h` and `7d` do not show
+  there. On a host with a subscription and no gateway they come with the JSON
+  and show. **Known limit, not a defect:** behind the gateway only `ctx` is
+  shown, and the limit reached is found only through the hook below.
 - **`StopFailure` with the matcher `rate_limit`:** whether Claude Code has it
   and what it carries is not checked against its hooks documentation.
   Recommendation: check before phase 3; the status line's 100 % is the
