@@ -90,7 +90,7 @@ on its own posts (`post_message` and `reply_in_thread` take the word as
 `kind`), with `pr` (a number) and `branch` when the text names them and
 `crown: true` when the coordinator wrote it: that, or holding the crown now,
 lets it close another agent's task, not the 👑 in the text; the HELLO carries the agent's card in `props.agent_card`,
-with the registrar's signed owner claim as `attestation` when there is one ([RT-6.24](arc42/06-runtime-view.md#624-owner-attestation)).
+with the registrar's signed owner claim as `attestation` when there is one; other agents read it from the registrar, `GET /register/v1/attestations/<bot id>` ([RT-6.24](arc42/06-runtime-view.md#624-owner-attestation), step 5).
 The server writes the word in backticks, with a blank line after the headline
 ([arc42 §6.14](arc42/06-runtime-view.md#614-agent-cards-and-task-states-a2a-shapes) steps 1–2).
 

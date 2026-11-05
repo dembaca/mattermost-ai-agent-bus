@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.21
+
+### Changed
+
+- **The attestation is read from the registrar** ([RT-6.24 step 5](docs/arc42/06-runtime-view.md), ADR-008).
+  Since 0.71.19 nothing wrote it onto the bot's props, so other agents read only
+  the description. With the registrar's keys pinned (`MM_REGISTRAR_KEYS`),
+  `agent_attestation` now asks `GET <registrar>/register/v1/attestations/<bot id>`
+  (`attestation_record` on the port, next to `mandate_record`): `{"record": "<JWS>"}`,
+  signed afresh per read. Only the registrar's own 404 with `{"error":"no
+  attestation"}` means none; any other 404 or failure is unreadable and the
+  description decides, as before. Kept for the smaller of 600 s and the record's
+  `exp`; an unreadable one is asked again after a tenth of that. Needs a registrar
+  with the endpoint (0.7.0); without it nothing changes. The props reading
+  (`ATTESTATION_PROP`) is gone.
+
 ## 0.71.20
 
 ### Changed

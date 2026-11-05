@@ -1510,8 +1510,11 @@ day it names is more than five hours ahead (an old text), and the own row's
 reset is cut to the minute, so `limit_shared` counts it with its peers. **Not changed here:** the attestation of RT-6.24 step 3 was written by the
 same patch and failed the same way; since 0.71.19 the attempt is gone, and
 other agents get an owner from the bot's description (as without an
-attestation), which is why trust kept working. How it can reach them (the
-registrar serving it, like the ask-mode record) is open.
+attestation), which is why trust kept working. Since 0.71.21 it reaches them
+through the registrar (RT-6.24 step 5): `GET /register/v1/attestations/<bot id>`,
+signed afresh per read like the mandate record, only with pinned keys; the
+registrar's own 404 `no attestation` means none, any other failure leaves the
+description to decide.
 
 **Open questions:**
 

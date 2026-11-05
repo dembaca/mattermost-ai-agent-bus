@@ -156,6 +156,15 @@ def _json(segment: str) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def expires_in(token: str, now: float | None = None) -> float:
+    """Seconds until a record's `exp`, read without checking it (a cache
+    bound; verify decides whether it counts); 0 when it has none."""
+    parts = token.split(".") if isinstance(token, str) else []
+    payload = _json(parts[1]) if len(parts) == 3 else None
+    exp = _int(payload.get("exp")) if payload else None
+    return 0.0 if exp is None else exp - (time.time() if now is None else now)
+
+
 def _int(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
