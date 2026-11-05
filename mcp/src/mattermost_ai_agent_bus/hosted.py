@@ -488,7 +488,7 @@ async def services(key: str, client: Any) -> AsyncIterator[str]:
     await api.start(write_file=False)  # the sandbox has it in its environment
     task = asyncio.create_task(lease.heartbeat(get_client, stall.watch))
     # The attestation preStart passed on (MM_BOT_ATTESTATION): checked and
-    # published on the bot's account (RT-6.24 steps 1–3).
+    # logged (RT-6.24 steps 1–2).
     attested = asyncio.create_task(attest.start(client))
     try:
         yield api.endpoint

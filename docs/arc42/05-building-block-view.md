@@ -72,7 +72,7 @@ work channel, permalink base, `get_me`, `account_created`, `get_channel`,
 people (`usernames`, `agents`, `bots_named`, `trusted_humans`, `bot_description`, `agent_owner`, `agent_attestation`);
 membership, status and
 presence (`member_channels`, `channel_users`, `is_member`, `presences`, `set_presence`,
-`set_custom_status`, `clear_custom_status`, `publish_attestation`); posting (`post`, `post_sync`,
+`set_custom_status`, `clear_custom_status`); posting (`post`, `post_sync`,
 `post_by_name_sync`); reading (`thread`, `channel_posts`, `posts_after`,
 `reactions`). Nothing crosses it as Mattermost's JSON. `MattermostAdapter`
 implements it; mypy checks that structurally. `agent_owner` is the bot's
@@ -80,8 +80,8 @@ native owner where the chat system keeps one (Mattermost: `owner_id`), else
 the registrar's `for @…`; the rule that combines them (`owners.decide`) is
 the bus's own (RT-6.16 step 1), and so is the check of the registrar's
 attestation (`attest.py`), which the port only carries: `agent_attestation`
-reads it from the account the description comes from, `publish_attestation`
-writes it there, keeping the account's other props (RT-6.24). The registrar has the same split on its side:
+reads it from the account the description comes from (RT-6.24; no bot can write it
+there, step 3). The registrar has the same split on its side:
 its core reaches the chat system only through its `ProviderPort`, whose
 Mattermost adapter binds the owner with `assign_bot`.
 
