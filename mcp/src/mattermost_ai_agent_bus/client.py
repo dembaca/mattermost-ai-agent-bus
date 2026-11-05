@@ -747,13 +747,26 @@ class MattermostAdapter:
         root = reg.removesuffix("/agents")
         return f"{root}/modes/{mm_id(channel_id, 'channel')}"
 
+    def mandates_url(self, channel_id: str) -> str:
+        """Where the registrar publishes a home's mandate (RT-6.26 step 8), found
+        like modes_url: `…/mandates/<id>`."""
+        return self.modes_url(channel_id).replace("/modes/", "/mandates/")
+
     async def ask_mode_record(self, channel_id: str) -> str | None:
         """The registrar's signed ask-mode record of a home (RT-6.25 step 8):
         `GET …/modes/<id>` → `{"record": "<JWS>"}`, None on 404. No
         Authorization header (the bot's token never goes there), 5 s, at
         most MODE_RECORD_MAX bytes; anything else raises."""
+        return await self._registrar_record(self.modes_url(channel_id))
+
+    async def mandate_record(self, channel_id: str) -> str | None:
+        """The registrar's signed mandate record of a home (RT-6.26 step 8):
+        `GET …/mandates/<id>`, read like ask_mode_record."""
+        return await self._registrar_record(self.mandates_url(channel_id))
+
+    async def _registrar_record(self, url: str) -> str | None:
         out = bytearray()
-        async with self._http().stream("GET", self.modes_url(channel_id), timeout=5.0,
+        async with self._http().stream("GET", url, timeout=5.0,
                                        headers={"Accept": "application/json"}) as resp:
             if resp.status_code == 404:
                 return None

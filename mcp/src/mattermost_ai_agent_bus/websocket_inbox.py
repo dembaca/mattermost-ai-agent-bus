@@ -13,7 +13,8 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import a2a, askroute, asks, departed, gate, lease, ownpost, unread, watermark
+from . import (a2a, askroute, asks, departed, gate, lease, mandate, ownpost, unread,
+               watermark)
 from .client import (MattermostAdapter, guest_ids, lobby_ids, post_of, reaction_of, read_links,
                      watched_channel_ids, with_links, ws_url_from_http)
 from .model import Channel, Post, Reaction, UnreadChannel
@@ -231,7 +232,8 @@ class WebSocketInbox:
         """RT-6.25 step 2: a trusted human's `ask-mode …` post in the home is
         the server's (kept, and acknowledged by the 👑's), for no agent's
         model: handled here. Anyone else's is a post like any other."""
-        if not await askroute.observe(self.client, post, self._bot_user_id):
+        if not (await askroute.observe(self.client, post, self._bot_user_id)
+                or await mandate.observe(self.client, post, self._bot_user_id)):
             return False
         if post.id:
             self._seen_ids.add(post.id)

@@ -62,7 +62,10 @@ REMINDER = "reminder"
 ASK_LINK = "ask_link"
 # The 👑's acknowledgement of an ask mode switch (RT-6.25 step 2): fyi.
 ASK_MODE = "ask_mode"
-_OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE)
+# The 👑's one hint under a pinned mandate post when the registrar's keys are
+# pinned and the post mandates nothing (RT-6.26 step 8): fyi.
+MANDATE = "mandate"
+_OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE)
 # A link line without props (before 0.64.4, `🙋 asked <ask id>`): the ask's id
 # bare, or as the permalink the server writes (RT-6.15).
 _ASK_LINK = re.compile(r"🙋\s*asked\s+(?:[a-z0-9]{26}|\[[^\]]*\]\([^)\s]*/[a-z0-9]{26}\))\s*")
@@ -138,7 +141,7 @@ def state(kind: str | None) -> str | None:
 def intent(kind: str | None) -> str | None:
     if kind in (ASK, PERMISSION):
         return REPLY
-    if kind in (REMINDER, ASK_MODE):
+    if kind in (REMINDER, ASK_MODE, MANDATE):
         return FYI
     return WORDS.get((kind or "").upper(), _NONE)[2]
 
