@@ -3,7 +3,8 @@
 # shellcheck shell=bash
 
 # shellcheck source=mm-agent-symbols.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/mm-agent-symbols.sh"
+# Pure bash: the hardened callers run it with no command from the workdir (dirname, cd).
+source "${BASH_SOURCE[0]%/*}/mm-agent-symbols.sh"
 
 mm_chat_url() {
   local url="${MM_CHAT_URL:-${MATTERMOST_URL:-}}"
