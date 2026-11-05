@@ -55,13 +55,6 @@ def _lock() -> asyncio.Lock:
     return lock
 
 
-def status_lock() -> asyncio.Lock:
-    """The lock every custom status write holds: whoever else writes the
-    bot's account (its attestation, RT-6.24 step 3) holds it too, so neither
-    sends back a stale status."""
-    return _lock()
-
-
 def _state_word(emoji: str) -> str:
     """The lease's status emoji as a word, for a status without text (the
     crown's is none)."""

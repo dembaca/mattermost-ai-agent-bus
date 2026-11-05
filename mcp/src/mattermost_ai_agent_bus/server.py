@@ -210,7 +210,7 @@ async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
     # The session's heartbeat: renews its status lease and the crown (RT-6.6),
     # reminds of open asks and, with the crown, looks for a stall (RT-6.19).
     task = asyncio.create_task(lease.heartbeat(_bus_client, stall.watch))
-    # A bot handed in by the host: check and publish its attestation (RT-6.24).
+    # A bot handed in by the host: check and log its attestation (RT-6.24).
     attested = asyncio.create_task(_attest_start())
     api = await _start_hook_api()
     try:
@@ -223,7 +223,7 @@ async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
 
 
 async def _attest_start() -> None:
-    """RT-6.24 steps 1–3 for a bot this server was handed (a token in its
+    """RT-6.24 steps 1–2 for a bot this server was handed (a token in its
     environment); session_start does it for one it registers. Never raises."""
     client = await _bus_client()
     if client is not None and client.token:
@@ -761,7 +761,7 @@ async def session_start(
     global _inbox
     _inbox = None  # reset inbox for new identity
     setup = await client.finish_session_setup()
-    await attest.start(client)  # RT-6.24: publish the attestation, if any
+    await attest.start(client)  # RT-6.24: check and log the attestation, if any
     out: dict[str, Any] = {
         "name": info.name,
         "username": info.username,

@@ -230,7 +230,9 @@ _PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 
 # A bot description (its owner and trusted list, ADR-003) is read again after this.
 DESCRIPTION_TTL_SEC = 600.0
-# The bot's own user prop that carries the registrar's attestation (RT-6.24).
+# The bot's own user prop that carries the registrar's attestation (RT-6.24). Nobody
+# writes it since 0.71.19 (a bot's patch of its own user is a 403); the read path is the
+# seam for the registrar endpoint.
 ATTESTATION_PROP = "agent_attestation"
 # The most the registrar's answer with a home's ask-mode record may hold (RT-6.25 step 8).
 MODE_RECORD_MAX = 8192
@@ -714,9 +716,10 @@ class MattermostAdapter:
         self._attestations[user_id] = signed if isinstance(signed, str) else ""
 
     async def agent_attestation(self, user_id: str) -> str | None:
-        """The registrar's attestation the bot put into its own user props
-        (RT-6.24 step 5), read with its description and cached alike; '' when
-        it carries none, None when its user object cannot be read."""
+        """The registrar's attestation its user props carry (RT-6.24 step 5),
+        read with its description and cached alike; '' when it carries none
+        (every bot, while a bot cannot write its own props: 0.71.19), None when
+        its user object cannot be read."""
         await self.bot_description(user_id)
         return self._attestations.get(user_id)
 
@@ -770,30 +773,6 @@ class MattermostAdapter:
             raise ValueError("the registrar's answer holds no record")
         return record
 
-    async def publish_attestation(self, token: str) -> bool:
-        """Put this bot's attestation into its own user props (RT-6.24 step 3).
-        Mattermost's user patch replaces the whole props map, so the props as
-        they are now are read first and sent back with it: the custom status
-        (the lease, lease.py) is one of them, and the caller holds the lease's
-        lock. False when the props carry it already."""
-        if not await self._publish_prop(ATTESTATION_PROP, token):
-            return False
-        uid = mm_id((await self.get_me()).id, "user")
-        self._descriptions.pop(uid, None)
-        self._owners.pop(uid, None)
-        return True
-
-    async def _publish_prop(self, key: str, value: str) -> bool:
-        me = await self.get_me()
-        uid = mm_id(me.id, "user")
-        user = await self._api("GET", f"/api/v4/users/{uid}")
-        current = user.get("props") if isinstance(user, dict) else None
-        props = dict(current) if isinstance(current, Mapping) else {}
-        if props.get(key) == value:
-            return False
-        props[key] = value
-        await self._api("PUT", f"/api/v4/users/{uid}/patch", json={"props": props})
-        return True
 
     def _take(self, info: SessionInfo) -> None:
         """Make ``info`` this process's bot and hand it to the hooks."""
@@ -816,7 +795,7 @@ class MattermostAdapter:
         os.environ["MM_BOT_USER_ID"] = info.user_id
         os.environ["MM_BOT_TOKEN"] = info.bot_token
         os.environ["MATTERMOST_TOKEN"] = info.bot_token
-        if info.attestation:  # RT-6.24: the server checks and publishes it
+        if info.attestation:  # RT-6.24: the server checks and logs it
             os.environ[attest.ENV] = info.attestation
         else:
             os.environ.pop(attest.ENV, None)

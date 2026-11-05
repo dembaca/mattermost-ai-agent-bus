@@ -7,7 +7,6 @@ Tokens are never printed: the tests compare hashes, lengths and booleans.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import io
@@ -21,7 +20,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fakes import BOT, FakeChat
 
-from mattermost_ai_agent_bus import a2a, attest, hosted, lease, owners, server, session_file
+from mattermost_ai_agent_bus import a2a, attest, hosted, owners, server, session_file
 from mattermost_ai_agent_bus.client import MattermostAdapter, SessionInfo, post_of
 
 # The interop vector shared with the registrar: a public test seed, no credential.
@@ -237,33 +236,35 @@ def _mine(**over) -> str:
     return token(**({"bot_id": SELF, "username": "agent-me"} | over))
 
 
-async def test_start_publishes_under_the_status_lock(monkeypatch):
-    """Step 3: written on the account while no custom status write runs, once."""
-    chat = FakeChat()
+async def test_start_checks_and_logs_but_writes_nothing_on_the_account(monkeypatch, caplog):
+    """Step 2/3 (0.71.19): the own attestation is checked and logged once; it is not written onto the
+    account (a bot's patch of its own user props is a 403): no write, no warning at every start."""
+    seen: list = []
+    c = _adapter(seen, {"customStatus": "{}"})
     monkeypatch.setenv("MM_REGISTRAR_KEYS", _x(_key()))
     monkeypatch.setenv(attest.ENV, _mine())
     monkeypatch.setattr(attest.time, "time", lambda: NOW)
-    lock = lease.status_lock()
-    async with lock:
-        task = asyncio.create_task(attest.start(chat))
-        await asyncio.sleep(0.05)
-        assert chat.published == []  # waits for the lease
-    own = await task
-    assert own.label == "valid" and len(chat.published) == 1
-    published = _digest(chat.published[0])
-    assert published == _digest(_mine())
-    await attest.start(chat)
-    assert len(chat.published) == 1
+    attest._started.clear()
+    with caplog.at_level("INFO"):
+        own = await attest.start(c)
+    assert own.label == "valid" and own.publish and seen == []  # nothing PUT, the HELLO card still carries it
+    assert "own attestation: valid" in caplog.text and "not published" not in caplog.text
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        assert (await attest.start(c)).label == "valid"
+    assert "own attestation" not in caplog.text and seen == []  # once per bot and attestation
 
 
-async def test_start_publishes_no_invalid_one_and_nothing_without(monkeypatch):
-    chat = FakeChat()
+async def test_start_logs_an_invalid_one_and_nothing_without(monkeypatch):
+    seen: list = []
+    c = _adapter(seen, None)
     monkeypatch.setenv("MM_REGISTRAR_KEYS", _x(_key()))
     monkeypatch.setattr(attest.time, "time", lambda: NOW)
-    assert (await attest.start(chat)).label == "none"
+    attest._started.clear()
+    assert (await attest.start(c)).label == "none"
     monkeypatch.setenv(attest.ENV, token())  # another bot's
-    own = await attest.start(chat)
-    assert own.label == "invalid (bot_id mismatch)" and chat.published == []
+    own = await attest.start(c)
+    assert own.label == "invalid (bot_id mismatch)" and seen == []
 
 
 def _adapter(seen: list, props: dict | None) -> MattermostAdapter:
@@ -273,36 +274,14 @@ def _adapter(seen: list, props: dict | None) -> MattermostAdapter:
         if req.url.path == f"/api/v4/users/{SELF}" and req.method == "GET":
             return httpx.Response(200, json={"id": SELF, "username": "agent-me",
                                              **({"props": props} if props is not None else {})})
-        if req.url.path == f"/api/v4/users/{SELF}/patch" and req.method == "PUT":
-            seen.append(json.loads(req.content))
-            return httpx.Response(200, json={"id": SELF})
+        if req.method in ("PUT", "POST", "DELETE"):
+            seen.append((req.method, req.url.path))  # any write is recorded
+            return httpx.Response(403, json={"message": "no"})
         return httpx.Response(404)
 
     c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return c
-
-
-async def test_publishing_merges_the_props_and_keeps_the_custom_status():
-    """Step 3: Mattermost's user patch replaces the whole props map, so the
-    custom status (the lease) and every other prop go back with it."""
-    status = json.dumps({"emoji": "ear", "text": "listening · ~proj", "duration": "date_and_time",
-                         "expires_at": "2026-11-01T12:00:00Z"})
-    seen: list = []
-    c = _adapter(seen, {"customStatus": status, "recentCustomStatuses": "[]"})
-    tok = _mine()
-    assert await c.publish_attestation(tok) is True
-    sent = seen[0]["props"]
-    assert sent["customStatus"] == status and sent["recentCustomStatuses"] == "[]"
-    written = _digest(sent["agent_attestation"])
-    assert written == _digest(tok) and set(seen[0]) == {"props"}
-    # Already there: nothing is written again.
-    seen.clear()
-    c2 = _adapter(seen, {"customStatus": status, "agent_attestation": tok})
-    assert await c2.publish_attestation(tok) is False and seen == []
-    # An account without props gets just the attestation.
-    c3 = _adapter(seen, None)
-    assert await c3.publish_attestation(tok) is True and list(seen[0]["props"]) == ["agent_attestation"]
 
 
 async def test_the_account_read_carries_the_attestation():

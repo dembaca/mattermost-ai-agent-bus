@@ -107,9 +107,10 @@ class ChatPort(Protocol):
         ...
 
     async def agent_attestation(self, user_id: str) -> str | None:
-        """The registrar's signed owner claim the bot published on its account
-        (RT-6.24), read where its description is read; '' when it carries
-        none, None when it cannot be read. owners.attested checks it."""
+        """The registrar's signed owner claim its account carries (RT-6.24: none
+        today, a bot cannot write its own props), read where its description is
+        read; '' when it carries none, None when it cannot be read.
+        owners.attested checks it."""
         ...
 
     # --- channel membership, status and presence -----------------------------
@@ -142,12 +143,6 @@ class ChatPort(Protocol):
         no mandate is set there (the registrar's 404 `no mandate set`, also after
         `/agent-mandate off`). Raises on any other failure, a 404 without that
         answer too (a registrar without the endpoint), like ask_mode_record."""
-        ...
-
-    async def publish_attestation(self, token: str) -> bool:
-        """Put this bot's attestation on its own account (RT-6.24 step 3),
-        keeping whatever else the account carries (its custom status); False
-        when it is there already. The caller holds lease.status_lock()."""
         ...
 
     # --- posting and replying ------------------------------------------------

@@ -1373,7 +1373,7 @@ about once a second, so nothing there may block or call the API.
    windows with `used` and `resets_at`, and `at` (when it was taken). It is
    written like the attestation (RT-6.24 step 3): the props are read first and
    sent back whole, since Mattermost's user patch replaces the map, under
-   `lease.status_lock`, on the heartbeat and when a number crosses a band
+   `lease.status_lock` (removed in 0.71.19), on the heartbeat and when a number crosses a band
    (step 2), not more often. The status text of step 2 is only a display,
    cut and incomplete by design; **nothing parses it**. `coordinator("roster")`
    reads the props of the agents it lists (one lookup each, cached like the
@@ -1507,11 +1507,11 @@ description-read side effect are gone), no write that can be refused. The
 status text's separator) becomes a space in `/v1/presence`; the numbers are the
 agent's own claim in any case. The 5-hour reset is left out when the time of
 day it names is more than five hours ahead (an old text), and the own row's
-reset is cut to the minute, so `limit_shared` counts it with its peers. **Not changed here:** the attestation of RT-6.24 step 3 is written by the
-same patch and fails the same way; other agents get an owner from the bot's
-description then (as without an attestation), which is why trust kept
-working. Whether it can reach them another way (the HELLO card already carries
-it) is open.
+reset is cut to the minute, so `limit_shared` counts it with its peers. **Not changed here:** the attestation of RT-6.24 step 3 was written by the
+same patch and failed the same way; since 0.71.19 the attempt is gone, and
+other agents get an owner from the bot's description (as without an
+attestation), which is why trust kept working. How it can reach them (the
+registrar serving it, like the ask-mode record) is open.
 
 **Open questions:**
 
