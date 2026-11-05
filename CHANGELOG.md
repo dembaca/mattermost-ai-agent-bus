@@ -22,6 +22,7 @@ before 0.5.0 are described in the git history.
   (a queued `go/no-go` becomes free text). The ask keeps the list
   (`ANSWERS=` in `asks-<uid>.env`), and a reaction event names the answer as
   `chosen` beside `choice` (👍/👎 on two answers too).
+
 ## 0.71.14
 
 ### Added
