@@ -26,7 +26,10 @@ before 0.5.0 are described in the git history.
   registrar before 0.6.0, a proxy) is a failed read, so a rollout never reads
   it as `off`; a failed read holds the last record for 5 refresh periods
   (about 10 min) after the last read that went through, not to its end; a
-  swallowed mandate post is logged once on a server that is not the 👑's.
+  swallowed mandate post is logged once on a server that is not the 👑's. The
+  command is `/agent-mandate set ~<home> [until YYYY-MM-DD] [note]` (no emoji in
+  the syntax), the record's claim `home`, `bus_info.mandate.role` reads
+  `coordinator of ~<home>`; a test checks the registrar's interop vector.
 
 ## 0.71.17
 

@@ -69,6 +69,31 @@ def test_a_mandate_record_verifies_and_is_strict():
     assert attest.verify_mandate(record(iat=old), keys, channel_id=WORK) == (None, "expired")
 
 
+# The interop vector shared with the registrar (its Go test, mandate_test.go, has the
+# same header and payload bytes): a public test seed, no credential.
+VECTOR_HEADER = b'{"alg":"EdDSA","typ":"mm-agent-mandate+jwt","kid":"Vkdap1RjR0wChd9d"}'
+VECTOR_PAYLOAD = (b'{"channel_id":"c0000000000000000000000000","home":"c1111111111111111111111111",'
+                  b'"set_by":"alice","set_by_id":"u0000000000000000000000000",'
+                  b'"set_at_ms":1699999000000,"until":"2023-12-01","note":"ship it",'
+                  b'"iat":1700000000,"exp":1700003600}')
+
+
+def test_the_interop_vector_holds():
+    """RT-6.26 step 8: the registrar's vector, byte for byte, verifies here with the
+    claim names it writes (`home`, not a crown)."""
+    from test_ask_mode_signed import SEED
+    keys = attest.pinned(_x(_key(SEED)))
+    tok = _sign(VECTOR_HEADER, VECTOR_PAYLOAD, _key(SEED))
+    got, why = attest.verify_mandate(tok, keys, channel_id="c0000000000000000000000000",
+                                     now=1700000100)
+    assert why == "" and got is not None
+    assert (got.home, got.set_by, got.set_by_id, got.set_at_ms, got.until, got.note) == (
+        "c1111111111111111111111111", "alice", "u0000000000000000000000000",
+        1699999000000, "2023-12-01", "ship it")
+    assert attest.verify_mandate(tok, keys, channel_id=WORK, now=1700000100) == (
+        None, "channel_id mismatch")
+
+
 @pytest.mark.parametrize("over", [
     {"home": "H" * 26}, {"home": "short"}, {"set_by_id": "u" * 25}, {"set_by": "no handle"},
     {"set_at_ms": 0}, {"until": "soon"}, {"until": 20990102}, {"note": "x" * 201},
