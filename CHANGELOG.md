@@ -15,9 +15,11 @@ before 0.5.0 are described in the git history.
   (`["go", "no-go"]`), the emojis come by position (2: 👍 the go, 👎; 3 to 4:
   1️⃣ to 4️⃣), so `choice: n` is always `answers[n - 1]`. A mark an agent wrote
   first (👍 ✅ 👎 ❌ 1️⃣–4️⃣ with `=`, `:` or `-`) is stripped, the cleaned list
-  comes back as `answers`, a list of one or of five or more is refused, an
-  approval with more than two still too. For one version a `str` is still
-  taken, split only at ` / ` with spaces. The ask keeps the list
+  comes back as `answers` (also skin tones of 👍/👎 and ✔️ ☑️ count as marks), an
+  entry of nothing but a mark is refused with a hint, not dropped, and so is a
+  list of one or of five or more, an approval with more than two too. A `str`
+  is no longer taken; an ask queued with one before this version has no answers
+  (a queued `go/no-go` becomes free text). The ask keeps the list
   (`ANSWERS=` in `asks-<uid>.env`), and a reaction event names the answer as
   `chosen` beside `choice` (👍/👎 on two answers too).
 

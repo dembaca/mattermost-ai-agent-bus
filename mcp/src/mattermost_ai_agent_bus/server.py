@@ -1413,7 +1413,7 @@ async def ask_human(
     decision: str = "",
     where: str = "",
     blocking: bool = False,
-    answers: list[str] | str | None = None,
+    answers: list[str] | None = None,
     human: str = "",
     root_id: str = "",
     kind: str = "approval",
@@ -1428,10 +1428,10 @@ async def ask_human(
     — what you would do and why; decision — the decision written out ("Install
     02dadca on hogan now, VM 399 stays up"), which a 👍 then approves as it
     stands. where: PR, thread or host; PRs and issues as markdown links, as in
-    posts. blocking: true if you cannot go on without it. answers: two to four plain
-    texts, no emojis, the server gives them by position (2: 👍 = first, the go,
-    👎; 3–4: 1️⃣–4️⃣; an approval: ["go", "no-go"]); a reaction's answer comes
-    back as chosen. human defaults to your responsible human. The ask is always a top-level post, its thread its own; root_id
+    posts. blocking: true if you cannot go on without it. answers: 2–4 plain texts,
+    no emojis (the server adds 👍 = first, the go, and 👎, or 1️⃣–4️⃣; an
+    approval: ["go", "no-go"]); chosen names the one a reaction picks. human
+    defaults to your responsible human. The ask is always a top-level post, its thread its own; root_id
     links it from that thread.
 
     One question per ask: several in need and context are refused (an answer
@@ -1441,7 +1441,7 @@ async def ask_human(
     ask_posted event tells you. Ask the most important question first.
 
     The answer comes through wait_for_events: a reply, or {kind: reaction,
-    emoji, answer: yes|no|null, choice: 1–4, chosen: "<answer text>", ask} — 👍/✅ from a trusted human is a yes to
+    emoji, answer: yes|no|null, choice: 1–4, chosen, ask} — 👍/✅ from a trusted human is a yes to
     exactly this ask, within 24 h of it: a later answer comes with
     expired: true and approves nothing; resolve_ask it and ask again. Until
     then the server reminds the human in its thread (RT-6.19). When it is
@@ -1459,20 +1459,22 @@ async def ask_human(
     client = _get_client()
     me = await client.get_me()
     # Free text of the model: nothing but the ask itself may notify (RT-6.11).
-    # RT-6.11 step 1: a list of plain texts (a str for one version: split at " / "),
-    # emojis stripped, each one line and cleaned like the rest.
-    raw_answers = asks.normalize_answers(answers)
+    # RT-6.11 step 1: a list of plain texts, emojis stripped, each one line and
+    # cleaned like the rest; an entry that is nothing but a mark is refused, not dropped.
     cleaned = [_unbroadcast(x) for x in (need, context, recommendation, decision, where,
-                                         *raw_answers)]
+                                         *(asks.clean_answer(x) for x in answers or []))]
     need, context, recommendation, decision, where, *answer_list = (c[0] for c in cleaned)
     everyone = sorted({n for c in cleaned for n in c[1]})
-    if isinstance(answers, list) and not asks.valid_answers(answer_list):
+    if empty := [i + 1 for i, a in enumerate(answer_list) if not a.strip()]:
+        return _out("ask_human", {
+            "posted": False,
+            "hint": f"answers: entry {empty[0]} is empty (a bare emoji is no text; the "
+                    "server gives the emojis): write each answer as plain text"})
+    if not asks.valid_answers(answer_list):
         return _out("ask_human", {
             "posted": False,
             "hint": "answers: none, or two to four plain texts (a go / no-go is two); "
                     "a longer list is no choice for a reaction: ask one thing at a time"})
-    if not asks.valid_answers(answer_list):
-        answer_list = []  # a str of one or five parts is free text, as before
     responsible, _ = await _responsible_and_trusted(client)
     who = human.strip().lstrip("@") or responsible
     if not who:
@@ -1658,7 +1660,7 @@ async def _post_ask(client: MattermostAdapter, me: Any, *, to: str, head: str, n
     # a later post in a shared thread; too late after 24 h (RT-6.11).
     post = await client.post(text, props=props)
     asks.add(me.id, post.id, to, post.id, title=head, question=human, blocking=blocking,
-             answers=answers if 2 <= len(answers) <= 4 else None)
+             answers=answers or None)
     stats.record("ask", id=post.id)  # RT-6.9
     out = await slim.post(client, post)
     out["ask"] = post.id

@@ -43,7 +43,7 @@ async def test_ask_is_one_post_with_the_mention_and_a_callout(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.ask_human(
         need="Go to install 02dadca on hogan", where="#50, hogan", blocking=True,
-        answers="go / not now"))
+        answers=["go", "not now"]))
     post = c.posted[0]
     assert post["message"] == "🙋 @dembaca — **Go to install 02dadca on hogan**"
     assert post["root_id"] is None  # stands on its own
@@ -183,7 +183,7 @@ async def test_an_ask_never_notifies_everyone(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.ask_human(
         need="Merge #61 @channel?", context="@here is waiting", recommendation="yes",
-        decision="Merge @all", where="PR @channel", answers="go / @all"))
+        decision="Merge @all", where="PR @channel", answers=["go", "@all"]))
     text = json.dumps([c.posted[0]["message"], c.posted[0]["props"]])
     for word in ("@channel", "@here", "@all"):
         assert word not in text
@@ -595,7 +595,7 @@ async def test_every_alternative_has_its_own_emoji(monkeypatch):
     keycaps, none given 👍 yes · 👎 no; no emoji stands twice."""
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)
-    await server.ask_human(need="Which order?", kind="question", answers="A / B / C")
+    await server.ask_human(need="Which order?", kind="question", answers=["A", "B", "C"])
     answer = {f["title"]: f["value"] for f in c.posted[0]["props"]["attachments"][0]["fields"]}["Answer"]
     assert answer == "1️⃣ = A · 2️⃣ = B · 3️⃣ = C · or reply in this thread"
     assert asks.answer_line([], False) == "👍 = yes · 👎 = no · or reply in this thread"
@@ -619,20 +619,9 @@ async def test_answers_are_plain_texts_and_the_server_gives_the_emojis(monkeypat
     assert asks.answers_of(BOT, ASK) == out["answers"]
     assert asks.clean_answer("2️⃣: B / C") == "B / C" and asks.clean_answer("✅ - go") == "go"
     assert asks.clean_answer("1 thing") == "1 thing"  # a digit alone is no mark
-
-
-@pytest.mark.asyncio
-async def test_a_str_is_split_at_a_spaced_slash_for_one_version(monkeypatch):
-    """RT-6.11 step 1 (0.71.15): the old `A / B` string still works, split only at
-    ` / `, emojis stripped; one or five parts are free text as before."""
-    c = _Client()
-    monkeypatch.setattr(server, "_get_client", lambda: c)
-    out = json.loads(await server.ask_human(
-        need="Which?", kind="question", answers="👍 = ja, 5h/7d sichtbar / nein"))
-    assert out["answers"] == ["ja, 5h/7d sichtbar", "nein"]
-    assert asks.normalize_answers("go/no-go") == ["go/no-go"] and asks.normalize_answers(None) == []
-    assert asks.normalize_answers("a / b / c / d / e") == ["a", "b", "c", "d", "e"]
-    assert not asks.valid_answers(asks.normalize_answers("a / b / c / d / e"))
+    for mark in ("👍🏽", "✔️", "☑️", "✅", "❌", "👎🏿", "4️⃣"):
+        assert asks.clean_answer(f"{mark} = text") == "text"
+    assert asks.normalize_answers("go / no-go") == []  # an ask queued before 0.71.15: free text
 
 
 @pytest.mark.asyncio
@@ -642,6 +631,18 @@ async def test_a_list_of_one_or_five_answers_is_refused(monkeypatch):
     for bad in (["only one"], list("abcde")):
         out = json.loads(await server.ask_human(need="Which?", kind="question", answers=bad))
         assert out["posted"] is False and "two to four" in out["hint"]
+    assert not c.posted
+
+
+@pytest.mark.asyncio
+async def test_an_answer_of_nothing_but_a_mark_is_refused_not_dropped(monkeypatch):
+    """RT-6.11 step 1: `["👍", "👎"]` is no go / no-go with texts, and must not turn
+    into a plain yes / no; `["👍 go", "👎"]` is not a lone answer either."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    for bad in (["👍", "👎"], ["👍 go", "👎"], ["go", "  "]):
+        out = json.loads(await server.ask_human(need="Which?", kind="question", answers=bad))
+        assert out["posted"] is False and "empty" in out["hint"]
     assert not c.posted
 
 
@@ -662,6 +663,19 @@ async def test_a_reaction_names_its_answer_as_chosen(monkeypatch):
     await inbox._on_reaction_event(_reaction_event("-1", at=2))
     item = json.loads(await server.wait_for_events(timeout_sec=1))[0]
     assert item["answer"] == "no" and item["chosen"] == "wait" and "choice" not in item
+    asks.resolve(BOT, ASK)
+    await server.ask_human(need="Merge again?", decision="Merge it", answers=["go", "wait"])
+    await inbox._on_reaction_event(_reaction_event("white_check_mark", at=3))
+    assert json.loads(await server.wait_for_events(timeout_sec=1))[0]["chosen"] == "go"
+    asks.resolve(BOT, ASK)
+    await server.ask_human(need="Merge once more?", decision="Merge it", answers=["go", "wait"])
+    await inbox._on_reaction_event(_reaction_event("x", at=4))
+    assert json.loads(await server.wait_for_events(timeout_sec=1))[0]["chosen"] == "wait"
+    old = "q" * 26
+    asks.add(BOT, old)  # an ask from before 0.71.15: no ANSWERS=, so nothing is named
+    await inbox._on_reaction_event(_reaction_event("+1", post_id=old, at=5))
+    item = json.loads(await server.wait_for_events(timeout_sec=1))[0]
+    assert item["answer"] == "yes" and "chosen" not in item
 
 
 @pytest.mark.asyncio

@@ -85,8 +85,8 @@ def is_answer(emoji: str) -> bool:
 
 # An emoji an agent put in front of an answer, `👍 = yes`: stripped, the server
 # gives the emojis by position (RT-6.11 step 1).
-_MARK = re.compile(r"^\s*(?:👍|✅|👎|❌|[1-4]\ufe0f?\u20e3)\s*[=:\-–]?\s*")
-_SPACED_SLASH = re.compile(r"\s+/\s+")
+_MARK = re.compile(r"^\s*(?:(?:👍|👎)[\U0001F3FB-\U0001F3FF]?|✅|❌|✔\ufe0f?|☑\ufe0f?"
+                   r"|[1-4]\ufe0f?\u20e3)\s*[=:\-–]?\s*")
 
 
 def clean_answer(text: str) -> str:
@@ -95,13 +95,12 @@ def clean_answer(text: str) -> str:
 
 
 def normalize_answers(answers: list[str] | str | None) -> list[str]:
-    """The answers of an ask as a list of plain texts (RT-6.11 step 1). A list
-    is taken as it is; a `str` (one version only, 0.71.15) is split at ` / ` with
-    a space on both sides, never at a bare `/`. Marks are stripped in both."""
-    if answers is None:
+    """The answers of a queued ask as a list of plain texts (RT-6.11 step 1). A
+    list is cleaned entry by entry, empty ones dropped; a `str`, as an ask queued
+    before 0.71.15 stored it, is free text: no answers."""
+    if not isinstance(answers, list):
         return []
-    items = _SPACED_SLASH.split(answers) if isinstance(answers, str) else list(answers)
-    return [c for c in (clean_answer(x) for x in items) if c]
+    return [c for c in (clean_answer(x) for x in answers) if c]
 
 
 def valid_answers(answers: list[str]) -> bool:
