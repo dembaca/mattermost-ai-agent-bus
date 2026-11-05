@@ -863,6 +863,8 @@ async def bus_info() -> str:
         "ask_mode": await askroute.info(client, me.id),
         # RT-6.26 step 6: the home's mandate for a role, or why none holds.
         "mandate": await mandate.info(client),
+        # RT-6.26 step 9: the guest channels this coordinator watches under a mandate.
+        **({"mandate_holds": holds} if (holds := await mandate.holds(client, me.id)) else {}),
         "permission_relay": RELAY,
         **({"update": {"installed": newer, "how": _restart_how()}}
            if (newer := _newer_installed()) else {}),

@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from mattermost_ai_agent_bus import a2a, asks, channel, hookapi, lease, remind, server, stall, stats, tasks
+from mattermost_ai_agent_bus import a2a, asks, channel, hookapi, lease, mandate, remind, server, stall, stats, tasks
 from mattermost_ai_agent_bus.client import post_of, reaction_of
 from mattermost_ai_agent_bus.model import Post, RosterEntry, Thread
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
@@ -50,9 +50,10 @@ class Client:
         self.trusted = {HUMAN: "dembaca"}
         self.reacts: dict[str, list[dict]] = {}
         self.sent: list[dict] = []
+        self.guest_posts: list[Post] = []   # the mandated guest channel's (RT-6.26 step 9)
 
     async def posts_after(self, since_ms, channel_id=None):
-        return sorted(self.posts, key=lambda p: p.create_at)
+        return sorted(self.guest_posts if channel_id else self.posts, key=lambda p: p.create_at)
 
     async def usernames(self, ids):
         return {i: self.names[i] for i in ids if i in self.names}
@@ -676,3 +677,122 @@ async def test_a_link_line_is_never_reminded(bus):
                   post(2, ME, f"🙋 asked {ask_id}", 25, root=7, kind=a2a.ASK_LINK)]
     await remind.tick(bus, ME, NOW)
     assert [s["root_id"] for s in bus.sent] == [ask_id]
+
+
+# --- a mandated holder also watches the channels of its mandate (RT-6.19 step 6, RT-6.26 step 9) ---
+
+GUEST = "j" * 26
+
+
+@pytest.fixture
+def guest(bus, monkeypatch):
+    """~proj-b is a guest where a mandate names this coordinator's home; its own
+    coordinator `agent-pm` is live unless the test says `no_crown`."""
+    held = [{"id": GUEST, "name": "proj-b"}]
+    crowned = {"agent-pm": True}
+
+    async def fake_held(_client, now=None):
+        return list(held)
+
+    async def fake_roster_in(_client, channel_id, name):
+        assert (channel_id, name) == (GUEST, "proj-b")
+        return [RosterEntry(username="agent-bob", status="listening"),
+                *([RosterEntry(username="agent-pm", status="listening", coordinator=True, crown=True)]
+                  if crowned["agent-pm"] else [])]
+
+    monkeypatch.setattr(mandate, "held", fake_held)
+    monkeypatch.setattr(lease, "roster_in", fake_roster_in)
+    bus.held, bus.crowned = held, crowned
+    return bus
+
+
+def _guest_task(bus, ago_min: float = 60) -> None:
+    bus.guest_posts += [post(21, ME, "TASK · Fix the build · @agent-bob", ago_min),
+                        post(22, BOB, "ACK · on it", ago_min - 5, root=21)]
+
+
+async def test_a_stalled_mandated_guest_wakes_the_holder_with_the_channel_named(guest):
+    """RT-6.19 step 6: the digest marks the items of a guest with ~channel."""
+    _guest_task(guest)
+    await look(guest, 30)
+    [text] = guest.woken
+    assert "(mandate in ~proj-b)" in text and "- ~proj-b: task active" in text
+    assert "in the channel the item is from" in text
+
+
+async def test_a_guest_without_a_mandate_is_not_watched(guest):
+    guest.held.clear()
+    _guest_task(guest)
+    assert await look(guest, 30) is None
+    assert guest.woken == []
+
+
+async def test_each_channel_keeps_its_own_quiet_period(guest):
+    """RT-6.19 step 6: a busy home does not hide a stalled guest, nor the reverse."""
+    _guest_task(guest)
+    guest.posts.append(post(3, EVE, "PROGRESS · working on the other thing", 1))
+    await look(guest, 30)
+    [text] = guest.woken
+    assert "~proj-b: task" in text
+    guest.woken.clear()
+    guest.guest_posts.append(post(23, EVE, "PROGRESS · fresh", -29))
+    _open(guest, "task")                       # the home stalls, the guest has just seen activity
+    await look(guest, 40)
+    [text] = guest.woken
+    assert "task active" in text and "~proj-b" not in text
+
+
+async def test_the_state_is_one_file_with_a_key_per_guest_and_is_forgotten_with_the_mandate(guest):
+    _guest_task(guest)
+    await look(guest, 30)
+    raw = stall._path(ME).read_text()
+    assert f"WAKES@{GUEST}=1" in raw and "WAKES=" in raw
+    assert len(list(stall._path(ME).parent.glob("stall-*.env"))) == 1
+    guest.held.clear()
+    await look(guest, 31)
+    assert "@" not in stall._path(ME).read_text()
+
+
+async def test_second_in_line_behind_the_guests_own_crown(guest):
+    """RT-6.19 step 6: with a live crown of its own the guest waits twice MM_STALL_SEC."""
+    _guest_task(guest, 60)
+    guest.guest_posts.append(post(23, BOB, "PROGRESS · still on it", 15))
+    await look(guest, 0)                       # 15 min quiet: past 10, short of 20
+    assert guest.woken == []
+    await look(guest, 6)                       # 21 min
+    assert len(guest.woken) == 1
+    guest.woken.clear()
+    guest.guest_posts.clear()
+    guest.crowned["agent-pm"] = False          # no coordinator of its own: one gap
+    _guest_task(guest, 60)
+    guest.guest_posts.append(post(23, BOB, "PROGRESS · still on it", 15))
+    stall._save(ME, 0, 0, 0.0, 0.0, GUEST)     # a fresh quiet period for the channel
+    await look(guest, 0)
+    assert len(guest.woken) == 1
+
+
+async def test_one_event_for_all_due_channels_the_home_first_and_capped(guest):
+    _open(guest, "task")
+    guest.guest_posts += [post(30 + n, ME, f"TASK · Guest task {n} · @agent-bob", 60 - n) for n in range(10)]
+    await look(guest, 30)
+    [text] = guest.woken
+    lines = text.splitlines()
+    assert lines[1].startswith("- task active") and "~proj-b" in lines[2]
+    assert len(text) <= stall.MAX_TEXT and "more" in text
+
+
+async def test_only_the_crown_holder_reads_the_guests(bus, monkeypatch):
+    """RT-6.26 step 9: without the crown the watch reads no guest mandate."""
+    reads = []
+
+    async def fake_held(_client, now=None):
+        reads.append(1)
+        return []
+
+    monkeypatch.setattr(mandate, "held", fake_held)
+    monkeypatch.setattr(lease, "crown_held", lambda uid: False)
+    await stall.watch(bus)
+    assert reads == []
+    monkeypatch.setattr(lease, "crown_held", lambda uid: True)
+    await stall.watch(bus)
+    assert reads == [1]
