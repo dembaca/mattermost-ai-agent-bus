@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from . import a2a, asks
-from .model import Mark
+from .model import Answer, Mark
 
 CAPABILITY = "claude/channel/permission"
 REQUEST = "notifications/claude/channel/permission_request"
@@ -128,7 +128,7 @@ def prompt(params: Mapping[str, Any]) -> str:
         f"{a2a.symbol(Mark.LOCK)} **Permission for `{tool}`?** · id `{rid}`",
         _fenced(str(params.get("description", ""))),
         _fenced(args),
-        f"Reply `yes {rid}` or `no {rid}`, or {a2a.symbol(Mark.YES)} / {a2a.symbol(Mark.NO)} on this post. "
+        f"Reply `yes {rid}` or `no {rid}`, or {a2a.answer_symbol(Answer.YES)} / {a2a.answer_symbol(Answer.NO)} on this post. "
         "The terminal can answer too; the first answer wins.",
     ])
 

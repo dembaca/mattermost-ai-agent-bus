@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.22
+
+### Changed
+
+- **Each meaning once in `model.py`** (arc42 §5.1, follow-up to 0.71.20). `Answer`
+  now holds `YES`, `NO` and the choice of an alternative (`Answer.choice(n)`), so
+  the answer marks left `Mark`; `Mark.BUS` is `Mark.HEADER` (the channel
+  header's bus; the status `BUS` is a different character) and
+  `StatusMark.CROWN` is `StatusMark.COORDINATOR` (a state, shown with the
+  `crown` shortcode; the crown in a text stays `Mark.CROWN`). `a2a.answer_symbol`
+  gives an answer's characters. The channel shows the same characters, byte for byte.
+
 ## 0.71.21
 
 ### Changed
