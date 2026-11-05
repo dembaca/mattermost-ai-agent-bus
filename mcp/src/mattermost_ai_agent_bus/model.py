@@ -237,6 +237,13 @@ class UnreadChannel:
     name: str = field(default="", compare=False)
 
 
+class NoAttestationEndpoint(ValueError):
+    """A 404 on the registrar's attestation route that is not its own `no
+    attestation` (RT-6.24 step 5): that registrar does not serve attestations
+    (yet), so the read failed: the description decides. Raised by the port's
+    attestation_record."""
+
+
 class NoMandateEndpoint(ValueError):
     """A 404 on the registrar's mandate route that is not its own `no mandate
     set` (RT-6.26 step 8): that registrar does not serve mandates (yet), which

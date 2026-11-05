@@ -19,8 +19,8 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, stats, watermark
-from .model import (Channel, ChannelUser, FileInfo, Me, NoMandateEndpoint, Post, Reaction, Thread,
-                    UnreadChannel)
+from .model import (Channel, ChannelUser, FileInfo, Me, NoAttestationEndpoint, NoMandateEndpoint, Post,
+                    Reaction, Thread, UnreadChannel)
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -233,11 +233,14 @@ DESCRIPTION_TTL_SEC = 600.0
 # The bot's own user prop that carries the registrar's attestation (RT-6.24). Nobody
 # writes it since 0.71.19 (a bot's patch of its own user is a 403); the read path is the
 # seam for the registrar endpoint.
-ATTESTATION_PROP = "agent_attestation"
 # The most the registrar's answer with a home's ask-mode record may hold (RT-6.25 step 8).
 MODE_RECORD_MAX = 8192
 # The registrar's own 404 for a home without a mandate (RT-6.26 step 8).
 NO_MANDATE_ERROR = "no mandate set"
+# The registrar's own 404 for a bot without an attestation (RT-6.24 step 5).
+NO_ATTESTATION_ERROR = "no attestation"
+# How long an attestation is kept at most; a failed read for a tenth of it.
+ATTESTATION_TTL_SEC = 600.0
 
 
 def _error_of(body: bytes) -> str:
@@ -438,9 +441,10 @@ class MattermostAdapter:
     # user id -> (when read, its owner as agent_owner gives it), ADR-003, WP3.
     _owners: dict[str, tuple[float, str | None]] = field(
         default_factory=dict, repr=False, init=False)
-    # user id -> the attestation its user props carry ('' none), read with
-    # its description (RT-6.24); missing: its user object was not read.
-    _attestations: dict[str, str] = field(default_factory=dict, repr=False, init=False)
+    # user id -> (when it stops counting, monotonic; the registrar's attestation
+    # for it, '' none, None not readable), RT-6.24 step 5.
+    _attestations: dict[str, tuple[float, str | None]] = field(
+        default_factory=dict, repr=False, init=False)
     # RT-6.21: lower-case username -> (when read, its bot account; None: none),
     # and (channel id, user id) -> (when read, a member).
     _named: dict[str, tuple[float, ChannelUser | None]] = field(
@@ -688,7 +692,6 @@ class MattermostAdapter:
             mm_id(user_id, "user")
         except InvalidId:
             return None
-        self._attestations.pop(user_id, None)
         for path, key in ((f"/api/v4/users/{user_id}", "bot_description"),
                           (f"/api/v4/bots/{user_id}", "description")):
             try:
@@ -707,21 +710,49 @@ class MattermostAdapter:
         return description
 
     def _read_account(self, user_id: str, user: Mapping[str, Any]) -> None:
-        """What a bot's user object says besides its description: its
-        username and the attestation in its props (RT-6.24 step 5)."""
+        """What a bot's user object says besides its description: its username."""
         if isinstance(user.get("username"), str):
             self._usernames[user_id] = user["username"]
-        props = user.get("props")
-        signed = props.get(ATTESTATION_PROP) if isinstance(props, Mapping) else None
-        self._attestations[user_id] = signed if isinstance(signed, str) else ""
 
     async def agent_attestation(self, user_id: str) -> str | None:
-        """The registrar's attestation its user props carry (RT-6.24 step 5),
-        read with its description and cached alike; '' when it carries none
-        (every bot, while a bot cannot write its own props: 0.71.19), None when
-        its user object cannot be read."""
-        await self.bot_description(user_id)
-        return self._attestations.get(user_id)
+        """The registrar's signed attestation of a bot (RT-6.24 step 5), read
+        from the registrar when its keys are pinned (MM_REGISTRAR_KEYS), else
+        '': without keys there is nothing to check it with. '' when the registrar
+        has none, None when it cannot be read (then the description decides). Cached
+        for the smaller of ATTESTATION_TTL_SEC and the record's own `exp`; an
+        unreadable one for a tenth of that."""
+        if not attest.pinned():
+            return ""
+        now = time.monotonic()
+        hit = self._attestations.get(user_id)
+        if hit and now < hit[0]:
+            return hit[1]
+        try:
+            mm_id(user_id, "user")
+            token = await self.attestation_record(user_id)
+        except Exception as exc:  # noqa: BLE001 — not readable: the description decides
+            if not isinstance(exc, InvalidId):
+                log.info("attestation of %s not readable: %s", user_id, exc)
+            self._attestations[user_id] = (now + ATTESTATION_TTL_SEC / 10, None)
+            return None
+        ttl = ATTESTATION_TTL_SEC if token is None else min(
+            ATTESTATION_TTL_SEC, max(0.0, attest.expires_in(token)))
+        self._attestations[user_id] = (now + ttl, token or "")
+        return token or ""
+
+    def attestations_url(self, bot_id: str) -> str:
+        """Where the registrar publishes a bot's attestation (RT-6.24 step 5),
+        found like modes_url: `…/attestations/<bot id>`."""
+        return self.modes_url(bot_id).replace("/modes/", "/attestations/")
+
+    async def attestation_record(self, bot_id: str) -> str | None:
+        """The registrar's signed attestation of a bot, unverified
+        (owners.attested checks it): `GET …/attestations/<id>`, read like
+        mandate_record: only a 404 with the registrar's own body `{"error":"no
+        attestation"}` means none; any other 404 raises NoAttestationEndpoint."""
+        return await self._registrar_record(self.attestations_url(bot_id),
+                                            none_error=NO_ATTESTATION_ERROR,
+                                            missing=NoAttestationEndpoint)
 
     def modes_url(self, channel_id: str) -> str:
         """Where the registrar publishes a home's ask mode (RT-6.25 step 8),
@@ -754,13 +785,14 @@ class MattermostAdapter:
         return await self._registrar_record(self.mandates_url(channel_id),
                                             none_error=NO_MANDATE_ERROR)
 
-    async def _registrar_record(self, url: str, *, none_error: str = "") -> str | None:
+    async def _registrar_record(self, url: str, *, none_error: str = "",
+                                missing: type[ValueError] = NoMandateEndpoint) -> str | None:
         out = bytearray()
         async with self._http().stream("GET", url, timeout=5.0,
                                        headers={"Accept": "application/json"}) as resp:
             if resp.status_code == 404:
                 if none_error and _error_of(await resp.aread()) != none_error:
-                    raise NoMandateEndpoint("registrar has no mandate endpoint")
+                    raise missing(f"registrar has no {none_error!r} endpoint")
                 return None
             resp.raise_for_status()
             async for chunk in resp.aiter_bytes():

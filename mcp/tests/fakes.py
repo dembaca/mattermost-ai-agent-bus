@@ -155,6 +155,10 @@ class FakeChat:
             return self.attestations[user_id]
         return "" if user_id in self.descriptions else None
 
+    async def attestation_record(self, bot_id: str) -> str | None:
+        """`attestations[bot_id]` (RT-6.24 step 5), None for a bot without one."""
+        return self.attestations.get(bot_id) or None
+
     async def member_channels(self) -> list[UnreadChannel]:
         return list(self.channels)
 

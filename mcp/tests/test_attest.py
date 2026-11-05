@@ -22,6 +22,7 @@ from fakes import BOT, FakeChat
 
 from mattermost_ai_agent_bus import a2a, attest, hosted, owners, server, session_file
 from mattermost_ai_agent_bus.client import MattermostAdapter, SessionInfo, post_of
+from mattermost_ai_agent_bus.model import NoAttestationEndpoint
 
 # The interop vector shared with the registrar: a public test seed, no credential.
 SEED = bytes(range(32))
@@ -284,14 +285,77 @@ def _adapter(seen: list, props: dict | None) -> MattermostAdapter:
     return c
 
 
-async def test_the_account_read_carries_the_attestation():
-    """Step 5: the user object other agents read already carries it."""
+def _registrar_adapter(answers: list, seen: list | None = None) -> MattermostAdapter:
+    """An adapter whose registrar answers from `answers`, in order; seen lists the URLs asked."""
+    it = iter(answers)
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(str(req.url))
+        return next(it)
+
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return c
+
+
+async def test_the_attestation_is_read_from_the_registrar(monkeypatch):
+    """RT-6.24 step 5: `GET …/attestations/<bot id>` gives `{"record": …}`, read only with pinned keys."""
     tok = _mine()
-    c = _adapter([], {"agent_attestation": tok, "customStatus": ""})
-    got = await c.agent_attestation(SELF)
-    assert got is not None and _digest(got) == _digest(tok)
-    assert (await c.usernames({SELF})) == {SELF: "agent-me"}  # read with it, no second request
-    assert await _adapter([], {}).agent_attestation(SELF) == ""
+    seen: list = []
+    c = _registrar_adapter([httpx.Response(200, json={"record": tok})], seen)
+    assert await c.agent_attestation(SELF) == ""   # no pinned keys: nothing to check it with
+    assert seen == []
+    monkeypatch.setenv("MM_REGISTRAR_KEYS", _x(_key()))
+    monkeypatch.setattr(attest.time, "time", lambda: NOW)
+    assert await c.agent_attestation(SELF) == tok
+    assert seen == [f"https://mm.example/register/v1/attestations/{SELF}"]
+    assert await c.agent_attestation(SELF) == tok and len(seen) == 1   # cached
+
+
+async def test_the_registrars_own_404_is_none_and_any_other_failure_is_unreadable(monkeypatch):
+    monkeypatch.setenv("MM_REGISTRAR_KEYS", _x(_key()))
+    c = _registrar_adapter([httpx.Response(404, json={"error": "no attestation"}),
+                            httpx.Response(404), httpx.Response(404, text="not found"),
+                            httpx.Response(404, json={"error": "no mandate set"}),
+                            httpx.Response(500), httpx.Response(200, json={"nothing": 1})])
+    assert await c.agent_attestation(SELF) == ""                # the registrar's own: none
+    for _ in range(5):                                           # cached as none, no further read
+        assert await c.agent_attestation(SELF) == ""
+    for other in ("b" * 26, "c" * 26, "d" * 26, "e" * 26):
+        assert await c.agent_attestation(other) is None        # a foreign 404, a 500: not readable
+    with pytest.raises(NoAttestationEndpoint):
+        await _registrar_adapter([httpx.Response(404)]).attestation_record(SELF)
+    assert await _registrar_adapter([httpx.Response(404, json={"error": "no attestation"})]
+                                    ).attestation_record(SELF) is None
+
+
+async def test_an_unreadable_attestation_is_not_cached_as_none(monkeypatch):
+    """The description decides on an unreadable one, and the next look asks again."""
+    monkeypatch.setenv("MM_REGISTRAR_KEYS", _x(_key()))
+    monkeypatch.setattr(attest.time, "time", lambda: NOW)
+    tok = _mine()
+    clock = [1000.0]
+    monkeypatch.setattr("mattermost_ai_agent_bus.client.time.monotonic", lambda: clock[0])
+    c = _registrar_adapter([httpx.Response(404), httpx.Response(200, json={"record": tok})])
+    assert await c.agent_attestation(SELF) is None
+    assert await c.agent_attestation(SELF) is None               # inside the short wait: no read
+    clock[0] += 61.0
+    assert await c.agent_attestation(SELF) == tok
+
+
+async def test_the_cache_ends_with_the_records_exp(monkeypatch):
+    monkeypatch.setenv("MM_REGISTRAR_KEYS", _x(_key()))
+    monkeypatch.setattr(attest.time, "time", lambda: NOW)
+    clock = [1000.0]
+    monkeypatch.setattr("mattermost_ai_agent_bus.client.time.monotonic", lambda: clock[0])
+    short, fresh = _mine(exp=NOW + 30), _mine()
+    seen: list = []
+    c = _registrar_adapter([httpx.Response(200, json={"record": short}),
+                            httpx.Response(200, json={"record": fresh})], seen)
+    assert await c.agent_attestation(SELF) == short
+    clock[0] += 31.0
+    assert await c.agent_attestation(SELF) == fresh and len(seen) == 2
 
 
 # --- registration, session file, host process (step 1) ----------------------------

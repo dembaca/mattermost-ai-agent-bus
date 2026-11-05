@@ -107,10 +107,16 @@ class ChatPort(Protocol):
         ...
 
     async def agent_attestation(self, user_id: str) -> str | None:
-        """The registrar's signed owner claim its account carries (RT-6.24: none
-        today, a bot cannot write its own props), read where its description is
-        read; '' when it carries none, None when it cannot be read.
-        owners.attested checks it."""
+        """The registrar's signed owner claim for a bot (RT-6.24 step 5), read
+        from the registrar when its keys are pinned and cached; '' when it has
+        none, None when it cannot be read. owners.attested checks it."""
+        ...
+
+    async def attestation_record(self, bot_id: str) -> str | None:
+        """The registrar's signed attestation of a bot, unverified: the compact
+        JWS, None when the registrar has none (its 404 `no attestation`). Raises
+        on any other failure, a 404 without that answer too (a registrar without
+        the endpoint), like mandate_record."""
         ...
 
     # --- channel membership, status and presence -----------------------------
