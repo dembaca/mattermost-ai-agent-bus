@@ -420,6 +420,18 @@ def _inbox_edits() -> list[unread.Pending]:
 hookapi.edits = _inbox_edits
 
 
+async def _wake_connect() -> None:
+    """A wake long poll (ADR-009 phase 2, RT-6.17 step 7) opens the inbox's
+    WebSocket when it is not open: the first poll of a plugin session, not the
+    server's start, so no session that never polls (Claude Code with the Stop
+    hook, Codex, Cursor) opens one it has no use for, and none before the bot
+    exists. Claude Code's channels open it at channel_ok (RT-6.12)."""
+    await _get_inbox().ensure_connected()
+
+
+hookapi.connect = _wake_connect
+
+
 async def _my_id(client: MattermostAdapter) -> str:
     try:
         uid = await lease._user_id(client)
