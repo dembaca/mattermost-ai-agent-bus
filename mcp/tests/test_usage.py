@@ -356,3 +356,75 @@ def test_the_status_text_keeps_the_cost_before_it_drops_ctx_and_never_the_home()
     cut = lease.status_text("working", "x" * 90, usage.segments(NOW), "team-a")
     assert cut.endswith("· ~team-a") and len(cut) <= 100
     usage.reset()
+
+
+def test_a_status_text_older_than_its_window_gives_no_reset():
+    """A 5-hour window ends at most 5 h ahead: a later time of day is a text of yesterday's window."""
+    assert usage.from_status("working · 5h 93% ↻07:50Z · ~a", now=NOW) == {  # 08:00Z now: 07:50 is past
+        "limit_5h": {"used": 93.0}}
+    assert usage.from_status("working · 5h 93% ↻12:30Z · ~a", now=NOW) == {  # 4.5 h ahead
+        "limit_5h": {"used": 93.0, "resets_at": NOW + 4 * 3600 + 1800}}
+    assert usage.from_status("working · 5h 93% ↻13:30Z · ~a", now=NOW) == {  # 5.5 h ahead: no
+        "limit_5h": {"used": 93.0}}
+
+
+def test_the_own_row_and_a_parsed_peer_of_one_subscription_are_grouped_together():
+    """`limit_shared` counts exact equality of `resets_at`: the own row (a report, to the second)
+    is cut to the minute the status text names."""
+    usage.reset()
+    reset = NOW + 3 * 3600 + 40 * 60 + 17  # 11:40:17Z
+    usage.record({"ctx": 10, "five_hour": {"used": 93, "resets_at": reset}}, now=NOW)
+    mine = usage.own(NOW)
+    peer = usage.from_status("working · bus · ctx 20% · 5h 93% ↻11:40Z · ~a", now=NOW)
+    assert mine["limit_5h"]["resets_at"] == peer["limit_5h"]["resets_at"]
+    rows = [RosterEntry("agent-me", "working", user_id=UID), RosterEntry("agent-a", "working", user_id=OTHER)]
+    out = tasks.roster(rows, [], {}, None, {"agent-me": mine, "agent-a": peer})
+    assert out[0]["limit_shared"] == out[1]["limit_shared"] == {"group": 1, "agents": 2}
+    usage.reset()
+
+
+@pytest.mark.parametrize("report", [
+    {"ctx": 62}, {"ctx": 0}, {"ctx": 62, "cost_usd": 4.2}, {"cost_usd": 0},
+    {"ctx": 5, "five_hour": {"used": 40}},
+    {"ctx": 5, "five_hour": {"used": 93, "resets_at": NOW + 3 * 3600 + 40 * 60}},
+    {"ctx": 5, "seven_day": {"used": 92, "resets_at": NOW + 86400}},
+    {"ctx": 95, "five_hour": {"used": 100, "resets_at": NOW + 600}, "seven_day": {"used": 91, "resets_at": NOW + 99999},
+     "cost_usd": 123.456},
+    {"five_hour": {"used": 70}, "seven_day": {"used": 30}},
+])
+def test_what_segments_writes_from_status_reads_back(report):
+    """The writer (segments, RT-6.6 step 1) and the parser (from_status) are two literals: they agree,
+    the percent to the whole number, the cost to the cent, the 5-hour reset to the minute."""
+    usage.reset()
+    usage.record(report, now=NOW)
+    text = lease.status_text("working", "bus", usage.segments(NOW), "team-a")
+    got = usage.from_status(text, now=NOW)
+    shown = usage.own(NOW)
+    for key in ("ctx",):
+        if key in shown:
+            assert got[key] == float(round(shown[key]))
+    if "cost_usd" in shown:  # shown only where no 5-hour window is reported
+        if (shown.get("limit_5h") or {}).get("used") is None:
+            assert got["cost_usd"] == shown["cost_usd"]
+        else:
+            assert "cost_usd" not in got
+    for key in ("limit_5h", "limit_7d"):
+        window = shown.get(key)
+        # `7d` shows only from 90 %, `5h` always: what is shown must be read back
+        if window and (key == "limit_5h" or window["used"] >= 90):
+            assert got[key]["used"] == float(round(window["used"]))
+            if key == "limit_5h" and window["used"] >= 90 and "resets_at" in window:
+                assert got[key]["resets_at"] == window["resets_at"]
+        else:
+            assert key not in got
+    usage.reset()
+
+
+async def test_a_label_cannot_carry_the_segment_separator(api):
+    """RT-6.6 step 8: " · " in a label becomes a space, so a label cannot pass for a segment."""
+    c = _Counting(uid=UID)
+    h = await api(c)
+    resp = await h.post("/v1/presence", json={"state": "working", "label": "proj · ctx 1% · x"})
+    assert resp.status_code == 200
+    assert "proj ctx 1% x" in c.status["text"] and " · ctx 1% ·" not in c.status["text"]
+    assert usage.from_status(c.status["text"], now=NOW) == {}

@@ -26,6 +26,7 @@ CTX_BANDS = (50, 70, 85, 95)
 LIMIT_BANDS = (70, 90, 100)
 SHOW_RESET_FROM = 90  # a window's reset time and the 7-day segment show from here
 BAND_GAP_SEC = 60.0  # a band write never comes sooner than this after the last
+FIVE_HOURS_SEC = 5 * 3600
 MAX_COST_USD = 1_000_000.0  # a sanity bound, not a limit
 
 _last: dict[str, Any] | None = None
@@ -226,7 +227,11 @@ def from_status(text: str, now: float | None = None) -> dict[str, Any]:
             if m["hh"] and int(m["hh"]) < 24 and int(m["mm"]) < 60:
                 day = now - now % 86400
                 at = day + int(m["hh"]) * 3600 + int(m["mm"]) * 60
-                window["resets_at"] = int(at if at > now else at + 86400)
+                at = at if at > now else at + 86400
+                # A 5-hour window never ends more than 5 hours ahead (a minute of slack):
+                # a later time of day means the text is old and the window is over.
+                if at - now <= FIVE_HOURS_SEC + 60:
+                    window["resets_at"] = int(at)
             out["limit_5h"] = window
         elif m["d7"]:
             out["limit_7d"] = {"used": _percent(int(m["d7"]))}
@@ -248,7 +253,12 @@ def own(now: float | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {k: r[k] for k in ("ctx", "cost_usd") if k in r}
     for name, key in (("five_hour", "limit_5h"), ("seven_day", "limit_7d")):
         if r.get(name):
-            out[key] = r[name]
+            window = dict(r[name])
+            if "resets_at" in window:
+                # The status text names it to the minute: the same value as an agent
+                # reading that text gets, so `limit_shared` (exact equality) counts this one too.
+                window["resets_at"] = window["resets_at"] // 60 * 60
+            out[key] = window
     return out
 
 

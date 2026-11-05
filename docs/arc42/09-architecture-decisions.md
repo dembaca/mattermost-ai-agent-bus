@@ -1499,9 +1499,11 @@ variants and the cut), and its freshness is the status's (a turn's start or
 end, a band, the heartbeat). The own row stays exact from memory. No second
 channel, no lookup per agent (the per-agent `GET`, its cache and its
 description-read side effect are gone), no write that can be refused. The
-`bus_info` `usage` is `{report, shown}` now. A label of free text before the
-numbers can look like a segment; the numbers are the agent's own claim in any
-case. **Not changed here:** the attestation of RT-6.24 step 3 is written by the
+`bus_info` `usage` is `{report, shown}` now. A " · " in the label (the
+status text's separator) becomes a space in `/v1/presence`; the numbers are the
+agent's own claim in any case. The 5-hour reset is left out when the time of
+day it names is more than five hours ahead (an old text), and the own row's
+reset is cut to the minute, so `limit_shared` counts it with its peers. **Not changed here:** the attestation of RT-6.24 step 3 is written by the
 same patch and fails the same way; other agents get an owner from the bot's
 description then (as without an attestation), which is why trust kept
 working. Whether it can reach them another way (the HELLO card already carries
