@@ -731,13 +731,17 @@ class WebSocketInbox:
         timeout_sec: float = 60.0,
         max_events: int = 10,
         agent: bool = True,
+        deliver: bool = True,
     ) -> list[ClassifiedEvent]:
         """Block until at least one classified event or timeout.
 
         A newer call supersedes one still waiting: the older returns [].
         A delivered mention or DM starts the typing indicator in its thread.
         agent=False is the channel pusher (RT-6.12): its next read says nothing
-        about whether the agent has answered yet.
+        about whether the agent has answered yet. deliver=False takes the events
+        out of the queue without handing them over: the caller does that with
+        `deliver` once they are out, or puts them back with `requeue` (the pusher,
+        whose connection may end between the read and the push, RT-6.12 step 3).
         """
         # Waiting again means the agent is done with what it was given.
         if agent:
@@ -771,12 +775,18 @@ class WebSocketInbox:
         for e in rest:
             self._queue.put_nowait(e)
         self.pending = len(rest)
-        # Handed over: the listener must not wake the agent for these again.
+        if deliver:
+            await self.deliver(events)
+        return events
+
+    async def deliver(self, events: list[ClassifiedEvent]) -> None:
+        """The events reached the agent (or what stands for it): the listener
+        must not wake it for them again, the read watermark passes their posts
+        (up to the oldest post still queued in that channel, which keeps counting
+        as pending), and a mention or DM shows it typing."""
         for e in events:
             if e.kind == "reaction":
                 asks.mark_seen(self._bot_user_id, e.post.id)
-        # Handed over: the read watermark passes them, up to the oldest post
-        # still queued in that channel, which keeps counting as pending.
         await self._hand_over(events)
         # Posts from watched channels often need no answer, so only a mention or
         # DM, which does, promises one; a gated one promises nothing (RT-6.16).
@@ -784,7 +794,16 @@ class WebSocketInbox:
         if addressed is not None:
             post = addressed.post
             self.start_typing(post.channel_id, post.thread)
-        return events
+
+    def requeue(self, events: list[ClassifiedEvent]) -> None:
+        """Events taken with deliver=False that did not go out: back to the front
+        of the queue, still unhandled, for the next connection's pusher or
+        wait_for_events (RT-6.12 step 3)."""
+        for e in events:
+            self._queue.put_nowait(e)  # wakes a waiting getter
+        q = self._queue._queue  # type: ignore[attr-defined]  # see waits()
+        q.rotate(len(events))
+        self.pending = self._queue.qsize()
 
     async def _hand_over(self, events: list[ClassifiedEvent]) -> None:
         """Handing an event to the agent is what "handled" means (RT-6.2): the

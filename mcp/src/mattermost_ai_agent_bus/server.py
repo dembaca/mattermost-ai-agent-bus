@@ -2193,16 +2193,47 @@ async def _compact_bystander(payload: list[dict[str, Any]]) -> None:
 async def _push_wait(timeout: float) -> list[dict[str, Any]]:
     """The pusher's read of the inbox: the same events wait_for_events returns."""
     await _tool_idle.wait()
-    events = await _get_inbox().wait_for_events(timeout_sec=timeout, max_events=10, agent=False)
-    items = await _event_items(events)
-    await _typing_for_task(events, items)
-    await _note_delivered(events, items)
-    for item in items:
-        stats.record("push", name=item["kind"], chars=len(json.dumps(item, ensure_ascii=False)))
+    inbox = _get_inbox()
+    # Taken, not handed over: that is done per item once the pusher dealt with it
+    # (_push_delivered), so a connection that ends meanwhile loses nothing.
+    events = await inbox.wait_for_events(timeout_sec=timeout, max_events=10, agent=False, deliver=False)
+    try:
+        items = await _event_items(events)
+    except BaseException:
+        inbox.requeue(events)
+        raise
     for e, item in zip(events, items, strict=True):
         # For the digest's "+N more" line (RT-6.12 step 3); never pushed.
         item[channel.CHANNEL_ID], item[channel.CREATE_AT] = e.post.channel_id, e.post.create_at
+        _taken[id(item)] = (e, item)
     return items
+
+
+# The inbox events behind the items the pusher has taken and not dealt with yet.
+_taken: dict[int, tuple[Any, dict[str, Any]]] = {}
+
+
+async def _push_delivered(item: dict[str, Any]) -> None:
+    """The pusher dealt with an item (pushed, held for the digest, dropped): it
+    counts as delivered now (RT-6.12 step 3, RT-6.2 step 2): handed over to the
+    read watermark, typing, the sign-off bookkeeping, the stats."""
+    taken = _taken.pop(id(item), None)
+    if taken is None:
+        return
+    event, _ = taken
+    await _get_inbox().deliver([event])
+    await _typing_for_task([event], [item])
+    await _note_delivered([event], [item])
+    stats.record("push", name=item["kind"], chars=len(json.dumps(item, ensure_ascii=False)))
+
+
+def _push_give_back(items: list[dict[str, Any]]) -> None:
+    """Items the pusher did not deal with before its connection ended or a push
+    failed: back into the inbox, unhandled, for the next connection or
+    wait_for_events."""
+    events = [taken[0] for item in items if (taken := _taken.pop(id(item), None)) is not None]
+    if events:
+        _get_inbox().requeue(events)
 
 
 _relay = permission.Relay()
@@ -2324,7 +2355,8 @@ async def serve(read_stream: Any, write_stream: Any) -> None:
         await decided.wait()
         if PUSH:
             await _pusher.run(_push_wait, prepare=_push_prepare, addressed=_push_addressed,
-                              intercept=_push_intercept if RELAY else None)
+                              intercept=_push_intercept if RELAY else None,
+                              delivered=_push_delivered, give_back=_push_give_back)
 
     async with low.lifespan(low) as state:
         await channel.serve_handshake_only(
