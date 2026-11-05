@@ -328,6 +328,9 @@ async def test_the_registrars_own_404_is_none_and_any_other_failure_is_unreadabl
         await _registrar_adapter([httpx.Response(404)]).attestation_record(SELF)
     assert await _registrar_adapter([httpx.Response(404, json={"error": "no attestation"})]
                                     ).attestation_record(SELF) is None
+    # The registrar's JSON ends with a newline: the body is parsed, not compared byte for byte.
+    assert await _registrar_adapter([httpx.Response(404, content=b'{"error":"no attestation"}\n')]
+                                    ).attestation_record(SELF) is None
 
 
 async def test_an_unreadable_attestation_is_not_cached_as_none(monkeypatch):
