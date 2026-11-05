@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import a2a, channel, owners, session_file, usage
-from .model import ChannelUser, RosterEntry
+from .model import ChannelUser, Mark, RosterEntry, StatusMark
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -62,9 +62,11 @@ def status_lock() -> asyncio.Lock:
     return _lock()
 
 
-# The lease's status emoji as a word, for a status without text.
-_STATUS = {"hammer_and_wrench": "working", "ear": "listening", "zzz": "idle",
-           "satellite_antenna": "bus"}
+def _state_word(emoji: str) -> str:
+    """The lease's status emoji as a word, for a status without text (the
+    crown's is none)."""
+    mark = a2a.status_of(emoji)
+    return mark.value if mark and mark is not StatusMark.CROWN else ""
 
 
 def heartbeat_sec() -> float:
@@ -247,20 +249,20 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     if state == "listening":
         if not label.isdigit():
             raise ValueError("listening needs the window's end as epoch seconds")
-        emoji = "ear"
+        emoji = a2a.status_emoji(StatusMark.LISTENING)
         text = f"listening · until {time.strftime('%H:%M', time.localtime(int(label)))}, then idle"
         # The window may end without the Stop hook running, so the status ends with it.
         until = min(until, int(label))
     elif state == "working":
-        emoji, text, named = "hammer_and_wrench", "working", label
+        emoji, text, named = a2a.status_emoji(StatusMark.WORKING), "working", label
     elif state == "idle" and channel.confirmed_file(uid).exists():
         # Started as a channel (RT-6.12): this server pushes what comes in, so
         # the agent stays reachable, and keeps a crown, between its turns.
-        emoji, text = "ear", "listening · the bus wakes me"
+        emoji, text = a2a.status_emoji(StatusMark.LISTENING), "listening · the bus wakes me"
     elif state == "idle":
-        emoji, text, reachable = "zzz", "idle · until my human resumes", False
+        emoji, text, reachable = a2a.status_emoji(StatusMark.IDLE), "idle · until my human resumes", False
     elif state == "bus":
-        emoji, text, named = "satellite_antenna", "on the bus", label
+        emoji, text, named = a2a.status_emoji(StatusMark.BUS), "on the bus", label
     else:
         presence, emoji, text = "offline", "", ""
 
@@ -275,7 +277,7 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     if state != "offline" and crown > now:
         if reachable:
             crown = now + lease
-        emoji, text, until = "crown", f"coordinator · {text}", crown
+        emoji, text, until = a2a.status_emoji(StatusMark.CROWN), f"coordinator · {text}", crown
     else:
         crown = 0
     if text:
@@ -412,14 +414,14 @@ async def _rows(client: ChatPort, channel_id: str) -> list[dict[str, Any]]:
         emoji = str(custom.get("emoji") or "")
         on = live(custom, now)
         presence = status.get(u.id) or "offline"
-        reachable = presence != "offline" and on and emoji != "zzz"
+        reachable = presence != "offline" and on and emoji != a2a.status_emoji(StatusMark.IDLE)
         until = _at(custom.get("expires_at")) if custom.get("duration") else None
         text = str(custom.get("text") or "")
         rows.append({"id": u.id, "username": u.username,
                      "create_at": u.create_at, "presence": presence,
                      "emoji": emoji, "text": text, "home": home_of(text), "live": on,
                      "until_ms": int(until.timestamp() * 1000) if until else 0,
-                     "reachable": reachable, "crown": reachable and emoji == "crown"})
+                     "reachable": reachable, "crown": reachable and emoji == a2a.status_emoji(StatusMark.CROWN)})
     return rows
 
 
@@ -491,7 +493,7 @@ def entry(row: Mapping[str, Any], crown_of: str = "") -> RosterEntry:
     text = [w.strip() for w in str(row.get("text", "")).split(" · ")]
     if text and text[0] == "coordinator":
         text = text[1:]
-    status = text[0] if text and text[0] else _STATUS.get(str(row.get("emoji", "")), "")
+    status = text[0] if text and text[0] else _state_word(str(row.get("emoji", "")))
     return RosterEntry(username=str(row.get("username") or ""), status=status,
                        coordinator=bool(row.get("coordinator")), crown=bool(row.get("crown")),
                        crown_of=crown_of, user_id=str(row.get("id") or ""),
@@ -676,8 +678,9 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
 # --- the work channel's header (RT-6.6 step 7) ---------------------------------------
 
 HEADER_MAX = 1024  # Mattermost's limit, in characters
-HEADER_MARK = "🚌 agent bus"
-HEADER_RULE = "plain post → 👑 routes it · @agent → that agent · 🙋 = a question for you"
+HEADER_MARK = f"{a2a.symbol(Mark.BUS)} agent bus"
+HEADER_RULE = (f"plain post → {a2a.symbol(Mark.CROWN)} routes it · @agent → that agent · "
+               f"{a2a.symbol(Mark.ASK)} = a question for you")
 # The bus part: how to address the agents. It names no holder, so a crown
 # change leaves it alone (the 👑 shows on posts and in the custom status).
 BUS_HEADER = f"{HEADER_MARK} · {HEADER_RULE}"
