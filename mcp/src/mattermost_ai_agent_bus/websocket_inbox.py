@@ -760,12 +760,20 @@ class WebSocketInbox:
     async def ack(self, events: list[ClassifiedEvent], *, typing: bool = True) -> None:
         """Taken events that were dealt with: handed over now."""
         self._release(events)
-        await self.deliver(events, typing=typing)
+        try:
+            await self.deliver(events, typing=typing)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — out of `_out`: a failure here is bookkeeping, never a loss
+            log.warning("hand-over of %d event(s) failed: %s", len(events), exc)
 
     def nack(self, events: list[ClassifiedEvent]) -> None:
         """Taken events that did not go out: back to the front of the queue, still
         unhandled, for the next connection's pusher or wait_for_events."""
         self._release(events)
+        self._put_front(events)
+
+    def _put_front(self, events: list[ClassifiedEvent]) -> None:
         for e in events:
             self._queue.put_nowait(e)  # wakes a waiting getter
         self._queue._queue.rotate(len(events))  # type: ignore[attr-defined]  # see waits()
@@ -792,12 +800,19 @@ class WebSocketInbox:
         getter = asyncio.ensure_future(self._queue.get())
         self._getter = getter
         try:
-            done, _ = await asyncio.wait({getter}, timeout=timeout_sec)
+            await asyncio.wait({getter}, timeout=timeout_sec)
+        except BaseException:
+            # Cancelled (the pusher's run ends with its connection) as the getter
+            # finished: the event it took goes back to the front, not lost.
+            if getter.done() and not getter.cancelled() and getter.exception() is None:
+                self._put_front([getter.result()])
+            raise
         finally:
             if not getter.done():
                 getter.cancel()
-        if getter not in done or getter.cancelled():
-            # Timed out, or superseded by a newer call.
+        if getter.cancelled() or not getter.done():
+            # Timed out, or superseded by a newer call. (A getter that finished
+            # as the timeout ran out is used: the event is not dropped.)
             return []
         queued: list[ClassifiedEvent] = [getter.result()]
         while True:

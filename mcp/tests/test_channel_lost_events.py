@@ -368,3 +368,55 @@ async def test_recheck_keeps_the_order_of_the_held_posts_when_a_push_fails():
 
     assert await pusher.recheck(wakes) == 1  # a goes out, b fails
     assert pusher.held == [b, c]  # b stays before c
+
+
+@pytest.mark.anyio
+async def test_recheck_puts_a_failed_post_back_into_the_held_list_as_it_is_now():
+    """The run may append to the held list while recheck awaits: what it added stays, and the
+    post that could not go out is back at its place (before: the old snapshot replaced the list)."""
+    pusher = channel.Pusher()
+    pusher.confirm(pusher.code)
+    pusher.connection = _Conn(fail_at=2)
+    a, b, late = _item(1), _item(2), _item(3)
+    pusher.held = [a, b]
+
+    async def wakes(item):
+        if item is b:
+            pusher.held.append(late)  # the run held another post meanwhile
+        return True
+
+    assert await pusher.recheck(wakes) == 1  # a goes out, b fails
+    assert pusher.held == [b, late]
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_as_the_getter_finishes_does_not_lose_the_event():
+    """The pusher's run ends with its connection while take waits: if the queue's getter
+    had just finished, its event goes back to the front, not lost."""
+    inbox, _ = _inbox()
+    task = asyncio.ensure_future(inbox.take(timeout_sec=5))
+    await asyncio.sleep(0.01)  # take waits on its getter
+    inbox._queue.put_nowait(_event(1))  # the getter finishes at the next loop turn
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert inbox._out == []
+    again = await inbox.wait_for_events(timeout_sec=0.5)
+    assert [e.post.id for e in again] == ["p1"]
+    inbox.stop_typing()
+
+
+@pytest.mark.asyncio
+async def test_a_failing_hand_over_is_logged_never_raised_and_loses_nothing(monkeypatch, caplog):
+    inbox, _ = _inbox()
+    await inbox._queue.put(_event(1))
+    taken = await inbox.take(timeout_sec=1)
+
+    async def boom(events):
+        raise RuntimeError("view failed")
+
+    monkeypatch.setattr(inbox, "_hand_over", boom)
+    await inbox.ack(taken)  # does not raise
+    assert inbox._out == [] and "hand-over of 1 event(s) failed" in caplog.text
+    inbox.stop_typing()

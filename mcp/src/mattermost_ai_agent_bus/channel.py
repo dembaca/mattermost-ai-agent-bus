@@ -353,7 +353,6 @@ class Pusher:
             return 0  # a reconnect not confirmed yet: the held posts stay, the digest sends them once it is
         sent = 0
         before = list(self.held)
-        gone: list[dict[str, Any]] = []
         for item in before:
             if item.get("gated") or not await wakes(item):
                 continue
@@ -361,10 +360,13 @@ class Pusher:
                 continue  # gone into a digest meanwhile
             self.held = [h for h in self.held if h is not item]
             if not await self.send(notification(item)):
-                # Not out: held still, where it was, for the next try.
-                self.held = [h for h in before if not any(h is g for g in gone)]
+                # Not out: back into the held list as it is now (the run may have
+                # added to it or sent a digest meanwhile), at its place among the
+                # entries of `before` that are still held.
+                ahead = before[:next(i for i, h in enumerate(before) if h is item)]
+                at = sum(1 for h in self.held if any(h is a for a in ahead))
+                self.held.insert(at, item)
                 break
-            gone.append(item)
             sent += 1
         return sent
 
