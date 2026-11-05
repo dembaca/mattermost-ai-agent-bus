@@ -383,3 +383,98 @@ def test_one_five_hour_reset_is_one_subscription():
     assert "limit_shared" not in out[2]
     third = {"agent-a": {"limit_5h": win}, "agent-b": {"limit_5h": win}, "agent-c": {"limit_5h": win}}
     assert [r["limit_shared"] for r in tasks.roster(rows, [], {}, None, third)] == [{"group": 1, "agents": 3}] * 3
+
+
+# --- the cost where there are no limits (ADR-008 amendment 2026-11-05) -------------------
+
+def test_the_cost_is_kept_in_cents_and_only_when_it_is_a_number_from_zero():
+    now = float(NOW)
+    assert usage.parse({"cost_usd": 4.2049}, now) == {"cost_usd": 4.2}
+    assert usage.parse({"cost_usd": 0}, now) == {"cost_usd": 0.0}  # a 0 is a number
+    for bad in (-0.01, True, "4.2", None, float("nan"), float("inf"), 2e6, [1]):
+        assert "cost_usd" not in usage.parse({"ctx": 5, "cost_usd": bad}, now)
+
+
+def test_the_cost_stands_in_the_place_of_5h_where_no_window_is_reported():
+    usage.reset()
+    usage.record({"ctx": 62, "cost_usd": 4.2}, now=NOW)
+    assert usage.segments(NOW) == ["ctx 62%", "$4.20"]
+    # A reported 5-hour window shows instead; the cost is then left out.
+    usage.record({"ctx": 62, "cost_usd": 4.2, "five_hour": {"used": 40, "resets_at": RESET}}, now=NOW)
+    assert usage.segments(NOW) == ["ctx 62%", "5h 40%"]
+    usage.reset()
+
+
+def test_the_cost_goes_through_the_props_into_the_roster_row():
+    usage.reset()
+    usage.record({"ctx": 10, "cost_usd": 12.34}, now=NOW)
+    got = usage.from_props(usage.props_value(NOW), NOW)
+    assert got == {"ctx": 10.0, "cost_usd": 12.34}
+    rows = tasks.roster([RosterEntry("agent-a", "working", user_id=UID)], [], {}, usage={"agent-a": got})
+    assert rows[0]["cost_usd"] == 12.34 and rows[0]["ctx"] == 10.0
+    usage.reset()
+
+
+def test_the_status_text_keeps_the_cost_before_it_drops_ctx_and_never_the_home():
+    """RT-6.6 step 1: the order of the cut (label, 7d, the 5h/cost segment, ctx) is as before."""
+    usage.reset()
+    usage.record({"ctx": 62, "cost_usd": 4.2}, now=NOW)
+    text = lease.status_text("working", "bus", usage.segments(NOW), "team-a")
+    assert text == "working · bus · ctx 62% · $4.20 · ~team-a"
+    cut = lease.status_text("working", "x" * 90, usage.segments(NOW), "team-a")
+    assert cut.endswith("· ~team-a") and len(cut) <= 100
+    usage.reset()
+
+
+# --- why the numbers do not reach the roster (bus_info `usage`) ---------------------------
+
+def _failing(status: int, method_path: tuple[str, str]):
+    """An adapter whose call to `method_path` answers `status`."""
+    method, path = method_path
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.path == "/api/v4/users/me":
+            return httpx.Response(200, json={"id": UID, "username": "agent-me", "is_bot": True})
+        if req.url.path == f"/api/v4/users/{UID}" and req.method == "GET":
+            return httpx.Response(200, json={"id": UID, "props": {}})
+        if req.method == method and req.url.path == path:
+            return httpx.Response(status, json={"message": "no"})
+        return httpx.Response(200, json={"id": UID})
+
+    c = MattermostAdapter(base_url="https://mm.example", token="t")
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return c
+
+
+async def test_a_write_the_server_refuses_is_named_with_endpoint_and_status(caplog):
+    c = _failing(403, ("PUT", f"/api/v4/users/{UID}/patch"))
+    with caplog.at_level(logging.WARNING), pytest.raises(httpx.HTTPStatusError):
+        await c.publish_usage('{"ctx":5.0}')
+    assert c.usage_write_error == f"PUT /api/v4/users/{UID}/patch → 403"
+    assert "usage report write failed" in caplog.text and "403" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING), pytest.raises(httpx.HTTPStatusError):
+        await c.publish_usage('{"ctx":5.0}')
+    assert caplog.text == ""  # the same failure is logged once
+    info = usage.info(c.usage_written_at, c.usage_write_error, c.usage_read_error, NOW)
+    assert info["write"] == f"failed: PUT /api/v4/users/{UID}/patch → 403" and info["read"] == "ok"
+
+
+async def test_a_read_that_fails_is_named_and_a_write_that_works_clears_the_failure():
+    c = _failing(403, ("GET", f"/api/v4/users/{OTHER}"))
+    assert await c.agent_usage(OTHER) is None  # the roster without its numbers
+    assert c.usage_read_error == f"GET /api/v4/users/{OTHER} → 403"
+    assert usage.info(0.0, "", c.usage_read_error, NOW)["read"] == f"failed: GET /api/v4/users/{OTHER} → 403"
+    ok = _failing(500, ("GET", "/nowhere"))
+    assert await ok.publish_usage('{"ctx":1.0}') is True
+    assert ok.usage_write_error == "" and ok.usage_written_at > 0
+    assert usage.info(ok.usage_written_at, "", "", ok.usage_written_at + 40)["write"] == "written 40 s ago"
+
+
+def test_the_usage_info_without_a_report_or_a_write():
+    usage.reset()
+    assert usage.info(0.0, "", "", NOW) == {"report": None, "write": "no report yet", "read": "ok"}
+    usage.record({"ctx": 5}, now=NOW)
+    assert usage.info(0.0, "", "", NOW)["write"] == "not written yet"
+    assert usage.info(0.0, "", "", NOW)["report"] == {"ctx": 5.0}
+    usage.reset()

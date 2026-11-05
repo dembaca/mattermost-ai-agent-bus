@@ -52,17 +52,19 @@ usage_tap() {
     def n: if type == "number" then . else null end;
     def clean: with_entries(select(.value != null));
     ({ctx: (.context_window.used_percentage? | n), ctx_size: (.context_window.context_window_size? | n),
+      cost_usd: (.cost.total_cost_usd? | n | if . != null and . < 0 then null else . end),
       five_hour: ({used: (.rate_limits.five_hour.used_percentage? | n),
                    resets_at: (.rate_limits.five_hour.resets_at? | n)} | clean),
       seven_day: ({used: (.rate_limits.seven_day.used_percentage? | n),
                    resets_at: (.rate_limits.seven_day.resets_at? | n)} | clean)}
      | with_entries(select(.value != null and .value != {}))) as $b
-    | {ctx: $b.ctx, five: $b.five_hour.used, seven: $b.seven_day.used} as $cur
+    | {ctx: $b.ctx, five: $b.five_hour.used, seven: $b.seven_day.used, cost: $b.cost_usd} as $cur
     | ($old | fromjson? // {}) as $o
-    | def moved(k): (($cur[k] == null) != ($o[k] == null))
-        or ($cur[k] != null and $o[k] != null and (($cur[k] - $o[k]) | fabs) >= 1);
+    | def moved(k; step): (($cur[k] == null) != ($o[k] == null))
+        or ($cur[k] != null and $o[k] != null and (($cur[k] - $o[k]) | fabs) >= step);
       if ($b | length) == 0 then empty
-      elif moved("ctx") or moved("five") or moved("seven") or (($o.at // 0) + 60 <= $now)
+      elif moved("ctx"; 1) or moved("five"; 1) or moved("seven"; 1) or moved("cost"; 0.1)
+           or (($o.at // 0) + 60 <= $now)
       then ($b, ($cur + {at: $now})) else empty end' <<<"$input" 2>/dev/null)
   [[ -n "${body:-}" && -n "${st:-}" ]] || return 0
   # No state file, no throttle: then nothing is sent, not one call a second.

@@ -27,6 +27,7 @@ LIMIT_BANDS = (70, 90, 100)
 SHOW_RESET_FROM = 90  # a window's reset time and the 7-day segment show from here
 BAND_GAP_SEC = 60.0  # a band write never comes sooner than this after the last
 PROPS_GAP_SEC = 60.0
+MAX_COST_USD = 1_000_000.0  # a sanity bound, not a limit
 
 _last: dict[str, Any] | None = None
 _limits_logged = False
@@ -52,6 +53,14 @@ def _percent(value: Any) -> float | None:
     return float(round(min(value, 100), 1))
 
 
+def _cost(value: Any) -> float | None:
+    """The session's cumulative cost in dollars: a number from 0 up to
+    MAX_COST_USD, in cents; anything else is none."""
+    if type(value) not in (int, float) or not 0 <= value <= MAX_COST_USD:  # also not NaN
+        return None
+    return float(round(value, 2))
+
+
 def _epoch(value: Any, now: float) -> int | None:
     if type(value) is float and value.is_integer():
         value = int(value)
@@ -61,8 +70,9 @@ def _epoch(value: Any, now: float) -> int | None:
 
 
 def parse(body: Any, now: float) -> dict[str, Any]:
-    """The valid part of a report: `ctx`, `ctx_size`, and `five_hour` /
-    `seven_day` as {used, resets_at} (each field only when valid, a window
+    """The valid part of a report: `ctx`, `ctx_size`, `cost_usd` (the session's
+    cumulative cost, shown where no 5-hour window is reported), and `five_hour`
+    / `seven_day` as {used, resets_at} (each field only when valid, a window
     only with a field). The rest is dropped without a word."""
     out: dict[str, Any] = {}
     if not isinstance(body, dict):
@@ -70,6 +80,9 @@ def parse(body: Any, now: float) -> dict[str, Any]:
     ctx = _percent(body.get("ctx"))
     if ctx is not None:
         out["ctx"] = ctx
+    cost = _cost(body.get("cost_usd"))
+    if cost is not None:
+        out["cost_usd"] = cost
     size = body.get("ctx_size")
     if type(size) is int and 0 < size < 2**40:
         out["ctx_size"] = size
@@ -164,7 +177,8 @@ def _live(report: dict[str, Any], now: float) -> dict[str, Any]:
 def segments(now: float | None = None) -> list[str]:
     """The status text's usage segments, in the order they are dropped from
     the end: `ctx 62%`, `5h 40%` (`5h 93% ↻21:40Z`: reset time from 90 %, UTC),
-    `7d 92%` (only from 90 %). [] without a report."""
+    `7d 92%` (only from 90 %); where no 5-hour window is reported the cost
+    stands in its place, `$4.20`. [] without a report."""
     now = time.time() if now is None else now
     if _last is None:
         return []
@@ -172,6 +186,8 @@ def segments(now: float | None = None) -> list[str]:
     out = []
     if "ctx" in r:
         out.append(f"ctx {round(r['ctx'])}%")
+    if "cost_usd" in r and (r.get("five_hour") or {}).get("used") is None:
+        out.append(f"${r['cost_usd']:.2f}")
     for name, tag, floor in (("five_hour", "5h", 0), ("seven_day", "7d", SHOW_RESET_FROM)):
         used = (r.get(name) or {}).get("used")
         if used is None or used < floor:
@@ -239,6 +255,8 @@ def from_props(raw: str | None, now: float | None = None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if "ctx" in got:
         out["ctx"] = got["ctx"]
+    if "cost_usd" in got:
+        out["cost_usd"] = got["cost_usd"]
     for name, key in (("five_hour", "limit_5h"), ("seven_day", "limit_7d")):
         window = (got.get(name) or {}) if isinstance(data, dict) else {}
         if window.get("resets_at", now + 1) <= now:
@@ -246,3 +264,20 @@ def from_props(raw: str | None, now: float | None = None) -> dict[str, Any]:
         if "used" in window or "resets_at" in window:
             out[key] = window
     return out
+
+
+def info(written_at: float, write_error: str, read_error: str, now: float | None = None) -> dict[str, Any]:
+    """bus_info's `usage` (ADR-008 step 3): the last report this server holds,
+    and whether it reaches the bot's props and the other bots' props can be
+    read: `write` is "written <n> s ago", "not written yet" or the last
+    failure ("PUT /api/v4/users/<id>/patch → 403"), `read` is "ok" or the last
+    failure of reading another bot's report."""
+    now = time.time() if now is None else now
+    if write_error:
+        state = f"failed: {write_error}"
+    elif written_at:
+        state = f"written {int(now - written_at)} s ago"
+    else:
+        state = "not written yet" if _last is not None else "no report yet"
+    return {"report": ({k: v for k, v in _last.items() if k != "at"} if _last else None),
+            "write": state, "read": f"failed: {read_error}" if read_error else "ok"}
