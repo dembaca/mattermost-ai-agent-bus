@@ -307,8 +307,12 @@ async def test_pusher_hands_intercepted_events_to_nobody():
     conn.initialized = anyio.Event()
     conn.initialized.set()
     pusher.connection = conn
-    pusher.confirm(pusher.code)
     queued = [_item("hello"), _item("yes abcde")]
+
+    async def answer():  # every connection is confirmed by its own check (RT-6.12 step 2)
+        while not conn.sent:
+            await asyncio.sleep(0.005)
+        pusher.confirm(pusher.code)
 
     async def wait(timeout):
         if queued:
@@ -318,9 +322,12 @@ async def test_pusher_hands_intercepted_events_to_nobody():
     async def intercept(item):
         return item["post"]["message"] == "yes abcde"
 
-    with anyio.move_on_after(0.3):
-        await pusher.run(wait, intercept=intercept)
-    assert [p["content"] for _, p in conn.sent] == ["hello"] and pusher.held == []
+    with anyio.move_on_after(0.5):
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(answer)
+            await pusher.run(wait, intercept=intercept, check_after=(0.01,))
+    pushed = [p["content"] for _, p in conn.sent if p["meta"]["kind"] != "channel_check"]
+    assert pushed == ["hello"] and pusher.held == []
 
 
 @pytest.mark.anyio

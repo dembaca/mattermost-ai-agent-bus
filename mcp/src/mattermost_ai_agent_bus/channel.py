@@ -387,6 +387,13 @@ class Pusher:
             except Exception as exc:  # noqa: BLE001 — no bus yet
                 log.info("channel check waits for the bus: %s", exc)
                 await asyncio.sleep(retry_sec)
+        # A connection is confirmed by its own check, also one of a process that
+        # lived on (a relay reconnect: /reload-plugins, /mcp; RT-6.18): prepare
+        # has forgotten the confirmation file, so an earlier confirmation that
+        # stays set would send no check and nothing would write the file again,
+        # and the hooks would ask for a listener beside a working push.
+        self.confirmed.clear()
+        self.code = secrets.token_hex(4)
         # Unconfirmed, the session may not see a single push: leave the inbox
         # to wait_for_events and the listener, which mark read what they hand over.
         # Claude Code drops a push that comes before it registered the channel

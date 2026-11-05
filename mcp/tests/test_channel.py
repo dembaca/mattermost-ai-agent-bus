@@ -203,11 +203,22 @@ def _pusher(**kw):
     return pusher
 
 
+async def _run_answered(pusher, *args, **kw):
+    """pusher.run with the session answering the check at once, as a live Claude Code does."""
+    async def answer():
+        while not pusher.connection.sent:
+            await asyncio.sleep(0.005)
+        pusher.confirm(pusher.code)
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(answer)
+        await pusher.run(*args, check_after=(0.01,), **kw)
+
+
 @pytest.mark.anyio
 async def test_pusher_waits_for_the_bus():
     """No bus yet (before session_start, or a dropped socket): retry, don't die."""
     pusher = _pusher()
-    pusher.confirm(pusher.code)
     calls = prepared = 0
 
     async def prepare():
@@ -226,9 +237,9 @@ async def test_pusher_waits_for_the_bus():
         await asyncio.sleep(3600)
 
     with anyio.move_on_after(0.5):
-        await pusher.run(wait, prepare=prepare, retry_sec=0.01)
+        await _run_answered(pusher, wait, prepare=prepare, retry_sec=0.01)
     assert calls >= 2
-    assert pusher.connection.sent == [channel.notification(MENTION)]
+    assert pusher.connection.sent == [channel.check(pusher.code), channel.notification(MENTION)]
 
 
 @pytest.mark.anyio
@@ -275,6 +286,34 @@ async def test_check_comes_late_and_again_until_confirmed():
     checks = [p for p in pusher.connection.sent if p["meta"]["kind"] == "channel_check"]
     assert len(checks) == 2  # at 0.05 s and 0.15 s; confirmed before the next
     assert reads == 1
+
+
+@pytest.mark.anyio
+async def test_a_reconnect_is_checked_again_and_confirmed_anew():
+    """RT-6.12 steps 1 and 2, RT-6.18: a connection of a process that lived on
+    (a relay reconnect after /reload-plugins) forgets the confirmation file,
+    so it needs its own check: a new code, no read of the inbox before it is
+    confirmed, and the confirmation (which writes the file) comes again."""
+    pusher = _pusher()
+    pusher.confirm(pusher.code)  # the first connection's confirmation stays set in the process
+    first = pusher.code
+    forgotten = reads = 0
+
+    async def prepare():
+        nonlocal forgotten
+        forgotten += 1  # _push_prepare: the confirmation file goes
+
+    async def wait(timeout):
+        nonlocal reads
+        reads += 1
+        await asyncio.sleep(3600)
+
+    with anyio.move_on_after(0.2):
+        await pusher.run(wait, prepare=prepare, check_after=(0.01,), check_every=10)
+    assert forgotten == 1 and reads == 0 and not pusher.confirmed.is_set()
+    assert pusher.code != first and not pusher.confirm(first)
+    assert pusher.connection.sent == [channel.check(pusher.code)]
+    assert pusher.confirm(pusher.code) and pusher.confirmed.is_set()
 
 
 def _post(message, kind="watched_channel", trusted=False, root=""):
@@ -351,7 +390,6 @@ async def test_other_posts_come_as_one_digest(monkeypatch):
     System posts ("… joined the channel") are dropped: their author is the
     human who added the bot, so a pusher that wakes for that human would wake."""
     pusher = _pusher(digest_sec=0.3)
-    pusher.confirm(pusher.code)
     joined = _post("agent-y joined the channel.", trusted=True)
     joined["post"]["type"] = "system_join_channel"
     batches = [[_post("IDLE a"), joined], [_post("IDLE b", root="r1")], [MENTION]]
@@ -368,8 +406,8 @@ async def test_other_posts_come_as_one_digest(monkeypatch):
         return item["kind"] == "mention" or item["from_trusted_human"]
 
     with anyio.move_on_after(1.0):
-        await pusher.run(wait, addressed=addressed, wait_cap=5)
-    sent = pusher.connection.sent
+        await _run_answered(pusher, wait, addressed=addressed, wait_cap=5)
+    sent = pusher.connection.sent[1:]  # after the check
     assert sent[0] == channel.notification(MENTION)  # at once, while two are held
     assert len(sent) == 2 and sent[1]["meta"] == {"kind": "digest", "count": "2"}
     assert "IDLE a" in sent[1]["content"] and "thread r1" in sent[1]["content"]
