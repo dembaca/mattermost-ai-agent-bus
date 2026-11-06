@@ -144,6 +144,22 @@ async def test_agents_carry_the_registrars_prefix(bus, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_an_agent_whose_description_was_read_first_stays_an_agent(bus, monkeypatch):
+    """RT-6.16 step 1: reading a bot's description caches its username; the
+    bot mark goes with it, or the agent would be taken for a person and gated."""
+    api = bus.client._api
+
+    async def with_user(method, path, json=None, **kw):
+        if path == f"/api/v4/users/{AGENT}":
+            return {**USERS[AGENT], "bot_description": "for @dembaca"}
+        return await api(method, path, json=json, **kw)
+
+    monkeypatch.setattr(bus.client, "_api", with_user)
+    await bus.client.bot_description(AGENT)
+    assert await gate.author_classes(bus.client, [post_of({"user_id": AGENT})]) == ["agent"]
+
+
+@pytest.mark.asyncio
 async def test_no_gate_without_trusted_humans(bus, monkeypatch):
     """RT-6.16 step 2: with nobody trusted everything wakes as before; the
     events still carry from_agent."""
