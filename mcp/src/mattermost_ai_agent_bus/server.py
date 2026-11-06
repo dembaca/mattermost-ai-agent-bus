@@ -1003,6 +1003,13 @@ def _headline(need: str) -> tuple[str, str]:
     return head, text[len(head):].strip()
 
 
+def _title_and_context(need: str, context: str) -> tuple[str, str]:
+    """The bold title of an ask and its context, with the rest of `need` as the
+    first paragraph (RT-6.11 step 1); for the direct and the queued post alike."""
+    head, rest = _headline(need)
+    return head, f"{rest}\n\n{context}" if rest and context.strip() else rest or context
+
+
 # What in an ask holds no question of its own (RT-6.11 step 1): a code span or
 # block, a quote (an apostrophe opens none), a URL up to its closing punctuation.
 _NOT_ASKED = re.compile(
@@ -1565,9 +1572,7 @@ async def ask_human(
         if floored:
             out["floor"] = floored
         return _out("ask_human", _with_unmentioned(out | route, everyone))
-    head, rest = _headline(need)
-    if rest:
-        context = f"{rest}\n\n{context}" if context.strip() else rest
+    head, context = _title_and_context(need, context)
     out = await _post_ask(client, me, to=target, head=head, need=need, context=context,
                           recommendation=recommendation, decision=decision, where=where,
                           blocking=blocking, answers=answer_list, root_id=root_id,
@@ -1634,10 +1639,9 @@ async def _post_queued(client: MattermostAdapter, me: Any, key: str,
             if [p for p in asks.blocking(me.id, target) if p not in answered]:
                 asks.unclaim(me.id, e)
                 return None
-            head, rest = _headline(e["need"])
+            head, context = _title_and_context(e["need"], e["context"])
             out = await _post_ask(
-                client, me, to=target, head=head, need=e["need"],
-                context=f"{rest} {e['context']}" if rest else e["context"],
+                client, me, to=target, head=head, need=e["need"], context=context,
                 recommendation=e["recommendation"], decision=e["decision"], where=e["where"],
                 blocking=e["blocking"], answers=asks.normalize_answers(e["answers"]),
                 root_id=e.get("link", ""),
