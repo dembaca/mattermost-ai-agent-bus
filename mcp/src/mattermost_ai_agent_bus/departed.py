@@ -192,6 +192,60 @@ def reply_text(found: list[Absent], permalink_base: str, channel: str = "") -> s
     return " ".join(lines + away)
 
 
+async def _present(client: ChatPort, channel_id: str, names: list[str]) -> list[str]:
+    """Of the names the channel's page of agents lacks, the live ones that are
+    members after all (a channel of more than 200 accounts)."""
+    if not names:
+        return []
+    bots = await client.bots_named(set(names))
+    return [n for n in names if (u := bots.get(n)) is not None and lease.live_home(u) is not None
+            and await client.is_member(channel_id, u.id)]
+
+
+async def unreachable(client: ChatPort, message: str, me: str, channel_id: str) -> list[str]:
+    """The agents an outgoing task names (@, not me) that the roster of
+    `channel_id` does not show as reachable, each `<name> (<why>)` (RT-6.14
+    step 10). Reachable is a live lease, online, not idle: not that the agent
+    listens right now (a lease outlives its session by up to MM_LEASE_SEC).
+    One read of the channel's agents for all names; [] when none is named or
+    when they cannot be read (fail open: the post is out anyway)."""
+    names = mentioned(message, me)
+    if not names:
+        return []
+    try:
+        rows = await _members(client, channel_id)
+        why_not = {n: lease.not_reachable(rows.get(n)) for n in names}
+        # A channel's agents are read up to a page: one beyond it is no absent one.
+        for n in await _present(client, channel_id, [n for n in names if why_not[n] == "absent"]):
+            why_not[n] = ""
+        bad = [n for n in names if why_not[n]]
+        if not bad:
+            return []
+        work = channel_id == await client.work_channel_id()
+        left = [n for n in bad if why_not[n] in ("absent", "lease")]
+        departures = {d.username: d for d in await gone(client, left, rows)} if work and left else {}
+        away = {e.username: e for e in await elsewhere(
+            client, channel_id, [n for n in bad if n not in rows and n not in departures])}
+    except Exception as exc:  # noqa: BLE001 — fail open: no warning
+        log.info("unreachable agents not read: %s", exc)
+        return []
+    out = []
+    for n in bad:
+        d = departures.get(n)
+        if d is not None:
+            since = f" since {_when(d.since_ms)}" if d.since_ms else ""
+            why = f"gone{since}, {'BYE' if d.bye else 'its lease ran out'}"
+        elif n in away:
+            home = f"~{away[n].home}" if away[n].home else "another channel"
+            why = f"live in {home}, not in this channel"
+        else:
+            why = {"absent": "not in this channel, no agent of this bus by that name that I can see",
+                   "lease": "its lease ran out", "idle": "idle, until its human resumes",
+                   "offline": "offline"}[why_not[n]]
+        out.append(f"{n} ({why})")
+    return out
+
+
 async def check(client: ChatPort, post: Post, uid: str,
                 name: str) -> tuple[list[Absent], list[Absent]]:
     """The agents a work-channel post mentions that are gone or not here, and

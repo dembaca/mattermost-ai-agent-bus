@@ -20,7 +20,7 @@ from typing import Any
 from mcp.server.mcpserver import Image, MCPServer
 
 from . import (
-    __version__, a2a, askroute, asks, attest, channel, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
+    __version__, a2a, askroute, asks, attest, channel, departed, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
     profile, remind, session_file, slim, stall, stats, tasks, unread, usage,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
@@ -1102,6 +1102,34 @@ def _with_unmentioned(result: dict[str, Any], removed: list[str],
     return result
 
 
+async def _unreachable(client: MattermostAdapter, message: str, post: Post) -> tuple[list[str], bool]:
+    """Agents a TASK or DELEGATE names that the roster of the channel it went to
+    does not show as reachable (RT-6.14 step 10), and whether that channel is
+    not the home; the post is out already. Not for a DM; fails open."""
+    if a2a.word(message) not in ("TASK", "DELEGATE"):
+        return [], False
+    try:
+        me = (await client.get_me()).username
+        if not departed.mentioned(message, me) or await lease.is_direct(client, post.channel_id):
+            return [], False
+        return (await departed.unreachable(client, message, me, post.channel_id),
+                post.channel_id != await client.work_channel_id())
+    except Exception as exc:  # noqa: BLE001 — never block a post over this
+        log.info("reachability check skipped: %s", exc)
+        return [], False
+
+
+def _with_unreachable(result: dict[str, Any], found: tuple[list[str], bool], word: str) -> dict[str, Any]:
+    names, guest = found
+    if names:
+        result["not_reachable"] = names
+        scope = ', scope="all"' if guest else ""
+        result["warning"] = (
+            f"this {word} names agents the roster does not show as reachable: {', '.join(names)}. "
+            f"It is posted, but nobody may pick it up: choose another from coordinator(\"roster\"{scope})")
+    return result
+
+
 async def _responsible_and_trusted(client: MattermostAdapter) -> tuple[str | None, list[str]]:
     trusted = await client.trusted_humans()
     names = [n for n in trusted.values() if n]
@@ -1232,13 +1260,13 @@ async def post_message(
     and becomes a guest channel (RT-6.22): there only a mention or a reply in
     your thread wakes you. Tasks, HELLO and BYE stay in your home.
 
-    to: another agent's username — a DM, for back-and-forth that would only
-    cost the others tokens; share the outcome in the channel afterwards.
+    to: another agent's username — a DM, for back-and-forth; share the outcome
+    in the channel afterwards (SKILL.md).
     Agents only: people are asked with ask_human. "all" wakes every agent in
     the channel (RT-6.11); @channel/@here/@all are written plain, they would
     notify every human. kind: the bus word (TASK, ACK, BLOCKED, RESULT, DONE…),
-    put first if missing (RT-6.14). While you hold the coordinator crown a
-    post in your home or a DM starts with 👑.
+    put first if missing (RT-6.14); a TASK to a gone agent: not_reachable. While
+    you hold the coordinator crown a post in your home or a DM starts with 👑.
     """
     return _out("post_message", await post_as_bot(None, message, channel_id, root_id, to, kind,
                                                   channel_name=channel))
@@ -1316,9 +1344,11 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
         return _refusal(str(exc))
     await _posted(client, post)
     await _as_guest(client, uid, guest, post)
-    return await _claimed(client, post.root_id or root_id, message, uid, _with_unmentioned(
-        await slim.post(client, post), removed, await _unasked(client, message, uid),
-        a2a.word(message) or ""))
+    word = a2a.word(message) or ""
+    return await _claimed(client, post.root_id or root_id, message, uid, _with_unreachable(
+        _with_unmentioned(await slim.post(client, post), removed, await _unasked(client, message, uid), word),
+        await _unreachable(client, message, post),
+        word))
 
 
 @mcp.tool()
@@ -1371,9 +1401,10 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
         return _refusal(str(exc))
     await _posted(client, post)
     await _as_guest(client, uid, guest, post)
-    return await _claimed(client, post.root_id or root_id, message, uid, _with_unmentioned(
-        await slim.post(client, post), removed, await _unasked(client, message, uid),
-        a2a.word(message) or ""))
+    word = a2a.word(message) or ""
+    return await _claimed(client, post.root_id or root_id, message, uid, _with_unreachable(
+        _with_unmentioned(await slim.post(client, post), removed, await _unasked(client, message, uid), word),
+        await _unreachable(client, message, post), word))
 
 
 # Task threads this bot holds: its next claim there needs no thread read.
