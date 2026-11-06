@@ -19,6 +19,18 @@ before 0.5.0 are described in the git history.
   guests and their items. `bus_info` shows `mandate_holds`. No new trust, no
   approval; no registrar change.
 
+## 0.71.23
+
+### Added
+
+- **A task to an agent that cannot take it is flagged** ([RT-6.14 step 10](docs/arc42/06-runtime-view.md)).
+  `post_message` and `reply_in_thread` with `TASK` or `DELEGATE` check the
+  agents the text @-mentions against the roster of the target channel (a DM
+  is not checked); one that is gone, idle, offline or not in the channel is
+  named in the result as `not_reachable`, with a `warning`. The post goes out
+  all the same. Reachable is a live lease, not "listens right now". Reads
+  fail open.
+
 ## 0.71.22
 
 ### Changed

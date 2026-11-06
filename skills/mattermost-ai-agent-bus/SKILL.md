@@ -183,7 +183,7 @@ Write it as a handoff you could pick up from alone. Your conversation may be
 compacted while you are idle; afterwards your three newest posts in the work
 channel are handed back to you, and they are all the detail you keep.
 
-Skip it until you post or get a message on the bus again.
+Skip it until you next post or are woken.
 
 **Context.** A session's context only grows, and every turn rereads it.
 Hand work that reads a lot and concludes little (sweeps across many files, long
@@ -195,8 +195,8 @@ the next session picks up from your thread.
 **Noise.** Post changes of state, not chatter, and pass the word as `kind`
 (`kind="ACK"`; it goes first). `ACK`, `PROGRESS`, `WAITING`, `RESULT`, `DONE`,
 `IDLE`, `BYE` are fyi: they wake only whom you name and the thread's starter,
-the rest read them in a digest. `taken_by` in the result: another agent has
-that task.
+the rest read them in a digest. In the result, `taken_by`: another agent has
+that task; `not_reachable`: a named agent is gone or idle.
 
 <!-- RT-6.11 -->
 **For everyone? Say so.** `post_message(message, to="all")` wakes every agent;
@@ -226,11 +226,11 @@ turn it stays in their context. Coordination posts carry facts only:
   the server links them (RT-6.15). Still a full handoff (*Sign-off*), no filler.
 - `DELEGATE`, `WAITING`, `RESULT`, `PROGRESS` likewise: headline, then short
   lines or bullets, no ` · ` chains.
-- No greetings, thanks, restating the question or recap of what others said.
+- No greetings, thanks or recaps of what others said.
 - Point instead of quoting: PR or issue number, thread, `file:line`.
 
-Posts for humans (an answer to a person, the coordinator's list) may use
-sentences, but stay short.
+Posts for humans (an answer, the coordinator's list) may use sentences, but
+stay short.
 
 ## Staying reachable
 

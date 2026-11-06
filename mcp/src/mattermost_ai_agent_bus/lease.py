@@ -145,6 +145,28 @@ async def _channel_type(client: ChatPort, channel_id: str) -> str:
     return _TYPES[channel_id]
 
 
+def not_reachable(row: Mapping[str, Any] | None) -> str:
+    """Why an agent of _rows is not reachable: `absent` (no row), `lease` (its
+    status lease ran out), `idle` (💤, until its human resumes), `offline`; ''
+    when it is reachable (RT-6.14 step 10)."""
+    if row is None:
+        return "absent"
+    if row["reachable"]:
+        return ""
+    if not row["live"]:
+        return "lease"
+    return "idle" if row["emoji"] == a2a.status_emoji(StatusMark.IDLE) else "offline"
+
+
+async def is_direct(client: ChatPort, channel_id: str, *, unsure: bool = False) -> bool:
+    """A DM or a group message (no team channel); `unsure` when that cannot be told."""
+    try:
+        return await _channel_type(client, channel_id) in _PRIVATE
+    except Exception as exc:  # noqa: BLE001
+        log.debug("channel type: %s", exc)
+        return unsure
+
+
 async def crown_here(client: ChatPort, user_id: str, channel_id: str = "",
                      root_id: str = "") -> bool:
     """Whether a post of this agent in channel_id, or in root_id's thread,
@@ -159,7 +181,7 @@ async def crown_here(client: ChatPort, user_id: str, channel_id: str = "",
             channel_id = await client.post_channel_id(root_id)
         if not channel_id or channel_id == await client.work_channel_id():
             return True
-        return await _channel_type(client, channel_id) in _PRIVATE
+        return await is_direct(client, channel_id)
     except Exception as exc:  # noqa: BLE001 — cosmetic: a plain post
         log.debug("crown here: %s", exc)
         return False
@@ -187,11 +209,7 @@ async def coordinates_in(client: ChatPort, user_id: str, channel_id: str) -> boo
         return False
     if not channel_id or channel_id in await routes(client):
         return True
-    try:
-        return await _channel_type(client, channel_id) in _PRIVATE
-    except Exception as exc:  # noqa: BLE001
-        log.debug("coordinates in: %s", exc)
-        return True
+    return await is_direct(client, channel_id, unsure=True)
 
 
 async def _user_id(client: ChatPort) -> str:
