@@ -784,10 +784,11 @@ not; without one nothing is marked, as today (Section 7.2).
 - Narrowing the holder further, e.g. to `autonomous` agents or an agent type
   (#141 point 9). Recommendation: not in phase 1; a home of its own (step 5)
   does it.
-- Whether the holder's server shows the mandates it finds pinned in its guest
-  channels (`coordinator("roster", scope="all")`, per channel).
-  Recommendation: yes, informational, judged against its own trusted humans;
-  each receiver still decides for itself.
+- Whether the holder's server shows the mandates it finds in its guest
+  channels. Settled (0.71.24, RT-6.26 step 9): yes, judged against its own
+  trusted humans, shown as `mandate_holds` in `bus_info`; it also drives the
+  holder's stall check in those channels (RT-6.19 step 6; only where the
+  guest has no live coordinator of its own). Each receiver still decides for itself.
 - Whether the home's 👑 should be told when a mandated task arrives.
   Recommendation: no new wake; it sees the `TASK` root as any post in its
   home, and the row is marked `mandated`.

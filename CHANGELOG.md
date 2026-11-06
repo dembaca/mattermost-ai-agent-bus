@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.24
+
+### Changed
+
+- **A mandated holder watches the channels of its mandate** (RT-6.19 step 6,
+  RT-6.26 step 9; #141 point 5). While it holds the crown, the stall check also
+  looks at each guest channel where a mandate names its home: the registrar's
+  record there (or the pinned post without pinned keys), set by a trusted
+  human of the session, not ended. Each channel keeps its own quiet period in
+  `stall-<uid>.env` (keys with `@<channel id>`, no new file); a guest with a
+  live coordinator of its own is not looked at (second in line: that
+  coordinator nudges, the holder steps in when its crown lapses). A guest not
+  judged at a check (failed read) keeps its saved state. One stall event for all channels due; the text marks the
+  guests and their items. `bus_info` shows `mandate_holds`. No new trust, no
+  approval; no registrar change.
+
 ## 0.71.23
 
 ### Added

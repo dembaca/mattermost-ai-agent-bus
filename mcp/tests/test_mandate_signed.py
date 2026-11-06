@@ -16,7 +16,7 @@ from mattermost_ai_agent_bus.model import NoMandateEndpoint
 
 from fakes import BOT, WORK
 from test_ask_mode_signed import _key, _sign, _x, record as mode_record
-from test_mandate import (HOLDER, HUB, HUMAN, MPOST, NOW, NOW_MS, OTHER, _event,
+from test_mandate import (GUEST, HOLDER, HUB, HUMAN, MPOST, NOW, NOW_MS, OTHER, _event,
                           _Homes, _items, _mandate, _post)
 from mattermost_ai_agent_bus import gate
 
@@ -352,3 +352,86 @@ async def test_the_swallowed_post_is_logged_without_the_crown(chat, caplog):
         assert await mandate.observe(chat, _pinned_post(), BOT) is True
         assert await mandate.observe(chat, _pinned_post(), BOT) is True
     assert caplog.text.count("goes to no agent") == 1
+
+
+# --- the holder's side: guests where a mandate names this home (RT-6.26 step 9) ---------
+
+def _guests(chat, *ids):
+    chat.guests = set(ids)
+
+
+async def test_a_guest_whose_mandate_names_this_home_is_held(chat):
+    _guests(chat, GUEST)
+    chat.mandate_records[GUEST] = record(channel=GUEST, home=WORK)
+    assert await mandate.held(chat, NOW) == ([{"id": GUEST, "name": "proj-b"}], set())
+    assert chat.fetched_mandates.count(GUEST) == 1
+
+
+@pytest.mark.parametrize("rec", [
+    lambda: record(channel=GUEST, home=HUB),                                     # another home's role
+    lambda: record(channel=GUEST, home=WORK, by=OTHER, name="visitor"),          # not a trusted human
+    lambda: record(channel=GUEST, home=WORK, until="2000-01-01"),                # ended
+    lambda: None,                                                                 # off, or none set
+])
+async def test_a_guest_without_a_mandate_for_this_home_is_known_not_held(chat, rec):
+    _guests(chat, GUEST)
+    got = rec()
+    if got is not None:
+        chat.mandate_records[GUEST] = got
+    assert await mandate.held(chat, NOW) == ([], set())
+
+
+async def test_a_guest_not_read_yet_or_gone_stale_is_not_judged(chat):
+    """A failed read is no end of the mandate: the caller keeps its state."""
+    _guests(chat, GUEST)
+    chat.mandate_records[GUEST] = RuntimeError("registrar down")
+    assert await mandate.held(chat, NOW) == ([], {GUEST})            # never read
+    chat.mandate_records[GUEST] = record(channel=GUEST, home=WORK)
+    assert (await mandate.held(chat, NOW + 200))[0] == [{"id": GUEST, "name": "proj-b"}]
+    chat.mandate_records[GUEST] = RuntimeError("registrar down")
+    assert (await mandate.held(chat, NOW + 400))[0] != []            # the last good read holds
+    later = NOW + 200 + mandate.STALE_PERIODS * mandate.REFRESH_SEC + 60
+    assert await mandate.held(chat, later) == ([], {GUEST})          # gone stale: not judged
+
+
+async def test_a_guest_is_read_again_only_after_the_refresh_period(chat):
+    _guests(chat, GUEST)
+    chat.mandate_records[GUEST] = record(channel=GUEST, home=WORK)
+    await mandate.held(chat, NOW)
+    await mandate.held(chat, NOW + mandate.REFRESH_SEC - 1)
+    assert chat.fetched_mandates.count(GUEST) == 1
+    chat.mandate_records.pop(GUEST)               # `/agent-mandate off` there
+    assert await mandate.held(chat, NOW + mandate.REFRESH_SEC + 1) == ([], set())
+    assert chat.fetched_mandates.count(GUEST) == 2
+
+
+async def test_without_pinned_keys_a_pinned_post_in_the_guest_holds(monkeypatch):
+    """Phase 1 installation: the guest's pinned post names this home by its name."""
+    monkeypatch.delenv(attest.KEYS_ENV, raising=False)
+    c = _Homes()
+    _guests(c, GUEST)
+    c.pinned = [_mandate("mandate: \U0001F451 of ~agents", channel_id=GUEST)]
+    assert await mandate.held(c, NOW) == ([{"id": GUEST, "name": "proj-b"}], set())
+    c.pinned = [_mandate("mandate: \U0001F451 of ~hub", channel_id=GUEST)]
+    c.mandate_records.clear()
+    assert await mandate.held(c, NOW + 200) == ([], set())
+
+
+async def test_no_guest_channels_means_none_held_and_unreadable_ones_raise(chat, monkeypatch):
+    assert await mandate.held(chat, NOW) == ([], set())
+    assert chat.fetched_mandates == []
+
+    async def broken():
+        raise RuntimeError("memberships unreadable")
+
+    monkeypatch.setattr(chat, "guest_channel_ids", broken)
+    with pytest.raises(RuntimeError):
+        await mandate.held(chat, NOW)
+
+
+async def test_bus_info_names_the_held_guests_only_with_the_crown(chat, monkeypatch):
+    _guests(chat, GUEST)
+    chat.mandate_records[GUEST] = record(channel=GUEST, home=WORK)
+    assert await mandate.holds(chat, BOT, NOW) == []
+    monkeypatch.setattr(lease, "crown_held", lambda uid: True)
+    assert await mandate.holds(chat, BOT, NOW) == ["~proj-b"]

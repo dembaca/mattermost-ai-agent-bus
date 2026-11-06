@@ -190,8 +190,10 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
     return sorted(out, key=lambda i: i["at"])
 
 
-def digest(found: Sequence[Mapping[str, Any]], quiet_ms: int, now: float) -> str:
-    """The stall event's text: one line per item, capped."""
+def digest(found: Sequence[Mapping[str, Any]], quiet_ms: int, now: float,
+           guests: Sequence[str] = ()) -> str:
+    """The stall event's text: one line per item, capped. `guests`: the mandated
+    guest channels among them; their items are marked `~channel`."""
     since = f" since {_hhmm(quiet_ms)}" if quiet_ms else ""
     quiet = round((now - quiet_ms / 1000) / 60) if quiet_ms else 0
     # The crown holder's own posts are no activity (its nudges would restart
@@ -199,14 +201,21 @@ def digest(found: Sequence[Mapping[str, Any]], quiet_ms: int, now: float) -> str
     head = (f"Stall: no post by another agent or a trusted human{since} ({quiet} min; "
             f"your own posts do not count), no agent working, {len(found)} open:"
             ) if quiet_ms else f"Stall: {len(found)} open, nobody working:"
+    if guests:  # the quiet times differ per channel: none in the head
+        head = (f"Stall: {len(found)} open, items marked ~channel are in the guest channels of "
+                f"your mandate ({', '.join('~' + g for g in guests)}), the others in your home:")
     lines = [head]
     for i in found[:MAX_ITEMS]:
         t = str(i.get("title") or "")
         title = f' "{t[:TITLE - 1] + "…" if len(t) > TITLE else t}"' if t else ""
-        lines.append(f"- {i['what']} {i['id']}{title} · next: {i['next']} · last: {i['last'] or '–'}"[:LINE])
+        where = f"~{i['channel']}: " if i.get("channel") else ""
+        lines.append(f"- {where}{i['what']} {i['id']}{title} · next: {i['next']} · last: {i['last'] or '–'}"[:LINE])
     if len(found) > MAX_ITEMS:
         lines.append(f"- … and {len(found) - MAX_ITEMS} more (coordinator(\"tasks\"))")
-    lines.append("Per item nudge exactly one addressee in its thread (coordinator.md); "
+    lines.append("Per item nudge exactly one addressee in its thread (coordinator.md), "
+                 "in the channel the item is from; if the wait is fine, do nothing."
+                 if guests else
+                 "Per item nudge exactly one addressee in its thread (coordinator.md); "
                  "if the wait is fine, do nothing.")
     text = "\n".join(lines)
     return text if len(text) <= MAX_TEXT else text[: MAX_TEXT - 1] + "…"
@@ -214,28 +223,53 @@ def digest(found: Sequence[Mapping[str, Any]], quiet_ms: int, now: float) -> str
 
 # --- the state ---------------------------------------------------------------------
 
+_KEYS = ("QUIET", "WAKES", "NEXT", "FROM")
+
+
 def _path(uid: str) -> Path:
     return session_file.state_dir() / f"stall-{uid}.env"
 
 
-def _read(uid: str) -> dict[str, float]:
-    out = {"QUIET": 0.0, "WAKES": 0.0, "NEXT": 0.0, "FROM": 0.0}
+def _raw(uid: str) -> dict[str, str]:
+    out: dict[str, str] = {}
     try:
         for line in _path(uid).read_text().splitlines():
             k, _, v = line.partition("=")
-            if k in out and v.replace(".", "", 1).isdigit():
-                out[k] = float(v)
+            if k.partition("@")[0] in _KEYS and v.replace(".", "", 1).isdigit():
+                out[k] = v
     except OSError:
         pass
     return out
 
 
-def _save(uid: str, quiet_ms: int, wakes: int, nxt: float, frm: float) -> None:
+def _read(uid: str, chan: str = "") -> dict[str, float]:
+    """The saved state of the home, or of the mandated guest channel `chan`
+    (its keys carry `@<channel id>`: one file per bot, as before)."""
+    raw, sfx = _raw(uid), f"@{chan}" if chan else ""
+    return {k: float(raw.get(k + sfx, 0.0)) for k in _KEYS}
+
+
+def _save(uid: str, quiet_ms: int, wakes: int, nxt: float, frm: float, chan: str = "") -> None:
+    raw, sfx = _raw(uid), f"@{chan}" if chan else ""
+    raw.update({"QUIET" + sfx: str(quiet_ms), "WAKES" + sfx: str(wakes), "NEXT" + sfx: f"{nxt:.3f}"})
+    if not chan:  # a guest inherits the home's FROM (a fresh crown, RT-6.19 step 4)
+        raw["FROM"] = f"{frm:.3f}"
+    _write(uid, raw)
+
+
+def _write(uid: str, raw: dict[str, str]) -> None:
     try:
-        session_file.write_private(
-            _path(uid), f"QUIET={quiet_ms}\nWAKES={wakes}\nNEXT={nxt:.3f}\nFROM={frm:.3f}\n")
+        session_file.write_private(_path(uid), "".join(f"{k}={v}\n" for k, v in sorted(raw.items())))
     except OSError as exc:
         log.debug("stall state not saved: %s", exc)
+
+
+def _forget(uid: str, keep: Collection[str]) -> None:
+    """Drop the saved state of guest channels no longer mandated (RT-6.19 step 6)."""
+    raw = _raw(uid)
+    kept = {k: v for k, v in raw.items() if "@" not in k or k.partition("@")[2] in keep}
+    if kept != raw:
+        _write(uid, kept)
 
 
 def crowned(uid: str, now: float | None = None) -> None:
@@ -248,18 +282,34 @@ def crowned(uid: str, now: float | None = None) -> None:
 
 # --- the check -----------------------------------------------------------------------
 
-async def check(client: ChatPort, uid: str, now: float | None = None) -> float | None:
-    """One look while holding the crown: wake the agent when the bus stalls.
-    Seconds until the next wake could be due; None to look at the next tick.
-    Times in the state are whole: QUIET in ms as Mattermost gives them."""
-    now = now or time.time()
+class _Look:
+    """What one channel shows at a check: its open items and its place in
+    the quiet period (RT-6.19 steps 2 to 4)."""
+
+    def __init__(self, uid: str, chan: str, name: str, found: list[dict[str, Any]],
+                 quiet: int, wakes: int, nxt: float, frm: float) -> None:
+        self.uid, self.chan, self.name, self.found = uid, chan, name, found
+        self.quiet, self.wakes, self.nxt, self.frm = quiet, wakes, nxt, frm
+
+    def save(self) -> None:
+        _save(self.uid, self.quiet, self.wakes, self.nxt, self.frm, self.chan)
+
+
+async def _look(client: ChatPort, uid: str, now: float, chan: str = "", name: str = "",
+                frm: float = 0.0) -> _Look | None:
+    """One channel: the home (`chan` empty) or a guest where this coordinator's
+    mandate stands (step 6). None for a guest whose home has a live crown of
+    its own: that coordinator looks first, this one only steps in when it is gone."""
     now_ms = int(now * 1000)
-    st = _read(uid)
-    posts = await client.posts_after(tasks.since_ms(now))
+    roster = await lease.roster_in(client, chan, name) if chan else await lease.roster(client)
+    if chan and lease.crown_in(roster):
+        return None
+    st = _read(uid, chan)
+    posts = await (client.posts_after(tasks.since_ms(now), channel_id=chan) if chan
+                   else client.posts_after(tasks.since_ms(now)))
     reactors = {r.user_id for p in posts for r in p.reactions}
     names = await client.usernames(({p.user_id for p in posts} | reactors | {uid}) - {""})
     classes = await gate.author_classes(client, posts)
-    roster = await lease.roster(client)
     # The crown holder's own posts (its nudges) and own `working` (its wake
     # turn) start no quiet period: only someone else's activity does.
     quiet, own = quiet_since(posts, classes, uid)
@@ -276,6 +326,9 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
     foreign = await owners.foreign(client, tasks.ask_closers(posts)) if trusted else {}
     found = items(posts, names, classes, rows, {r.username for r in roster}, now_ms, trusted,
                   me=names.get(uid, ""), foreign=set(foreign))
+    if chan:
+        for i in found:
+            i["channel"] = name
     if not quiet:  # nothing that counts in the window: the saved start, else the oldest open item
         quiet = int(st["QUIET"]) or min((i["at"] for i in found if i["at"]), default=now_ms)
     wakes, nxt = int(st["WAKES"]), st["NEXT"]
@@ -284,22 +337,59 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
     else:
         quiet = int(st["QUIET"])
     # Own posts and a fresh crown only push the next wake out; the backoff goes on.
-    nxt = max(nxt, own / 1000 + stall_sec() if own else 0.0, st["FROM"])
-    if all(i.get("reminded") for i in found):
-        # RT-6.19 step 2: nothing open, or only asks their agents' servers
-        # remind: the human is nudged already, a wake would find nothing to
-        # do — no event, no push. The quiet period and backoff are kept, so a
-        # later item that needs an agent wakes as if these had not been there.
-        _save(uid, quiet, wakes, nxt, st["FROM"])
-        return None
-    if nxt > now:
-        _save(uid, quiet, wakes, nxt, st["FROM"])
-        return nxt - now
-    if not waiting() and (sink is None or not sink(digest(found, quiet, now))):
+    nxt = max(nxt, own / 1000 + stall_sec() if own else 0.0, frm)
+    return _Look(uid, chan, name, found, quiet, wakes, nxt, frm)
+
+
+async def check(client: ChatPort, uid: str, now: float | None = None) -> float | None:
+    """One look while holding the crown: wake the agent when the bus stalls,
+    in the home or in a guest channel where its mandate stands (RT-6.26 step 9).
+    Seconds until the next wake could be due; None to look at the next tick.
+    Times in the state are whole: QUIET in ms as Mattermost gives them. One
+    event for all channels that are due; each keeps its own quiet period."""
+    now = now or time.time()
+    frm = _read(uid)["FROM"]
+    looks = [lk for lk in [await _look(client, uid, now, frm=frm)] if lk is not None]
+    try:
+        guests, unsure = await mandate.held(client, now)
+        # Only a guest whose mandate is known to be gone loses its state: one
+        # not judged this time (a failed read) keeps it (RT-6.19 step 6).
+        _forget(uid, {g["id"] for g in guests} | unsure)
+    except Exception as exc:  # noqa: BLE001 — the home alone, nothing forgotten
+        log.info("stall: mandated guests not read: %s", exc)
+        guests = []
+    for g in guests:
+        try:
+            if (lk := await _look(client, uid, now, g["id"], g["name"], frm)) is not None:
+                looks.append(lk)
+        except Exception as exc:  # noqa: BLE001 — that guest is left out, its state kept
+            log.info("stall: ~%s not read: %s", g["name"], exc)
+    waits: list[float] = []
+    due: list[_Look] = []
+    for lk in looks:
+        if all(i.get("reminded") for i in lk.found):
+            # RT-6.19 step 2: nothing open, or only asks their agents' servers
+            # remind: the human is nudged already, a wake would find nothing to
+            # do. The quiet period and backoff are kept, so a later item that
+            # needs an agent wakes as if these had not been there.
+            lk.save()
+        elif lk.nxt > now:
+            lk.save()
+            waits.append(lk.nxt - now)
+        else:
+            due.append(lk)
+    if not due:
+        return min(waits, default=None)
+    text = digest([i for lk in due for i in lk.found], min(lk.quiet for lk in due), now,
+                  [lk.name for lk in due if lk.chan])
+    if not waiting() and (sink is None or not sink(text)):
         return None  # nobody to wake yet: look again at the next tick
-    wakes += 1
-    _save(uid, quiet, wakes, now + backoff(wakes), st["FROM"])
-    return backoff(wakes)
+    for lk in due:
+        lk.wakes += 1
+        gap = backoff(lk.wakes)
+        _save(uid, lk.quiet, lk.wakes, now + gap, lk.frm, lk.chan)
+        waits.append(gap)
+    return min(waits)
 
 
 async def watch(client: ChatPort) -> float | None:
