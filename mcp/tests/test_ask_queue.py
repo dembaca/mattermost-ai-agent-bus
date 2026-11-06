@@ -143,6 +143,16 @@ async def test_resolve_ask_posts_the_next_at_once_and_tells_the_agent(bus):
 
 
 @pytest.mark.asyncio
+async def test_a_queued_ask_keeps_its_lines_like_a_direct_one(bus):
+    """RT-6.11 step 1: the rest of need is the first paragraph, the lines stay."""
+    first = await _ask(need="Merge #61?")
+    await _ask(need="Archive #60? Nothing uses it.", context="- one\n\n\n- two")
+    await server.resolve_ask(first["ask"])
+    fields = {f["title"]: f["value"] for f in bus.posted[1]["props"]["attachments"][0]["fields"]}
+    assert fields["Context"] == "Nothing uses it.\n\n- one\n\n- two"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("by", ["reaction", "reply"])
 async def test_an_answer_on_the_bus_posts_the_next_on_the_heartbeat(bus, by):
     first = await _ask(need="Merge #61?")

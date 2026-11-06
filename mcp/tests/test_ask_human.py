@@ -284,6 +284,22 @@ async def test_humans_among_asks_once_and_skips_bots():
 
 
 @pytest.mark.asyncio
+async def test_a_multiline_context_keeps_its_lines(monkeypatch):
+    """RT-6.11 step 1: paragraphs, lists and markdown reach the card; @channel is still cleaned."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(
+        need="Install 02dadca on hogan? It is reviewed.",
+        context="Situation:\n\n\n\n- lab 3.2 passed\n- hogan needs the package\n\n**Risk:** @channel low  \n",
+        recommendation="Yes.\nThen watch the flood test.")
+    fields = {f["title"]: f["value"] for f in c.posted[0]["props"]["attachments"][0]["fields"]}
+    assert fields["Context"] == ("It is reviewed.\n\nSituation:\n\n- lab 3.2 passed\n"
+                                 "- hogan needs the package\n\n**Risk:** channel low")
+    assert fields["Recommendation"] == "Yes.\nThen watch the flood test."
+    assert c.posted[0]["message"].count("\n") == 0
+
+
+@pytest.mark.asyncio
 async def test_a_decision_comes_with_context_recommendation_and_wording(monkeypatch):
     """RT-6.11: the human answers in a word because the ask explains itself."""
     c = _Client()
@@ -310,7 +326,7 @@ async def test_only_the_first_sentence_is_bold(monkeypatch):
         context="Open only 1.1.")
     assert c.posted[0]["message"].endswith("— **Merge #62 `reload` (new VMs within 5 s).**")
     fields = dict((f["title"], f["value"]) for f in c.posted[0]["props"]["attachments"][0]["fields"])
-    assert fields["Context"] == "Ready now: review passed. Open only 1.1."
+    assert fields["Context"] == "Ready now: review passed.\n\nOpen only 1.1."
 
 
 @pytest.mark.asyncio

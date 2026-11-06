@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.26
+
+### Changed
+
+- **An ask keeps its line breaks and markdown** ([RT-6.11 step 1](docs/arc42/06-runtime-view.md)).
+  `Context`, `Recommendation` and `Decision` of `ask_human` were each folded
+  into one line, so a long context reached the human as a wall of text. They
+  now keep paragraphs, lists and markdown; only the ends are trimmed and a run
+  of blank lines becomes one. `Need`, `Where` and the answers stay one line.
+  The text after the first sentence of `need` goes to the front of `Context`
+  as its own paragraph. The tool description no longer asks for 1 to 3
+  sentences: how an agent structures its text is its own choice. No new
+  field, no length check; `@channel`, `@here`, `@all` and mentions are
+  cleaned as before.
+
 ## 0.71.25
 
 ### Fixed
