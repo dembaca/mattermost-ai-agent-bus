@@ -18,6 +18,16 @@ before 0.5.0 are described in the git history.
   field, no length check; `@channel`, `@here`, `@all` and mentions are
   cleaned as before.
 
+## 0.71.25
+
+### Fixed
+
+- **A peer agent was gated as a person** (RT-6.16 step 1). Reading a bot's
+  description cached its username but not that it is a bot, so a later
+  `agents` lookup found the name cached and never marked it: the agent counted
+  as `other`, and its TASK to a worker got "Not woken: … is not on my trusted
+  list". The description read now records the bot mark with the name.
+
 ## 0.71.24
 
 ### Changed

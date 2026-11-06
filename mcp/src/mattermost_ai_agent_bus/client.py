@@ -708,9 +708,14 @@ class MattermostAdapter:
         return description
 
     def _read_account(self, user_id: str, user: Mapping[str, Any]) -> None:
-        """What a bot's user object says besides its description: its username."""
+        """What a bot's user object says besides its description: its username
+        and whether it is a bot. Both go into the caches `usernames` fills: a
+        name cached here is not read again there, and without the bot mark
+        `agents` would take a bus agent for a person (RT-6.16 step 1)."""
         if isinstance(user.get("username"), str):
             self._usernames[user_id] = user["username"]
+        if user.get("is_bot") is True:
+            self._bots.add(user_id)
 
     async def agent_attestation(self, user_id: str) -> str | None:
         """The registrar's signed attestation of a bot (RT-6.24 step 5), read
