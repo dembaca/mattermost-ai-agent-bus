@@ -971,6 +971,12 @@ def _one_line(text: str) -> str:
     return " ".join(str(text).split())
 
 
+def _paragraphs(text: str) -> str:
+    """Line breaks, lists and markdown kept; the ends trimmed, a run of blank
+    lines made one (RT-6.11 step 1)."""
+    return re.sub(r"\n[ \t]*(?:\n[ \t]*)+", "\n\n", str(text).replace("\r\n", "\n")).strip()
+
+
 # One word, no link: a markdown link, a URL, text with spaces or a backtick
 # stays as given.
 _PLAIN = re.compile(r"[^\s`\[\]()<>]+")
@@ -1456,10 +1462,9 @@ async def ask_human(
     and what you need in the text, and a callout. need: one short sentence, the
     bold title ("Go to install 02dadca on hogan?"); more sentences are moved to
     context. For a decision give the human what lets them
-    answer in a word: context — the situation in 1–3 sentences; recommendation
-    — what you would do and why; decision — the decision written out ("Install
-    02dadca on hogan now, VM 399 stays up"), which a 👍 then approves as it
-    stands. where: PR, thread or host; PRs and issues as markdown links, as in
+    answer in a word: context — the situation; recommendation — what you would
+    do and why; decision — the decision written out, which a 👍 then approves
+    as it stands. These three keep line breaks and show as markdown: lists read better. where: PR, thread or host; PRs and issues as markdown links, as in
     posts. blocking: true if you cannot go on without it. answers: 2–4 plain texts,
     no emojis (the server adds 👍 = first, the go, and 👎, or 1️⃣–4️⃣; an
     approval: ["go", "no-go"]); chosen names the one a reaction picks. human
@@ -1562,7 +1567,7 @@ async def ask_human(
         return _out("ask_human", _with_unmentioned(out | route, everyone))
     head, rest = _headline(need)
     if rest:
-        context = f"{rest} {context}"
+        context = f"{rest}\n\n{context}" if context.strip() else rest
     out = await _post_ask(client, me, to=target, head=head, need=need, context=context,
                           recommendation=recommendation, decision=decision, where=where,
                           blocking=blocking, answers=answer_list, root_id=root_id,
@@ -1682,7 +1687,7 @@ async def _post_ask(client: MattermostAdapter, me: Any, *, to: str, head: str, n
     for title, value in (("Context", context), ("Recommendation", recommendation),
                          ("Decision", decision)):
         if value.strip():
-            fields.append((title, " ".join(value.split()), False))
+            fields.append((title, _paragraphs(value), False))
     fields.append(("Answer", (f"reply in this thread · the {CROWN}'s answer is advice, never approval"
                               if human else asks.answer_line(answers, bool(decision.strip()))), False))
     props = (attachment_props(fields, fallback=f"{to}: {_one_line(need)}", urgent=blocking)
