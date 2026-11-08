@@ -426,12 +426,13 @@ class MattermostAdapter:
     _channels: dict[str, Channel] = field(
         default_factory=dict, repr=False, init=False
     )
-    _usernames: dict[str, str] = field(default_factory=dict, repr=False, init=False)
+    # user id -> (username, is a live bot): one read fills both, a deleted
+    # account is no bot (RT-6.16 step 1).
+    _accounts: dict[str, tuple[str, bool]] = field(default_factory=dict, repr=False, init=False)
     # post id -> (its channel, its root): a post never moves.
     _roots: dict[str, tuple[str, str]] = field(default_factory=dict, repr=False, init=False)
     # ask id -> its headline, '' for no ask or not readable (RT-6.15 step 2).
     _ask_heads: dict[str, str] = field(default_factory=dict, repr=False, init=False)
-    _bots: set[str] = field(default_factory=set, repr=False, init=False)
     _is_human: dict[str, bool] = field(default_factory=dict, repr=False, init=False)
     # user id -> (when read, its bot description; None: not readable), ADR-003.
     _descriptions: dict[str, tuple[float, str | None]] = field(
@@ -671,7 +672,7 @@ class MattermostAdapter:
         except Exception as exc:  # noqa: BLE001 — not readable: the description decides
             log.debug("native owner of %s not readable: %s", user_id, exc)
             return None
-        return name.lower() if name and owner_id not in self._bots else None
+        return name.lower() if name and not self._accounts[owner_id][1] else None
 
     async def bot_description(self, user_id: str) -> str | None:
         """A bot's description (ADR-003), None when it cannot be read; never
@@ -709,13 +710,12 @@ class MattermostAdapter:
 
     def _read_account(self, user_id: str, user: Mapping[str, Any]) -> None:
         """What a bot's user object says besides its description: its username
-        and whether it is a bot. Both go into the caches `usernames` fills: a
-        name cached here is not read again there, and without the bot mark
+        and whether it is a live bot. Both go into the cache `usernames` fills:
+        a name cached here is not read again there, and without the bot mark
         `agents` would take a bus agent for a person (RT-6.16 step 1)."""
         if isinstance(user.get("username"), str):
-            self._usernames[user_id] = user["username"]
-        if user.get("is_bot") is True:
-            self._bots.add(user_id)
+            self._accounts[user_id] = (user["username"],
+                                       user.get("is_bot") is True and not user.get("delete_at"))
 
     async def agent_attestation(self, user_id: str) -> str | None:
         """The registrar's signed attestation of a bot (RT-6.24 step 5), read
@@ -1221,15 +1221,14 @@ class MattermostAdapter:
 
     async def usernames(self, user_ids: set[str]) -> dict[str, str]:
         """{user_id: username}, cached; one request for all unknown ids."""
-        missing = sorted(set(user_ids) - set(self._usernames))
+        missing = sorted(set(user_ids) - set(self._accounts))
         for i in missing:
             mm_id(i, "user")
         if missing:
             for u in await self._api("POST", "/api/v4/users/ids", json=missing):
-                self._usernames[u["id"]] = u.get("username", "")
-                if u.get("is_bot"):
-                    self._bots.add(u["id"])
-        return {i: self._usernames[i] for i in user_ids if i in self._usernames}
+                self._accounts[u["id"]] = (u.get("username", ""),
+                                           bool(u.get("is_bot")) and not u.get("delete_at"))
+        return {i: self._accounts[i][0] for i in user_ids if i in self._accounts}
 
     async def username(self, user_id: str) -> str:
         """One account's username, uncached; raises when it cannot be read."""
@@ -1242,7 +1241,7 @@ class MattermostAdapter:
         may name their account agent-x; it stays a person."""
         names = await self.usernames(user_ids)
         prefix = session_file.agent_prefix()
-        return {i for i, n in names.items() if i in self._bots and n.startswith(prefix)}
+        return {i for i, n in names.items() if self._accounts[i][1] and n.startswith(prefix)}
 
     async def bots_named(self, usernames: set[str]) -> dict[str, ChannelUser]:
         """The bot accounts among these usernames, by lower-case username,

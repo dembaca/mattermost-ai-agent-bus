@@ -160,6 +160,19 @@ async def test_an_agent_whose_description_was_read_first_stays_an_agent(bus, mon
 
 
 @pytest.mark.asyncio
+async def test_a_deleted_bot_account_is_no_agent(bus, monkeypatch):
+    """RT-6.16 step 1: one cache holds the username and the bot mark; a bot
+    account with delete_at set is gone and counts as other."""
+    USERS[AGENT] = {**USERS[AGENT], "delete_at": 1700000000000}
+    try:
+        posts = [post_of({"user_id": AGENT})]
+        assert await gate.author_classes(bus.client, posts) == ["other"]
+        assert bus.client._accounts[AGENT] == (USERS[AGENT]["username"], False)
+    finally:
+        USERS[AGENT] = {k: v for k, v in USERS[AGENT].items() if k != "delete_at"}
+
+
+@pytest.mark.asyncio
 async def test_no_gate_without_trusted_humans(bus, monkeypatch):
     """RT-6.16 step 2: with nobody trusted everything wakes as before; the
     events still carry from_agent."""
