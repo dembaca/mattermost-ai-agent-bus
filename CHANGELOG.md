@@ -9,9 +9,11 @@ before 0.5.0 are described in the git history.
 
 - **One account cache in the client** ([RT-6.16 step 1](docs/arc42/06-runtime-view.md);
   follow-up of #182). `_usernames` and `_bots` are one cache,
-  `user id -> (username, live bot)`, filled by `usernames` and by the read of
-  a bot's description alike, so the two cannot drift apart. An account with
-  `delete_at` set counts as no bot, hence no agent. No change on the wire.
+  `user id -> Account(username, bot, deleted)`, filled by `usernames` and by
+  the read of a bot's description alike, so the two cannot drift apart. A
+  deleted bot is no agent (`agents`) but still no human owner
+  (`_native_owner`): a rotated registrar bot as `owner_id` must not turn every
+  agent foreign. No change on the wire.
 
 ## 0.71.26
 

@@ -154,8 +154,10 @@ def _owner_client(description, bot, owner_user=None):
     # an owner that is no human (a bot, a plugin id): ignored
     ("", {"owner_id": OWNER}, {"id": OWNER, "username": "agent-z", "is_bot": True}, ""),
     ("", {"owner_id": "com.mattermost.calls"}, None, ""),
+    # a deleted bot (the registrar's rotated one) is still no human owner
+    (BOUND, {"owner_id": OWNER}, {"id": OWNER, "username": "reg", "is_bot": True, "delete_at": 9}, "alice"),
 ], ids=["native", "native-hand-made", "unreadable-fallback", "mismatch", "unbound",
-        "registrar-no-owner", "owner-is-a-bot", "owner-is-a-plugin"])
+        "registrar-no-owner", "owner-is-a-bot", "owner-is-a-plugin", "owner-is-a-deleted-bot"])
 async def test_agent_owner(description, bot, owner_user, want, caplog):
     """RT-6.16 step 1, WP3: ChatPort.agent_owner in the adapter."""
     c, seen = _owner_client(description, bot, owner_user)

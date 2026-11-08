@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 from urllib.parse import urlparse, urlunparse
 
 import httpx
@@ -200,6 +200,20 @@ def attachment_texts(props: Mapping[str, Any], edit: Callable[[str], str]) -> di
         edited.append(card)
     out["attachments"] = edited
     return out
+
+
+class Account(NamedTuple):
+    """What the client keeps of an account: its name, whether it is a bot and
+    whether it was deleted (`delete_at`). Kept apart: a deleted bot is still no
+    human owner (`_native_owner`), but no live agent either (`agents`)."""
+    username: str
+    bot: bool
+    deleted: bool
+
+
+def _account_of(user: Mapping[str, Any]) -> Account:
+    return Account(str(user.get("username") or ""), user.get("is_bot") is True,
+                   bool(user.get("delete_at")))
 
 
 def attachment_props(fields: list[tuple[str, str, bool]], *, fallback: str,
@@ -426,9 +440,8 @@ class MattermostAdapter:
     _channels: dict[str, Channel] = field(
         default_factory=dict, repr=False, init=False
     )
-    # user id -> (username, is a live bot): one read fills both, a deleted
-    # account is no bot (RT-6.16 step 1).
-    _accounts: dict[str, tuple[str, bool]] = field(default_factory=dict, repr=False, init=False)
+    # user id -> its name, bot mark and deletion: one read fills all (RT-6.16 step 1).
+    _accounts: dict[str, Account] = field(default_factory=dict, repr=False, init=False)
     # post id -> (its channel, its root): a post never moves.
     _roots: dict[str, tuple[str, str]] = field(default_factory=dict, repr=False, init=False)
     # ask id -> its headline, '' for no ask or not readable (RT-6.15 step 2).
@@ -672,7 +685,7 @@ class MattermostAdapter:
         except Exception as exc:  # noqa: BLE001 — not readable: the description decides
             log.debug("native owner of %s not readable: %s", user_id, exc)
             return None
-        return name.lower() if name and not self._accounts[owner_id][1] else None
+        return name.lower() if name and not self._accounts[owner_id].bot else None
 
     async def bot_description(self, user_id: str) -> str | None:
         """A bot's description (ADR-003), None when it cannot be read; never
@@ -710,12 +723,11 @@ class MattermostAdapter:
 
     def _read_account(self, user_id: str, user: Mapping[str, Any]) -> None:
         """What a bot's user object says besides its description: its username
-        and whether it is a live bot. Both go into the cache `usernames` fills:
+        and whether it is a bot. Both go into the cache `usernames` fills:
         a name cached here is not read again there, and without the bot mark
         `agents` would take a bus agent for a person (RT-6.16 step 1)."""
         if isinstance(user.get("username"), str):
-            self._accounts[user_id] = (user["username"],
-                                       user.get("is_bot") is True and not user.get("delete_at"))
+            self._accounts[user_id] = _account_of(user)
 
     async def agent_attestation(self, user_id: str) -> str | None:
         """The registrar's signed attestation of a bot (RT-6.24 step 5), read
@@ -1226,9 +1238,8 @@ class MattermostAdapter:
             mm_id(i, "user")
         if missing:
             for u in await self._api("POST", "/api/v4/users/ids", json=missing):
-                self._accounts[u["id"]] = (u.get("username", ""),
-                                           bool(u.get("is_bot")) and not u.get("delete_at"))
-        return {i: self._accounts[i][0] for i in user_ids if i in self._accounts}
+                self._accounts[u["id"]] = _account_of(u)
+        return {i: self._accounts[i].username for i in user_ids if i in self._accounts}
 
     async def username(self, user_id: str) -> str:
         """One account's username, uncached; raises when it cannot be read."""
@@ -1241,7 +1252,8 @@ class MattermostAdapter:
         may name their account agent-x; it stays a person."""
         names = await self.usernames(user_ids)
         prefix = session_file.agent_prefix()
-        return {i for i, n in names.items() if self._accounts[i][1] and n.startswith(prefix)}
+        return {i for i, n in names.items() if self._accounts[i].bot and not self._accounts[i].deleted
+                and n.startswith(prefix)}
 
     async def bots_named(self, usernames: set[str]) -> dict[str, ChannelUser]:
         """The bot accounts among these usernames, by lower-case username,
@@ -1257,8 +1269,8 @@ class MattermostAdapter:
             for n in missing:
                 self._named[n] = (now, None)
             for u in found:
-                if isinstance(u, Mapping) and u.get("is_bot") and not u.get("delete_at"):
-                    self._named[str(u.get("username") or "").lower()] = (now, channel_user_of(u))
+                if isinstance(u, Mapping) and (acc := _account_of(u)).bot and not acc.deleted:
+                    self._named[acc.username.lower()] = (now, channel_user_of(u))
         return {n: user for n in names if (user := self._named.get(n, (0.0, None))[1]) is not None}
 
     async def direct_channel_with_bot(self, username: str) -> str:
