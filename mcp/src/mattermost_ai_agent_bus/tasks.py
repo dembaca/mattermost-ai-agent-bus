@@ -236,7 +236,6 @@ def open_asks(posts: Sequence[Post], names: Mapping[str, str],
         # ❓ @<agent>: a question to the home's 👑 (RT-6.25), which answers it.
         human = a2a.ask_head(msg)
         question = human is not None and human[0] == "question"
-        need = re.search(r"\*\*(.+?)\*\*", msg)
         if (ask_answered(p, order, p.reactions, names, human[1] if human else "", trusted)
                 or resolved(p.reactions, names, foreign)
                 # A trusted human's reply answers a question to the 👑 as well.
@@ -246,7 +245,7 @@ def open_asks(posts: Sequence[Post], names: Mapping[str, str],
         row = {"ask": p.id, "by": names.get(p.user_id, ""),
                "human": human[1] if human else None,
                "question": question,
-               "need": _first_line(need[1] if need else msg, TITLE),
+               "need": _first_line(p.title or msg, TITLE),
                "at": _when(p.create_at)}
         out.append({k: v for k, v in row.items() if v})
     return out

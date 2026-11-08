@@ -30,6 +30,10 @@ class _Client(FakeChat):
         self.reacted.append((post_id, emoji))
 
 
+def title_of(posted):
+    return posted["props"]["attachments"][0]["title"]
+
+
 @pytest.fixture(autouse=True)
 def clean(monkeypatch):
     for v in ("MM_RESPONSIBLE_HUMAN", "MM_AGENT_KIND"):
@@ -45,7 +49,8 @@ async def test_ask_is_one_post_with_the_mention_and_a_callout(monkeypatch):
         need="Go to install 02dadca on hogan", where="#50, hogan", blocking=True,
         answers=["go", "not now"]))
     post = c.posted[0]
-    assert post["message"] == "\U0001F64B @dembaca — **Go to install 02dadca on hogan**"
+    assert post["message"] == "\U0001F64B @dembaca"
+    assert title_of(post) == "Go to install 02dadca on hogan"
     assert post["root_id"] is None  # stands on its own
     box = post["props"]["attachments"][0]
     fields = {f["title"]: f["value"] for f in box["fields"]}
@@ -55,6 +60,30 @@ async def test_ask_is_one_post_with_the_mention_and_a_callout(monkeypatch):
                       "Answer": "\U0001F44D = go · \U0001F44E = not now · or reply in this thread"}
     assert box["color"] == "#d24b4e"
     assert out["ask"] == ASK and asks.open_asks(BOT) == [ASK]
+
+
+@pytest.mark.asyncio
+async def test_the_question_is_the_cards_title(monkeypatch):
+    """RT-6.11 step 1: the text holds the mark and the mention, the card's title the question."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="Merge #61?")
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca"
+    assert title_of(c.posted[0]) == "Merge #61?"
+
+
+@pytest.mark.asyncio
+async def test_where_is_left_out_when_not_given(monkeypatch):
+    """RT-6.11 step 1: a Where field stands only when where was given."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="Merge #61?")
+    c.post_id = "o" * 26
+    await server.resolve_ask(ASK)
+    await server.ask_human(need="Merge #62?", where="#62, hogan")
+    fields = [{f["title"]: f["value"] for f in p["props"]["attachments"][0]["fields"]}
+              for p in c.posted if p["props"].get("attachments")]
+    assert "Where" not in fields[0] and fields[1]["Where"] == "#62, hogan"
 
 
 @pytest.mark.asyncio
@@ -187,7 +216,8 @@ async def test_an_ask_never_notifies_everyone(monkeypatch):
     text = json.dumps([c.posted[0]["message"], c.posted[0]["props"]])
     for word in ("@channel", "@here", "@all"):
         assert word not in text
-    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **Merge #61 channel?**"
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca"
+    assert title_of(c.posted[0]) == "Merge #61 channel?"
     assert out["unmentioned"] == ["all", "channel", "here"]
 
 
@@ -261,7 +291,7 @@ async def test_ask_human_still_mentions(monkeypatch):
     c = _NamingClient()
     monkeypatch.setattr(server, "_get_client", lambda: c)
     await server.ask_human(need="Merge #61")
-    assert c.posted[0]["message"].startswith("\U0001F64B @dembaca — ")
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca"
 
 
 @pytest.mark.asyncio
@@ -311,20 +341,20 @@ async def test_a_decision_comes_with_context_recommendation_and_wording(monkeypa
         decision="Install 02dadca on hogan now; VM 399 stays up.")
     fields = [(f["title"], f["value"]) for f in c.posted[0]["props"]["attachments"][0]["fields"]]
     titles = [t for t, _ in fields]
-    assert titles == ["From", "Blocking", "Where", "Context", "Recommendation", "Decision", "Answer"]
+    assert titles == ["From", "Blocking", "Context", "Recommendation", "Decision", "Answer"]
     assert dict(fields)["Decision"] == "Install 02dadca on hogan now; VM 399 stays up."
     assert dict(fields)["Answer"].startswith("\U0001F44D = yes to the decision")
 
 
 @pytest.mark.asyncio
-async def test_only_the_first_sentence_is_bold(monkeypatch):
+async def test_only_the_first_sentence_is_the_title(monkeypatch):
     """RT-6.11: an explanation written into need goes to context, not into the bold title."""
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)
     await server.ask_human(
         need="**Merge #62** `reload` (new VMs within 5 s). Ready now: review passed.",
         context="Open only 1.1.")
-    assert c.posted[0]["message"].endswith("— **Merge #62 `reload` (new VMs within 5 s).**")
+    assert title_of(c.posted[0]) == "Merge #62 `reload` (new VMs within 5 s)."
     fields = dict((f["title"], f["value"]) for f in c.posted[0]["props"]["attachments"][0]["fields"])
     assert fields["Context"] == "Ready now: review passed.\n\nOpen only 1.1."
 
@@ -342,7 +372,7 @@ async def test_one_open_ask_per_human_at_a_time(monkeypatch):
     other = json.loads(await server.ask_human(need="Hand on hogan?", human="kollegin"))
     assert other["ask"] and len(c.posted) == 2  # another human: own queue
     await server.resolve_ask(first["ask"])
-    assert len(c.posted) == 3 and c.posted[2]["message"].endswith("**Archive #60?**")
+    assert len(c.posted) == 3 and title_of(c.posted[2]) == "Archive #60?"
 
 
 @pytest.mark.asyncio
@@ -431,7 +461,8 @@ async def test_an_ask_from_a_thread_stands_on_its_own_and_is_linked_there(monkey
     task, day = "t" * 26, asks.APPROVAL_SEC
     out = json.loads(await server.ask_human(need="Merge #61?", root_id=task))
     ask, link = c.posted
-    assert ask["root_id"] is None and ask["message"] == "\U0001F64B @dembaca — **Merge #61?**"
+    assert ask["root_id"] is None and ask["message"] == "\U0001F64B @dembaca"
+    assert title_of(ask) == "Merge #61?"
     # A pointer, not an ask (RT-6.19): its own kind keeps it out of the open asks.
     # Humans read it as the ask's headline, linked (RT-6.15 step 2): asks-<uid>.env keeps it.
     assert link == {"message": f"🙋 ask {ASK}", "channel_id": None, "root_id": task,

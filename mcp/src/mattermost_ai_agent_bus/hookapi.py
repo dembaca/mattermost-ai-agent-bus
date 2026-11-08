@@ -599,7 +599,7 @@ def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
         "root_id": post.root_id,
         "create_at": post.create_at,
         "type": post.type,
-        "message": post.message,
+        "message": post.text,  # an ask's question with it (RT-6.11 step 1)
         "to": post.to,
         "intent": intent,
         # Only an agent's intent counts: anyone can write props (RT-6.14).
