@@ -26,7 +26,6 @@ from __future__ import annotations
 import fcntl
 import logging
 import os
-import re
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
