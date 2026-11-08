@@ -345,7 +345,9 @@ def test_ask_titles_outlive_resolve_capped_at_the_newest():
 async def test_an_asks_card_links_post_ids_and_reads_back_bare(monkeypatch):
     """RT-6.15 step 6: the adapter treats an attachment's text like the
     message, so a post id in an ask's context opens with one click; reading
-    gives the agent the bare id again. Titles and the fallback stay plain."""
+    gives the agent the bare id again; the card's title too (an ask's
+    question, an odd link in it written out). Field titles and the fallback
+    stay plain."""
     sent = []
 
     async def no_bookkeeping(self, cid, post):
@@ -362,12 +364,16 @@ async def test_an_asks_card_links_post_ids_and_reads_back_bare(monkeypatch):
     props = attachment_props([("context", f"see {POST_ID}", False), ("where", pr, True)],
                              fallback=f"ask {POST_ID}", urgent=False)
     props["attachments"][0]["text"] = f"also {POST_ID}"
+    props["attachments"][0]["title"] = f"Merge [PR #57](https://github.com@evil.example/pull/57) after {POST_ID}?"
     post = await c.post("\U0001F64B ask", channel_id="c" * 26, props=props)
     card = sent[0]["props"]["attachments"][0]
     assert card["fields"][0] == {"title": "context", "value": f"see [Post]({PL}{POST_ID})",
                                  "short": False}
     assert card["fields"][1]["value"] == pr
     assert card["text"] == f"also [Post]({PL}{POST_ID})" and card["fallback"] == f"ask {POST_ID}"
+    assert "(https://github.com@evil.example/pull/57)" in card["title"] and "](https://github.com@" not in card["title"]
+    assert card["title"].endswith(f"[Post]({PL}{POST_ID})?")
     back = post.props["attachments"][0]
     assert back["fields"][0]["value"] == f"see {POST_ID}" and back["text"] == f"also {POST_ID}"
+    assert back["title"].endswith(f"after {POST_ID}?")
     assert props["attachments"][0]["fields"][0]["value"] == f"see {POST_ID}"  # the caller's stays

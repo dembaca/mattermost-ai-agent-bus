@@ -74,7 +74,7 @@ def _one(p: Post, users: dict[str, str], channels: dict[str, str]) -> dict[str, 
     out["channel"] = channels.get(p.channel_id, p.channel_id)
     out["author"] = users.get(p.user_id) or p.user_id
     out["at"] = _when(p.create_at)
-    out["message"] = p.message
+    out["message"] = p.text
     if p.type:
         out["type"] = p.type
     if p.edit_at:

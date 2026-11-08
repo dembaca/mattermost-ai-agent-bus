@@ -182,10 +182,19 @@ class Post:
     pr: int | None = None  # the PR it names: props, else its text (RT-6.14)
     branch: str | None = None
     crowned: bool = False  # the server wrote it while its author held the crown
+    title: str = ""  # an ask's question (RT-6.11 step 1); "" for no ask
     reactions: tuple[Reaction, ...] = field(default=(), compare=False)
     files: tuple[FileInfo, ...] = field(default=(), compare=False)  # RT-6.23
     props: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)
     raw: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)
+
+    @property
+    def text(self) -> str:
+        """The message as an agent reads it: an ask's question stands in its
+        card (since 0.71.27), which slim posts leave out, so it follows the
+        mention as it did in the text (RT-6.11 step 1)."""
+        return (f"{self.message} — **{self.title}**" if self.title and self.title not in self.message
+                else self.message)
 
     @property
     def thread(self) -> str:
