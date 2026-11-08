@@ -8,7 +8,7 @@ import time
 import pytest
 
 from mattermost_ai_agent_bus import asks, channel, gate, server, session_file, slim
-from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
+from mattermost_ai_agent_bus.client import Account, MattermostAdapter, post_of
 from mattermost_ai_agent_bus.model import Me, RosterEntry, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
 
@@ -157,6 +157,22 @@ async def test_an_agent_whose_description_was_read_first_stays_an_agent(bus, mon
     monkeypatch.setattr(bus.client, "_api", with_user)
     await bus.client.bot_description(AGENT)
     assert await gate.author_classes(bus.client, [post_of({"user_id": AGENT})]) == ["agent"]
+
+
+@pytest.mark.asyncio
+async def test_a_deleted_bot_account_is_no_agent(bus, monkeypatch):
+    """RT-6.16 step 1: one cache holds name, bot mark and deletion; a bot
+    account with delete_at set is gone and counts as other."""
+    monkeypatch.setitem(USERS, AGENT, {**USERS[AGENT], "delete_at": 1700000000000})
+    assert await gate.author_classes(bus.client, [post_of({"user_id": AGENT})]) == ["other"]
+    assert bus.client._accounts[AGENT] == Account(USERS[AGENT]["username"], True, True)
+
+
+def test_reading_a_deleted_bots_account_marks_it_deleted(bus):
+    """RT-6.16 step 1: the read of a description fills the same cache."""
+    c = bus.client
+    c._read_account(AGENT, {"username": "agent-gone", "is_bot": True, "delete_at": 5})
+    assert c._accounts[AGENT] == Account("agent-gone", True, True)
 
 
 @pytest.mark.asyncio

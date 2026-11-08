@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.28
+
+### Changed
+
+- **One account cache in the client** ([RT-6.16 step 1](docs/arc42/06-runtime-view.md);
+  follow-up of #182). `_usernames` and `_bots` are one cache,
+  `user id -> Account(username, bot, deleted)`, filled by `usernames` and by
+  the read of a bot's description alike, so the two cannot drift apart. A
+  deleted bot is no agent (`agents`) but still no human owner
+  (`_native_owner`): a rotated registrar bot as `owner_id` must not turn every
+  agent foreign. No change on the wire.
+
 ## 0.71.27
 
 ### Changed
