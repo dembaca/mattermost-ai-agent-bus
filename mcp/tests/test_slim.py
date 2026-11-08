@@ -5,7 +5,7 @@ import json
 import pytest
 
 from mattermost_ai_agent_bus import server, slim
-from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.client import ask_headline, post_of
 
 from fakes import FakeChat
 
@@ -55,3 +55,30 @@ async def test_names_are_optional(monkeypatch):
 
     p = await slim.post(_Broken(), post_of(POST))
     assert p["author"] == "u1" and p["message"] == "Listener-Test \U0001F442"
+
+
+NEW_ASK = {"id": "k1", "channel_id": "c1", "user_id": "u1", "create_at": 1, "message": "\U0001F64B @dembaca",
+           "props": {"a2a": {"v": 1, "kind": "ask"}, "attachments": [{"title": "Merge #4?"}]}}
+OLD_ASK = {"id": "k2", "channel_id": "c1", "user_id": "u1", "create_at": 1,
+           "message": "\U0001F64B @dembaca — **Merge #4?**", "props": {"a2a": {"v": 1, "kind": "ask"}}}
+
+
+def test_post_of_reads_an_asks_title_from_its_card_or_its_old_text():
+    """RT-6.11 step 1: the card's title, else the first bold text; no ask, no title."""
+    assert post_of(NEW_ASK).title == "Merge #4?"
+    assert post_of(OLD_ASK).title == "Merge #4?"
+    assert post_of(POST).title == ""
+
+
+def test_ask_headline_reads_the_card_title():
+    """RT-6.15 step 2: a linked ask's headline is its card's title."""
+    assert ask_headline(NEW_ASK) == "Merge #4?"
+    assert ask_headline(OLD_ASK) == "Merge #4?"
+    assert ask_headline(POST) == ""
+
+
+@pytest.mark.asyncio
+async def test_slim_puts_an_asks_title_after_the_mention_once():
+    """RT-6.11 step 1: a new ask's question follows the mention as it did in the text; an old one is not doubled."""
+    assert (await slim.post(_Client(), post_of(NEW_ASK)))["message"] == "\U0001F64B @dembaca — **Merge #4?**"
+    assert (await slim.post(_Client(), post_of(OLD_ASK)))["message"] == "\U0001F64B @dembaca — **Merge #4?**"

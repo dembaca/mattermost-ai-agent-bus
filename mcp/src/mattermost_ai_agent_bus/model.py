@@ -182,6 +182,7 @@ class Post:
     pr: int | None = None  # the PR it names: props, else its text (RT-6.14)
     branch: str | None = None
     crowned: bool = False  # the server wrote it while its author held the crown
+    title: str = ""  # an ask's question (RT-6.11 step 1); "" for no ask
     reactions: tuple[Reaction, ...] = field(default=(), compare=False)
     files: tuple[FileInfo, ...] = field(default=(), compare=False)  # RT-6.23
     props: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)

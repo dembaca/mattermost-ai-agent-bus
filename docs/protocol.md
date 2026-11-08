@@ -161,8 +161,8 @@ handover, sign-off) are in the skill's *Coordination manifest*
 ## Asking a human
 
 An agent that needs a human calls `ask_human`; it is the only place a human is
-@-mentioned — the server posts any other mention of a person as the plain name. One post: `🙋 @<human> — **<need>**`, with a callout (`From`,
-`Blocking`, `Where`, and for a decision `Context`, `Recommendation`, `Decision`, then `Answer`). One open ask per agent and human at a time. The human replies in its thread, or reacts:
+@-mentioned — the server posts any other mention of a person as the plain name. One post: `🙋 @<human>`, with a callout titled with `<need>` (`From`,
+`Blocking`, `Where` when given, and for a decision `Context`, `Recommendation`, `Decision`, then `Answer`). One open ask per agent and human at a time. The human replies in its thread, or reacts:
 👍/✅ = yes, 👎/❌ = no. A reaction on an open ask reaches the agent as
 `{kind: reaction, emoji, answer, ask}` and wakes an idle one; a yes approves only
 within 24 h of the ask, a later answer comes with `expired: true`; `resolve_ask` puts ✅
@@ -175,7 +175,7 @@ coordinator's server wakes it with `{kind: stall}` when open work sits quiet
 An ask is a `question` or an `approval` (`kind`, default approval; the server
 makes one that names an action with effect an approval). A trusted human's
 top-level post `ask-mode coordinator` (or `ask-mode direct`) in a home sends
-the agents' questions there to its 👑 first, posted as `❓ @<👑> — **<need>**`;
+the agents' questions there to its 👑 first, posted as `❓ @<👑>` with the question as the callout's title;
 its answer is advice, approvals still go to the human
 ([arc42 §6.25](arc42/06-runtime-view.md#625-ask-routing-modes)). With the
 registrar's keys pinned the mode comes only from the registrar's signed record

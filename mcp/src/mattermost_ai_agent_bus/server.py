@@ -1465,14 +1465,12 @@ async def ask_human(
 ) -> str:
     """Ask a human for something — the only way to @-mention one (RT-6.11).
 
-    One post in the work channel in a fixed, easy-to-spot format: the mention
-    and what you need in the text, and a callout. need: one short sentence, the
-    bold title ("Go to install 02dadca on hogan?"); more sentences are moved to
-    context. For a decision give the human what lets them
-    answer in a word: context — the situation; recommendation — what you would
-    do and why; decision — the decision written out, which a 👍 then approves
-    as it stands. These three keep line breaks and show as markdown: lists read better. where: PR, thread or host; PRs and issues as markdown links, as in
-    posts. blocking: true if you cannot go on without it. answers: 2–4 plain texts,
+    One post: the mention, and a callout titled with need: one short sentence
+    ("Go to install 02dadca on hogan?"); more go to context. For a decision:
+    context — the situation; recommendation — what you would do and why;
+    decision — written out, which a 👍 approves as it stands. These three show
+    as markdown: more than a few sentences as short lines or a list, not one
+    paragraph. where: PR, thread or host; PRs and issues as markdown links. blocking: true if you cannot go on without it. answers: 2–4 plain texts,
     no emojis (the server adds 👍 = first, the go, and 👎, or 1️⃣–4️⃣; an
     approval: ["go", "no-go"]); chosen names the one a reaction picks. human
     defaults to your responsible human. The ask is always a top-level post, its thread its own; root_id
@@ -1679,22 +1677,26 @@ async def _post_ask(client: MattermostAdapter, me: Any, *, to: str, head: str, n
                     human: str = "") -> dict[str, Any]:
     """Post and record an ask to `to` (RT-6.11 step 1); with human, a
     question to the 👑 `to` that falls back to that human (RT-6.25 step 3)."""
-    text = lease.with_crown(f"{a2a.symbol(Mark.QUESTION if human else Mark.ASK)} @{to} — **{head}**", me.id)
+    # The question is the card's title, so it stands in the card; the text
+    # keeps the mention, which notifies (RT-6.11 step 1).
+    text = lease.with_crown(f"{a2a.symbol(Mark.QUESTION if human else Mark.ASK)} @{to}", me.id)
     fields = [("For", f"{CROWN} {to}: a question for the coordinator, not for a human; asked of "
                       f"{human} if unanswered for {askroute.wait_sec() // 60} min", False)
               ] if human else []
     fields += [
         ("From", f"@{me.username}", True),
         ("Blocking", "yes" if blocking else "no", True),
-        ("Where", _one_line(where) or "–", False),
     ]
+    if where.strip():
+        fields.append(("Where", _one_line(where), False))
     for title, value in (("Context", context), ("Recommendation", recommendation),
                          ("Decision", decision)):
         if value.strip():
             fields.append((title, _paragraphs(value), False))
     fields.append(("Answer", (f"reply in this thread · the {CROWN}'s answer is advice, never approval"
                               if human else asks.answer_line(answers, bool(decision.strip()))), False))
-    props = (attachment_props(fields, fallback=f"{to}: {_one_line(need)}", urgent=blocking)
+    props = (attachment_props(fields, fallback=f"{to}: {_one_line(need)}", urgent=blocking,
+                              title=head)
              | (a2a.props(kind=a2a.ASK) or {}))
     stats.record("post", chars=len(text))
     # Always top-level, its thread its own: only a reply there answers it, not

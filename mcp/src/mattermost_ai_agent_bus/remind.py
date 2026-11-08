@@ -40,7 +40,6 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_TITLE = re.compile(r"\*\*(.+?)\*\*")
 TITLE = 90
 # Posts the next ask queued for a target (RT-6.11 step 2); the server sets it.
 advance: Callable[[ChatPort, str, set[str]], Awaitable[None]] | None = None
@@ -132,8 +131,7 @@ async def _answered(client: ChatPort, uid: str, pid: str, root: str,
     names = await client.usernames(ids - {"", uid})
     if tasks.ask_answered(ask, posts, reactions, names, human, await client.trusted_humans()):
         return True, ""
-    title = _TITLE.search(ask.message)
-    return False, " ".join(title[1].split())[:TITLE] if title else ""
+    return False, ask.title[:TITLE]
 
 
 async def tick(client: ChatPort, uid: str, now: float | None = None) -> float | None:

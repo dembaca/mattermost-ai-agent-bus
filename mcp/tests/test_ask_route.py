@@ -71,6 +71,10 @@ def _coordinator_mode(monkeypatch, c, holder="agent-coord"):
     monkeypatch.setattr(lease, "coordinator_of", _crown(holder))
 
 
+def title_of(posted):
+    return posted["props"]["attachments"][0]["title"]
+
+
 def _fields(posted):
     return {f["title"]: f["value"] for f in posted["props"]["attachments"][0]["fields"]}
 
@@ -284,7 +288,8 @@ async def test_a_question_goes_to_the_crown_in_coordinator_mode(monkeypatch):
     out = json.loads(await server.ask_human(need="Approach A or B for the cache?",
                                             kind="question", blocking=True))
     post = c.posted[0]
-    assert post["message"] == "\u2753 @agent-coord — **Approach A or B for the cache?**"
+    assert post["message"] == "\u2753 @agent-coord"
+    assert title_of(post) == "Approach A or B for the cache?"
     assert post["root_id"] is None and post["props"]["a2a"]["kind"] == "ask"
     fields = _fields(post)
     assert fields["For"] == ("\U0001F451 agent-coord: a question for the coordinator, not for a human; "
@@ -312,7 +317,8 @@ async def test_an_approval_never_goes_to_an_agent(monkeypatch):
     c = _Client()
     _coordinator_mode(monkeypatch, c)
     out = json.loads(await server.ask_human(need="Ship 02dadca to hogan?"))
-    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **Ship 02dadca to hogan?**"
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca"
+    assert title_of(c.posted[0]) == "Ship 02dadca to hogan?"
     assert out["kind"] == "approval" and out["route"] == "human" and "advice" not in out
     assert asks.questions(BOT) == {}
 
@@ -339,7 +345,8 @@ async def test_without_a_reachable_crown_the_human_is_asked_at_once(monkeypatch,
     c = _Client()
     _coordinator_mode(monkeypatch, c, holder)
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **A or B?**"
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca"
+    assert title_of(c.posted[0]) == "A or B?"
     assert out["route"] == "human" and "no \U0001F451 reachable" in out["route_note"]
 
 
@@ -349,7 +356,8 @@ async def test_the_crowns_own_question_goes_to_the_human(monkeypatch):
     _coordinator_mode(monkeypatch, c, "agent-worker")
     monkeypatch.setattr(lease, "crown_held", lambda uid: True)
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert c.posted[0]["message"] == "\U0001F451 \U0001F64B @dembaca — **A or B?**"
+    assert c.posted[0]["message"] == "\U0001F451 \U0001F64B @dembaca"
+    assert title_of(c.posted[0]) == "A or B?"
     assert out["route"] == "human" and "you hold the crown" in out["route_note"]
 
 
@@ -358,7 +366,8 @@ async def test_direct_mode_asks_the_human_as_before(monkeypatch):
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **A or B?**"
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca"
+    assert title_of(c.posted[0]) == "A or B?"
     assert out["kind"] == "question" and "route" not in out and "ask_mode" not in out
 
 
@@ -509,7 +518,9 @@ async def test_the_fallback_asks_the_human_linked_and_closes_the_question(monkey
     aid = await server._ask_fallback(c, q, "dembaca", "agent-coord")
     ask, link = c.posted
     assert aid == "f" * 26
-    assert ask["message"] == "\U0001F64B @dembaca — **A or B for the cache?**" and ask["root_id"] is None
+    assert ask["message"] == "\U0001F64B @dembaca"
+    assert title_of(ask) == "A or B for the cache?"
+    assert ask["root_id"] is None
     fields = _fields(ask)
     assert fields["Where"] == f"ask {q}" and fields["Blocking"] == "yes"
     assert "agent-coord" in fields["Context"] and "15 min" in fields["Context"]
@@ -545,7 +556,8 @@ async def test_a_question_never_goes_to_a_crown_that_is_no_peer(monkeypatch, des
         c.descriptions[COORD] = description
     _coordinator_mode(monkeypatch, c)
     out = json.loads(await server.ask_human(need="A or B?", kind="question"))
-    assert c.posted[0]["message"] == "\U0001F64B @dembaca — **A or B?**"
+    assert c.posted[0]["message"] == "\U0001F64B @dembaca"
+    assert title_of(c.posted[0]) == "A or B?"
     assert out["route"] == "human" and "to" not in out
     assert out["route_note"] == ("the home's \U0001F451 agent-coord is not a peer of this session: "
                                  "asked the human at once")

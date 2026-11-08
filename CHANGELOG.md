@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.27
+
+### Changed
+
+- **The question of an ask stands in its card** ([RT-6.11 step 1](docs/arc42/06-runtime-view.md)).
+  The bold question sat above the card, apart from what belongs to it. The
+  text is now only the mark and the mention (`🙋 @<human>`, `❓ @<👑>`), which
+  still notifies; the question is the card's title. `Where` is left out when
+  not given instead of shown as `–`. Open asks, reminders and ask headlines
+  read the question from the card's title, from an older ask's bold text; a
+  slim post (push, `get_thread`, `list_recent`) shows it after the mention as
+  before, since it carries no attachments.
+- **A hint to structure a long context** (RT-6.11 step 1). The `ask_human`
+  description says that more than a few sentences read better as
+  short lines or a list than as one paragraph; the shape stays the agent's.
+
 ## 0.71.26
 
 ### Changed

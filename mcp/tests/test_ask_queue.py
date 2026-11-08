@@ -72,6 +72,10 @@ def bus(monkeypatch):
     return c
 
 
+def title_of(posted):
+    return posted["props"]["attachments"][0]["title"]
+
+
 async def _ask(**kw):
     return json.loads(await server.ask_human(**kw))
 
@@ -133,7 +137,7 @@ async def test_resolve_ask_posts_the_next_at_once_and_tells_the_agent(bus):
     await _ask(need="Archive #60?", context="Nothing uses it.")
     await _ask(need="Keep VM 399?")
     await server.resolve_ask(first["ask"])
-    assert len(bus.posted) == 2 and bus.posted[1]["message"].endswith("**Archive #60?**")
+    assert len(bus.posted) == 2 and title_of(bus.posted[1]) == "Archive #60?"
     assert [e["need"] for e in asks.queued(BOT)] == ["Keep VM 399?"]
     kind, text = bus.inbox.sent[0]
     assert kind == askroute.POSTED == "ask_posted" and bus.ids()[1] in text and "1 more" in text
@@ -322,7 +326,7 @@ async def test_the_heartbeat_and_resolve_ask_post_each_queued_ask_once(bus):
     assert not resolve.done()  # it waits its turn: one queued ask is posted at a time
     gate.set()
     await asyncio.gather(tick, resolve)
-    sent = [p["message"] for p in bus.posted]
+    sent = [title_of(p) for p in bus.posted]
     assert sum("Archive #60?" in m for m in sent) == 1
     assert sum("Keep VM 399?" in m for m in sent) <= 1
     left = [e["need"] for e in asks.queued(BOT)]
@@ -379,7 +383,7 @@ async def test_a_queued_ask_has_an_id_and_is_withdrawn_by_it(bus):
     assert json.loads(await server.resolve_ask(one["id"]))["was_open"] is False
     assert bus.reacted == []  # no post to put a ✅ on
     await server.resolve_ask(first["ask"])
-    assert "Keep VM 399?" in bus.posted[1]["message"]
+    assert title_of(bus.posted[1]) == "Keep VM 399?"
 
 
 @pytest.mark.asyncio

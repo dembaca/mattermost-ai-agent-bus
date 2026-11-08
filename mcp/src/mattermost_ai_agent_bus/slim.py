@@ -74,7 +74,10 @@ def _one(p: Post, users: dict[str, str], channels: dict[str, str]) -> dict[str, 
     out["channel"] = channels.get(p.channel_id, p.channel_id)
     out["author"] = users.get(p.user_id) or p.user_id
     out["at"] = _when(p.create_at)
-    out["message"] = p.message
+    # An ask's question stands in its card (since 0.71.27), which a slim post
+    # leaves out: it follows the mention as it did in the text (RT-6.11 step 1).
+    out["message"] = (f"{p.message} — **{p.title}**" if p.title and p.title not in p.message
+                      else p.message)
     if p.type:
         out["type"] = p.type
     if p.edit_at:

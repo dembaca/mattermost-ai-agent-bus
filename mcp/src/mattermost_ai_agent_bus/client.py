@@ -67,6 +67,7 @@ def post_of(raw: Mapping[str, Any]) -> Post:
         pr=a2a.pr_of(raw),
         branch=a2a.branch_of(raw),
         crowned=a2a.crowned(raw),
+        title=ask_title(raw) if a2a.kind_of(raw) == a2a.ASK else "",
         reactions=tuple(reaction_of(r) for r in reactions or () if isinstance(r, Mapping)),
         files=files_of(raw),
         props=props,
@@ -163,19 +164,30 @@ _BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 _AT = re.compile(r"@(?=[a-z0-9])", re.I)
 
 
+def ask_title(post: Mapping[str, Any]) -> str:
+    """An ask's question as its post holds it: the title of its card (since
+    0.71.27), else the first bold text of an older one (`🙋 @<human> — **<need>**`),
+    whitespace collapsed (RT-6.11 step 1)."""
+    props = post.get("props")
+    cards = props.get("attachments") if isinstance(props, Mapping) else None
+    card = cards[0] if isinstance(cards, list) and cards else None
+    if isinstance(card, Mapping) and isinstance(card.get("title"), str) and card["title"].strip():
+        return " ".join(card["title"].split())
+    bold = _BOLD.search(str(post.get("message") or ""))
+    return " ".join(bold[1].split()) if bold else ""
+
+
 def ask_headline(post: Mapping[str, Any]) -> str:
-    """An ask post's headline, its first bold text (`👑 🙋 @<human> — **<need>**`);
-    '' for a post that is no ask: props a2a kind `ask`, or `🙋 @` at the start
-    after an optional 👑 (RT-6.15 step 2). Its @ dropped (`@dembaca` →
-    `dembaca`, `@channel` → `channel`): it comes from someone else's post and
-    goes into ours after its mentions were checked (RT-6.11 step 1)."""
+    """An ask post's headline, its question (ask_title); '' for a post that is
+    no ask: props a2a kind `ask`, or `🙋 @` at the start after an optional 👑
+    (RT-6.15 step 2). Its @ dropped (`@dembaca` → `dembaca`, `@channel` →
+    `channel`): it comes from someone else's post and goes into ours after its
+    mentions were checked (RT-6.11 step 1)."""
     props = post.get("props")
     note = props.get("a2a") if isinstance(props, Mapping) else None
-    message = str(post.get("message") or "")
     asked = (isinstance(note, Mapping) and note.get("kind") == a2a.ASK) \
-        or a2a.head(message).ask_at
-    bold = _BOLD.search(message) if asked else None
-    return _AT.sub("", bold[1]).strip() if bold else ""
+        or a2a.head(str(post.get("message") or "")).ask_at
+    return _AT.sub("", ask_title(post)).strip() if asked else ""
 
 
 def attachment_texts(props: Mapping[str, Any], edit: Callable[[str], str]) -> dict[str, Any]:
@@ -203,12 +215,13 @@ def attachment_texts(props: Mapping[str, Any], edit: Callable[[str], str]) -> di
 
 
 def attachment_props(fields: list[tuple[str, str, bool]], *, fallback: str,
-                     urgent: bool) -> dict[str, Any]:
-    """Props for a message attachment: a card of (title, value, short) fields,
-    red when urgent, else amber."""
+                     urgent: bool, title: str = "") -> dict[str, Any]:
+    """Props for a message attachment: a card with an optional title and
+    (title, value, short) fields, red when urgent, else amber."""
     return {"attachments": [{
         "color": "#d24b4e" if urgent else "#e8a317",
         "fallback": fallback,
+        **({"title": title} if title else {}),
         "fields": [{"title": t, "value": v, "short": s} for t, v, s in fields],
     }]}
 
