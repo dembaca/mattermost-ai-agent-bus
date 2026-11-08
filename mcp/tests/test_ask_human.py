@@ -279,6 +279,30 @@ async def test_no_hint_with_an_open_ask_or_without_the_name(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_blocked_and_waiting_on_a_human_without_an_ask_warn(monkeypatch):
+    """RT-6.11 step 3: a BLOCKED or WAITING that waits on a human in text only warns."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    for word in ("BLOCKED", "WAITING", "IDLE", "RESULT"):
+        out = json.loads(await server.post_message(f"{word} · decision from dembaca"))
+        assert "warning" in out and word in out["warning"], word
+    assert "warning" not in json.loads(await server.post_message("ACK · dembaca knows"))
+
+
+@pytest.mark.asyncio
+async def test_an_answered_ask_no_longer_counts_as_open(monkeypatch):
+    """RT-6.11 step 3: a new decision after an answer needs a new ask."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    asks.add(BOT, ASK, "dembaca")
+    assert "unasked" not in json.loads(await server.post_message("BLOCKED · decision from dembaca"))
+    asks.answered(BOT, ASK)  # records the human's answer (not under test: the call is the setup)
+    out = json.loads(await server.post_message("BLOCKED · next decision from dembaca"))
+    assert out["unasked"] == ["dembaca"] and "warning" in out
+    assert asks.open_to(BOT, "dembaca") == [ASK]  # open_to keeps its meaning
+
+
+@pytest.mark.asyncio
 async def test_hint_when_the_name_stands_next_to_a_link(monkeypatch):
     c = _NamingClient()
     monkeypatch.setattr(server, "_get_client", lambda: c)

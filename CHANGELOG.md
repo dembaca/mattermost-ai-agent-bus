@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.29
+
+### Changed
+
+- **A BLOCKED that waits on a human without an ask draws the warning**
+  ([RT-6.11 step 3](docs/arc42/06-runtime-view.md), [RT-6.14](docs/arc42/06-runtime-view.md)).
+  The hard `warning` of `_with_unmentioned` now covers `BLOCKED` and
+  `WAITING` as well as `IDLE` and `RESULT`. An ask the human has answered no
+  longer counts as open for the `unasked` check (`asks.blocking` instead of
+  `open_to`, whose other callers are unchanged): a new decision after an
+  answer needs a new ask. SKILL.md and the MCP `instructions` say so.
+
 ## 0.71.28
 
 ### Changed
