@@ -398,7 +398,7 @@ _SKILL = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-
 # Per-load budgets, about 10 % over the 0.57.0 size (in brackets): SKILL.md is
 # the core every agent loads; the files next to it are read only when they apply.
 _SKILL_BUDGET = {
-    "SKILL.md": 16_750,                 # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11)
+    "SKILL.md": 16_850,                 # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + no BLOCKED on a human (RT-6.11)
     "runtime-claude-code.md": 4_850,    # (4417)
     "runtime-no-hooks.md": 2_600,       # (2381)
     "self-registration.md": 2_450,      # (2234)
@@ -453,10 +453,11 @@ def test_static_budget():
 # 0.55.0 size (in brackets). The unavailable reason is at its longest, 300.
 _INSTRUCTION_BUDGET = {
     # + 80 each, RT-6.26: an event marked mandated is a task, never approval.
-    "self-registering": (2130, 2430, 2580),   # (1860, 2128, 2267)
-    "host-managed": (1960, 2230, 2380),       # (1680, 1948, 2087); + get_file (RT-6.23)
-    "hosted": (2080, 2380, 2530),             # (1806, 2074, 2213)
-    "unavailable": (2280, 2580, 2730),        # (1987, 2255, 2394)
+    # + 50 each, RT-6.11: waiting on a human is never a BLOCKED, a new decision a new ask.
+    "self-registering": (2180, 2480, 2630),   # (1860, 2128, 2267)
+    "host-managed": (2010, 2280, 2430),       # (1680, 1948, 2087); + get_file (RT-6.23)
+    "hosted": (2130, 2430, 2580),             # (1806, 2074, 2213)
+    "unavailable": (2330, 2630, 2780),        # (1987, 2255, 2394)
 }
 
 

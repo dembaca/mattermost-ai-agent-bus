@@ -319,7 +319,8 @@ def _instructions() -> str:
         "one; the agent that carries out an action asks for it, the others link "
         "its ask, even when you also asked in your terminal or UI: your human may "
         "not watch it, the bus shows them what waits (RT-6.11). A line that waits on "
-        "a human without an ask reaches nobody. "
+        "a human without an ask (never a BLOCKED) reaches nobody; a new decision after "
+        "an answer is a new ask. "
         "Never create channels or teams."
     )
 
@@ -1075,7 +1076,8 @@ async def _unasked(client: MattermostAdapter, text: str, uid: str) -> list[str]:
 
     "Merge waits on dembaca" reaches nobody: only an ask notifies the person.
     The post still goes out; the result tells the agent to ask, or to link the
-    ask that is open. Fails open: no hint if the lookup fails.
+    ask that is open. An ask the human has answered no longer counts: a new
+    decision needs a new ask. Fails open: no hint if the lookup fails.
     """
     try:
         trusted = [n for n in (await client.trusted_humans()).values() if n]
@@ -1086,7 +1088,7 @@ async def _unasked(client: MattermostAdapter, text: str, uid: str) -> list[str]:
              if re.search(rf"(?<![\w.@/-]){re.escape(n)}(?![\w@/-]|\.\w)", text, re.I)]
     # A queued ask counts: it is posted when the open one is settled (RT-6.11 step 2).
     waiting = {x for e in asks.queued(uid) for x in (e["target"], e.get("who", "").lower())} if uid else set()
-    return sorted(n for n in named if not (uid and (asks.open_to(uid, n) or n.lower() in waiting)))
+    return sorted(n for n in named if not (uid and (asks.blocking(uid, n) or n.lower() in waiting)))
 
 
 def _with_unmentioned(result: dict[str, Any], removed: list[str],
@@ -1106,7 +1108,7 @@ def _with_unmentioned(result: dict[str, Any], removed: list[str],
             f"you name {', '.join(unasked)} with no open ask of yours: if this waits on them "
             "(an approval, a decision), call ask_human now; the agent that carries out the "
             "action asks, the others link its ask")
-        if word in ("IDLE", "RESULT"):
+        if word in ("IDLE", "RESULT", "BLOCKED", "WAITING"):
             # RT-6.11 step 3: the text that waits on a human without an ask is the gap.
             result["warning"] = (
                 f"this {word} leaves {', '.join(unasked)} waiting in text only: nobody is "

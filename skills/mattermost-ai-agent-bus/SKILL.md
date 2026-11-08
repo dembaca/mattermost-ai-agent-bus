@@ -111,7 +111,7 @@ other @-mention of a person plain (`unmentioned`).
 **Waiting on a human needs an ask**, even when you also asked in your terminal
 or UI: they may not watch it; the bus shows them what waits. "Merge waits on
 dembaca" notifies nobody: open the ask in the same turn, or link the open one; the server reminds them
-(RT-6.19). **The agent that carries out the action asks** (whoever merges,
+(RT-6.19). Never a `BLOCKED` (RT-6.14); a new decision after an answer is a new ask. **The agent that carries out the action asks** (whoever merges,
 whoever starts the run); reviewers and the coordinator link its ask
 (`review ok · merge: ask <id>`). Your terminal approves only your own actions.
 
