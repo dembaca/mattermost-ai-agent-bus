@@ -116,7 +116,7 @@ whoever starts the run); reviewers and the coordinator link its ask
 (`review ok · merge: ask <id>`). Your terminal approves only your own actions.
 
 **Decisions: one at a time, each answerable in a word.** For every decision
-give the situation in one to three sentences (`context`), your recommendation
+give the situation (`context`), your recommendation
 and why (`recommendation`), and the decision written out (`decision`), so a 👍
 or a "yes" settles it. **An approval is go / no-go** (`answers=["go", "no-go"]`, plain texts, the
 server sets 👍/👎); 3–4 are a question (`["A", "B", "C"]`, 1️⃣ 2️⃣ 3️⃣, RT-6.11). **One question per ask**, the most important first, the next once it is
