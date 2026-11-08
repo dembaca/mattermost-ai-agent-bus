@@ -13,8 +13,9 @@ before 0.5.0 are described in the git history.
   still notifies; the question is the card's title. `Where` is left out when
   not given instead of shown as `–`. Open asks, reminders and ask headlines
   read the question from the card's title, from an older ask's bold text; a
-  slim post (push, `get_thread`, `list_recent`) shows it after the mention as
-  before, since it carries no attachments.
+  slim post (push, `get_thread`, `list_recent`, the hook API's posts) shows it
+  after the mention as before, since it carries no attachments. The title goes
+  through the link checks (RT-6.15) like the card's fields.
 - **A hint to structure a long context** (RT-6.11 step 1). The `ask_human`
   description says that more than a few sentences read better as
   short lines or a list than as one paragraph; the shape stays the agent's.

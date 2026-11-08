@@ -347,7 +347,7 @@ async def test_a_decision_comes_with_context_recommendation_and_wording(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_only_the_first_sentence_is_bold(monkeypatch):
+async def test_only_the_first_sentence_is_the_title(monkeypatch):
     """RT-6.11: an explanation written into need goes to context, not into the bold title."""
     c = _Client()
     monkeypatch.setattr(server, "_get_client", lambda: c)

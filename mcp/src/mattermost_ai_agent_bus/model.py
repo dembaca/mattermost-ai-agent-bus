@@ -189,6 +189,14 @@ class Post:
     raw: Mapping[str, Any] = field(default=_EMPTY, compare=False, repr=False)
 
     @property
+    def text(self) -> str:
+        """The message as an agent reads it: an ask's question stands in its
+        card (since 0.71.27), which slim posts leave out, so it follows the
+        mention as it did in the text (RT-6.11 step 1)."""
+        return (f"{self.message} — **{self.title}**" if self.title and self.title not in self.message
+                else self.message)
+
+    @property
     def thread(self) -> str:
         """The thread the post is in: its root, or itself when it is one."""
         return self.root_id or self.id

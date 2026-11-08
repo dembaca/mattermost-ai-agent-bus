@@ -192,8 +192,9 @@ def ask_headline(post: Mapping[str, Any]) -> str:
 
 def attachment_texts(props: Mapping[str, Any], edit: Callable[[str], str]) -> dict[str, Any]:
     """props with `edit` applied to what a human reads in its message
-    attachments: pretext, text and the fields' values (RT-6.15). Titles and
-    the fallback are the server's own plain text."""
+    attachments: title (an ask's question, since 0.71.27), pretext, text and
+    the fields' values (RT-6.15). Field titles and the fallback are the
+    server's own plain text."""
     out = dict(props)
     cards = out.get("attachments")
     if not isinstance(cards, list):
@@ -202,7 +203,7 @@ def attachment_texts(props: Mapping[str, Any], edit: Callable[[str], str]) -> di
     for card in cards:
         if isinstance(card, Mapping):
             card = dict(card)
-            for key in ("pretext", "text"):
+            for key in ("title", "pretext", "text"):
                 if isinstance(card.get(key), str):
                     card[key] = edit(card[key])
             if isinstance(card.get("fields"), list):

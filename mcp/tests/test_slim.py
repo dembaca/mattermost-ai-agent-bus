@@ -82,3 +82,11 @@ async def test_slim_puts_an_asks_title_after_the_mention_once():
     """RT-6.11 step 1: a new ask's question follows the mention as it did in the text; an old one is not doubled."""
     assert (await slim.post(_Client(), post_of(NEW_ASK)))["message"] == "\U0001F64B @dembaca — **Merge #4?**"
     assert (await slim.post(_Client(), post_of(OLD_ASK)))["message"] == "\U0001F64B @dembaca — **Merge #4?**"
+
+
+def test_the_hook_api_and_the_reminder_read_the_question_from_the_card():
+    """RT-6.11 step 1: the hook API's posts carry a new ask's question after the
+    mention; the open asks name it (RT-6.19)."""
+    from mattermost_ai_agent_bus import hookapi, tasks
+    assert hookapi._slim(post_of(NEW_ASK), set(), set())["message"] == "\U0001F64B @dembaca — **Merge #4?**"
+    assert [a["need"] for a in tasks.open_asks([post_of(NEW_ASK)], {"u1": "agent-x"})] == ["Merge #4?"]
