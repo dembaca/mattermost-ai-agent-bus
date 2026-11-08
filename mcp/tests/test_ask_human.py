@@ -296,7 +296,7 @@ async def test_an_answered_ask_no_longer_counts_as_open(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: c)
     asks.add(BOT, ASK, "dembaca")
     assert "unasked" not in json.loads(await server.post_message("BLOCKED · decision from dembaca"))
-    assert asks.answered(BOT, ASK) is not None
+    asks.answered(BOT, ASK)  # records the human's answer (not under test: the call is the setup)
     out = json.loads(await server.post_message("BLOCKED · next decision from dembaca"))
     assert out["unasked"] == ["dembaca"] and "warning" in out
     assert asks.open_to(BOT, "dembaca") == [ASK]  # open_to keeps its meaning

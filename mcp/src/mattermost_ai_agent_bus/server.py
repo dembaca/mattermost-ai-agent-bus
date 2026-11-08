@@ -320,7 +320,7 @@ def _instructions() -> str:
         "its ask, even when you also asked in your terminal or UI: your human may "
         "not watch it, the bus shows them what waits (RT-6.11). A line that waits on "
         "a human without an ask (never a BLOCKED) reaches nobody; a new decision after "
-        "an answer is a new ask. "
+        "an answer is a new ask (resolve_ask the old one). "
         "Never create channels or teams."
     )
 
@@ -1105,15 +1105,16 @@ def _with_unmentioned(result: dict[str, Any], removed: list[str],
     if unasked:
         result["unasked"] = unasked
         hints.append(
-            f"you name {', '.join(unasked)} with no open ask of yours: if this waits on them "
+            f"you name {', '.join(unasked)} with no unanswered ask of yours: if this waits on them "
             "(an approval, a decision), call ask_human now; the agent that carries out the "
-            "action asks, the others link its ask")
+            "action asks, the others link its ask; after an answer a new decision is a new ask, "
+            "resolve_ask the old one")
         if word in ("IDLE", "RESULT", "BLOCKED", "WAITING"):
             # RT-6.11 step 3: the text that waits on a human without an ask is the gap.
             result["warning"] = (
                 f"this {word} leaves {', '.join(unasked)} waiting in text only: nobody is "
-                "notified and nothing is open on the bus. Call ask_human now, or the human "
-                "never learns that you wait")
+                "notified and no ask of yours waits for an answer. Call ask_human now (resolve_ask "
+                "the answered one), or the human never learns that you wait")
     if hints:
         result["hint"] = "; ".join(hints)
     return result
