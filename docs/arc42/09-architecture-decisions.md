@@ -1742,10 +1742,11 @@ already holds: `channel.wakes`, `gate.wake_reason` and the gate,
 `gate.author_class`, `attest.verify` / `verify_mode` / `verify_mandate`,
 `asks.py`, the refusals and rewrites of a tool call, and every post's props,
 which Mattermost delivers with the post. None of it reaches the chat. The
-props are invisible too: the Mattermost webapp renders none of the bus's
-props (`a2a`, and the `bgl_*` props of #192, open); it renders `attachments`,
-which is how the ask cards show. A person sees the rest only through the API
-or `mmctl`. The servers never talk to each other; each knows its own view only.
+props are invisible too: the Mattermost webapp renders neither the bus's
+props (`a2a`) nor a bridge's under the configured prefix (`MM_PROPS_PREFIX`,
+RT-6.16 step 8); it renders `attachments`, which is how the ask cards show.
+A person sees the rest only through the API or `mmctl`. The servers never
+talk to each other; each knows its own view only.
 
 **Decision (proposed):**
 
@@ -1786,9 +1787,9 @@ not know that either). A view across several servers (`/agent-explain
 - `full`: all of them.
 
 No `delegation` while ADR-004 is not built: nothing of it exists yet, and
-props that claim work on someone's behalf (`bgl_on_behalf_of` of #192, or
-ADR-004's `delegated` once built) show under `props`, unchecked. Not costs or
-context either: the status shows those (ADR-008).
+props that claim work on someone's behalf (`<prefix>on_behalf_of`, RT-6.16
+step 8, or ADR-004's `delegated` once built) show under `props`, unchecked.
+Not costs or context either: the status shows those (ADR-008).
 
 *Switching · additive, per home, by a trusted human.* `/agent-debug on
 <category…>` adds, `/agent-debug off <category…>` removes, `/agent-debug off`
@@ -1818,7 +1819,8 @@ one line per active category, about the event the post answers; `props` as a
 after it (`attachments` is a list). An agent that posts nothing adds nothing:
 the channel stays quiet, and Mattermost collapses a long attachment behind
 "Show more". Never in a guest channel, the lobby or a DM: props and author
-classes may name people, and the setting is the home's. The agent itself gets
+classes may name people, and the setting is the home's (a DM between two
+agents: open question below). The agent itself gets
 the same lines with the events of its home, in the body of its channel tag
 (RT-6.12; a block after the post, escaped like it) and as a `debug` field in
 `wait_for_events`, only while a category is on; its `props` there are cut at
@@ -1886,6 +1888,13 @@ on: the end, and `status` and `bus_info` show it.
 - **`/agent-explain` across servers:** each server answering for its own view
   of a linked post, ephemeral to the human. Recommendation: after phase 2,
   once the lines have proved useful.
+- **A DM between two agents:** a test of work on someone's behalf runs in
+  a DM between two agents, which this decision leaves without debug. Not
+  decided yet: whether such a DM gets the attachment while each agent's home
+  has debug on; a DM with a person would stay without either way. For it:
+  that DM is where the test runs. Against it: the reason for the line holds
+  there too (`<prefix>on_behalf_of` may name a person), and no human of the
+  home sees the DM.
 - **Size:** Mattermost's limit on props is far above what reads well.
   Recommendation: cut the `debug` attachment at 4,000 characters to keep the
   post readable, `props` first.
