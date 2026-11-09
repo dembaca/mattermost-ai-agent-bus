@@ -18,7 +18,9 @@ starts with the oldest open item. An ask within its 24 h whose asking agent is
 still on the roster (the crown holder's own too) is listed but is no reason to
 wake it: that agent's remind.py nudges the human, the coordinator would find
 nothing to do, so a stall whose only items they are wakes nobody (RT-6.19
-step 2). An ask expired, or whose agent left (no reminders any more), still
+step 2). A task whose assignee has such an ask open waits on that human as
+well: listed with the ask, no reason to wake either; an answered ask shields
+nothing. An ask expired, or whose agent left (no reminders any more), still
 wakes it, and so does any other item: a question to the 👑 (RT-6.25) too. Then the server wakes its agent with an event
 `{kind: "stall"}` whose text lists the items: what, who is next, the last
 activity. The event goes into the inbox queue, so it reaches the agent like
@@ -119,7 +121,8 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
     """The open items, longest quiet first: {what, id, title, next, last, at}.
     An ask still within its 24 h by `me` (the crown holder) or by an agent in
     `reachable` is marked reminded: that agent's server reminds the human
-    (remind.py), so it is listed but wakes nobody (RT-6.19 step 2)."""
+    (remind.py), so it is listed but wakes nobody (RT-6.19 step 2). So is a
+    task whose assignee has such an ask open: it waits on that human."""
     live = [p for p in posts if not p.type and not p.delete_at]
     by_thread: dict[str, list[Post]] = {}
     for p in live:
@@ -129,22 +132,7 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
         return names.get(p.user_id, "")
 
     out: list[dict[str, Any]] = []
-    for r in rows:
-        status = r.get("status", "open")
-        if status not in OPEN:
-            continue
-        thread = by_thread.get(r["task"], [])
-        agent = r.get("agent")
-        said = [p.kind for p in sorted(thread, key=_at) if agent and who(p) == agent]
-        said = [w for w in said if w and a2a.status(w)]
-        if said and said[-1] == "WAITING":
-            continue  # the assignee waits on purpose
-        nxt = {"open": agent or "nobody: assign it", "active": agent,
-               "blocked": r.get("by"), "review": r.get("by")}[status] or "–"
-        at, last = _last(thread, names)
-        out.append({"what": f"task {status}", "id": r["task"], "title": r.get("title", ""),
-                    "next": nxt, "last": last, "at": at})
-
+    on_human: dict[str, dict[str, Any]] = {}  # agent → its reminded ask
     by_id = {p.id: p for p in live}
     for a in tasks.open_asks(live, names, trusted, foreign):
         post = by_id.get(a["ask"])
@@ -166,6 +154,28 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
         item = {"what": what, "id": a["ask"], "title": a.get("need", ""),
                 "next": nxt, "last": last, "at": at}
         if what == "ask" and reminded:
+            item["reminded"] = True
+            on_human.setdefault(by, a)
+        out.append(item)
+
+    for r in rows:
+        status = r.get("status", "open")
+        if status not in OPEN:
+            continue
+        thread = by_thread.get(r["task"], [])
+        agent = r.get("agent")
+        said = [p.kind for p in sorted(thread, key=_at) if agent and who(p) == agent]
+        said = [w for w in said if w and a2a.status(w)]
+        if said and said[-1] == "WAITING":
+            continue  # the assignee waits on purpose
+        nxt = {"open": agent or "nobody: assign it", "active": agent,
+               "blocked": r.get("by"), "review": r.get("by")}[status] or "–"
+        at, last = _last(thread, names)
+        item = {"what": f"task {status}", "id": r["task"], "title": r.get("title", ""),
+                "next": nxt, "last": last, "at": at}
+        if agent and (waits := on_human.get(agent)):
+            # Its assignee waits on a human's answer, reminded by its server.
+            item["next"] = f"{waits.get('human', '–')} (ask {waits['ask']} of {agent}; reminded automatically)"
             item["reminded"] = True
         out.append(item)
 
@@ -369,8 +379,8 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
     for lk in looks:
         if all(i.get("reminded") for i in lk.found):
             # RT-6.19 step 2: nothing open, or only asks their agents' servers
-            # remind: the human is nudged already, a wake would find nothing to
-            # do. The quiet period and backoff are kept, so a later item that
+            # remind and tasks whose assignee waits on such an ask: the human
+            # is nudged already, a wake would find nothing to do. The quiet period and backoff are kept, so a later item that
             # needs an agent wakes as if these had not been there.
             lk.save()
         elif lk.nxt > now:

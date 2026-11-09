@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.31
+
+### Changed
+
+- **A task whose assignee waits on a human's answer is no stall**
+  ([RT-6.19 step 2](docs/arc42/06-runtime-view.md)). When the assignee has
+  an ask open that its server reminds (within 24 h, agent on the roster),
+  the task is listed with that ask but wakes the coordinator no more than
+  the ask itself; before, a task waiting only on a merge go woke it every
+  20 min. An answered or resolved ask shields nothing, and the shielded time
+  uses up no backoff.
+
 ## 0.71.30
 
 ### Changed

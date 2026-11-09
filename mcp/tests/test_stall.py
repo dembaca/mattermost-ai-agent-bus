@@ -617,6 +617,55 @@ async def test_reminded_human_asks_alone_wake_nobody(bus):
     assert "reminded automatically" in bus.woken[0] and pid(3) in bus.woken[0]
 
 
+def _task_on_ask(bus, reactions: list[dict] | None = None) -> None:
+    """A task whose assignee asked the human (as #186 waited on its merge go)."""
+    bus.posts += [post(1, ME, "TASK · Fix the parser · @agent-bob", 60),
+                  post(2, BOB, "PROGRESS · PR #4, CI green", 50, root=1),
+                  post(3, BOB, "\U0001F64B @dembaca — **Merge PR #4?**", 45, kind=a2a.ASK,
+                       metadata={"reactions": reactions} if reactions else None)]
+
+
+async def test_a_task_whose_assignee_has_an_open_ask_waits_on_the_human(bus):
+    """RT-6.19 step 2 (0.71.31): the assignee waits on the human's answer, which
+    its server reminds: the task wakes nobody, alone or with that ask. Beside an
+    item that needs an agent it is listed, the ask named as what it waits on."""
+    _task_on_ask(bus)
+    await look(bus)
+    await look(bus, 60)
+    assert bus.woken == []
+    bus.posts += [post(4, HUMAN, "@agent-eve can you look at the build?", 40)]
+    await look(bus, 61)
+    assert len(bus.woken) == 1
+    line = next(ln for ln in bus.woken[0].splitlines() if ln.startswith(f"- task active {pid(1)}"))
+    assert f"ask {pid(3)} of agent-bob; reminded automatically" in line
+
+
+@pytest.mark.parametrize("by,emoji", [(HUMAN, "+1"), (BOB, "white_check_mark")])
+async def test_an_answered_or_resolved_ask_shields_the_task_no_more(bus, by, emoji):
+    """RT-6.19: once the human answered (or the agent resolved the ask) the
+    task waits on its assignee again and the stall wakes the coordinator."""
+    _task_on_ask(bus, [{"user_id": by, "post_id": pid(3), "emoji_name": emoji}])
+    await look(bus)
+    assert len(bus.woken) == 1
+    assert f"task active {pid(1)}" in bus.woken[0] and "next: agent-bob" in bus.woken[0]
+
+
+async def test_a_working_agent_then_the_answer_wakes_without_a_lost_alert(bus):
+    """RT-6.19: while the ask is open and an agent works (a sub-agent run), no
+    stall; the shielded time uses up no backoff, so once the ask is answered
+    and nobody works the first wake comes at once."""
+    _task_on_ask(bus)
+    bus.roster["agent-eve"] = "working"
+    await look(bus)
+    bus.roster["agent-eve"] = "listening"
+    await look(bus, 30)
+    assert bus.woken == [] and stall._read(ME)["WAKES"] == 0
+    bus.posts[-1] = post(3, BOB, "\U0001F64B @dembaca — **Merge PR #4?**", 45, kind=a2a.ASK,
+                         metadata={"reactions": [{"user_id": HUMAN, "post_id": pid(3), "emoji_name": "+1"}]})
+    await look(bus, 45)
+    assert len(bus.woken) == 1 and "next: agent-bob" in bus.woken[0]
+
+
 async def test_an_ask_whose_agent_left_still_wakes(bus):
     """RT-6.19 step 2: an ask whose agent is no longer on the roster has no
     reminders any more: it wakes the coordinator and says so."""
