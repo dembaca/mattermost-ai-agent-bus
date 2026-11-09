@@ -99,6 +99,7 @@ def bus(monkeypatch):
     monkeypatch.setattr(stall, "sink", sink)
     monkeypatch.setattr(stall, "waiting", lambda: False)
     monkeypatch.setattr(stall, "_held", False)
+    monkeypatch.setattr(stall, "_seen_answers", {})
     client.roster, client.woken = roster, woken
     return client
 
@@ -643,27 +644,66 @@ async def test_a_task_whose_assignee_has_an_open_ask_waits_on_the_human(bus):
 @pytest.mark.parametrize("by,emoji", [(HUMAN, "+1"), (BOB, "white_check_mark")])
 async def test_an_answered_or_resolved_ask_shields_the_task_no_more(bus, by, emoji):
     """RT-6.19: once the human answered (or the agent resolved the ask) the
-    task waits on its assignee again and the stall wakes the coordinator."""
-    _task_on_ask(bus, [{"user_id": by, "post_id": pid(3), "emoji_name": emoji}])
+    task waits on its assignee again and the stall wakes the coordinator
+    (the answer 40 min back: its grace is over)."""
+    _task_on_ask(bus, [{"user_id": by, "post_id": pid(3), "emoji_name": emoji,
+                        "create_at": int((NOW - 40 * 60) * 1000)}])
     await look(bus)
     assert len(bus.woken) == 1
     assert f"task active {pid(1)}" in bus.woken[0] and "next: agent-bob" in bus.woken[0]
 
 
-async def test_a_working_agent_then_the_answer_wakes_without_a_lost_alert(bus):
+def _answer(bus, at_min: float | None) -> None:
+    """The human's 👍 on the ask of _task_on_ask, at NOW + at_min (None: no time)."""
+    r = {"user_id": HUMAN, "post_id": pid(3), "emoji_name": "+1"}
+    if at_min is not None:
+        r["create_at"] = int((NOW + at_min * 60) * 1000)
+    bus.posts[-1] = post(3, BOB, "\U0001F64B @dembaca — **Merge PR #4?**", 45, kind=a2a.ASK,
+                         metadata={"reactions": [r]})
+
+
+async def test_a_working_agent_then_the_answer_loses_no_alert(bus):
     """RT-6.19: while the ask is open and an agent works (a sub-agent run), no
-    stall; the shielded time uses up no backoff, so once the ask is answered
-    and nobody works the first wake comes at once."""
+    stall; the shielded time uses up no backoff. The human's answer starts a
+    quiet period (0.71.33): MM_STALL_SEC later the task, still not moving,
+    wakes the coordinator, as the first wake of that period."""
     _task_on_ask(bus)
     bus.roster["agent-eve"] = "working"
     await look(bus)
     bus.roster["agent-eve"] = "listening"
     await look(bus, 30)
     assert bus.woken == [] and stall._read(ME)["WAKES"] == 0
-    bus.posts[-1] = post(3, BOB, "\U0001F64B @dembaca — **Merge PR #4?**", 45, kind=a2a.ASK,
-                         metadata={"reactions": [{"user_id": HUMAN, "post_id": pid(3), "emoji_name": "+1"}]})
+    _answer(bus, 44)
     await look(bus, 45)
+    await look(bus, 53)
+    assert bus.woken == []
+    await look(bus, 54.5)
     assert len(bus.woken) == 1 and "next: agent-bob" in bus.woken[0]
+
+
+async def test_the_answer_gives_the_assignee_grace_before_the_stall(bus):
+    """RT-6.19 (0.71.33): once the human answered, the task is due only
+    MM_STALL_SEC after the answer, not at once: the assignee gets time to act.
+    It acts (a post), and nothing wakes."""
+    _task_on_ask(bus)
+    _answer(bus, -1)
+    await look(bus)
+    assert bus.woken == []
+    bus.posts.append(post(4, BOB, "PROGRESS · merging", -5, root=1))
+    await look(bus, 9.5)
+    assert bus.woken == []
+
+
+async def test_an_answer_without_its_time_counts_from_the_first_look(bus):
+    """RT-6.19: a reaction that comes without create_at starts the grace at the
+    first look that sees it; later looks keep that time."""
+    _task_on_ask(bus)
+    _answer(bus, None)
+    await look(bus, 1)
+    await look(bus, 10.5)
+    assert bus.woken == []
+    await look(bus, 11.5)
+    assert len(bus.woken) == 1
 
 
 async def test_an_ask_whose_agent_left_still_wakes(bus):

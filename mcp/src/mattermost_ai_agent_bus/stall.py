@@ -10,7 +10,9 @@ WAITING: that wait is on purpose), an ask_human ask without its answer, or a
 post in the work channel that @-mentions a reachable agent and has no reply
 by that agent in its thread after it (not an agent's fyi post, not older than
 a day) — and for MM_STALL_SEC (default 600 s) no post there by an agent or a
-trusted human (the ask reminders of remind.py are none) and no agent with the
+trusted human (the ask reminders of remind.py are none), no answer by a
+trusted human on an ask (its yes, no or choice emoji: the task the ask
+shielded gets that long before it is due) and no agent with the
 status `working`; the crown holder's own posts and status are none either (its
 nudges would start a new quiet period), they only push the next wake to
 MM_STALL_SEC after them. Without any activity in the window the quiet period
@@ -104,6 +106,28 @@ def quiet_since(posts: Sequence[Post], classes: list[str], uid: str = "") -> tup
                and p.kind != a2a.REMINDER]
     return (max((_at(p) for p in counted if p.user_id != uid), default=0),
             max((_at(p) for p in counted if uid and p.user_id == uid), default=0))
+
+
+_seen_answers: dict[str, int] = {}  # answer → first look that saw it, for one without create_at
+
+
+def answered_since(posts: Sequence[Post], trusted: Collection[str], now_ms: int) -> int:
+    """Epoch ms of the newest answer (yes, no or a choice emoji) by a trusted
+    human (ids in `trusted`) on an ask among `posts`; 0 without one. A reply
+    is a post and counts in quiet_since already. A reaction without its time
+    counts from the first look that sees it (kept in memory, a day at most)."""
+    newest = 0
+    for p in posts:
+        if p.kind != a2a.ASK or p.delete_at:
+            continue
+        for r in p.reactions:
+            if r.user_id not in trusted or not asks.is_answer(r.emoji_name):
+                continue
+            at = r.create_at or _seen_answers.setdefault(f"{p.id}:{r.user_id}:{r.emoji_name}", now_ms)
+            newest = max(newest, at)
+    for key in [k for k, t in _seen_answers.items() if now_ms - t > ADDRESSED_KEEP_SEC * 1000]:
+        del _seen_answers[key]
+    return newest
 
 
 def _last(thread: Sequence[Post], names: Mapping[str, str]) -> tuple[int, str]:
@@ -323,9 +347,12 @@ async def _look(client: ChatPort, uid: str, now: float, chan: str = "", name: st
     # The crown holder's own posts (its nudges) and own `working` (its wake
     # turn) start no quiet period: only someone else's activity does.
     quiet, own = quiet_since(posts, classes, uid)
+    trusted = await client.trusted_humans()
+    # A trusted human's answer on an ask is activity like their post: the
+    # task it shielded gets MM_STALL_SEC before it is due (0.71.33).
+    quiet = max(quiet, answered_since(posts, trusted, now_ms))
     if any(r.status == "working" and r.username != names.get(uid) for r in roster):
         quiet = now_ms
-    trusted = await client.trusted_humans()
     untrusted: set[str] = set()
     if trusted:
         untrusted = {p.id for p, c in zip(posts, classes, strict=True)
