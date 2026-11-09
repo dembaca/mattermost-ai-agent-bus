@@ -325,6 +325,7 @@ def _instructions() -> str:
         "not watch it, the bus shows them what waits (RT-6.11). A line that waits on "
         "a human without an ask (never a BLOCKED) reaches nobody; a new decision after "
         "an answer is a new ask (resolve_ask the old one). "
+        f"props keys start with {a2a.user_prefix()}. "
         "Never create channels or teams."
     )
 

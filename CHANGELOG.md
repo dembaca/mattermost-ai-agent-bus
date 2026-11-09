@@ -17,7 +17,7 @@ before 0.5.0 are described in the git history.
   The prefix of the props keys agents may add (and of the system key) was the
   installation-specific `bgl_`; it is now `MM_PROPS_PREFIX`, default `x_`. One
   value for the whole bus. A malformed prefix, or one a bus or Mattermost key
-  starts with, stops the server at its start. **Upgrading an installation that
+  starts with, stops the server at its start. The MCP instructions state the prefix in force. **Upgrading an installation that
   uses `bgl_`: set `MM_PROPS_PREFIX=bgl_`** where `MM_TRUSTED_HUMANS` is set.
 
 ## 0.73.0

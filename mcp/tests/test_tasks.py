@@ -455,10 +455,11 @@ _INSTRUCTION_BUDGET = {
     # + 80 each, RT-6.26: an event marked mandated is a task, never approval.
     # + 100 each, RT-6.11: waiting on a human is never a BLOCKED, a new decision a new ask.
     # + 50 in push modes (+ 60 host-managed, which is scoped to a confirmed channel), RT-6.11: after ask_human end the turn, the answer is pushed.
-    "self-registering": (2230, 2580, 2730),   # (1860, 2128, 2267)
-    "host-managed": (2060, 2390, 2540),       # (1680, 1948, 2087); + get_file (RT-6.23)
-    "hosted": (2180, 2530, 2680),             # (1806, 2074, 2213)
-    "unavailable": (2380, 2730, 2880),        # (1987, 2255, 2394)
+    # + 30 each, RT-6.16 step 8: the props prefix in force, so no call needs a refusal to learn it.
+    "self-registering": (2260, 2610, 2760),   # (1860, 2128, 2267)
+    "host-managed": (2090, 2420, 2570),       # (1680, 1948, 2087); + get_file (RT-6.23)
+    "hosted": (2210, 2560, 2710),             # (1806, 2074, 2213)
+    "unavailable": (2410, 2760, 2910),        # (1987, 2255, 2394)
 }
 
 
@@ -612,3 +613,11 @@ async def test_every_tool_refuses_an_unknown_argument_and_names_the_valid_ones()
     with pytest.raises(ToolError) as err:  # a missing argument is named in the same answer
         await server.mcp.call_tool("ask_human", {"question": "x"})
     assert "no argument question" in str(err.value) and "also wrong: need (field required)" in str(err.value)
+
+
+def test_the_instructions_name_the_props_prefix_in_force(monkeypatch):
+    """RT-6.16 step 8: an agent reads the prefix with the instructions, not from a refusal."""
+    monkeypatch.delenv("MM_PROPS_PREFIX", raising=False)
+    assert "props keys start with x_." in server._instructions()
+    monkeypatch.setenv("MM_PROPS_PREFIX", "bgl_")
+    assert "props keys start with bgl_." in server._instructions()
