@@ -140,8 +140,9 @@ def wake(posts: Iterable[Mapping[str, Any]], recent: Iterable[Mapping[str, Any]]
     roots = {p.get("id") for p in own if not p.get("root_id")}
     addressed, others = 0, []
     for p in posts:
-        if p.get("user_id") == me or p.get("type") or int(p.get("create_at") or 0) < since_ms:
-            continue
+        if (p.get("user_id") == me or p.get("type") or p.get("quiet")
+                or int(p.get("create_at") or 0) < since_ms):
+            continue  # a quiet post: another agent's context line (RT-6.6 step 9)
         root = p.get("root_id") or ""
         seen = (coordinator and not p.get("names_agent")) or (bool(root) and root in threads)
         mine = bool(root) and root in roots

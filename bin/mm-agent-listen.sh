@@ -136,11 +136,12 @@ while (( $(date +%s) < UNTIL )); do
     # server answers (RT-6.21). Seen: a thread it posted in, or holding the 👑
     # a post that names no agent (names_agent, RT-6.6 step 5). An agent's fyi post (the server tells, RT-6.14)
     # wakes only whom it names and the author of its thread's root; a post the
-    # server gated (RT-6.16) wakes nobody here.
+    # server gated (RT-6.16) wakes nobody here. Another agent's context line
+    # (quiet, RT-6.6 step 9) wakes nobody and enters no digest.
     read -r addressed others oldest fyi < <(jq -r --arg me "$ME" --arg name "$MY_NAME" \
         --argjson t "$since_ms" --argjson threads "$MY_THREADS" --argjson roots "$MY_ROOTS" \
         --argjson coord "$coordinator" '
-      [.posts[] | select(.user_id != $me and .type == "" and .create_at >= $t)]
+      [.posts[] | select(.user_id != $me and .type == "" and .create_at >= $t and .quiet != true)]
       | map(.root_id as $r
         | . + {named: ((.message | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
                         | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))

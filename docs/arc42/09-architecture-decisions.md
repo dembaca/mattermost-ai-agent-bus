@@ -1451,7 +1451,7 @@ or not at all is for the human to decide.
 **Phases:** (1) the tap and the status (steps 1 and 2): `POST /v1/usage`, the
 helper, the throttle, the text and its truncation. (2) the roster and the
 coordinator.md line (step 3). (3) the thresholds, `BLOCKED`, the blocked state
-and its answer (step 4), after the measurement below. Each is patch-sized. Built in 0.71.6: (1) and (2) together. Built in 0.76.0 of (3): the context line only (once per context window, armed again when a report is below 85 %; its own fyi kind `usage`, which, like a reminder, is no post of the agent's); the window lines, `BLOCKED`, the blocked state and its answer wait for the measurement.
+and its answer (step 4), after the measurement below. Each is patch-sized. Built in 0.71.6: (1) and (2) together. Built in 0.76.0 of (3): the context line only (once per context window, armed again when a report is below 70 %; its own fyi kind `usage`, which, like a reminder, is no post of the agent's, and which wakes no other agent and enters no digest: the roster carries the number); the window lines, `BLOCKED`, the blocked state and its answer wait for the measurement.
 
 **Tests (when built, `mcp/tests/`, `tests/hooks/`):** the helper sends on a
 change of one point and every 60 s, not more, and never waits longer than 1 s

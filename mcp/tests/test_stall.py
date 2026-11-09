@@ -949,3 +949,13 @@ async def test_only_the_crown_holder_reads_the_guests(bus, monkeypatch):
     monkeypatch.setattr(lease, "crown_held", lambda uid: True)
     await stall.watch(bus)
     assert reads == [1]
+
+
+def test_a_context_line_is_no_activity_of_the_agent():
+    """RT-6.6 step 9: the server's context line is not the agent's activity for the
+    stall check (quiet_since), like a reminder."""
+    posts = [post(1, BOB, "ctx 86% · compaction soon", 1, kind=a2a.USAGE),
+             post(2, BOB, "ACK · on it", 30)]
+    assert stall.quiet_since(posts, ["agent", "agent"], ME) == (posts[1].create_at, 0)
+    posts = [post(1, ME, "ctx 86% · compaction soon", 1, kind=a2a.USAGE)]
+    assert stall.quiet_since(posts, ["agent"], ME) == (0, 0)

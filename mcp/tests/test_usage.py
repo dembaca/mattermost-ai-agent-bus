@@ -9,7 +9,8 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import a2a, hookapi, lease, ownpost, tasks, usage
+from mattermost_ai_agent_bus import a2a, hookapi, lease, ownpost, tasks, turnend, usage
+from mattermost_ai_agent_bus.model import Refused
 from mattermost_ai_agent_bus.model import RosterEntry
 
 from fakes import FakeChat, HookClient, post_of
@@ -461,10 +462,78 @@ async def test_the_context_line_comes_once_per_window_and_again_after_a_compacti
     for ctx in (90, 96, 99):
         await h.post("/v1/usage", json={"ctx": ctx})
     assert len(c.posted) == 1  # once per context window
-    await h.post("/v1/usage", json={"ctx": 12})  # compacted
+    await h.post("/v1/usage", json={"ctx": 12})  # compacted: below 70 %, armed again
     assert len(c.posted) == 1
     await h.post("/v1/usage", json={"ctx": 88})
     assert [p["message"] for p in c.posted] == ["ctx 85% · compaction soon", "ctx 88% · compaction soon"]
+
+
+async def test_a_jitter_around_the_threshold_posts_one_line(api, monkeypatch):
+    """RT-6.6 step 9: only a report below CTX_REARM_BELOW (70 %) arms the next line."""
+    _announced(monkeypatch)
+    c = FakeChat(uid=UID)
+    h = await api(c)
+    for ctx in (85, 84, 86, 80, 71, 85, 90):
+        await h.post("/v1/usage", json={"ctx": ctx})
+    assert len(c.posted) == 1
+    await h.post("/v1/usage", json={"ctx": 69})
+    await h.post("/v1/usage", json={"ctx": 85})
+    assert len(c.posted) == 2
+
+
+async def test_a_restarted_server_posts_the_line_once_more(api, monkeypatch):
+    """RT-6.6 step 9, error row: a restart forgets the line, so a context still at 85 %
+    or more posts it once more (accepted)."""
+    _announced(monkeypatch)
+    c = FakeChat(uid=UID)
+    h = await api(c)
+    await h.post("/v1/usage", json={"ctx": 90})
+    usage.reset()  # the server restarts: its memory is new
+    await h.post("/v1/usage", json={"ctx": 91})
+    await h.post("/v1/usage", json={"ctx": 92})
+    assert [p["message"] for p in c.posted] == ["ctx 90% · compaction soon", "ctx 91% · compaction soon"]
+
+
+async def test_a_4xx_ends_the_line_for_this_window(api, monkeypatch, caplog):
+    """RT-6.6 step 9, error row: a 4xx comes back the same (the HELLO deleted, the channel
+    archived): no retry on every report, logged once; a compaction arms the next."""
+    _announced(monkeypatch)
+
+    class Refusing(FakeChat):
+        refuse = True
+
+        async def post(self, message, **kw):
+            self.tries = getattr(self, "tries", 0) + 1
+            if self.refuse:
+                raise Refused("Mattermost refused the post (403)", status=403)
+            return await super().post(message, **kw)
+
+    c = Refusing(uid=UID)
+    h = await api(c)
+    with caplog.at_level(logging.INFO, logger="mattermost_ai_agent_bus.lease"):
+        for ctx in (86, 87, 88, 89):
+            await h.post("/v1/usage", json={"ctx": ctx})
+    assert c.tries == 1 and not usage.ctx_line_due()
+    assert sum("ctx line not posted" in r.getMessage() for r in caplog.records) == 1
+    c.refuse = False
+    await h.post("/v1/usage", json={"ctx": 30})
+    await h.post("/v1/usage", json={"ctx": 86})
+    assert [p["message"] for p in c.posted] == ["ctx 86% · compaction soon"]
+
+
+def test_another_agents_context_line_is_quiet_for_the_listener():
+    """RT-6.6 step 9: /v1/posts marks an agent's context line `quiet` (only from an agent),
+    and the listener's rules (/v1/wake) neither wake for it nor count it for a digest."""
+    line = post_of({"id": "l" * 26, "user_id": OTHER, "message": "ctx 86% · compaction soon",
+                    "root_id": HELLO, "create_at": 5, "props": a2a.props(kind=a2a.USAGE)})
+    slim = hookapi._slim(line, {OTHER}, set(), set())
+    assert slim["quiet"] is True and slim["fyi"] is True
+    assert hookapi._slim(line, set(), set(), set())["quiet"] is False  # a human's props do not count
+    recent = [{"id": HELLO, "user_id": UID, "root_id": ""}]  # even in a thread this agent started
+    for coordinator in (False, True):
+        got = turnend.wake([slim], recent, me=UID, username="agent-me", since_ms=0,
+                           coordinator=coordinator, digest_sec=0, now=10)
+        assert got["wake"] is False
 
 
 async def test_no_context_line_for_a_runtime_that_reports_nothing(api, monkeypatch):

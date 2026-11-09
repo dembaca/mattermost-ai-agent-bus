@@ -20,7 +20,7 @@ import httpx
 
 from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, stats, watermark
 from .model import (Channel, ChannelUser, FileInfo, Me, NoAttestationEndpoint, NoMandateEndpoint, Post,
-                    Reaction, Thread, UnreadChannel)
+                    Reaction, Refused, Thread, UnreadChannel)
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -287,16 +287,13 @@ class InvalidId(ValueError):
     """An id or name that must not go into a Mattermost API path (#81)."""
 
 
-class Refused(Exception):
-    """Mattermost refused a post or a file; the text says why, for the agent."""
-
-
 def _refused(exc: httpx.HTTPStatusError, what: str = "post") -> Refused:
     try:
         why = str(exc.response.json().get("message") or "")
     except (ValueError, httpx.ResponseNotRead):
         why = ""
-    return Refused(f"Mattermost refused the {what} ({exc.response.status_code})" + (f": {why}" if why else ""))
+    return Refused(f"Mattermost refused the {what} ({exc.response.status_code})" + (f": {why}" if why else ""),
+                   status=exc.response.status_code)
 
 
 def mm_id(value: object, what: str) -> str:

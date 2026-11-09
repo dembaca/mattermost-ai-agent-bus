@@ -29,6 +29,9 @@ BAND_GAP_SEC = 60.0  # a band write never comes sooner than this after the last
 FIVE_HOURS_SEC = 5 * 3600
 MAX_COST_USD = 1_000_000.0  # a sanity bound, not a limit
 CTX_LINE_AT = 85  # ADR-008 step 4: one line in the HELLO thread per context window
+# Below this the next line is armed: a compaction goes far below, a jitter around
+# CTX_LINE_AT does not.
+CTX_REARM_BELOW = CTX_LINE_AT - 15
 
 _last: dict[str, Any] | None = None
 _limits_logged = False
@@ -163,16 +166,16 @@ def take_band(now: float | None = None) -> bool:
 
 def ctx_line_due() -> bool:
     """Whether the last report's `ctx` reached CTX_LINE_AT and no line came for this
-    context window yet (ADR-008 step 4, RT-6.6 step 9). A report below it (a
-    compaction) arms the next line; one without `ctx` changes nothing. Cheap."""
+    context window yet (ADR-008 step 4, RT-6.6 step 9). A report below
+    CTX_REARM_BELOW (a compaction) arms the next line; one without `ctx` changes
+    nothing. Cheap."""
     global _ctx_armed
     ctx = (_last or {}).get("ctx")
     if ctx is None:
         return False
-    if ctx < CTX_LINE_AT:
+    if ctx < CTX_REARM_BELOW:
         _ctx_armed = True
-        return False
-    return _ctx_armed
+    return ctx >= CTX_LINE_AT and _ctx_armed
 
 
 def take_ctx_line() -> float | None:

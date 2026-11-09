@@ -77,6 +77,9 @@ _OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE, USAGE)
 # Posts the server sends on its own: no post of the agent's, so they neither undo
 # a sign-off (ownpost.py) nor count as its activity (stall.py).
 SERVER_OWN = (REMINDER, USAGE)
+# An agent's posts no other agent needs a turn for: they wake nobody and enter no
+# digest (the roster carries the number, RT-6.6 step 9). Only an agent's props count.
+QUIET = (USAGE,)
 # The wire door of the core (arc42 §5.1): the meanings the core speaks in
 # (model.Mark, Answer, StatusMark) and what they look like in Mattermost
 # (symbols.py, the one place that knows the characters and shortcodes).

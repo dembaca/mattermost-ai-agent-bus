@@ -449,6 +449,8 @@ class Pusher:
                         # "… joined the channel": Mattermost names the human who
                         # added a bot as its author, so it would wake as theirs.
                         pass
+                    elif item.get("quiet"):
+                        pass  # RT-6.6 step 9: an agent's context line, no turn for it
                     elif intercept is not None and await intercept(item):
                         pass
                     elif addressed is None or await addressed(item):

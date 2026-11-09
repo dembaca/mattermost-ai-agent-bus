@@ -26,8 +26,8 @@ from . import (
     __version__, a2a, askroute, asks, attest, channel, departed, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
     profile, remind, session_file, slim, stall, stats, tasks, unread, usage,
 )
-from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
-from .model import Answer, Mark, Post
+from .client import InvalidId, MattermostAdapter, attachment_props, guest_ids, mm_id, mm_name
+from .model import Answer, Mark, Post, Refused
 from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox
 
 log = logging.getLogger(__name__)
@@ -2187,6 +2187,8 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         if cls in gate.AGENTS and e.post.intent == a2a.FYI:
             # RT-6.14: needs no answer. Only an agent's props count: anyone can write them.
             item["intent"] = a2a.FYI
+        if cls in gate.AGENTS and e.post.kind in a2a.QUIET:
+            item["quiet"] = True  # RT-6.6 step 9: no push, no digest
         if e.kind == "reaction" and e.raw:
             # RT-6.11: 👍/✅ yes, 👎/❌ no — an approval only from a trusted human,
             # and only for this ask.

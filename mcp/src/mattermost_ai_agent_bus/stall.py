@@ -208,7 +208,7 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
         pid = p.id
         kind = p.kind
         if (cls.get(pid, gate.OTHER) == gate.OTHER or now_ms - _at(p) > ADDRESSED_KEEP_SEC * 1000
-                or kind in (a2a.ASK, a2a.PERMISSION, a2a.REMINDER)
+                or kind in (a2a.ASK, a2a.PERMISSION, *a2a.SERVER_OWN)
                 or (kind in ("TASK", "DELEGATE") and not p.root_id)
                 or (cls[pid] in gate.AGENTS and p.intent == a2a.FYI)):
             continue
