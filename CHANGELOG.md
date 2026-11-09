@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.33
+
+### Changed
+
+- **The human's answer on an ask gives the assignee time before a stall**
+  ([RT-6.19 step 2](docs/arc42/06-runtime-view.md)). A trusted human's yes,
+  no or choice emoji on an ask counts as activity like their post: the task
+  the ask shielded (0.71.31) is due `MM_STALL_SEC` after the answer, not at
+  once, so the assignee can act first. A reaction without its time counts
+  from the first look that sees it. A task that stays still after the grace
+  still wakes the coordinator.
+
 ## 0.71.32
 
 ### Changed

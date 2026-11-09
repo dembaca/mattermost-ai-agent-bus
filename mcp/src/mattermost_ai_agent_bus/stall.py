@@ -10,7 +10,10 @@ WAITING: that wait is on purpose), an ask_human ask without its answer, or a
 post in the work channel that @-mentions a reachable agent and has no reply
 by that agent in its thread after it (not an agent's fyi post, not older than
 a day) — and for MM_STALL_SEC (default 600 s) no post there by an agent or a
-trusted human (the ask reminders of remind.py are none) and no agent with the
+trusted human (the ask reminders of remind.py are none), no answer on an
+ask (a yes, no or choice emoji by the human asked or a trusted one, as
+ends its shield: the task the ask shielded gets that long before it is
+due) and no agent with the
 status `working`; the crown holder's own posts and status are none either (its
 nudges would start a new quiet period), they only push the next wake to
 MM_STALL_SEC after them. Without any activity in the window the quiet period
@@ -104,6 +107,27 @@ def quiet_since(posts: Sequence[Post], classes: list[str], uid: str = "") -> tup
                and p.kind != a2a.REMINDER]
     return (max((_at(p) for p in counted if p.user_id != uid), default=0),
             max((_at(p) for p in counted if uid and p.user_id == uid), default=0))
+
+
+_seen_answers: dict[str, int] = {}  # answer → first look that saw it, for one without create_at
+
+
+def answered_since(posts: Sequence[Post], names: Mapping[str, str],
+                   trusted: Collection[str], now_ms: int) -> int:
+    """Epoch ms of the newest reaction that answers an ask among `posts`, by
+    the rule that ends its shield (tasks.answering: the human asked or a
+    trusted one); 0 without one. A reply is a post and counts in quiet_since
+    already. A reaction without its time counts from the first look that sees
+    it, kept for the server's life (rare, and never counted fresh again)."""
+    newest = 0
+    for p in posts:
+        if p.kind != a2a.ASK or p.delete_at:
+            continue
+        head = a2a.ask_head(p.message)
+        for r in tasks.answering(p.reactions, names, head[1] if head else "", trusted):
+            at = r.create_at or _seen_answers.setdefault(f"{p.id}:{r.user_id}:{r.emoji_name}", now_ms)
+            newest = max(newest, at)
+    return newest
 
 
 def _last(thread: Sequence[Post], names: Mapping[str, str]) -> tuple[int, str]:
@@ -208,7 +232,7 @@ def digest(found: Sequence[Mapping[str, Any]], quiet_ms: int, now: float,
     quiet = round((now - quiet_ms / 1000) / 60) if quiet_ms else 0
     # The crown holder's own posts are no activity (its nudges would restart
     # the quiet period), so the text says whose posts it counts.
-    head = (f"Stall: no post by another agent or a trusted human{since} ({quiet} min; "
+    head = (f"Stall: no post or answer by another agent or a trusted human{since} ({quiet} min; "
             f"your own posts do not count), no agent working, {len(found)} open:"
             ) if quiet_ms else f"Stall: {len(found)} open, nobody working:"
     if guests:  # the quiet times differ per channel: none in the head
@@ -323,9 +347,12 @@ async def _look(client: ChatPort, uid: str, now: float, chan: str = "", name: st
     # The crown holder's own posts (its nudges) and own `working` (its wake
     # turn) start no quiet period: only someone else's activity does.
     quiet, own = quiet_since(posts, classes, uid)
+    trusted = await client.trusted_humans()
+    # RT-6.19 step 2 (0.71.33): a human's answer on an ask is activity like
+    # their post: the task it shielded gets MM_STALL_SEC before it is due.
+    quiet = max(quiet, answered_since(posts, names, trusted, now_ms))
     if any(r.status == "working" and r.username != names.get(uid) for r in roster):
         quiet = now_ms
-    trusted = await client.trusted_humans()
     untrusted: set[str] = set()
     if trusted:
         untrusted = {p.id for p, c in zip(posts, classes, strict=True)
