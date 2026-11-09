@@ -230,13 +230,13 @@ def props(message: str = "", to: str = "", kind: str = "",
 PREFIX_ENV = "MM_PROPS_PREFIX"
 DEFAULT_PREFIX = "x_"
 _PREFIX = re.compile(r"[a-z][a-z0-9]*_")
-# Keys the bus or Mattermost writes into post props; no prefix may match the start
-# of one, and `a2a_` stays the bus's namespace.
-_RESERVED_KEYS = ("a2a", "agent_card", "attachments", "card", "from_webhook", "from_bot",
-                  "from_plugin", "override_username", "override_icon_url",
-                  "override_icon_emoji", "webhook_display_name", "channel_mentions",
-                  "disable_group_highlight", "mentionhighlightdisabled", "username",
-                  "icon_url", "model", "ai_generated_by", "ai_generated_by_user_id")
+# The first `_`-segment of the keys the bus or Mattermost writes into post props
+# (a prefix is one segment ending in `_`, so it clashes exactly when it names the
+# first segment of one of them); `a2a_` stays the bus's namespace.
+_RESERVED_SEGMENTS = frozenset({
+    "a2a_", "agent_", "from_", "override_", "webhook_", "channel_", "disable_", "icon_",
+    "ai_", "add_", "new_", "old_", "remove_", "previewed_", "unsafe_", "requested_",
+    "persistent_", "app_", "message_", "mention_", "attachments_", "username_"})
 
 
 def user_prefix(environ: Mapping[str, str] | None = None) -> str:
@@ -247,8 +247,8 @@ def user_prefix(environ: Mapping[str, str] | None = None) -> str:
     prefix = raw or DEFAULT_PREFIX
     if not _PREFIX.fullmatch(prefix):
         raise ValueError(f"{PREFIX_ENV}={raw!r} is no props prefix: lower-case letters and digits, "
-                         "starting with a letter, ending with _ (for example x_ or bgl_)")
-    if prefix == "a2a_" or any(k.startswith(prefix) for k in _RESERVED_KEYS):
+                         "starting with a letter, ending with _ (for example x_ or abc_)")
+    if prefix in _RESERVED_SEGMENTS:
         raise ValueError(f"{PREFIX_ENV}={prefix!r} could clash with a key of the bus or of "
                          "Mattermost: choose another")
     return prefix

@@ -57,7 +57,7 @@ import anyio
 from anyio.abc import SocketAttribute
 from anyio.streams.buffered import BufferedByteReceiveStream
 
-from . import session_file
+from . import a2a, session_file
 
 log = logging.getLogger(__name__)
 
@@ -110,7 +110,10 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(host_main(args[1:]))
     if os.environ.get(ENDPOINT_ENV, "").strip():
         sys.exit(relay(os.environ))
-    from .server import main as serve_stdio
+    try:
+        from .server import main as serve_stdio
+    except ValueError as exc:  # a bad MM_PROPS_PREFIX (RT-6.16 step 8): one line, not a traceback
+        sys.exit(_fail(str(exc)))
 
     serve_stdio()
 
@@ -697,6 +700,10 @@ def host_main(argv: list[str]) -> int:
             return _fail(f"not an absolute path: {path}")
     os.environ.update(env)
     os.environ.pop(KEY_ENV, None)
+    try:
+        a2a.user_prefix()  # RT-6.16 step 8: before the host reports ready, not at the first relay
+    except ValueError as exc:
+        return _fail(str(exc))
     try:
         session_file.use_hosted_dir(args.state_dir)
     except (OSError, ValueError) as exc:

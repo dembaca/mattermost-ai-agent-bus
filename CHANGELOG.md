@@ -3,7 +3,13 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
-## 0.71.37
+## 0.74.0
+
+### Breaking
+
+- **The default props prefix is `x_`, not `bgl_`.** An installation that uses `bgl_`
+  sets `MM_PROPS_PREFIX=bgl_` before updating, on every server of the bus, or its
+  bridge's props are refused and its system replies are not recognised.
 
 ### Added
 

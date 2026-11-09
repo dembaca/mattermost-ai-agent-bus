@@ -20,6 +20,7 @@ _BUS_ENV = (
     "MM_BOT_USER_ID",
     "MM_BOT_ATTESTATION",
     "MM_REGISTRAR_KEYS",
+    "MM_PROPS_PREFIX",
     "MM_TEAM",
     "MM_TEAM_ID",
     "MM_CHANNEL",
