@@ -379,8 +379,8 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
     for lk in looks:
         if all(i.get("reminded") for i in lk.found):
             # RT-6.19 step 2: nothing open, or only asks their agents' servers
-            # remind: the human is nudged already, a wake would find nothing to
-            # do. The quiet period and backoff are kept, so a later item that
+            # remind and tasks whose assignee waits on such an ask: the human
+            # is nudged already, a wake would find nothing to do. The quiet period and backoff are kept, so a later item that
             # needs an agent wakes as if these had not been there.
             lk.save()
         elif lk.nxt > now:
