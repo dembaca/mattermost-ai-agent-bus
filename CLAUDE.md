@@ -18,12 +18,12 @@ is not done until the docs say what the code now does:
 - **Describe once, link elsewhere.** README, adapter docs and `docs/protocol.md`
   link to the arc42 section instead of restating behaviour.
 - **Version bump → CHANGELOG.md entry** for that version, and the same version in
-  `mcp/pyproject.toml`, `mcp/src/…/__init__.py` and `mcp/uv.lock` (doc-check
-  compares the first two).
-- **Which number (SemVer, from 0.72.0).** Minor: a new tool, argument or
-  command, a noticeable change of behaviour, anything breaking (marked
-  **Breaking** in its CHANGELOG entry). Patch: fixes that change no
-  behaviour, docs, tests. A docs-only change needs no bump.
+  `.claude-plugin/plugin.json` (the one doc-check reads), `mcp/pyproject.toml`,
+  `mcp/src/…/__init__.py` and `mcp/uv.lock` (doc-check compares the first three).
+- **Which number?** SemVer from 0.72.0. Minor: a new tool, argument or
+  command, a noticeably changed behaviour, anything breaking (under
+  `### Breaking` in its CHANGELOG entry). Patch: fixes that change no
+  behaviour, docs, tests.
 
 ## Before you push
 
