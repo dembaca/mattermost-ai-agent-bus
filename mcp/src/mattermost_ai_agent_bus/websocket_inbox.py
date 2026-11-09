@@ -649,6 +649,8 @@ class WebSocketInbox:
             return
         event.departed = ", ".join(d.username for d in found if isinstance(d, departed.Departure))
         event.not_here = departed.not_here(found)
+        with contextlib.suppress(OSError):
+            gate.mark_absent(me, post.id)  # the listener wakes for it (RT-6.2 step 4)
         if tell:
             task = asyncio.create_task(departed.tell(self.client, post, me, tell))
             self._gate_tasks.add(task)

@@ -10,7 +10,8 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             (?detail=1: up to 5 channels, with fyi counts)
     GET  /v1/last-post      {at, message, signed_off}: the own latest post in the work channel
     GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
-                            message, to, intent, fyi, gated[, files]}]}, work channel
+                            message, to, intent, fyi, gated, names_agent, absent[, files]}]},
+                            work channel
                             (or ?channel=ID|NAME of the project or default
                             channel, else 403), newest first (?limit=N, at
                             most 200, or ?since=MS)
@@ -82,7 +83,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import a2a, asks, channel, files, gate, lease, ownpost, session_file, stall, stats, turnend, unread, usage
+from . import a2a, asks, channel, files, gate, lease, ownpost, session_file, stall, stats, tasks, turnend, unread, usage
 from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
 from .model import Post
 
@@ -591,7 +592,7 @@ async def _last(client: MattermostAdapter, query: Mapping[str, str],
     return 0, "", False
 
 
-def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
+def _slim(post: Post, agents: set[str], gated: set[str], absent: set[str]) -> dict[str, Any]:
     intent = post.intent or ""
     out: dict[str, Any] = {
         "id": post.id,
@@ -605,6 +606,8 @@ def _slim(post: Post, agents: set[str], gated: set[str]) -> dict[str, Any]:
         # Only an agent's intent counts: anyone can write props (RT-6.14).
         "fyi": intent == a2a.FYI and post.user_id in agents,
         "gated": post.id in gated,
+        "names_agent": bool(tasks._mentions(post.message)),
+        "absent": post.id in absent,
     }
     if post.files:
         out["files"] = [files.hint(f) for f in post.files]  # RT-6.23: get_file fetches one
@@ -689,8 +692,10 @@ async def _channel(client: MattermostAdapter, chan: str) -> str:
 async def posts(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """The work channel's posts (or ?channel=), newest first: the last
     ?limit=N, or those since ?since=MS (created or edited). Each says whether
-    it is for all agents, an agent's fyi post (RT-6.14) and gated by the
-    server (RT-6.16), and names its files (RT-6.23). mm-agent-poll.sh reads them too."""
+    it is for all agents, an agent's fyi post (RT-6.14), gated by the
+    server (RT-6.16), names an agent (no task for the coordinator, RT-6.6 step 5)
+    or one gone or not here that this server answers (RT-6.21), and names its
+    files (RT-6.23). mm-agent-poll.sh reads them too."""
     since, limit = query.get("since", ""), query.get("limit", "60")
     if not (since or limit).isdigit():
         raise BadRequest("since: epoch ms, limit: a count")
@@ -706,10 +711,10 @@ async def posts(client: MattermostAdapter, query: Mapping[str, str], body: Mappi
     except Exception as exc:  # noqa: BLE001 — nobody counts as an agent then
         log.info("hook API: fyi authors unknown: %s", type(exc).__name__)
         agents = set()
-    gated = gate.gated(uid)
+    gated, absent = gate.gated(uid), gate.absent(uid)
     # Which channel this is, for mm-agent-poll.sh to say: as asked, else the work channel's name.
     return 200, {"channel": query.get("channel", "") or client.work_channel_name,
-                 "posts": [_slim(p, agents, gated) for p in raw]}
+                 "posts": [_slim(p, agents, gated, absent) for p in raw]}
 
 
 async def ask_reactions(client: MattermostAdapter, query: Mapping[str, str],
