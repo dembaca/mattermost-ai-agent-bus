@@ -260,7 +260,7 @@ def test_digest_says_what_who_is_next_and_last_activity_and_is_capped():
               "last": "agent-bob ACK 10:00", "at": i} for i in range(12)]
     text = stall.digest(found, int((NOW - 1500) * 1000), NOW)
     lines = text.splitlines()
-    assert lines[0].startswith("Stall: no post by another agent or a trusted human since ")
+    assert lines[0].startswith("Stall: no post or answer by another agent or a trusted human since ")
     assert "(25 min; your own posts do not count)" in lines[0]
     assert all(len(line) <= stall.LINE for line in lines[1:-1])
     assert lines[1].endswith(f' "{"T" * 59}…" · next: agent-bob · last: agent-bob ACK 10:00')
@@ -489,7 +489,7 @@ async def test_the_crown_holders_idle_and_ask_are_no_activity_and_the_text_says_
                   post(7, ME, "\U0001F64B @dembaca — **Merge PR #4?**", 23, kind=a2a.ASK)]
     assert await _wakes(bus, range(0, 25)) == [0, 20]
     quiet = stall._hhmm(bus.posts[1].create_at)
-    assert bus.woken[0].startswith(f"Stall: no post by another agent or a trusted human since {quiet} (50 min;"
+    assert bus.woken[0].startswith(f"Stall: no post or answer by another agent or a trusted human since {quiet} (50 min;"
                                    " your own posts do not count)")
     assert stall._read(ME)["QUIET"] == bus.posts[1].create_at
 
@@ -684,14 +684,31 @@ async def test_a_working_agent_then_the_answer_loses_no_alert(bus):
 async def test_the_answer_gives_the_assignee_grace_before_the_stall(bus):
     """RT-6.19 (0.71.33): once the human answered, the task is due only
     MM_STALL_SEC after the answer, not at once: the assignee gets time to act.
-    It acts (a post), and nothing wakes."""
+    It acts (a post at +5): the next wake is MM_STALL_SEC after that, not
+    after the answer."""
     _task_on_ask(bus)
     _answer(bus, -1)
     await look(bus)
     assert bus.woken == []
     bus.posts.append(post(4, BOB, "PROGRESS · merging", -5, root=1))
     await look(bus, 9.5)
+    await look(bus, 14)
     assert bus.woken == []
+    await look(bus, 15.5)
+    assert len(bus.woken) == 1
+
+
+@pytest.mark.parametrize("trusted", [{}, {HUMAN: "dembaca"}])
+async def test_the_asked_humans_answer_gives_grace_as_it_ends_the_shield(bus, trusted):
+    """RT-6.19: the answer that ends the shield (the human asked, trusted or
+    not) is the one that starts the grace, so no trusted list is needed."""
+    bus.trusted = trusted
+    _task_on_ask(bus)
+    _answer(bus, -1)
+    await look(bus)
+    assert bus.woken == []
+    await look(bus, 9.5)
+    assert len(bus.woken) == 1
 
 
 async def test_an_answer_without_its_time_counts_from_the_first_look(bus):

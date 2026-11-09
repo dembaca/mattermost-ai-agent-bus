@@ -181,6 +181,15 @@ def _apply(t: dict[str, Any], p: Post, author: str,
     t["updated"] = p.create_at
 
 
+def answering(reactions: Collection[Reaction], names: Mapping[str, str],
+              human: str, trusted: Collection[str] = ()) -> list[Reaction]:
+    """The reactions that answer an ask to `human` (RT-6.11): a yes, no or
+    choice emoji by that human or a trusted human (ids in `trusted`)."""
+    human = human.lower()
+    return [r for r in reactions if asks.is_answer(r.emoji_name)
+            and ((bool(human) and names.get(r.user_id, "").lower() == human) or r.user_id in trusted)]
+
+
 def ask_answered(ask: Post, thread: Collection[Post],
                  reactions: Collection[Reaction], names: Mapping[str, str],
                  human: str, trusted: Collection[str] = ()) -> bool:
@@ -194,10 +203,8 @@ def ask_answered(ask: Post, thread: Collection[Post],
     def by_human(uid: str) -> bool:
         return bool(human) and names.get(uid, "").lower() == human
 
-    for r in reactions:
-        u = r.user_id
-        if asks.is_answer(r.emoji_name) and (by_human(u) or u in trusted):
-            return True
+    if answering(reactions, names, human, trusted):
+        return True
     root, at = ask.thread, ask.create_at
     return any(p.thread == root and p.create_at > at
                and not p.delete_at and by_human(p.user_id) for p in thread)
