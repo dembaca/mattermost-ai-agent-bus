@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.30
+
+### Changed
+
+- **No polling for the answer to an ask in a channel session**
+  ([RT-6.11](docs/arc42/06-runtime-view.md)). A 👍 collected by
+  `wait_for_events` is a tool result, which auto mode did not credit (a merge was
+  refused in ~bgl-infra). The MCP `instructions` and `SKILL.md` say: after
+  `ask_human` end the turn, the answer comes as a channel tag. `wait_for_events`
+  in a confirmed channel session with an ask waiting on a human ends its result
+  with `{kind: hint, text}`.
+
 ## 0.71.29
 
 ### Changed

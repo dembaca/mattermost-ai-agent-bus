@@ -305,7 +305,8 @@ def _instructions() -> str:
            "the turn hooks deliver messages as usual. After it, messages for you arrive by "
            "themselves as such tags (kind, post_id, root_id, author, from_trusted_human), "
            "the others as one digest every MM_LISTEN_DIGEST_SEC: answer in the thread with "
-           "reply_in_thread; no listener, no polling. "
+           "reply_in_thread; no listener, no polling. After ask_human end the turn: "
+           "its answer comes as a tag, not by polling (RT-6.11). "
            + ("Your tool permission prompts also go by DM to your responsible human, who may "
               "answer there; their verdict goes to Claude Code, not to you. " if RELAY else "")
            if PUSH else
@@ -1907,6 +1908,11 @@ async def list_recent(
                 else await slim.posts(client, posts, drop_system=True))
 
 
+# RT-6.11: a polled answer is no channel tag, so auto mode does not credit it.
+ASK_PUSH_HINT = ("An ask of yours waits on a human. Its answer reaches you as a channel tag: "
+                 "finish your turn and do not poll wait_for_events for it.")
+
+
 @mcp.tool()
 async def wait_for_events(
     timeout_sec: float = 60.0, max_events: int = 10, raw: bool = False
@@ -1939,6 +1945,8 @@ async def wait_for_events(
     coordinator.md). Keep timeout_sec below the
     runtime's background limit (Claude Code: ~120 s) and call it in the
     foreground; a newer call supersedes one still pending, which returns [].
+    With an ask waiting on a human in a channel session the result ends with
+    {kind: hint, text}: end the turn, the answer is pushed (RT-6.11).
     """
     inbox = _get_inbox()
     _tool_idle.clear()  # the pusher steps aside while the agent waits itself
@@ -1959,6 +1967,8 @@ async def wait_for_events(
     if events and more:
         # More than max_events were queued; mentions and DMs came first.
         payload.append({"kind": "more_pending", "count": more})
+    if _confirmed is not None and (uid := await _my_id(_get_client())) and asks.waiting(uid):
+        payload.append({"kind": "hint", "text": ASK_PUSH_HINT})
     return _out("wait_for_events", payload)
 
 

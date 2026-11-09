@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import time
+from pathlib import Path
 
 import pytest
 
@@ -491,3 +492,18 @@ def test_push_content_cannot_close_or_open_the_tag():
     for content in pushed:
         assert not re.search(r"</?channel", content, re.I) and "1 < 2" in content
     assert pushed[0] == body.replace("</", "‹/").replace("<channel", "‹channel")
+
+
+@pytest.mark.asyncio
+async def test_wait_for_events_hints_at_the_push_while_an_ask_waits(bus, monkeypatch):
+    """RT-6.11: in a confirmed channel session an ask of the agent that waits
+    on a human is answered by the channel tag, not by polling: the poll's
+    result ends with a hint. Without a channel, or an ask, there is none."""
+    monkeypatch.setattr(server, "_confirmed", None)
+    asks.add(ME, "a1000000000000000000000000", "dembaca")
+    assert json.loads(await server.wait_for_events(timeout_sec=1)) == []
+    monkeypatch.setattr(server, "_confirmed", Path("confirmed"))
+    items = json.loads(await server.wait_for_events(timeout_sec=1))
+    assert items == [{"kind": "hint", "text": server.ASK_PUSH_HINT}]
+    asks.resolve(ME, "a1000000000000000000000000")
+    assert json.loads(await server.wait_for_events(timeout_sec=1)) == []
