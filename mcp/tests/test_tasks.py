@@ -454,9 +454,9 @@ def test_static_budget():
 _INSTRUCTION_BUDGET = {
     # + 80 each, RT-6.26: an event marked mandated is a task, never approval.
     # + 100 each, RT-6.11: waiting on a human is never a BLOCKED, a new decision a new ask.
-    # + 50 in push modes, RT-6.11: after ask_human end the turn, the answer is pushed.
+    # + 50 in push modes (+ 60 host-managed, which is scoped to a confirmed channel), RT-6.11: after ask_human end the turn, the answer is pushed.
     "self-registering": (2230, 2580, 2730),   # (1860, 2128, 2267)
-    "host-managed": (2060, 2380, 2530),       # (1680, 1948, 2087); + get_file (RT-6.23)
+    "host-managed": (2060, 2390, 2540),       # (1680, 1948, 2087); + get_file (RT-6.23)
     "hosted": (2180, 2530, 2680),             # (1806, 2074, 2213)
     "unavailable": (2380, 2730, 2880),        # (1987, 2255, 2394)
 }
