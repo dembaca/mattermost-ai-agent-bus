@@ -609,3 +609,6 @@ async def test_every_tool_refuses_an_unknown_argument_and_names_the_valid_ones()
         text = str(err.value)
         assert "no argument no_such_argument" in text, (tool.name, text)
         assert all(name in text for name in tool.input_schema.get("properties", {})), tool.name
+    with pytest.raises(ToolError) as err:  # a missing argument is named in the same answer
+        await server.mcp.call_tool("ask_human", {"question": "x"})
+    assert "no argument question" in str(err.value) and "also wrong: need (field required)" in str(err.value)

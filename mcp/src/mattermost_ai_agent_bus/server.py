@@ -353,8 +353,11 @@ class _StrictServer(MCPServer):
             if tool is None:
                 raise
             valid = ", ".join(tool.parameters.get("properties", {}))
+            other = sorted({f"{e['loc'][0]} ({e['msg'].lower()})" for e in cause.errors()
+                            if e["type"] != "extra_forbidden" and e["loc"]})  # a missing one, too
             raise ToolError(f"Error executing tool {name}: no argument {', '.join(unknown)}; "
-                            f"the arguments are: {valid}") from cause
+                            f"the arguments are: {valid}"
+                            + (f"; also wrong: {', '.join(other)}" if other else "")) from cause
 
 
 mcp = _StrictServer("mattermost-ai-agent-bus", instructions=_instructions(), lifespan=_lifespan,
