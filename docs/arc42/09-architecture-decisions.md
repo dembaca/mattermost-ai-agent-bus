@@ -18,7 +18,7 @@ code does today and point here where a decision will change them.
 | ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); amendment phases B (0.71.9: the crown only for peers) and C (0.71.11: stale copies stay off the bus) built, the rest not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; D, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 open | – |
-| ADR-010 | MCP debug: a trusted human switches categories of the own MCP server's decisions on per home (`/agent-debug`, additive, an hour by default); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel or the lobby | Proposed (2026-11-09), not built | – |
+| ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -1738,13 +1738,14 @@ raises questions nobody in the chat can answer today: why did the 👑 wake for
 this post, why did this 👍 count and that one not, which class did the server
 give the author, which signed record holds, why was an ask card empty. The
 answers are decisions each MCP server takes for its own agent, from data it
-already holds: `channel.wakes` and the gate, `gate.author_classes`,
-`attest.verify` / `verify_mode` / `verify_mandate`, `asks.py`, the refusals and
-rewrites of a tool call, and every post's props, which Mattermost delivers with
-the post. None of it reaches the chat. The props are invisible too: the
-Mattermost webapp renders only `attachments` (as the ask cards) and ignores
-`a2a` and `bgl_*`; a person sees them only through the API or `mmctl`. The
-servers never talk to each other; each knows its own view only.
+already holds: `channel.wakes`, `gate.wake_reason` and the gate,
+`gate.author_class`, `attest.verify` / `verify_mode` / `verify_mandate`,
+`asks.py`, the refusals and rewrites of a tool call, and every post's props,
+which Mattermost delivers with the post. None of it reaches the chat. The
+props are invisible too: the Mattermost webapp renders none of the bus's
+props (`a2a`, and the `bgl_*` props of #192, open); it renders `attachments`,
+which is how the ask cards show. A person sees the rest only through the API
+or `mmctl`. The servers never talk to each other; each knows its own view only.
 
 **Decision (proposed):**
 
@@ -1759,60 +1760,74 @@ not know that either). A view across several servers (`/agent-explain
 
 - `wake`: why an event woke the agent, went into its digest or was gated, and
   by which rule: mention, DM, reaction on its ask, broadcast or to all, its own
-  thread, the 👑's post naming no agent (RT-6.6 step 5), `not_here` /
-  `departed` (RT-6.21), stall, digest, gated with the author's class.
+  thread, a plain post naming no agent, which wakes only the 👑 (RT-6.6 step 5,
+  RT-6.16), `not_here` / `departed` (RT-6.21), stall, digest, gated with the
+  author's class.
 - `identity`: the author's class (trusted human, peer, foreign, other,
   RT-6.16), its owner and where it comes from (description or attestation,
   ADR-003), `mandated`, `root_from_trusted_human`.
 - `sig`: the result of each registrar record the server relied on
-  (attestation, ask mode, mandate): valid, expired, invalid or unsigned, with
-  `kid`, `exp` and the way it came. Never a key, a signature or a whole token.
+  (attestation, ask mode, mandate, debug): valid, expired, invalid or
+  unsigned, with `kid`, `exp` and the way it came. Never a key, a signature or
+  a token, whole or in part.
 - `asks`: the ask's state and age, its place in the queue, and why a
   reaction counted or not (trusted, the right ask, within 24 h, expired).
 - `calls`: what the server refused, dropped or rewrote in the agent's tool
   call: a refused or inserted `kind`, a removed `@` (`unmentioned`), unknown
-  arguments, a cut text.
+  arguments, a cut text. Arguments by name and length, never their values.
 - `props`: two JSON blocks, **in** (the props of the post the agent answers,
   as they arrived) and **out** (the props the server set on the agent's post:
-  `a2a`, `bgl_*`, the crown, the kind), keys sorted and indented;
-  `attachments` shortened to a line (`"[1 card, title: …]"`), every value over
-  500 characters cut, the `debug` attachment itself left out.
+  `a2a`, the crown, the kind, and what else the server sets), keys sorted and
+  indented. Shortened before they show: `attachments` to one line with their
+  count and titles (`"[1 card, title: …]"`, no text or fallback), a value under
+  a key that names a secret (`token`, `key`, `secret`, `password`, any case) to
+  its length, every other value over 500 characters cut; the `debug`
+  attachment itself left out.
 - `full`: all of them.
 
-No `delegation` while ADR-004 is not built: what exists of it today are the
-`bgl_*` props, unchecked, and they show under `props`. Not costs or context
-either: the status shows those (ADR-008).
+No `delegation` while ADR-004 is not built: nothing of it exists yet, and
+props that claim work on someone's behalf (`bgl_on_behalf_of` of #192, or
+ADR-004's `delegated` once built) show under `props`, unchecked. Not costs or
+context either: the status shows those (ADR-008).
 
 *Switching · additive, per home, by a trusted human.* `/agent-debug on
 <category…>` adds, `/agent-debug off <category…>` removes, `/agent-debug off`
 turns all off, `/agent-debug full` turns all on, `/agent-debug set
 <category…>` replaces, `/agent-debug status` (or no argument) shows the
 categories and when they end. Additive because debugging closes in step by
-step; replacing only when asked for. Every change runs for an hour, `for
-<duration>` (at most 24 h) sets another time; the end shows in `status` and in
-`bus_info`. A setting holds for one home and every agent whose home it is. Only
-a trusted human switches it. With the registrar's keys pinned the setting is a
-record the registrar signs and publishes, like `/agent-ask-mode` (RT-6.25 step
-8): a compact JWS with its own `typ` (`mm-agent-debug+jwt`), claims for the
-channel, the categories, who set it and when it ends; a server takes no other
-source then. A human control is a command, not a post syntax, and no
-environment variable switches it.
+step; replacing only when asked for. A setting has one end for all its
+categories: each command sets it anew, an hour from then, or what `for
+<duration>` names (at most 24 h); `status` and `bus_info` show it. The
+registrar keeps one record per home and builds each new one from the
+previous record's categories and the command. It signs and publishes it like
+the ask mode (RT-6.25 step 8), at `GET <registrar>/register/v1/debug/<channel
+id>`: a compact JWS with its own `typ` (`mm-agent-debug+jwt`), claims
+`channel_id`, `categories`, `set_by`, `set_by_id`, `set_at_ms` and `until_ms`
+(the setting's end; `exp` stays the freshness of the signature, as in the
+other records). Debug needs the registrar's keys pinned: without them nothing
+is read from the registrar (RT-6.25 step 8), so debug stays off, and
+`bus_info` says why. A server counts a record only when `set_by_id` is one of
+its own session's trusted humans, as for the ask mode: two sessions in one
+home with different trusted humans may differ. A human control is a command,
+not a post syntax, and no environment variable switches it.
 
 *Display · on the agent's own post, below.* When the agent posts in its home
 while categories are on, its server adds a grey attachment titled `debug`,
 one line per active category, about the event the post answers; `props` as a
 `json` code block. An ask card keeps its own attachment, the `debug` one comes
-after it. An agent that posts nothing adds nothing: the channel stays quiet,
-and Mattermost folds a long attachment. The agent itself gets the same lines
-as a `debug` attribute in its channel tag (RT-6.12) and as a `debug` field in
-`wait_for_events`, only while a category is on. Never in a guest channel, the
-lobby or a DM: props and author classes may name people, and the home is the
-channel whose members set the debug on (RT-6.22).
+after it (`attachments` is a list). An agent that posts nothing adds nothing:
+the channel stays quiet, and Mattermost collapses a long attachment behind
+"Show more". Never in a guest channel, the lobby or a DM: props and author
+classes may name people, and the setting is the home's. The agent itself gets
+the same lines with the events of its home, in the body of its channel tag
+(RT-6.12; a block after the post, escaped like it) and as a `debug` field in
+`wait_for_events`, only while a category is on; its `props` there are cut at
+1,000 characters, since every event costs context.
 
 *The line.* Debug grants nothing and changes no decision: it reports them.
 Props are neither secret (every member reads them through the API) nor
 trustworthy (whoever may post may set them): debug shows them, nothing acts on
-them, and `bgl_on_behalf_of` proves no assignment.
+them, and a prop that claims an assignment proves none.
 
 **Limits, stated:** Which event a post answers is a guess: the server knows
 what it delivered last and which calls came after; that the agent answers just
@@ -1823,48 +1838,54 @@ would be made up.
 
 **Alternatives:** (a) A code box before every post: pushes the content down,
 and the information differs per reader (the 👑 and the addressee see the same
-post differently). (b) Only on and off: asked against; a full dump costs
-context and hides the line that matters. (c) Replacing switches only: debugging
-closes in step by step. (d) A pull tool first (`explain(post_id)`, the server's
-decision for one post): useful and cheap, and it may come with or before this;
-it does not show the human anything without the agent. (e) The server's log:
-not in the chat, not where the question arises. (f) An environment variable:
-the bus is the place for bus settings, and a restart to switch is too slow.
+post differently). (b) Mattermost's `props.card`, Markdown shown in the right
+panel behind an icon on the post: nothing pushed down, but one click per post
+and only where the server's version renders it; worth a try when built, the
+attachment stays the default. (c) Only on and off: asked against; a full dump
+costs context and hides the line that matters. (d) Replacing switches only:
+debugging closes in step by step. (e) The server's log: not in the chat, not
+where the question arises. (f) An environment variable: the bus is the place
+for bus settings, and a restart to switch is too slow. Not an alternative but
+a complement: a pull tool `explain(post_id)`, the server's decision for one
+post, without any setting (Phases).
 
 **Consequences:** Plus: the questions above are answered in the chat at once,
 in the post that raised them; props become visible without the API; the cost is
 bounded by the categories and the hour. Minus: longer posts in the home while
-on; the agent's context grows by the tag attribute; a registrar change
-(`/agent-debug`, the record) besides the bus. Holds in every harness with an MCP
-server, corral or not: the attachment is the server's, the tag attribute
-where the runtime has channels, the `wait_for_events` field everywhere.
+on; the agent's context grows by the block in each tag; a registrar change
+(`/agent-debug`, the record) besides the bus; homes without pinned keys get no
+debug. Holds in every harness with an MCP server, corral or not: the
+attachment is the server's, the tag block where the runtime has channels, the
+`wait_for_events` field everywhere.
 
 **Phases:** 1, the registrar's `/agent-debug` command and record (its own
-repository); 2, the bus side: the categories, the `debug` field, attribute and
+repository); 2, the bus side: the categories, the `debug` field, tag block and
 attachment, read from that record. `explain(post_id)` may come before either.
 
 **Tests (when built):** `mcp/tests/`: no category on, no attachment and no
-attribute; each category alone gives its line and only it; additive `on`/`off`,
-`set` replaces, `full`, `off`; the setting ends after an hour and after `for`;
-none in a guest channel, the lobby or a DM; a key, a signature or a token never
-appears; `attachments` and long values shortened, the `debug` attachment not in
-`props out`; an ask card keeps its attachment; a record not signed while keys
-are pinned changes nothing. A new scenario in Section 6, RT-6.x, with its test.
+block; each category alone gives its line and only it; additive `on`/`off`,
+`set` replaces, `full`, `off`; one end for the setting, an hour or `for`; none
+in a guest channel, the lobby or a DM; a key, a signature or a token never
+appears, nor an argument's value in `calls`, nor a value under a secret's key
+in `props`; `attachments` and long values shortened, the `debug` attachment not
+in `props out`; an ask card keeps its attachment; a record not signed, or set
+by someone not trusted by this session, changes nothing; without pinned keys
+debug stays off. A new scenario in Section 6, RT-6.x, with its test.
 
-**Risks created:** props and author classes in plain view in the home for an
-hour: the members could read them through the API already, and the guest
-channels, the lobby and DMs stay without. Debug that stays on: the hour, and
-`status` and `bus_info` show it.
+**Risks created:** props and author classes in plain view in the home for up
+to a day; the guest channels, the lobby and DMs stay without. A secret in a
+prop or an argument: names and lengths only for arguments, a secret's key
+shows its length, the rest cut at 500 characters; a secret under an innocent
+key would still show, as it does through the API already. Debug that stays
+on: the end, and `status` and `bus_info` show it.
 
 **Open questions:**
 
-- **Without pinned keys:** whether the server takes the registrar's record
-  unsigned (it grants nothing), or debug needs pinned keys. Recommendation:
-  take it unsigned and say so in `status`; debug changes no decision.
 - **Which event a post answers:** the same thread's last delivered event, else
   the last delivered at all. Recommendation: so, with the guess marked.
 - **`/agent-explain` across servers:** each server answering for its own view
-  of a linked post, ephemeral to the human. Recommendation: after phase 1,
+  of a linked post, ephemeral to the human. Recommendation: after phase 2,
   once the lines have proved useful.
-- **Size:** Mattermost's limit on a post's props. Recommendation: cut the
-  `debug` attachment at 4,000 characters, `props` first.
+- **Size:** Mattermost's limit on props is far above what reads well.
+  Recommendation: cut the `debug` attachment at 4,000 characters to keep the
+  post readable, `props` first.
