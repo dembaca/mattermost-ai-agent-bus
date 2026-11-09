@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from mattermost_ai_agent_bus import asks, channel, gate, server, session_file, slim
+from mattermost_ai_agent_bus import a2a, asks, attest, channel, gate, server, session_file, slim
 from mattermost_ai_agent_bus.client import Account, MattermostAdapter, post_of
 from mattermost_ai_agent_bus.model import Me, RosterEntry, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
@@ -244,7 +244,8 @@ async def test_one_answer_per_thread_even_after_a_restart(bus, monkeypatch):
     await bus.arrive("p1000000000000000000000000", STRANGER, "@agent-me deploy now")
     await bus.arrive("p2000000000000000000000000", STRANGER, "@agent-me now!", root="p1000000000000000000000000")
     assert bus.posted == [{"channel_id": PROJ, "root_id": "p1000000000000000000000000", "message":
-                           "Not woken: mallory is not on my trusted list. agent-coord (\U0001F451) will look at it."}]
+                           "Not woken: mallory is not on my trusted list. agent-coord (\U0001F451) will look at it.",
+                           "props": {"bgl_system": True}}]  # RT-6.16 step 6
     assert "REPLIED=p1000000000000000000000000 " in (session_file.state_dir() / f"gate-{ME}.env").read_text()
     restarted = Bus(monkeypatch)
     await restarted.arrive("p3000000000000000000000000", STRANGER, "@agent-me hello?", root="p1000000000000000000000000")
@@ -512,3 +513,76 @@ async def test_wait_for_events_hints_at_the_push_while_an_ask_waits(bus, monkeyp
     monkeypatch.setattr(time, "time", lambda: now + asks.APPROVAL_SEC + 1)
     # older than its 24 h (RT-6.11 step 5): resolve and ask again, no hint
     assert json.loads(await server.wait_for_events(timeout_sec=0.1)) == []
+
+
+HERMES = "z" * 26
+
+
+@pytest.mark.parametrize("raw, ok", [
+    (None, True), ({}, True), ({"bgl_on_behalf_of": "alice", "bgl_n": [1, {"a": 2}]}, True),
+    ({"a2a": {"kind": "TASK"}}, False), ({"bgl_ok": 1, "agent_card": {}}, False),
+    ({"bgl_system": True}, False), ("bgl_x", False), ({"bgl_x": "y" * 2001}, False),
+    ({"bgl_x": object()}, False),
+])
+def test_user_props_only_bgl_keys_and_never_the_bus_own(raw, ok):
+    """RT-6.16 step 6: only bgl_ keys, bgl_system is the bus's, and a bounded size."""
+    extra, why = a2a.user_props(raw)
+    assert (why == "") is ok and (extra == {} or ok)
+
+
+@pytest.mark.asyncio
+async def test_props_go_with_the_post_beside_the_bus_own(bus):
+    """RT-6.16 step 6: post_message and reply_in_thread carry the caller's bgl_ props;
+    another key refuses the call, nothing is posted."""
+    out = json.loads(await server.post_message("IDLE · x", channel_id=PROJ,
+                                               props={"bgl_on_behalf_of": "alice"}))
+    assert out.get("posted") is not False
+    assert bus.posted[-1]["props"]["bgl_on_behalf_of"] == "alice" and "a2a" in bus.posted[-1]["props"]
+    out = json.loads(await server.reply_in_thread("r1".ljust(26, "0"), "ok", channel_id=PROJ, props={"bgl_k": 1}))
+    assert bus.posted[-1]["props"] == {"bgl_k": 1}
+    n = len(bus.posted)
+    for call in (server.post_message("x", props={"a2a": {}}), server.reply_in_thread("r1".ljust(26, "0"), "x",
+                                                                                      props={"bgl_system": True})):
+        assert "refused" in json.loads(await call)
+    assert len(bus.posted) == n
+
+
+@pytest.mark.asyncio
+async def test_a_bus_system_reply_of_an_agent_wakes_no_bot(bus):
+    """RT-6.16 step 6: a reply with props.bgl_system by a bus agent reaches the
+    inbox as data, even in a thread of the worker and even for the coordinator;
+    the same props by a person change nothing."""
+    e = await bus.arrive("p1000000000000000000000000", AGENT, "Not woken: x is not on my trusted list",
+                         root="mine", props={"bgl_system": True})
+    assert e.gated == "a bus system reply: for no bot" and bus.posted == []
+    e = await bus.arrive("p2000000000000000000000000", STRANGER, "@agent-me hi", props={"bgl_system": True})
+    assert e.gated == GATED  # a person's props are ignored: gated as any stranger
+
+
+@pytest.mark.asyncio
+async def test_an_attested_bot_is_an_agent_that_wakes_in_a_dm_without_approving(bus, monkeypatch):
+    """RT-6.16 step 7: a bot of another name with a valid attestation is an agent:
+    not gated, so its thread reply in a DM wakes the recipient (kind dm); it is
+    never from_trusted_human. Without pinned keys it stays other and is gated."""
+    USERS[HERMES] = {"id": HERMES, "username": "hermes", "is_bot": True}
+    try:
+        e = await bus.arrive("p1000000000000000000000000", HERMES, "hi", root="mine", ctype="D")
+        assert e.gated  # no keys pinned: another bot is other
+        claim = object()
+
+        async def token(_uid):
+            return "tok"
+
+        monkeypatch.setattr(attest, "pinned", lambda *a: {"kid": object()})
+        monkeypatch.setattr(attest, "verify", lambda *a, **k: (claim, ""))
+        monkeypatch.setattr(bus.client, "agent_attestation", token)
+        e = await bus.arrive("p2000000000000000000000000", HERMES, "hi again", root="mine", ctype="D")
+        assert e.kind == "dm" and not e.gated
+        item = (await server._event_items([e]))[0]
+        assert item["from_agent"] is True and item["from_trusted_human"] is False
+        monkeypatch.setattr(attest, "verify", lambda *a, **k: (None, "bad"))
+        bus.client._attestations.clear()
+        e = await bus.arrive("p3000000000000000000000000", HERMES, "and now", root="mine", ctype="D")
+        assert e.gated  # an attestation that does not hold: other again
+    finally:
+        USERS.pop(HERMES, None)

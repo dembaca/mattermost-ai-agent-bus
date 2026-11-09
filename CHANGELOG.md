@@ -3,6 +3,17 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.34
+
+### Added
+
+- **`props` on posts, system replies, attested bots** ([RT-6.16 steps 8-10](docs/arc42/06-runtime-view.md)).
+  `post_message` and `reply_in_thread` take `props`: only `bgl_` keys, any other
+  refuses the call, `bgl_system` is the bus's. The server's answers without the
+  model (`Not woken: …`, departed or absent agents) carry `props.bgl_system=true`
+  and reach no bot as a task. A bot of another name with a valid registrar
+  attestation counts as an agent: it wakes, in a DM too, and approves nothing.
+
 ## 0.71.33
 
 ### Changed

@@ -562,6 +562,17 @@ class WebSocketInbox:
         post, me = event.post, self._bot_user_id
         root = post.thread
         try:
+            if a2a.system(post) and me and (
+                    await gate.author_classes(self.client, [post]))[0] in gate.AGENTS:
+                # RT-6.16 step 6: a bus agent's system reply is for no bot, the
+                # coordinator's included: data only, no answer.
+                gate.mark_gated(me, post.id)
+                event.gated = "a bus system reply: for no bot"
+                task = asyncio.create_task(self._after_gate(
+                    event, "", "", dm=False))
+                self._gate_tasks.add(task)
+                task.add_done_callback(self._gate_tasks.discard)
+                return
             # The coordinator is never gated where it routes (RT-6.16 step 2).
             if not me or await lease.coordinates_in(self.client, me, post.channel_id):
                 return
@@ -613,7 +624,8 @@ class WebSocketInbox:
         if root:
             try:
                 text = await gate.reply_text(self.client, who, dm=dm, guest=guest)
-                self.handled(await self.client.post(text, channel_id=cid or None, root_id=root))
+                self.handled(await self.client.post(
+                    text, channel_id=cid or None, root_id=root, props={a2a.SYSTEM: True}))
             except Exception as exc:  # noqa: BLE001 — the post is gated all the same
                 log.info("no answer to the gated post in thread %s: %s", root, exc)
                 with contextlib.suppress(OSError):
