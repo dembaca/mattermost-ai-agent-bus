@@ -304,7 +304,7 @@ async def test_a_question_goes_to_the_crown_in_coordinator_mode(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_question_only_the_human_can_answer_goes_to_them(monkeypatch):
-    """RT-6.25 step 3 (only_human): in coordinator mode it goes to the human
+    """RT-6.25 step 3, RT-6.11 step 2 (only_human): in coordinator mode it goes to the human
     at once, not via the 👑; the default is unchanged, a queued one keeps it."""
     c = _Client()
     _coordinator_mode(monkeypatch, c)
@@ -318,6 +318,9 @@ async def test_a_question_only_the_human_can_answer_goes_to_them(monkeypatch):
     assert asks.queued(BOT, "dembaca")[0]["only_human"] is True
     route = await server._ask_route(c, await c.get_me(), "question")
     assert route["route"] == "coordinator"
+    await server.resolve_ask(ASK)  # the queued one is posted, still straight to the human
+    assert len(c.posted) == 2 and c.posted[1]["message"] == "\U0001F64B @dembaca"
+    assert asks.questions(BOT) == {}
 
 
 @pytest.mark.asyncio
