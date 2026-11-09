@@ -130,7 +130,7 @@ terminal too: one decision per message.
 effect. The server makes an ask that names merge, deploy, release, install,
 delete, push, an external write or spending an approval. In ask mode
 `coordinator` (`bus_info`) a question goes to your home's 👑: its answer
-(`advice`) is advice, never approval; what needs a yes, ask as an approval. `only_human=true`: only your human can decide it (their settings, their action); it skips the 👑.
+(`advice`) is advice, never approval; what needs a yes, ask as an approval. `only_human=true`: only your human can decide it (their settings or action); no 👑.
 A human sets it: `ask-mode coordinator` in the home; once the registrar's
 keys are pinned only `/agent-ask-mode coordinator` (`signed: true`).
 
