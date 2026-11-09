@@ -271,7 +271,8 @@ async def tell(client: ChatPort, post: Post, uid: str,
     root = post.thread
     try:
         text = lease.with_crown(reply_text(found, client.permalink_base, client.work_channel_name), uid)
-        await client.post(text, channel_id=post.channel_id or None, root_id=root)
+        await client.post(text, channel_id=post.channel_id or None, root_id=root,
+                          props={a2a.SYSTEM: True})
     except Exception as exc:  # noqa: BLE001 — the wake-up stands all the same
         log.info("no answer on departed or absent agents in thread %s: %s", root, exc)
         for d in found:
