@@ -19,6 +19,7 @@ code does today and point here where a decision will change them.
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; D, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 open | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
+| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Proposed (2026-11-09), not built | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -1898,3 +1899,240 @@ on: the end, and `status` and `bus_info` show it.
 - **Size:** Mattermost's limit on props is far above what reads well.
   Recommendation: cut the `debug` attachment at 4,000 characters to keep the
   post readable, `props` first.
+
+## ADR-011: Updates from a signed release only
+
+**Status:** Proposed (2026-11-09), not built. Asked for by a trusted human on
+2026-11-09 ("probably not quite simple with plugin incl. MCP server and
+sandbox hooks"). Options, a recommendation and open questions; command words,
+file names and variables below are proposals. Builds on Section 7.1 (the
+host copy and its installer), Section 7.2 (parity without corral), Section 7.3
+(trust assumptions), RT-6.1 and RT-6.18 (host-managed sessions, the kept bot),
+RT-6.2 step 8 (the update notice), RT-6.6 (the crown), RT-6.11 and RT-6.19
+(open asks), RT-6.24 (the registrar's signatures), ADR-007 amendment C (stale
+copies stay off the bus) and RISK-04 (mixed versions).
+
+**Context:** One release has several parts, installed in different places
+and restarted by different things:
+
+| Part | Where it lies | Updated by | Takes effect |
+|------|---------------|------------|--------------|
+| Plugin: skill, turn hooks, `hooks.json`, the relay, the listener | Claude Code's marketplace clone and plugin cache under `~/.claude`, shared with the corral homes by default | `/plugin update`, or Claude Code's marketplace auto-update (off by default for this marketplace) | The next session; a running one names it in its banner (RT-6.2 step 8) |
+| MCP server outside corral | The plugin cache (Claude Code), or a checkout (`uv run --project <checkout>/mcp`: Cursor, OpenCode, Codex) | The plugin update, or whoever pulls the checkout | The next server start: no runtime respawns a stdio server |
+| Host copy under corral: host hooks, `bin/`, the MCP server and its `uv` environment, the skill | `~/.local/share/mm-agent-bus/current/`, which no sandbox sees | `bin/mm-agent-host-install.sh`, run by the developer on the host from a clone they reviewed | The next session; corral asks to approve a hook whose content changed |
+| OpenCode plugin | `.opencode/plugins/` or an `opencode.json` entry | Whoever updates that file or checkout | The next load of the location |
+| Registrar | Its own repository and host | Its operator | Not part of this decision |
+
+Today nothing ties these together. The developer updates the plugin, then a
+clone, reviews it and reruns the installer; the start hook and `--check` say
+when the host copy is older than the plugin, and a stale server registers no
+bot (ADR-007 amendment C). The host side matters most: the host hooks run
+with the registration secret, and the host process holds the bot token. Code
+a sandbox can write has reached the host before: the installer once read its
+source from the sandboxes' homes, and hooks ran from the marketplace clone
+(Section 7.1, "The installed copy is the only mode"). Since then the installer
+refuses every source a sandbox can write, but its source is still "a clone the
+developer reviewed", checked by eye against a printed sha. Under SemVer (since
+0.72.0) a minor version may change behaviour or break something (`### Breaking`
+in the CHANGELOG), and a release can need configuration first: 0.74.0 needed
+`MM_PROPS_PREFIX` set alike on every server of the bus.
+
+**Decision (proposed):**
+
+*1 · The source is a signed release, never a clone.* A release is an
+annotated git tag `v<major>.<minor>.<patch>` on the canonical repository,
+signed by a **release key**: an SSH signing key the maintainer keeps offline.
+Each host pins the public keys allowed to sign (`MM_RELEASE_SIGNERS`) and the
+repository's URL (`MM_RELEASE_URL`), both from the host's environment like
+`MM_REGISTRAR_KEYS` (Section 7.1), never from the plugin, a workdir or a
+session; the operator compares the keys out of band. The installer gets a new
+mode, `mm-agent-host-install.sh --release <version>`:
+
+- The version must match `^[0-9]+\.[0-9]+\.[0-9]+$` before it reaches a git
+  argument or any output.
+- It fetches the tag, anonymously over HTTPS (`GIT_TERMINAL_PROMPT=0`, no
+  credential helper, no SSH agent), into a bare repository only the host sees
+  (`~/.local/share/mm-agent-bus/src.git`), which passes the same "not where a
+  sandbox writes" check as the host copy.
+- It resolves the tag to one object id once and goes on with that id only:
+  verified with `git verify-tag` under its own config (no system or global
+  config, as today; `-c gpg.format=ssh -c gpg.ssh.allowedSignersFile=<a
+  host-only file written from MM_RELEASE_SIGNERS>`), good only with status
+  `G`; the tag object's own name must be the one asked for, and the version
+  in the archived tree (`.claude-plugin/plugin.json`, `mcp/pyproject.toml`)
+  must equal it, so a ref pointed at an older signed tag installs nothing.
+- It installs `git archive <id>`.
+
+A tag that is not signed, signed by another key, named otherwise or moved
+since its last fetch is refused. `--from` stays for development; an install
+from it is recorded as `unsigned`, and the version shows so wherever it shows
+(point 3).
+
+*2 · A directory per version, one switch, one step back.* The installer
+writes `releases/<version>/` (the tree and its `uv sync --locked`
+environment; `uv.lock` pins every dependency by hash), and only when that
+succeeded points `current` at it (a symlink replaced in one rename). The one
+before stays as `previous`; `--rollback` swaps the two, one step only. A
+version older than `current` installs only with `--downgrade`, so nobody is
+led back to an old signed release with a known bug. A host process keeps the
+tree it started from; `preStart` records that release in the session's state
+directory, and `postEnd` runs that release's hooks while it is there, so a
+session ends with the code it started with. A release directory goes only when
+it is neither `current` nor `previous` and no host process runs from it. corral
+sees a hook whose content changed and asks to approve it: that prompt is the
+human's last look, and stays.
+
+*3 · Notice: only what a signature covers.* A small helper of the host copy
+(`mm-agent-release-check.sh`), run by the installer's `--check`, and at most
+once a day, bounded to a few seconds, by the MCP server as a child with a clean
+environment and a timeout, fetches the newest tags (the tag objects, nothing
+else) into the bare repository, verifies them as in point 1, and reads the
+release's CHANGELOG entry from the verified tree. It writes the parsed fields
+to the state directory; the server only reads that file. A tag that does not
+verify is logged once and never shown. `bus_info`, the start banner and the
+roster then show this host's version (and `unsigned` after `--from`), the
+newest verified release, whether it is a patch or a minor, `Breaking` when its
+entry has that section, and what it needs first. That last part comes from a
+fixed line in the release's CHANGELOG entry, `Needs: MM_PROPS_PREFIX on every
+server`: variable names (`^MM_[A-Z0-9_]+$`) and a few fixed words, bounded in
+length, never free prose, since it reaches every agent's context. When the
+newest verified release is older than this host's, the notice says so (a
+repository frozen or rewound).
+
+*4 · A human approves every update; a breaking one never runs by itself.* No
+part installs itself on the host. The host copy changes only when the
+developer runs `--release`, after the notice; a minor release with
+`### Breaking` prints its `Needs:` lines and asks for confirmation in the
+terminal first. The plugin keeps Claude Code's own update, whose auto-update
+is on or off, not per kind of release (open question). Pull, not push: a
+trusted human's `/agent-update` that installs on every host of a home is not
+part of this decision (alternative (c)).
+
+*5 · Running sessions, the listener, the crown and asks.* An update never
+stops a session: it runs on with the version it started (its server, and
+the listener, which belongs to the plugin and runs until its window ends), and
+the banner tells it (RT-6.2 step 8). The agent switches when it chooses: quit,
+then resume under the same session id, `claude --resume <id>` or under corral
+`corral run -- --resume <id>`. Both keep the bot: outside corral the server's
+exit keeps it (RT-6.10); under corral `postEnd` keeps a Claude Code session's
+bot, sets it offline and leaves its state directory, and the next `preStart`
+takes it over (RT-6.1, RT-6.18). So the read mark and the open asks, which live
+in that state directory (RT-6.11, RT-6.19), carry over. The crown may lapse
+with its lease while the bot is offline and passes by RT-6.6; the coordinator
+updates last, so it moves once. For a long gap or a fresh start the agent signs
+off with a handoff first (RT-6.7).
+
+*6 · Mixed versions on one bus.* Servers of different versions meet during
+every rollout (RISK-04). The rules: what one server writes for another (props
+`a2a` with its `v`, status texts, records) changes only additively within a
+minor version, and a reader ignores what it does not know; a change that
+breaks that is `### Breaking` and says in its `Needs:` line what must match
+across the bus (as `MM_PROPS_PREFIX` did). The roster shows each agent's
+version, so the coordinator sees a mixed bus and which hosts run `unsigned`
+code. A state file format changes only additively within a minor, so a
+rollback reads what the newer version wrote; otherwise the CHANGELOG says that
+a rollback loses it.
+
+*7 · Without corral, the same.* Cursor, OpenCode and Codex run the server
+from a checkout today; with this decision their MCP configs, and the OpenCode
+plugin entry, point at the host copy (`uv run --project
+~/.local/share/mm-agent-bus/current/mcp …`), installed and verified by the same
+`--release`, and they get the same notice. Claude Code without corral runs the
+server from its plugin cache; to have the signed path it adds the server from
+the host copy by hand, as its adapter already describes for a server without
+the plugin. Outside corral there is no sandbox (Section 7.3), so this protects
+the source, not the machine. Nothing in this decision needs corral.
+
+*The registrar signs no release.* It could: it holds an Ed25519 key and signs
+records already (RT-6.24). But that key is online, and a release signature
+decides what code runs on every host with the bot token and the registration
+secret; the attestation key decides whom an agent answers to. One leak would
+then cost both. Its operator is not the code's maintainer either and could not
+review what it signed. The registrar may help distribute: it can list the
+release keys next to its own at `…/register/v1/keys`, one out-of-band channel
+for `MM_RELEASE_SIGNERS`; and it may later publish which release a team has
+approved (open question), never below a host's current version and never
+instead of the code's own signature.
+
+*Where the chain ends.* The host side runs only signed code. The sandbox side
+does not: the skill (in every agent's context), `hooks.json` and the turn
+hooks come with Claude Code's own plugin update from what the marketplace
+source publishes, so that half still trusts the GitHub account. Branch
+protection and signed commits on `main` are its complement until the plugin,
+too, can follow signed tags (open question).
+
+**Alternatives:** (a) Keep today's path (a reviewed clone, the printed sha):
+works, but the check is by eye, and the source is whatever the clone holds.
+(b) The registrar's key signs releases: an online key for code on every host,
+see above. (c) Push, `/agent-update` by a trusted human, every host installs:
+one approval reaches every host, a stolen trusted account or a steered
+coordinator installs everywhere, and the hosts' corral approval prompts arrive
+where nobody waits for them. Kept as an open question for a notice only.
+(d) GitHub's signals alone (a protected `main`, release artifacts with a
+Sigstore attestation) for the host side: trusts the GitHub account and its CI
+with code for the host; a signed tag needs nothing but git. For the sandbox side
+they are the complement (above). (e) Claude Code's marketplace auto-update for
+everything: it installs what the marketplace source publishes, with no
+signature check this bus could pin, and does not reach the host copy at all.
+(f) The MCP server updates itself: it would install code from inside the
+process that holds the token, triggered by what it reads on the bus.
+
+**Consequences:** Plus: the host side runs only what the release key signed;
+an update is one command with a rollback; every server tells what is
+available and what it needs, from signed data only; mixed versions and
+unsigned installs are visible. Minus: a release key to keep offline and to
+rotate; every release a signed tag (a release step in this repository); two
+more pinned settings per host; the sandbox side still follows Claude Code's own
+update and the GitHub account, and plugin and host copy can differ for a while
+(the existing start-hook notice and ADR-007 amendment C cover it). Holds in
+every harness, corral or not.
+
+**Phases:** 1, signed tags and `--release` with `releases/`, `current`,
+`previous`, `--rollback`, `--downgrade` and the release recorded per session;
+the non-corral configs pointed at the host copy. 2, the release check and the
+notice (`bus_info`, the banner, the roster's version column), and the
+`Needs:` line as a release rule in CLAUDE.md with a doc-check. 3, if wanted,
+the registrar's approved-release record. Each patch-sized on the bus side; 1
+needs the release key first.
+
+**Tests (when built):** `tests/hooks/`: `--release` installs a tag signed by a
+pinned key; refuses an unsigned one, one signed by another key, one whose
+name differs from its tag object's or whose tree has another version, one that
+moved, and a malformed version; refuses an older version without
+`--downgrade`; a failed `uv sync` leaves `current` as it was; `--rollback`
+swaps `current` and `previous`; `postEnd` runs the release `preStart` recorded;
+a running host process keeps its tree. `mcp/tests/`: the notice shows version,
+kind, `Breaking` and `Needs:` from a verified tag only, never from one that does
+not verify; a `Needs:` line outside its grammar is dropped; `unsigned` shows
+after `--from`; a failed check changes nothing; the roster shows versions. A new
+scenario in Section 6, RT-6.x, and Section 7.1 rewritten for the release path.
+
+**Risks created:** a leaked release key installs code on every host that
+pins it, until they unpin it: kept offline, rotated like the registrar's keys
+(pin old and new together). A bad release stays validly signed for ever:
+the downgrade guard and the notice keep hosts from going back to it, and its
+withdrawal is an open question. A new row in Section 11 when accepted.
+
+**Open questions:**
+
+- **Withdrawing a release:** a signature never expires. Recommendation: a
+  `Withdrawn: v<version>` line in a newer release's CHANGELOG entry, read from
+  its verified tree, which `--release` and the notice honour.
+- **The plugin side:** whether Claude Code's marketplace can follow release
+  tags (not read for this ADR), so that the sandbox side, too, comes only from a
+  signed release. Recommendation: find out before phase 1; until then
+  auto-update stays off, as it is.
+- **A notice by push:** a trusted human's `/agent-update notice` that makes
+  every server of a home ask its own responsible human (an ask, RT-6.11) to
+  update, installing nothing. Recommendation: after phase 2, if the pull
+  notice is not enough.
+- **The registrar's approved release:** a record per team naming the release
+  to run, signed with its key, which the notice shows next to the newest
+  verified tag, never below a host's version. Recommendation: phase 3, only if
+  teams want to hold back.
+- **Who runs the release check:** the installer only (no network from a
+  session), or also the MCP server as a bounded child once a day (it runs in
+  every harness, but spawns `git` against the network from the process that
+  holds the token). Recommendation: the child, with a clean environment and a
+  timeout, writing only a state file; the server parses nothing from the
+  network itself.
