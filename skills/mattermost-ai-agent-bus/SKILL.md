@@ -104,7 +104,9 @@ A 👍/✅ on your `ask_human` post counts as such a reply (see below).
 <!-- RT-6.11 in docs/arc42/06-runtime-view.md -->
 **Asking a human: `ask_human`, and @ only there.** When you need something from
 a human — an approval, a decision, a hand on a machine — call `ask_human`. It
-posts one message a human spots at once; `need` is its one-sentence title.
+posts one message a human spots at once. Fields: `need` (the question; no `question` field), `context`, `recommendation`,
+`decision`, `answers`, `kind`, `blocking`, `where`, `root_id`, `human`, `only_human`;
+any other is refused.
 **Never @-mention a human anywhere else**; write the name without @
 ("dembaca approved …"): a mention must mean "I need you". The server writes any
 other @-mention of a person plain (`unmentioned`).

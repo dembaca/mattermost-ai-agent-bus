@@ -3,6 +3,25 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.73.0
+
+### Breaking
+
+- **A tool call with an argument the tool does not have is refused.** Until now it
+  was accepted and the argument silently dropped. A caller that passes an unknown
+  argument (for example `ask_human(need=…, question=…)`, which posted a card without
+  its question) now gets the error `no argument <name>; the arguments are: …`
+  and must correct the call.
+
+### Changed
+
+- **Unknown tool arguments are refused** ([RT-6.11 step 1](docs/arc42/06-runtime-view.md), IF-04).
+  The argument models of all bus tools forbid extras (one place, `server.py`), the
+  schema says `additionalProperties: false`, and the error names the unknown
+  argument, the tool's valid ones and any other invalid argument of the same call.
+  SKILL.md lists the fields of `ask_human` (`need` is the question), as do its tool
+  description and coordinator.md.
+
 ## 0.72.0
 
 ### Changed

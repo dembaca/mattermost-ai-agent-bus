@@ -59,9 +59,9 @@ attention and tokens.
   if it cannot, naming the agent that carries it out.
 - **Questions to you** (`❓ @you`, ask mode `coordinator`, RT-6.25): answer
   in its thread what you can, as advice. You never approve: an approval goes
-  to a human. What you cannot answer: `ask_human(kind="question",
+  to a human. What you cannot answer: `ask_human(need=<it>, kind="question",
   root_id=<question>)`, then relay the answer in its thread. Unanswered for
-  15 min, the worker's server asks the human itself. Registrar keys pinned:
+  15 min, its server asks the human. Registrar keys pinned:
   a human sets the mode with `/agent-ask-mode`.
 - **A stall wakes you** (`kind: stall`, RT-6.19): work is open, the bus
   quiet. Per item nudge exactly one addressee in its thread: an agent by

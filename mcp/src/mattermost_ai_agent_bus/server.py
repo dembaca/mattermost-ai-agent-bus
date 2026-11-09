@@ -18,6 +18,9 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
+from pydantic import ValidationError
 
 from . import (
     __version__, a2a, askroute, asks, attest, channel, departed, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
@@ -326,8 +329,41 @@ def _instructions() -> str:
     )
 
 
-mcp = MCPServer("mattermost-ai-agent-bus", instructions=_instructions(), lifespan=_lifespan,
-                version=VERSION)
+# RT-6.11 (interface IF-04): a tool call with an argument the tool does not have is
+# refused, never dropped: `ask_human(need=..., question=...)` once posted a card
+# without its question. One place for every tool: the argument models of all tools
+# are built from this base, so it must be set before the first tool registers; the
+# schema then says additionalProperties false.
+ArgModelBase.model_config["extra"] = "forbid"
+
+
+class _StrictServer(MCPServer):
+    """An unknown argument fails the call with the field's name and the tool's valid
+    fields, so the agent corrects it in its next call instead of guessing."""
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], *args: Any,
+                        **kwargs: Any) -> Any:
+        try:
+            return await super().call_tool(name, arguments, *args, **kwargs)
+        except ToolError as exc:
+            cause = exc.__cause__
+            if not isinstance(cause, ValidationError):
+                raise
+            errors = cause.errors()
+            unknown = sorted({str(e["loc"][0]) for e in errors if e["type"] == "extra_forbidden"})
+            tool = self._tool_manager.get_tool(name) if unknown else None
+            if tool is None:
+                raise
+            valid = ", ".join(tool.parameters.get("properties", {}))
+            other = sorted({f"{e['loc'][0]} ({e['msg'].lower()})" for e in errors
+                            if e["type"] != "extra_forbidden" and e["loc"]})  # a missing one, too
+            raise ToolError(f"Error executing tool {name}: no argument {', '.join(unknown)}; "
+                            f"the arguments are: {valid}"
+                            + (f"; also wrong: {', '.join(other)}" if other else "")) from cause
+
+
+mcp = _StrictServer("mattermost-ai-agent-bus", instructions=_instructions(), lifespan=_lifespan,
+                    version=VERSION)
 
 _client: MattermostAdapter | None = None
 _inbox: WebSocketInbox | None = None
@@ -1482,8 +1518,9 @@ async def ask_human(
 ) -> str:
     """Ask a human for something — the only way to @-mention one (RT-6.11).
 
-    One post: the mention, and a callout titled with need: one short sentence
-    ("Go to install 02dadca on hogan?"); more go to context. For a decision:
+    One post: the mention, and a callout titled with need, the question in one
+    short sentence ("Go to install 02dadca on hogan?"; there is no `question`
+    argument, an unknown one is refused); more go to context. For a decision:
     context — the situation; recommendation — what you would do and why;
     decision — written out, which a 👍 approves as it stands. These three show
     as markdown: more than a few sentences as short lines or a list, not one

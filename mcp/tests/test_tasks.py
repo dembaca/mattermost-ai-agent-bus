@@ -398,7 +398,7 @@ _SKILL = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-
 # Per-load budgets, about 10 % over the 0.57.0 size (in brackets): SKILL.md is
 # the core every agent loads; the files next to it are read only when they apply.
 _SKILL_BUDGET = {
-    "SKILL.md": 17_100,                 # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 40: props (RT-6.16)
+    "SKILL.md": 17_260,                 # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 160: the fields of ask_human (RT-6.11)
     "runtime-claude-code.md": 4_850,    # (4417)
     "runtime-no-hooks.md": 2_600,       # (2381)
     "self-registration.md": 2_450,      # (2234)
@@ -590,3 +590,25 @@ def test_a_foreign_agents_check_mark_keeps_the_ask_open():
     assert tasks.ask_closers(posts) == {B}
     assert [a["ask"] for a in tasks.open_asks(posts, NAMES, foreign={B})] == ["q1"]
     assert tasks.open_asks(posts, NAMES, foreign=set()) == []
+
+
+@pytest.mark.asyncio
+async def test_every_tool_refuses_an_unknown_argument_and_names_the_valid_ones():
+    """RT-6.11, IF-04: no bus tool drops an argument it does not have: the schema
+    says additionalProperties false and the call fails with the field's name and
+    the tool's arguments (`ask_human(need=..., question=...)` once posted a card
+    without its question)."""
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    tools = await server.mcp.list_tools()
+    assert len(tools) > 10
+    for tool in tools:
+        assert tool.input_schema.get("additionalProperties") is False, tool.name
+        with pytest.raises(ToolError) as err:
+            await server.mcp.call_tool(tool.name, {"no_such_argument": "x"})
+        text = str(err.value)
+        assert "no argument no_such_argument" in text, (tool.name, text)
+        assert all(name in text for name in tool.input_schema.get("properties", {})), tool.name
+    with pytest.raises(ToolError) as err:  # a missing argument is named in the same answer
+        await server.mcp.call_tool("ask_human", {"question": "x"})
+    assert "no argument question" in str(err.value) and "also wrong: need (field required)" in str(err.value)
