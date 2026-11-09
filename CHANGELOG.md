@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.32
+
+### Changed
+
+- **A question only the human can answer goes to them; an ask to the 👑 counts for `unasked`**
+  ([RT-6.25 step 3](docs/arc42/06-runtime-view.md), [RT-6.11 step 3](docs/arc42/06-runtime-view.md)).
+  `ask_human(only_human=true)` marks a question about the human's own settings or
+  action: in ask mode `coordinator` it goes to them directly, not via the 👑
+  (`route_note` says so); the default is unchanged. `_unasked` counts an open,
+  unsettled question to the 👑 as an open ask to its human, so a post naming them
+  while it waits draws no `unasked` warning; once answered or settled it no longer counts.
+
 ## 0.71.31
 
 ### Changed
