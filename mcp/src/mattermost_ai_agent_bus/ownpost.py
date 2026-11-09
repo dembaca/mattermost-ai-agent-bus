@@ -15,9 +15,9 @@ it in ``last-<uid>.env`` in the state directory (``mm_bot_state_file last``):
                            agent after this post: a sign-off no longer covers
                            it (RT-6.2 step 2); the next own post clears it
 
-A reminder the server sends on its own (remind.py, RT-6.19) is not the agent's
-post: it is not remembered, so it neither undoes a sign-off nor opens a new
-listen window.
+A reminder the server sends on its own (remind.py, RT-6.19), or its context
+line (lease.ctx_line, RT-6.6 step 9), is not the agent's post: it is not
+remembered, so it neither undoes a sign-off nor opens a new listen window.
 
 Written by the MCP server (client.post) and bin/mm-agent-post.sh; a reader
 without a file asks the channel as before.
@@ -67,7 +67,7 @@ def read(uid: str) -> dict[str, str]:
 
 def record(uid: str, channel_id: str, post: Post) -> None:
     """Remember `post`, the bot's latest in the work channel."""
-    if not uid or not post.id or post.kind == a2a.REMINDER:
+    if not uid or not post.id or post.kind in a2a.SERVER_OWN:
         return
     message = a2a.strip_crown(post.message).strip()
     prev = read(uid)

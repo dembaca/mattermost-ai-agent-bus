@@ -1,6 +1,7 @@
 """ADR-008 phase 1: context and limits of the agents in the chat. The tap's
 endpoint (RT-6.17, POST /v1/usage), the bot's status text (RT-6.6 step 1),
-its status text and the roster (RT-6.14 step 4)."""
+its status text and the roster (RT-6.14 step 4); ADR-008 phase 3 in part: the
+context line in the HELLO thread (RT-6.6 step 9)."""
 
 import logging
 import time
@@ -8,10 +9,10 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import hookapi, lease, tasks, usage
+from mattermost_ai_agent_bus import a2a, hookapi, lease, ownpost, tasks, usage
 from mattermost_ai_agent_bus.model import RosterEntry
 
-from fakes import FakeChat, HookClient
+from fakes import FakeChat, HookClient, post_of
 
 UID = "u" * 26
 OTHER = "o" * 26
@@ -428,3 +429,84 @@ async def test_a_label_cannot_carry_the_segment_separator(api):
     assert resp.status_code == 200
     assert "proj ctx 1% x" in c.status["text"] and " · ctx 1% ·" not in c.status["text"]
     assert usage.from_status(c.status["text"], now=NOW) == {}
+
+
+# --- the context line in the HELLO thread (ADR-008 step 4, RT-6.6 step 9) -----------------
+
+HELLO = "h" * 26
+WORK_ID = "w" * 26
+
+
+def _announced(monkeypatch):
+    """An agent that posted its HELLO: the thread the line goes to (ownpost.py)."""
+    monkeypatch.setenv("MM_BOT_USER_ID", UID)
+    ownpost.record(UID, WORK_ID, post_of({"id": HELLO, "message": "HELLO · bus", "create_at": 1000}))
+
+
+async def test_the_context_line_comes_once_per_window_and_again_after_a_compaction(api, monkeypatch):
+    """RT-6.6 step 9: at 85 % one fyi line in the HELLO thread; not again until the
+    context drops below 85 % (a compaction) and climbs again."""
+    _announced(monkeypatch)
+    c = FakeChat(uid=UID)
+    h = await api(c)
+    for ctx in (80, 84):
+        await h.post("/v1/usage", json={"ctx": ctx})
+    assert c.posted == []
+    await h.post("/v1/usage", json={"ctx": 85})
+    assert len(c.posted) == 1
+    line = c.posted[0]
+    assert line["message"] == "ctx 85% · compaction soon"
+    assert line["root_id"] == HELLO and line["channel_id"] == WORK_ID
+    assert line["props"]["a2a"]["kind"] == a2a.USAGE and line["props"]["a2a"]["intent"] == a2a.FYI
+    for ctx in (90, 96, 99):
+        await h.post("/v1/usage", json={"ctx": ctx})
+    assert len(c.posted) == 1  # once per context window
+    await h.post("/v1/usage", json={"ctx": 12})  # compacted
+    assert len(c.posted) == 1
+    await h.post("/v1/usage", json={"ctx": 88})
+    assert [p["message"] for p in c.posted] == ["ctx 85% · compaction soon", "ctx 88% · compaction soon"]
+
+
+async def test_no_context_line_for_a_runtime_that_reports_nothing(api, monkeypatch):
+    """RT-6.6 step 9: no report, or one without `ctx` (only the cost), posts nothing."""
+    _announced(monkeypatch)
+    c = FakeChat(uid=UID)
+    h = await api(c)
+    await lease.ctx_line(c)
+    await h.post("/v1/usage", json={"cost_usd": 3.5, "five_hour": {"used": 99}})
+    assert c.posted == [] and not usage.ctx_line_due()
+
+
+async def test_the_context_line_waits_for_the_hello_and_a_failed_post_tries_again(api, monkeypatch):
+    """RT-6.6 step 9: without a HELLO thread nothing is posted and the line waits; a post
+    Mattermost refuses is tried again with the next report."""
+    monkeypatch.setenv("MM_BOT_USER_ID", UID)
+
+    class Failing(FakeChat):
+        fail = True
+
+        async def post(self, message, **kw):
+            if self.fail:
+                raise RuntimeError("refused")
+            return await super().post(message, **kw)
+
+    c = Failing(uid=UID)
+    h = await api(c)
+    await h.post("/v1/usage", json={"ctx": 90})
+    assert c.posted == [] and usage.ctx_line_due()  # not announced: still due
+    _announced(monkeypatch)
+    await h.post("/v1/usage", json={"ctx": 91})
+    assert c.posted == [] and usage.ctx_line_due()  # refused: still due
+    c.fail = False
+    await h.post("/v1/usage", json={"ctx": 92})
+    assert [p["message"] for p in c.posted] == ["ctx 92% · compaction soon"]
+
+
+def test_the_context_line_is_no_post_of_the_agent():
+    """RT-6.6 step 9: the server's line neither undoes a sign-off (ownpost.py) nor is
+    taken as the agent's latest post."""
+    ownpost.record(UID, WORK_ID, post_of({"id": "i" * 26, "message": "IDLE · done", "create_at": 4000}))
+    ownpost.record(UID, WORK_ID, post_of({"id": "l" * 26, "message": "ctx 86% · compaction soon",
+                                          "root_id": HELLO, "create_at": 5000,
+                                          "props": a2a.props(kind=a2a.USAGE)}))
+    assert ownpost.read(UID)["MSG"].startswith("IDLE")

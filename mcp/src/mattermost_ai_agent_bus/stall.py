@@ -104,7 +104,7 @@ def quiet_since(posts: Sequence[Post], classes: list[str], uid: str = "") -> tup
     system posts do not count. 0 without one."""
     counted = [p for p, c in zip(posts, classes, strict=True)
                if c != gate.OTHER and not p.type and not p.delete_at
-               and p.kind != a2a.REMINDER]
+               and p.kind not in a2a.SERVER_OWN]
     return (max((_at(p) for p in counted if p.user_id != uid), default=0),
             max((_at(p) for p in counted if uid and p.user_id == uid), default=0))
 

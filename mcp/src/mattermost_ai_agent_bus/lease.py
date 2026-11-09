@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import a2a, channel, owners, session_file, usage
+from . import a2a, channel, owners, ownpost, session_file, stats, usage
 from .model import ChannelUser, Mark, RosterEntry, StatusMark
 
 if TYPE_CHECKING:
@@ -758,6 +758,33 @@ async def usage_crossed(client: ChatPort) -> None:
         raise
     except Exception as exc:  # noqa: BLE001
         log.debug("usage band: %s", exc)
+
+
+async def ctx_line(client: ChatPort) -> None:
+    """The context reached usage.CTX_LINE_AT (ADR-008 step 4, RT-6.6 step 9): one
+    fyi line in the agent's HELLO thread, once per context window, no model turn.
+    Not before the agent announced itself (no HELLO thread: the line waits).
+    Never raises; a failed post is tried again with the next report."""
+    try:
+        if not client.token:
+            return
+        uid = await _user_id(client)
+        rec = ownpost.read(uid)
+        hello, channel_id = rec.get("HELLO"), rec.get("CHANNEL")
+        if not (hello and channel_id):
+            return
+        ctx = usage.take_ctx_line()
+        if ctx is None:
+            return
+        message = with_crown(f"ctx {round(ctx)}% · compaction soon", uid)
+        stats.record("post", chars=len(message))
+        await client.post(message, channel_id=channel_id, root_id=hello,
+                          props=a2a.props(kind=a2a.USAGE))
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        usage.ctx_line_failed()
+        log.info("ctx line not posted: %s", exc)
 
 
 async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],

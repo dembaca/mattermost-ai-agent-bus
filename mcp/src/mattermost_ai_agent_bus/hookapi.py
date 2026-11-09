@@ -586,7 +586,7 @@ async def _last(client: MattermostAdapter, query: Mapping[str, str],
     if rec.get("AT", "").isdigit() and rec.get("MSG"):
         return int(rec["AT"]), rec["MSG"], ownpost.signed_off(rec["MSG"], rec)
     for post in await client.channel_posts(await client.work_channel_id(), per_page=100):
-        if post.user_id == uid and post.kind != a2a.REMINDER:
+        if post.user_id == uid and post.kind not in a2a.SERVER_OWN:
             message = a2a.strip_crown(post.message).replace("\n", " ").strip()
             return post.create_at, message, ownpost.signed_off(message)
     return 0, "", False
@@ -770,10 +770,13 @@ async def usage_route(client: MattermostAdapter, query: Mapping[str, str],
     """The status line's numbers (ADR-008, RT-6.10 step 3): the valid fields
     are kept as this session's last report, anything else ignored, never a
     400: the status line's call must not fail on a number. A band crossed
-    (usage.band_due) writes the status and the props once, lease.py."""
+    (usage.band_due) writes the status once, lease.py; the context at
+    usage.CTX_LINE_AT posts one line in the HELLO thread (RT-6.6 step 9)."""
     usage.record(body)
     if usage.band_due():
         await lease.usage_crossed(client)
+    if usage.ctx_line_due():
+        await lease.ctx_line(client)
     return 200, {"ok": True}
 
 

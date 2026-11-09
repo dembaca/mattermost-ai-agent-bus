@@ -70,7 +70,13 @@ ASK_MODE = "ask_mode"
 # The coordinator's one hint under a pinned mandate post when the registrar's keys are
 # pinned and the post mandates nothing (RT-6.26 step 8): fyi.
 MANDATE = "mandate"
-_OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE)
+# The server's one line in the agent's HELLO thread when its context reaches
+# usage.CTX_LINE_AT (ADR-008 step 4, RT-6.6 step 9): fyi, not the agent's post.
+USAGE = "usage"
+_OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE, USAGE)
+# Posts the server sends on its own: no post of the agent's, so they neither undo
+# a sign-off (ownpost.py) nor count as its activity (stall.py).
+SERVER_OWN = (REMINDER, USAGE)
 # The wire door of the core (arc42 §5.1): the meanings the core speaks in
 # (model.Mark, Answer, StatusMark) and what they look like in Mattermost
 # (symbols.py, the one place that knows the characters and shortcodes).
@@ -167,7 +173,7 @@ def state(kind: str | None) -> str | None:
 def intent(kind: str | None) -> str | None:
     if kind in (ASK, PERMISSION):
         return REPLY
-    if kind in (REMINDER, ASK_MODE, MANDATE):
+    if kind in (REMINDER, ASK_MODE, MANDATE, USAGE):
         return FYI
     return WORDS.get((kind or "").upper(), _NONE)[2]
 
