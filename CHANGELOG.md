@@ -13,7 +13,7 @@ before 0.5.0 are described in the git history.
   action: in ask mode `coordinator` it goes to them directly, not via the 👑
   (`route_note` says so); the default is unchanged. `_unasked` counts an open,
   unsettled question to the 👑 as an open ask to its human, so a post naming them
-  while it waits draws no `unasked` warning; once answered or settled it no longer counts.
+  while it waits draws no `unasked` warning; once its server has settled it (after the wait of RT-6.25 step 6) it no longer counts.
 
 ## 0.71.31
 
