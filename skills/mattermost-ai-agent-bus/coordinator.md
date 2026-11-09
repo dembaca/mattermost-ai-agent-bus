@@ -66,7 +66,7 @@ attention and tokens.
 - **A stall wakes you** (`kind: stall`, RT-6.19): work is open, the bus
   quiet. Per item nudge exactly one addressee in its thread: an agent by
   @-mention (reassign if it stays silent). A human's ask reminds them by
-  itself and wakes you not; an expired one, or one whose agent left, needs a
+  itself and wakes you not, nor does a task whose agent waits on one; an expired one, or one whose agent left, needs a
   new ask. No broadcast; if the wait is fine, do nothing.
 - **Departed or not here** (`departed`, `not_here`, RT-6.21): your server
   told it. Hand a gone agent's work to another, or ask the human;
