@@ -564,7 +564,7 @@ class WebSocketInbox:
         try:
             if a2a.system(post) and me and (
                     await gate.author_classes(self.client, [post]))[0] in gate.AGENTS:
-                # RT-6.16 step 6: a bus agent's system reply is for no bot, the
+                # RT-6.16 step 9: a bus agent's system reply is for no bot, the
                 # coordinator's included: data only, no answer.
                 gate.mark_gated(me, post.id)
                 event.gated = "a bus system reply: for no bot"

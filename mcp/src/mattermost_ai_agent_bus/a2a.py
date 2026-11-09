@@ -219,7 +219,7 @@ def props(message: str = "", to: str = "", kind: str = "",
     return out or None
 
 
-# RT-6.16 step 6: the props an agent may add to its own posts (post_message,
+# RT-6.16 step 8: the props an agent may add to its own posts (post_message,
 # reply_in_thread): only keys with this prefix, for what a caller outside the
 # bus (a bridge) reads from them. The bus's own keys (a2a, agent_card, ...) never
 # start with it, so no caller can overwrite them; SYSTEM is the bus's alone.
@@ -255,7 +255,7 @@ def with_user(bus: dict[str, Any] | None, user: Mapping[str, Any]) -> dict[str, 
 
 
 def system(post: Post) -> bool:
-    """A post the bus wrote as a system reply (props.bgl_system, RT-6.16 step 6).
+    """A post the bus wrote as a system reply (props.bgl_system, RT-6.16 step 9).
     Anyone can write props: callers honour it only for a bus agent's post."""
     return post.props.get(SYSTEM) is True
 
