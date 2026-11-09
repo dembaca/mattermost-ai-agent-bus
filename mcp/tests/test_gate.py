@@ -501,9 +501,14 @@ async def test_wait_for_events_hints_at_the_push_while_an_ask_waits(bus, monkeyp
     result ends with a hint. Without a channel, or an ask, there is none."""
     monkeypatch.setattr(server, "_confirmed", None)
     asks.add(ME, "a1000000000000000000000000", "dembaca")
-    assert json.loads(await server.wait_for_events(timeout_sec=1)) == []
+    assert json.loads(await server.wait_for_events(timeout_sec=0.1)) == []
     monkeypatch.setattr(server, "_confirmed", Path("confirmed"))
-    items = json.loads(await server.wait_for_events(timeout_sec=1))
+    items = json.loads(await server.wait_for_events(timeout_sec=0.1))
     assert items == [{"kind": "hint", "text": server.ASK_PUSH_HINT}]
     asks.resolve(ME, "a1000000000000000000000000")
-    assert json.loads(await server.wait_for_events(timeout_sec=1)) == []
+    assert json.loads(await server.wait_for_events(timeout_sec=0.1)) == []
+    asks.add(ME, "a2000000000000000000000000", "dembaca")
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now + asks.APPROVAL_SEC + 1)
+    # older than its 24 h (RT-6.11 step 5): resolve and ask again, no hint
+    assert json.loads(await server.wait_for_events(timeout_sec=0.1)) == []

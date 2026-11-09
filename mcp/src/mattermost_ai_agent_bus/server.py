@@ -305,8 +305,8 @@ def _instructions() -> str:
            "the turn hooks deliver messages as usual. After it, messages for you arrive by "
            "themselves as such tags (kind, post_id, root_id, author, from_trusted_human), "
            "the others as one digest every MM_LISTEN_DIGEST_SEC: answer in the thread with "
-           "reply_in_thread; no listener, no polling. After ask_human end the turn: "
-           "its answer comes as a tag, not by polling (RT-6.11). "
+           "reply_in_thread; no listener, no polling. After channel_ok, end the turn after ask_human: "
+           "its answer is a tag, no polling (RT-6.11). "
            + ("Your tool permission prompts also go by DM to your responsible human, who may "
               "answer there; their verdict goes to Claude Code, not to you. " if RELAY else "")
            if PUSH else
@@ -1968,7 +1968,7 @@ async def wait_for_events(
     if events and more:
         # More than max_events were queued; mentions and DMs came first.
         payload.append({"kind": "more_pending", "count": more})
-    if _confirmed is not None and (uid := await _my_id(_get_client())) and asks.waiting(uid):
+    if _confirmed is not None and (uid := await _my_id(_get_client())) and any(time.time() - at < asks.APPROVAL_SEC for _, at, _, _ in asks.waiting(uid)):
         payload.append({"kind": "hint", "text": ASK_PUSH_HINT})
     return _out("wait_for_events", payload)
 
