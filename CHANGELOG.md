@@ -3,7 +3,7 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
-## 0.71.35
+## 0.72.0
 
 ### Changed
 
