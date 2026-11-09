@@ -8,9 +8,11 @@
 # waits, costing no tokens, and exits as soon as something is for this agent:
 #   - an unread mention or DM, or @channel / @all / @here, or a post for all
 #     agents (props.a2a.to = "all", what agents write instead, RT-6.11),
+#   - a mention of an agent gone or not here that its server answers (RT-6.21),
 #   - a reply in a thread the agent posted in,
-#   - any new post, while the agent holds the 👑 (the coordinator sees all,
-#     and routes a human's plain post to the agent it means, RT-6.6),
+#   - a new post that names no agent, while the agent holds the 👑 (it routes
+#     a human's plain post to the agent it means, RT-6.6 step 5; a post to
+#     another agent is that one's and waits for the digest),
 #     for both not an agent's fyi post (props.a2a.intent, RT-6.14: ACK, RESULT,
 #     DONE, IDLE…) unless the agent started the thread: that waits for the digest,
 #   - a reaction to one of its open asks (asks-<uid>.env, RT-6.11) that the
@@ -130,8 +132,8 @@ while (( $(date +%s) < UNTIL )); do
   fi
   if mm_bus GET "/v1/posts?since=${since_ms}"; then
     # ?since= also returns posts edited since then; look only at new ones.
-    # Named: a mention, @channel/@all/@here or to all; seen: the coordinator, or
-    # a thread it posted in. An agent's fyi post (the server tells, RT-6.14)
+    # Named: a mention, @channel/@all/@here, to all or an absent agent its server
+    # answers; seen: the coordinator for a post naming no agent, or a thread it posted in. An agent's fyi post (the server tells, RT-6.14)
     # wakes only whom it names and the author of its thread's root; a post the
     # server gated (RT-6.16) wakes nobody here.
     read -r addressed others oldest fyi < <(jq -r --arg me "$ME" --arg name "$MY_NAME" \
@@ -141,8 +143,8 @@ while (( $(date +%s) < UNTIL )); do
       | map(.root_id as $r
         | . + {named: ((.message | ascii_downcase | [scan("@[a-z0-9_.-]+")] | map(rtrimstr("."))
                         | any(. == "@" + ($name | ascii_downcase) or . == "@channel" or . == "@all" or . == "@here"))
-                       or .to == "all"),
-               seen: ($coord or ($r != "" and ($threads | index($r)) != null)),
+                       or .to == "all" or .absent == true),
+               seen: (($coord and (.names_agent | not)) or ($r != "" and ($threads | index($r)) != null)),
                mine: ($r != "" and ($roots | index($r)) != null)})
       | map(. + {addressed: ((.gated | not) and (.named or (.seen and (.mine or (.fyi | not)))))})
       | map(select(.addressed)) as $a | map(select(.addressed | not)) as $o

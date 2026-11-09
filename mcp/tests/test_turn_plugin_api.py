@@ -258,6 +258,14 @@ def test_wake_rules_match_the_listener():
         got = turnend.wake([{**base, **p}], recent, me=UID, username="agent-me", since_ms=0,
                            coordinator=False, digest_sec=3600, now=10)
         assert got["wake"] is woken, p
+    # RT-6.6 step 5: the 👑 wakes for a post naming no agent, not for one to
+    # another agent; an absent agent its server answers wakes it (RT-6.21).
+    for p, woken in [({"message": "deploy?"}, True),
+                     ({"message": "@agent-hogan deploy", "names_agent": True}, False),
+                     ({"message": "@agent-hogan deploy", "names_agent": True, "absent": True}, True)]:
+        got = turnend.wake([{**base, **p}], recent, me=UID, username="agent-me", since_ms=0,
+                           coordinator=True, digest_sec=3600, now=10)
+        assert got["wake"] is woken, p
 
 
 async def test_handoff_hands_back_the_own_posts(api):

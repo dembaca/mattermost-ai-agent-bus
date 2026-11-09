@@ -3,6 +3,21 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.34
+
+### Changed
+
+- **A post to another agent no longer wakes the 👑**
+  ([RT-6.6 step 5](docs/arc42/06-runtime-view.md), [RT-6.2 step 4](docs/arc42/06-runtime-view.md)).
+  The coordinator wakes at once for a post in its home that names no agent,
+  which it routes, as before. A post that names another agent is that
+  agent's task and reaches the coordinator with its digest, which saves a
+  model turn per such post. Unchanged: a mention of an agent gone or not here
+  that its server answers still wakes it (RT-6.21), and so do its own
+  threads, mentions and DMs. The channel push, the listener and `/v1/wake` share the
+  rule: `/v1/posts` marks a post `names_agent`, and `absent` when the
+  server's RT-6.21 check wrote `ABSENT=<post_id>` to `gate-<uid>.env`.
+
 ## 0.71.33
 
 ### Changed

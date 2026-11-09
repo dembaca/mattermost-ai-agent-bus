@@ -206,7 +206,8 @@ async def test_posts_say_what_the_listener_needs(api):
     assert [p["to"] for p in got] == ["", "", "all", ""]
     assert [p["gated"] for p in got] == [False, False, True, False]
     assert got[2] == {"id": "p3", "user_id": OTHER, "root_id": "r", "create_at": 1000, "type": "",
-                      "message": "main is red", "to": "all", "intent": "", "fyi": False, "gated": True}
+                      "message": "main is red", "to": "all", "intent": "", "fyi": False, "gated": True,
+                      "names_agent": False, "absent": False}
     assert got[3]["type"] == "system_join_channel" and "props" not in got[0]
     await h.get("/v1/posts?since=1234")
     assert client.calls[-1] == ("posts", None, 1234)

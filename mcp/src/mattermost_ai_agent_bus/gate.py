@@ -158,7 +158,7 @@ def _path(uid: str) -> Path:
 
 
 def _read(uid: str) -> dict[str, dict[str, float]]:
-    state: dict[str, dict[str, float]] = {"REPLIED": {}, "GATED": {}, "DEPARTED": {}}
+    state: dict[str, dict[str, float]] = {"REPLIED": {}, "GATED": {}, "DEPARTED": {}, "ABSENT": {}}
     try:
         lines = _path(uid).read_text().splitlines()
     except OSError:
@@ -195,6 +195,17 @@ def mark_gated(uid: str, post_id: str) -> None:
 
 def gated(uid: str) -> set[str]:
     return set(_read(uid)["GATED"])
+
+
+def mark_absent(uid: str, post_id: str) -> None:
+    """RT-6.21: the post names an agent gone or not here, and this server answers it."""
+    state = _read(uid)
+    state["ABSENT"][post_id] = time.time()
+    _write(uid, state)
+
+
+def absent(uid: str) -> set[str]:
+    return set(_read(uid)["ABSENT"])
 
 
 def first_reply(uid: str, root_id: str, key: str = "REPLIED") -> bool:
