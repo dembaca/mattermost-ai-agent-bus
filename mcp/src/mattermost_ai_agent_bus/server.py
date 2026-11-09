@@ -1089,6 +1089,8 @@ async def _unasked(client: MattermostAdapter, text: str, uid: str) -> list[str]:
              if re.search(rf"(?<![\w.@/-]){re.escape(n)}(?![\w@/-]|\.\w)", text, re.I)]
     # A queued ask counts: it is posted when the open one is settled (RT-6.11 step 2).
     waiting = {x for e in asks.queued(uid) for x in (e["target"], e.get("who", "").lower())} if uid else set()
+    # A question to the 👑 is an ask to its human too, until it is settled (RT-6.25 step 3).
+    waiting |= {h.lower() for *_, h in asks.questions_open(uid)} if uid else set()
     return sorted(n for n in named if not (uid and (asks.blocking(uid, n) or n.lower() in waiting)))
 
 
@@ -1466,6 +1468,7 @@ async def ask_human(
     human: str = "",
     root_id: str = "",
     kind: str = "approval",
+    only_human: bool = False,
 ) -> str:
     """Ask a human for something — the only way to @-mention one (RT-6.11).
 
@@ -1498,7 +1501,8 @@ async def ask_human(
     kind: question (approach, order, who does X) or approval (default); naming
     a merge, deploy, release, install, delete, push, external write or spending
     makes it an approval. In ask mode coordinator a question goes to your 👑,
-    whose answer is advice (RT-6.25).
+    whose answer is advice (RT-6.25). only_human: only the human can answer
+    (their own settings or action): it goes to them, never via the 👑.
     """
     _done_typing()
     if bad := _bad_id(post=root_id):
@@ -1542,7 +1546,7 @@ async def ask_human(
             "hint": "one question per ask: ask the most important one now, wait for the "
                     "answer, then the next — it may settle the rest",
         })
-    route = await _ask_route(client, me, effective)
+    route = await _ask_route(client, me, effective, only_human)
     coord = route.pop("to", "")
     target = coord or who
     pending = asks.open_to(me.id, target)
@@ -1564,7 +1568,8 @@ async def ask_human(
         position, qid = asks.enqueue(me.id, target, {
             "need": need, "context": context, "recommendation": recommendation,
             "decision": decision, "where": where, "blocking": blocking,
-            "answers": answer_list, "who": who, "link": root_id, "kind": effective})
+            "answers": answer_list, "who": who, "link": root_id, "kind": effective,
+            "only_human": only_human})
         out = {"posted": False, "queued": True, "id": qid, "position": position, "behind": behind,
                **({"answers": answer_list} if answer_list else {}),
                "hint": f"{target} still has your ask {behind} open: this one is posted when it is "
@@ -1594,7 +1599,8 @@ async def ask_human(
     return _out("ask_human", _with_unmentioned(out, everyone))
 
 
-async def _ask_route(client: MattermostAdapter, me: Any, kind: str) -> dict[str, Any]:
+async def _ask_route(client: MattermostAdapter, me: Any, kind: str,
+                     only_human: bool = False) -> dict[str, Any]:
     """RT-6.25: where an ask of this class goes. {"to": <the 👑>} for a
     question in ask mode coordinator from an agent without the crown while a
     👑 is reachable; else the human. ask_mode, route and route_note only in
@@ -1607,6 +1613,8 @@ async def _ask_route(client: MattermostAdapter, me: Any, kind: str) -> dict[str,
     out = {"ask_mode": mode, "route": "human"}
     if kind != askroute.QUESTION:
         return out  # approvals always go to the human
+    if only_human:
+        return out | {"route_note": "only_human: only the human can answer, asked directly"}
     if lease.crown_held(me.id):
         return out | {"route_note": "you hold the crown: your asks go to the human"}
     coord, why = await askroute.coordinator(client, me.username)
@@ -1636,7 +1644,7 @@ async def _post_queued(client: MattermostAdapter, me: Any, key: str,
             return None
         before = set(asks.open_asks(me.id))
         try:
-            route = await _ask_route(client, me, e["kind"])
+            route = await _ask_route(client, me, e["kind"], bool(e.get("only_human")))
             coord = route.pop("to", "")
             target = coord or e["who"]
             if [p for p in asks.blocking(me.id, target) if p not in answered]:

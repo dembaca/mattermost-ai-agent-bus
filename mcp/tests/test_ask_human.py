@@ -262,6 +262,19 @@ async def test_naming_a_human_without_an_ask_gets_a_hint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_question_to_the_crown_counts_as_an_ask_to_its_human(monkeypatch):
+    """RT-6.11 step 3 with RT-6.25: an open question to the 👑 falls back to
+    its human, so naming them while it waits draws no `unasked`; settled, it
+    counts no more."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    asks.add(BOT, ASK, "agent-coord", question="dembaca")
+    assert "unasked" not in json.loads(await server.post_message("merge waits on dembaca"))
+    asks.question_settled(BOT, ASK)
+    assert json.loads(await server.post_message("merge waits on dembaca"))["unasked"] == ["dembaca"]
+
+
+@pytest.mark.asyncio
 async def test_no_hint_with_an_open_ask_or_without_the_name(monkeypatch):
     c = _NamingClient()
     monkeypatch.setattr(server, "_get_client", lambda: c)
