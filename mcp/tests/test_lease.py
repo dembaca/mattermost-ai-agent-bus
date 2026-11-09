@@ -270,6 +270,169 @@ async def test_idle_coordinator_loses_the_crown_when_its_lease_runs_out(mm, clie
     assert coord(tmp_path)["CROWN_UNTIL"] == 0
 
 
+# --- the crown beat and the slot (ADR-007 phase 1) -----------------------------------
+
+MID = "m" * 26
+
+
+def _expires(mm) -> float:
+    """Seconds from now until the custom status written last ends."""
+    at = mm.custom_status()["expires_at"]
+    return time.mktime(time.strptime(at, "%Y-%m-%dT%H:%M:%SZ")) - time.mktime(time.gmtime())
+
+
+async def test_the_crown_has_a_short_lease_and_falls_back_on_release(mm, client, tmp_path):
+    """RT-6.6 step 6, ADR-007 step 1: the holder's status and crown end after
+    MM_CROWN_LEASE_SEC (150 s), renewed by the beat; released, the status
+    is a presence lease of MM_LEASE_SEC again."""
+    me(mm)
+    await lease.set_status(client, "working")
+    assert 890 <= _expires(mm) <= 900
+    assert await lease.command(client, "take") == "taken"
+    assert 140 <= _expires(mm) <= 150 and coord(tmp_path)["CROWN_UNTIL"] <= time.time() + 150
+    await lease.set_status(client, "renew")  # the beat
+    assert 140 <= _expires(mm) <= 150 and holds()
+    await lease.command(client, "release")
+    assert 890 <= _expires(mm) <= 900 and mm.custom_status()["emoji"] != "crown"
+
+
+async def test_a_lost_crown_falls_back_to_the_long_lease(mm, client):
+    """ADR-007 step 1: a holder that yields to an older crown (a race) is a
+    member again, with the long lease."""
+    me(mm, "crown")
+    await lease.command(client, "take")
+    mm.agent(OLDER, "agent-old", 1000, "crown")
+    await lease.command(client, "tick")
+    assert not holds() and 890 <= _expires(mm) <= 900
+
+
+def test_the_crown_times_keep_their_bounds(monkeypatch):
+    """ADR-007 step 1: the beat at least 15 s, the crown lease never below two beats."""
+    for var in ("MM_CROWN_BEAT_SEC", "MM_CROWN_LEASE_SEC"):
+        monkeypatch.delenv(var, raising=False)
+    assert (lease.crown_beat_sec(), lease.crown_lease_sec()) == (60, 150)
+    monkeypatch.setenv("MM_CROWN_BEAT_SEC", "5")
+    monkeypatch.setenv("MM_CROWN_LEASE_SEC", "20")
+    assert (lease.crown_beat_sec(), lease.crown_lease_sec()) == (15, 30)
+    monkeypatch.setenv("MM_CROWN_BEAT_SEC", "100")
+    monkeypatch.setenv("MM_CROWN_LEASE_SEC", "50")
+    assert lease.crown_lease_sec() == 200
+
+
+async def test_an_expired_crown_is_none_and_the_next_claims(mm, client):
+    """RT-6.6 step 1, ADR-007 step 1: a 👑 whose status ended counts for
+    nothing; the oldest reachable agent claims."""
+    me(mm)
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=-5)
+    assert [r.username for r in await lease.roster(client)] == ["agent-me"]
+    await lease.command(client, "tick")
+    assert holds()
+
+
+async def test_each_agent_looks_at_its_slot_after_the_holders_end(mm, client):
+    """ADR-007 step 2: the holder left out, the n-th agent that stands looks
+    n slots after the holder's status would end."""
+    me(mm)
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=150)
+    mm.agent(MID, "agent-mid", 1500, "hammer_and_wrench")
+    await lease.command(client, "tick")
+    assert not holds()
+    end = time.time() + 150
+    assert abs(lease.look_due() - (end + 2 * lease.SLOT_SEC)) <= 2
+    mm.agent(MID, "agent-mid", 1500, "zzz")  # idle: not reachable, holds no slot
+    await lease.command(client, "tick")
+    assert abs(lease.look_due() - (end + lease.SLOT_SEC)) <= 2
+
+
+async def test_a_dead_successor_delays_the_claim_by_one_slot(mm, client):
+    """ADR-007 step 2, RT-6.6 error handling: the holder died and the oldest
+    successor too, its status still live: the next one claims at its slot,
+    not after a lease. Before its slot it does not; with a live crown again
+    it plans for that crown's end."""
+    me(mm)
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=150)
+    mm.agent(MID, "agent-mid", 1500, "hammer_and_wrench")   # dead, status still live
+    await lease.command(client, "tick")
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=-5)   # the holder's status ended
+    assert not await lease.look(client)  # not due yet
+    assert not holds()
+    lease._look_at = time.time() - 1   # its slot has come
+    assert await lease.look(client) and holds()
+    assert mm.custom_status()["emoji"] == "crown" and 140 <= _expires(mm) <= 150
+    assert lease.look_due() == 0  # a holder looks for nothing
+
+
+async def test_a_live_crown_at_the_slot_is_left_alone(mm, client):
+    """ADR-007 step 2: the holder beat in time: the look claims nothing and
+    plans for the new end."""
+    me(mm)
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=150)
+    await lease.command(client, "tick")
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=300)
+    lease._look_at = time.time() - 1
+    assert not await lease.look(client) and not holds()
+    assert abs(lease.look_due() - (time.time() + 300 + lease.SLOT_SEC)) <= 2
+
+
+async def test_no_slot_after_a_release_or_while_idle(mm, client, tmp_path, monkeypatch):
+    """ADR-007 step 2, RT-6.6 step 4: a released crown is not claimed back
+    before YIELD_UNTIL; an agent that is not reachable plans no look."""
+    me(mm)
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=150)
+    _coord_file(tmp_path, monkeypatch, CROWN_UNTIL=0, PENDING=0, YIELD_UNTIL=int(time.time()) + 1800)
+    await lease.command(client, "tick")
+    assert lease.look_due() >= time.time() + 1790
+    me(mm, "zzz")
+    await lease.command(client, "tick")
+    assert lease.look_due() == 0
+
+
+async def test_without_a_holder_seen_only_the_oldest_plans(mm, client):
+    """ADR-007 step 2: the slots count from the holder's end, the one time all
+    servers share; with no holder seen, the others wait and only the oldest
+    that stands looks a slot from now."""
+    me(mm)
+    mm.agent(OLDER, "agent-old", 1000, "hammer_and_wrench")
+    await lease.command(client, "tick")
+    assert not holds() and lease.look_due() == 0
+
+
+async def test_the_holder_beats_between_ticks(monkeypatch):
+    """ADR-007 step 1: between ticks the holder renews its status every beat,
+    without the roster read or the watch of a tick."""
+    calls: list[str] = []
+
+    class _Client:
+        token = "t"
+        session = None
+
+    async def fake_command(client, action):
+        calls.append(action)
+        return ""
+
+    async def fake_status(client, state, label=""):
+        calls.append(state)
+
+    async def watch(client):
+        calls.append("watch")
+        return None
+
+    async def get_client():
+        return _Client()
+
+    monkeypatch.setattr(lease, "command", fake_command)
+    monkeypatch.setattr(lease, "set_status", fake_status)
+    monkeypatch.setattr(lease, "crown_held", lambda uid: True)
+    monkeypatch.setattr(lease, "crown_beat_sec", lambda: 0.01)
+    monkeypatch.setattr(lease, "heartbeat_sec", lambda: 60.0)
+    monkeypatch.setenv("MM_BOT_USER_ID", UID)
+    task = asyncio.create_task(lease.heartbeat(get_client, watch))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    assert calls[:2] == ["tick", "watch"] and calls.count("tick") == 1
+    assert calls.count("renew") >= 3 and calls.count("watch") == 1
+
+
 # --- the roster ------------------------------------------------------------------------
 
 async def test_roster_lists_coordinator_first_and_skips_the_unreachable(mm, client):
@@ -411,6 +574,8 @@ def _old_bus(name: str, at: str) -> str:
 @pytest.fixture(autouse=True)
 def fresh_process(monkeypatch):
     monkeypatch.setattr(lease, "_header_seen", set())
+    monkeypatch.setattr(lease, "_look_at", 0.0)
+    monkeypatch.setattr(lease, "_vacant_at", 0.0)
 
 
 async def test_the_header_bus_part_is_static(mm, client):

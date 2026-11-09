@@ -12,7 +12,7 @@ itself: SKILL.md (*Coordinator*).
   channel. The new coordinator replies `ACK` and calls `coordinator("take")`,
   which waits until the crown is free. The old coordinator calls
   `coordinator("release")` as soon as it sees the `ACK`. Idle or signed off,
-  you lose the crown at lease end: hand over first if you will be gone long.
+  you lose the crown in 2.5 min (its lease): hand over first if you will be gone.
 - **Duties:** keep an overview of who works on what, flag overlaps, route requests
   by capability, settle conflicts.
   `coordinator("roster")` / `("tasks")` give the overview, not history;
