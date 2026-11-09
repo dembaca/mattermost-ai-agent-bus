@@ -3,6 +3,23 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.74.0
+
+### Breaking
+
+- **The default props prefix is `x_`, not `bgl_`.** An installation that uses `bgl_`
+  sets `MM_PROPS_PREFIX=bgl_` before updating, on every server of the bus, or its
+  bridge's props are refused and its system replies are not recognised.
+
+### Added
+
+- **`MM_PROPS_PREFIX`: the props prefix is a setting** ([RT-6.16 step 8](docs/arc42/06-runtime-view.md), [chapter 7](docs/arc42/07-deployment-view.md)).
+  The prefix of the props keys agents may add (and of the system key) was the
+  installation-specific `bgl_`; it is now `MM_PROPS_PREFIX`, default `x_`. One
+  value for the whole bus. A malformed prefix, or one a bus or Mattermost key
+  starts with, stops the server at its start. The MCP instructions state the prefix in force. **Upgrading an installation that
+  uses `bgl_`: set `MM_PROPS_PREFIX=bgl_`** where `MM_TRUSTED_HUMANS` is set.
+
 ## 0.73.0
 
 ### Breaking

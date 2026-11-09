@@ -36,6 +36,19 @@ name, so the host session hooks hand the prefix in as `MM_AGENT_PREFIX`; the ses
 files carry it for the MCP server and the shell CLI. With neither, `agent-`. It is
 derived, not a setting.
 
+**Props prefix (RT-6.16 step 8, since 0.74.0).** `MM_PROPS_PREFIX` names the keys an agent
+may add to its posts' props and the bus's own system key (`<prefix>system`): lower-case
+letters and digits starting with a letter, ending in `_`; default `x_`. A prefix that is
+empty after trimming is the default; one that is malformed, or that a key of the bus or
+of Mattermost starts with (`a2a_`, `agent_`, `from_`, `override_`, `webhook_`, …), stops
+the MCP server at its start with the reason (in a corral session the host process refuses
+before it reports ready, so the hook's preStart fails with it). It is one setting of the whole bus: every
+server must have the same value, or one server does not recognise another's system replies
+and refuses the props the other writes. Like `MM_TRUSTED_HUMANS` and `MM_REGISTRAR_KEYS`
+it is set in a corral session in the host's environment (the host process gets it in its
+start line, RT-6.18), elsewhere in the MCP server's environment. A program that reads the
+props (a bridge) is configured with the same prefix.
+
 **Registrar keys (RT-6.24).** `MM_REGISTRAR_KEYS` pins the registrar's public
 keys: base64url raw Ed25519 keys, comma-separated, each one's kid derived from it.
 It is a setting like `MM_TRUSTED_HUMANS`: in a corral session in the host's

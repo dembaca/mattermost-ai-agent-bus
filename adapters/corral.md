@@ -168,6 +168,7 @@ Deliberately **not** contributed:
   the sandbox therefore has no token; the agent uses the MCP tools. A plugin older than
   0.39.0 in the sandbox does not know the relay: it gets no MCP bus until updated
   (`/plugin update`, then restart the session) ([arc42 §6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)).
+- `MM_PROPS_PREFIX` — the props prefix of the whole bus (default `x_`, [arc42 §7](../docs/arc42/07-deployment-view.md)); set on the host, next to `MM_TRUSTED_HUMANS`; a malformed one fails the session start.
 - `MM_BOT_ATTESTATION` — the registrar's signed owner claim. Not a secret, but the
   sandbox has no use for it: it goes to the session's MCP server on the host, which
   checks it against `MM_REGISTRAR_KEYS` (set on the host, next to

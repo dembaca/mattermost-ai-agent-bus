@@ -553,3 +553,16 @@ def test_current_plugin_says_why_when_the_host_kept_the_bus_off(tmp_path):
     assert got["managed"] is False
     assert "The bus is off in this corral session: the MCP server did not start" in got["text"]
     assert "session_start" not in got["text"] and "session_start" not in got["tools"]
+
+
+def test_a_bad_props_prefix_fails_the_host_before_it_is_ready(monkeypatch, tmp_path, capsys):
+    """RT-6.16 step 8, RT-6.18: the host process refuses a malformed MM_PROPS_PREFIX
+    at its start, with the reason, so the session start fails and no relay meets a
+    server that dies at its first connection."""
+    monkeypatch.setattr(hosted, "read_start", lambda _stdin: ("k", {"MM_PROPS_PREFIX": "BGL_"}))
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    ready = tmp_path / "ready"
+    code = hosted.host_main(["--ready-file", str(ready), "--state-dir", str(tmp_path / "state"),
+                             "--foreground"])
+    assert code == 1 and not ready.exists()
+    assert "MM_PROPS_PREFIX" in capsys.readouterr().err

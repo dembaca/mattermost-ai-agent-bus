@@ -246,7 +246,7 @@ async def test_one_answer_per_thread_even_after_a_restart(bus, monkeypatch):
     await bus.arrive("p2000000000000000000000000", STRANGER, "@agent-me now!", root="p1000000000000000000000000")
     assert bus.posted == [{"channel_id": PROJ, "root_id": "p1000000000000000000000000", "message":
                            "Not woken: mallory is not on my trusted list. agent-coord (\U0001F451) will look at it.",
-                           "props": {"bgl_system": True}}]  # RT-6.16 step 9
+                           "props": {"x_system": True}}]  # RT-6.16 step 9
     assert "REPLIED=p1000000000000000000000000 " in (session_file.state_dir() / f"gate-{ME}.env").read_text()
     restarted = Bus(monkeypatch)
     await restarted.arrive("p3000000000000000000000000", STRANGER, "@agent-me hello?", root="p1000000000000000000000000")
@@ -520,43 +520,43 @@ HERMES = "z" * 26
 
 
 @pytest.mark.parametrize("raw, ok", [
-    (None, True), ({}, True), ({"bgl_on_behalf_of": "alice", "bgl_n": [1, {"a": 2}]}, True),
-    ({"a2a": {"kind": "TASK"}}, False), ({"bgl_ok": 1, "agent_card": {}}, False),
-    ({"bgl_system": True}, False), ("bgl_x", False), ({"bgl_x": "y" * 2001}, False),
-    ({"bgl_x": object()}, False),
+    (None, True), ({}, True), ({"x_on_behalf_of": "alice", "x_n": [1, {"a": 2}]}, True),
+    ({"a2a": {"kind": "TASK"}}, False), ({"x_ok": 1, "agent_card": {}}, False),
+    ({"x_system": True}, False), ("x_x", False), ({"x_x": "y" * 2001}, False),
+    ({"x_x": object()}, False),
 ])
-def test_user_props_only_bgl_keys_and_never_the_bus_own(raw, ok):
-    """RT-6.16 step 8: only bgl_ keys, bgl_system is the bus's, and a bounded size."""
+def test_user_props_only_x_keys_and_never_the_bus_own(raw, ok):
+    """RT-6.16 step 8: only x_ keys, x_system is the bus's, and a bounded size."""
     extra, why = a2a.user_props(raw)
     assert (why == "") is ok and (extra == {} or ok)
 
 
 @pytest.mark.asyncio
 async def test_props_go_with_the_post_beside_the_bus_own(bus):
-    """RT-6.16 step 8: post_message and reply_in_thread carry the caller's bgl_ props;
+    """RT-6.16 step 8: post_message and reply_in_thread carry the caller's x_ props;
     another key refuses the call, nothing is posted."""
     out = json.loads(await server.post_message("IDLE · x", channel_id=PROJ,
-                                               props={"bgl_on_behalf_of": "alice"}))
+                                               props={"x_on_behalf_of": "alice"}))
     assert out.get("posted") is not False
-    assert bus.posted[-1]["props"]["bgl_on_behalf_of"] == "alice" and "a2a" in bus.posted[-1]["props"]
-    out = json.loads(await server.reply_in_thread("r1".ljust(26, "0"), "ok", channel_id=PROJ, props={"bgl_k": 1}))
-    assert bus.posted[-1]["props"] == {"bgl_k": 1}
+    assert bus.posted[-1]["props"]["x_on_behalf_of"] == "alice" and "a2a" in bus.posted[-1]["props"]
+    out = json.loads(await server.reply_in_thread("r1".ljust(26, "0"), "ok", channel_id=PROJ, props={"x_k": 1}))
+    assert bus.posted[-1]["props"] == {"x_k": 1}
     n = len(bus.posted)
     for call in (server.post_message("x", props={"a2a": {}}), server.reply_in_thread("r1".ljust(26, "0"), "x",
-                                                                                      props={"bgl_system": True})):
+                                                                                      props={"x_system": True})):
         assert "refused" in json.loads(await call)
     assert len(bus.posted) == n
 
 
 @pytest.mark.asyncio
 async def test_a_bus_system_reply_of_an_agent_wakes_no_bot(bus):
-    """RT-6.16 step 9: a reply with props.bgl_system by a bus agent reaches the
+    """RT-6.16 step 9: a reply with props.x_system by a bus agent reaches the
     inbox as data, even in a thread of the worker and even for the coordinator;
     the same props by a person change nothing."""
     e = await bus.arrive("p1000000000000000000000000", AGENT, "Not woken: x is not on my trusted list",
-                         root="mine", props={"bgl_system": True})
+                         root="mine", props={"x_system": True})
     assert e.gated == "a bus system reply: for no bot" and bus.posted == []
-    e = await bus.arrive("p2000000000000000000000000", STRANGER, "@agent-me hi", props={"bgl_system": True})
+    e = await bus.arrive("p2000000000000000000000000", STRANGER, "@agent-me hi", props={"x_system": True})
     assert e.gated == GATED  # a person's props are ignored: gated as any stranger
 
 
@@ -593,3 +593,41 @@ async def test_an_attested_bot_is_an_agent_that_wakes_in_a_dm_without_approving(
         assert e.gated  # an attestation that does not hold: other again
     finally:
         USERS.pop(HERMES, None)
+
+
+@pytest.mark.parametrize("value, prefix", [
+    (None, "x_"), ("", "x_"), ("bgl_", "bgl_"), ("abc1_", "abc1_"), (" bgl_ ", "bgl_"),
+])
+def test_the_props_prefix_is_configurable_with_a_neutral_default(monkeypatch, value, prefix):
+    """RT-6.16 step 8: MM_PROPS_PREFIX, default x_; the system key and the refusal
+    follow it, and the error names the prefix in force."""
+    monkeypatch.delenv("MM_PROPS_PREFIX", raising=False)
+    if value is not None:
+        monkeypatch.setenv("MM_PROPS_PREFIX", value)
+    assert a2a.user_prefix() == prefix and a2a.system_key() == prefix + "system"
+    assert a2a.user_props({prefix + "k": 1})[1] == ""
+    why = a2a.user_props({"other_k": 1})[1]
+    assert f"starting with {prefix}" in why and f"{prefix}system is the bus" in why
+    assert a2a.user_props({prefix + "system": True})[1] != ""
+    post = post_of({"props": {prefix + "system": True}})
+    assert a2a.system(post) is True and a2a.system(post_of({"props": {"x_other": True}})) is False
+
+
+@pytest.mark.parametrize("value", [
+    "a2a_", "a2a", "from_", "override_", "agent_", "attachments", "card", "BGL_", "bgl", "_", "1x_",
+    "bgl__", "bg l_", "webhook_", "x-y_",
+])
+def test_a_props_prefix_that_can_clash_is_refused_at_start(monkeypatch, value):
+    """RT-6.16 step 8: empty is the default, but a prefix a bus or Mattermost key can
+    start with, or one that is no `[a-z][a-z0-9]*_`, is refused: the server does not start."""
+    monkeypatch.setenv("MM_PROPS_PREFIX", value)
+    with pytest.raises(ValueError, match="MM_PROPS_PREFIX"):
+        a2a.user_prefix()
+
+
+@pytest.mark.asyncio
+async def test_a_system_reply_carries_the_configured_key(bus, monkeypatch):
+    """RT-6.16 step 9: the answer without the model is marked with `<prefix>system`."""
+    monkeypatch.setenv("MM_PROPS_PREFIX", "bgl_")
+    await bus.arrive("p1000000000000000000000000", STRANGER, "@agent-me deploy now")
+    assert bus.posted[-1]["props"] == {"bgl_system": True}

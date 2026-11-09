@@ -325,9 +325,12 @@ def _instructions() -> str:
         "not watch it, the bus shows them what waits (RT-6.11). A line that waits on "
         "a human without an ask (never a BLOCKED) reaches nobody; a new decision after "
         "an answer is a new ask (resolve_ask the old one). "
+        f"props keys start with {a2a.user_prefix()}. "
         "Never create channels or teams."
     )
 
+
+a2a.user_prefix()  # RT-6.16 step 8: a bad MM_PROPS_PREFIX stops the server here, at start
 
 # RT-6.11 (interface IF-04): a tool call with an argument the tool does not have is
 # refused, never dropped: `ask_human(need=..., question=...)` once posted a card
@@ -1325,7 +1328,7 @@ async def post_message(
     put first if missing (RT-6.14); a TASK to a gone agent: not_reachable. While
     you hold the coordinator crown a post in your home or a DM starts with 👑.
     props: an object for whoever reads the post outside the bus; only keys
-    starting with bgl_ (RT-6.16), any other is refused.
+    with the MM_PROPS_PREFIX prefix (RT-6.16), any other is refused.
     """
     return _out("post_message", await post_as_bot(None, message, channel_id, root_id, to, kind,
                                                   channel_name=channel, props=props))
