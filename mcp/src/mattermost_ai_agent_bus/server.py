@@ -347,13 +347,15 @@ class _StrictServer(MCPServer):
             return await super().call_tool(name, arguments, *args, **kwargs)
         except ToolError as exc:
             cause = exc.__cause__
-            unknown = sorted({str(e["loc"][0]) for e in cause.errors() if e["type"] == "extra_forbidden"}
-                             ) if isinstance(cause, ValidationError) else []
+            if not isinstance(cause, ValidationError):
+                raise
+            errors = cause.errors()
+            unknown = sorted({str(e["loc"][0]) for e in errors if e["type"] == "extra_forbidden"})
             tool = self._tool_manager.get_tool(name) if unknown else None
             if tool is None:
                 raise
             valid = ", ".join(tool.parameters.get("properties", {}))
-            other = sorted({f"{e['loc'][0]} ({e['msg'].lower()})" for e in cause.errors()
+            other = sorted({f"{e['loc'][0]} ({e['msg'].lower()})" for e in errors
                             if e["type"] != "extra_forbidden" and e["loc"]})  # a missing one, too
             raise ToolError(f"Error executing tool {name}: no argument {', '.join(unknown)}; "
                             f"the arguments are: {valid}"
