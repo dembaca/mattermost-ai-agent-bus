@@ -132,8 +132,9 @@ while (( $(date +%s) < UNTIL )); do
   fi
   if mm_bus GET "/v1/posts?since=${since_ms}"; then
     # ?since= also returns posts edited since then; look only at new ones.
-    # Named: a mention, @channel/@all/@here, to all or an absent agent its server
-    # answers; seen: the coordinator for a post naming no agent, or a thread it posted in. An agent's fyi post (the server tells, RT-6.14)
+    # Named: a mention, @channel/@all/@here, to all, or an absent agent its
+    # server answers (RT-6.21). Seen: a thread it posted in, or holding the 👑
+    # a post that names no agent (names_agent, RT-6.6 step 5). An agent's fyi post (the server tells, RT-6.14)
     # wakes only whom it names and the author of its thread's root; a post the
     # server gated (RT-6.16) wakes nobody here.
     read -r addressed others oldest fyi < <(jq -r --arg me "$ME" --arg name "$MY_NAME" \

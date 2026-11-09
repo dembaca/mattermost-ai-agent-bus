@@ -17,6 +17,11 @@ before 0.5.0 are described in the git history.
   threads, mentions and DMs. The channel push, the listener and `/v1/wake` share the
   rule: `/v1/posts` marks a post `names_agent`, and `absent` when the
   server's RT-6.21 check wrote `ABSENT=<post_id>` to `gate-<uid>.env`.
+  What people notice: a request to an agent that does not pick it up (its
+  gate held back an author it does not trust, or a typo in the name) gets
+  the 👑's attention only with the digest (`MM_LISTEN_DIGEST_SEC`).
+  An agent mention is read like the RT-6.21 check reads it: in any case,
+  not inside an address like `ops@agent-x.example`.
 
 ## 0.71.33
 

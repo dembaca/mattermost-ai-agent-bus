@@ -136,7 +136,8 @@ async def mentioned_agent_trusts(client: ChatPort, post: Post, author: str, me: 
 
 async def reply_text(client: ChatPort, author: str, *, dm: bool, guest: str = "") -> str:
     """The answer to a gated post. Names stay plain: only ask_human notifies a
-    person, and the coordinator wakes for every channel post anyway. guest:
+    person, and the coordinator sees every channel post anyway (one naming an
+    agent with its digest, RT-6.6 step 5). guest:
     the guest channel (an id) the post is in, whose own coordinator it names,
     the crown holder of the channel whose home it is (RT-6.22)."""
     coord = await coordinator_in(client, guest)
@@ -158,6 +159,9 @@ def _path(uid: str) -> Path:
 
 
 def _read(uid: str) -> dict[str, dict[str, float]]:
+    # REPLIED: a thread the gate answered; GATED: a post held back; DEPARTED:
+    # `<root>:<agent>`, a thread told about it (RT-6.21 step 4); ABSENT: a post
+    # naming an absent agent that this server answers, so it wakes (step 5).
     state: dict[str, dict[str, float]] = {"REPLIED": {}, "GATED": {}, "DEPARTED": {}, "ABSENT": {}}
     try:
         lines = _path(uid).read_text().splitlines()

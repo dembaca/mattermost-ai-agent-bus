@@ -414,6 +414,13 @@ def test_the_crown_leaves_a_post_to_another_agent_to_it():
     assert wakes(to_other | {"not_here": "agent-hogan (~ops)"})
     assert wakes(to_other | {"departed": "agent-hogan"})
     assert wakes(_post("@agent-hogan and @channel: main is red"))
+    # Mentioning the crown too is a mention of it: kind mention wins.
+    assert wakes(_post("@agent-x @agent-hogan deploy", kind="mention"))
+    # Also from someone not trusted, gated at the agent it names (RT-6.16): digest.
+    assert not wakes(_post("@agent-hogan deploy now"))
+    # Read as RT-6.21 reads a mention: any case, no address (a@agent-x.example).
+    assert not wakes(_post("@Agent-Hogan deploy", trusted=True))
+    assert wakes(_post("mail the log to ops@agent-infra.example", trusted=True))
 
 
 def test_an_fyi_post_wakes_only_whom_it_names():
