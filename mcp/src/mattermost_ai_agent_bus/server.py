@@ -1307,7 +1307,7 @@ async def get_me(raw: bool = False) -> str:
 @mcp.tool()
 async def post_message(
     message: str, channel_id: str = "", root_id: str = "", to: str = "", kind: str = "",
-    channel: str = "",
+    channel: str = "", props: dict[str, Any] | None = None,
 ) -> str:
     """Create a post, in your home (first MM_PROJECT_CHANNEL entry, else MM_CHANNEL) when channel_id and channel are empty.
 
@@ -1324,9 +1324,11 @@ async def post_message(
     notify every human. kind: the bus word (TASK, ACK, BLOCKED, RESULT, DONE…),
     put first if missing (RT-6.14); a TASK to a gone agent: not_reachable. While
     you hold the coordinator crown a post in your home or a DM starts with 👑.
+    props: an object for whoever reads the post outside the bus; only keys
+    starting with bgl_ (RT-6.16), any other is refused.
     """
     return _out("post_message", await post_as_bot(None, message, channel_id, root_id, to, kind,
-                                                  channel_name=channel))
+                                                  channel_name=channel, props=props))
 
 
 async def _join_by_name(client: MattermostAdapter, name: str) -> str:
@@ -1344,7 +1346,7 @@ async def _join_by_name(client: MattermostAdapter, name: str) -> str:
 
 async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id: str = "",
                       root_id: str = "", to: str = "", kind: str = "", *,
-                      channel_name: str = "") -> dict[str, Any]:
+                      channel_name: str = "", props: dict[str, Any] | None = None) -> dict[str, Any]:
     """post_message's work, for the tool and for the shell's POST /v1/post
     (RT-6.17): one implementation. client None: this server's own."""
     _done_typing()
@@ -1352,6 +1354,9 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refusal(str(exc), kinds=True)
+    extra, bad = a2a.user_props(props)
+    if bad:
+        return _refusal(bad)
     if bad := _bad_id(post=root_id):
         return _refusal(bad)
     client = client or _get_client()
@@ -1394,8 +1399,8 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
             lease.with_crown(message, uid, here=here),
             channel_id=channel_id or None,
             root_id=root_id or None,
-            props=a2a.props(message, a2a.ALL if everyone else "", crown=here,
-                            home=client.work_channel_name if guest else ""),
+            props=a2a.with_user(a2a.props(message, a2a.ALL if everyone else "", crown=here,
+                                          home=client.work_channel_name if guest else ""), extra),
         )
     except Refused as exc:
         return _refusal(str(exc))
@@ -1410,27 +1415,32 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
 
 @mcp.tool()
 async def reply_in_thread(
-    root_id: str, message: str, channel_id: str = "", to: str = "", kind: str = ""
+    root_id: str, message: str, channel_id: str = "", to: str = "", kind: str = "",
+    props: dict[str, Any] | None = None,
 ) -> str:
     """Reply in a thread (sets root_id on the new post), in the root's
     channel — a DM too — unless channel_id says otherwise.
 
     to="all" and kind as for post_message. While you hold the coordinator
-    crown a reply in your home or a DM starts with 👑.
+    crown a reply in your home or a DM starts with 👑. props: as for post_message.
 
     channel_id: the id, or the ~name of your home, a guest channel or the lobby
     """
-    return _out("reply_in_thread", await reply_as_bot(None, root_id, message, channel_id, to, kind))
+    return _out("reply_in_thread", await reply_as_bot(None, root_id, message, channel_id, to, kind, props))
 
 
 async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: str,
-                       channel_id: str = "", to: str = "", kind: str = "") -> dict[str, Any]:
+                       channel_id: str = "", to: str = "", kind: str = "",
+                       props: dict[str, Any] | None = None) -> dict[str, Any]:
     """reply_in_thread's work, for the tool and for POST /v1/reply (RT-6.17)."""
     _done_typing()
     try:
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refusal(str(exc), kinds=True)
+    extra, bad = a2a.user_props(props)
+    if bad:
+        return _refusal(bad)
     if bad := _bad_id(post=root_id or "-"):
         return _refusal(bad)
     client = client or _get_client()
@@ -1451,8 +1461,8 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
             lease.with_crown(message, uid, here=here),
             channel_id=channel_id or None,
             root_id=root_id,
-            props=a2a.props(message, a2a.ALL if everyone else "", crown=here,
-                            home=client.work_channel_name if guest else ""),
+            props=a2a.with_user(a2a.props(message, a2a.ALL if everyone else "", crown=here,
+                                          home=client.work_channel_name if guest else ""), extra),
         )
     except Refused as exc:
         return _refusal(str(exc))

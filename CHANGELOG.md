@@ -3,16 +3,55 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
-## 0.71.36
+## 0.73.0
+
+### Breaking
+
+- **A tool call with an argument the tool does not have is refused.** Until now it
+  was accepted and the argument silently dropped. A caller that passes an unknown
+  argument (for example `ask_human(need=…, question=…)`, which posted a card without
+  its question) now gets the error `no argument <name>; the arguments are: …`
+  and must correct the call.
 
 ### Changed
 
 - **Unknown tool arguments are refused** ([RT-6.11 step 1](docs/arc42/06-runtime-view.md), IF-04).
   The argument models of all bus tools forbid extras (one place, `server.py`), the
   schema says `additionalProperties: false`, and the error names the unknown
-  argument and the tool's valid ones. `ask_human(need=…, question=…)` had posted a
-  card without its question. SKILL.md lists the fields of `ask_human` (`need` is
-  the question), as do its tool description and coordinator.md.
+  argument, the tool's valid ones and any other invalid argument of the same call.
+  SKILL.md lists the fields of `ask_human` (`need` is the question), as do its tool
+  description and coordinator.md.
+
+## 0.72.0
+
+### Changed
+
+- **A post to another agent no longer wakes the 👑**
+  ([RT-6.6 step 5](docs/arc42/06-runtime-view.md), [RT-6.2 step 4](docs/arc42/06-runtime-view.md)).
+  The coordinator wakes at once for a post in its home that names no agent,
+  which it routes, as before. A post that names another agent is that
+  agent's task and reaches the coordinator with its digest, which saves a
+  model turn per such post. Unchanged: a mention of an agent gone or not here
+  that its server answers still wakes it (RT-6.21), and so do its own
+  threads, mentions and DMs. The channel push, the listener and `/v1/wake` share the
+  rule: `/v1/posts` marks a post `names_agent`, and `absent` when the
+  server's RT-6.21 check wrote `ABSENT=<post_id>` to `gate-<uid>.env`.
+  What people notice: a request to an agent that does not pick it up (its
+  gate held back an author it does not trust, or a typo in the name) gets
+  the 👑's attention only with the digest (`MM_LISTEN_DIGEST_SEC`).
+  An agent mention is read like the RT-6.21 check reads it: in any case,
+  not inside an address like `ops@agent-x.example`.
+
+## 0.71.34
+
+### Added
+
+- **`props` on posts, system replies, attested bots** ([RT-6.16 steps 8-10](docs/arc42/06-runtime-view.md)).
+  `post_message` and `reply_in_thread` take `props`: only `bgl_` keys, any other
+  refuses the call, `bgl_system` is the bus's. The server's answers without the
+  model (`Not woken: …`, departed or absent agents) carry `props.bgl_system=true`
+  and reach no bot as a task. A bot of another name with a valid registrar
+  attestation counts as an agent: it wakes, in a DM too, and approves nothing.
 
 ## 0.71.33
 

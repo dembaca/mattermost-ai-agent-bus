@@ -1266,8 +1266,25 @@ class MattermostAdapter:
         may name their account agent-x; it stays a person."""
         names = await self.usernames(user_ids)
         prefix = session_file.agent_prefix()
-        return {i for i, n in names.items() if self._accounts[i].bot and not self._accounts[i].deleted
-                and n.startswith(prefix)}
+        found = {i for i, n in names.items() if self._accounts[i].bot and not self._accounts[i].deleted
+                 and n.startswith(prefix)}
+        # RT-6.16 step 10: a bot of another name (a bridge's) the registrar attests
+        # counts too; the attestation is read for no one else, and only with its
+        # keys pinned.
+        if attest.pinned():
+            for i, n in names.items():
+                if i not in found and self._accounts[i].bot and not self._accounts[i].deleted \
+                        and await self._attested_bot(i, n):
+                    found.add(i)
+        return found
+
+    async def _attested_bot(self, user_id: str, username: str) -> bool:
+        """Whether the registrar's attestation of this bot holds (RT-6.24) and
+        rests on an enrollment: a claim the caller only made with the shared
+        secret (via secret) makes no agent (RT-6.16 step 10)."""
+        token = await self.agent_attestation(user_id)  # never raises: None when unreadable
+        claim, _ = attest.verify(token, attest.pinned(), bot_id=user_id, username=username)
+        return claim is not None and claim.via == attest.ENROLLMENT
 
     async def bots_named(self, usernames: set[str]) -> dict[str, ChannelUser]:
         """The bot accounts among these usernames, by lower-case username,

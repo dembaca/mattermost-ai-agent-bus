@@ -18,6 +18,7 @@ people, hand-written) are read from their text with the same rules.
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
@@ -216,6 +217,47 @@ def props(message: str = "", to: str = "", kind: str = "",
     if note:
         out["a2a"] = note
     return out or None
+
+
+# RT-6.16 step 8: the props an agent may add to its own posts (post_message,
+# reply_in_thread): only keys with this prefix, for what a caller outside the
+# bus (a bridge) reads from them. The bus's own keys (a2a, agent_card, ...) never
+# start with it, so no caller can overwrite them; SYSTEM is the bus's alone.
+USER_PREFIX = "bgl_"
+SYSTEM = "bgl_system"
+USER_PROPS_MAX = 2000  # serialised characters
+
+
+def user_props(raw: object) -> tuple[dict[str, Any], str]:
+    """The caller's props and "", or {} and why they are refused: not an
+    object, a key without USER_PREFIX (or the bus's own SYSTEM), or too long."""
+    if raw is None or raw == {}:
+        return {}, ""
+    if not isinstance(raw, Mapping):
+        return {}, "props must be an object"
+    bad = sorted(str(k) for k in raw if not str(k).startswith(USER_PREFIX) or k == SYSTEM)
+    if bad:
+        return {}, (f"props: only keys starting with {USER_PREFIX} are allowed, and {SYSTEM} "
+                    f"is the bus's own (refused: {', '.join(bad)})")
+    try:
+        size = len(json.dumps(raw, ensure_ascii=False))
+    except (TypeError, ValueError):
+        return {}, "props must be JSON"
+    if size > USER_PROPS_MAX:
+        return {}, f"props are {size} characters, at most {USER_PROPS_MAX}"
+    return dict(raw), ""
+
+
+def with_user(bus: dict[str, Any] | None, user: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The bus's props with the caller's beside them: the bus's keys win."""
+    out = {**user, **(bus or {})}
+    return out or None
+
+
+def system(post: Post) -> bool:
+    """A post the bus wrote as a system reply (props.bgl_system, RT-6.16 step 9).
+    Anyone can write props: callers honour it only for a bus agent's post."""
+    return post.props.get(SYSTEM) is True
 
 
 def intent_of(post: Mapping[str, Any]) -> str | None:
