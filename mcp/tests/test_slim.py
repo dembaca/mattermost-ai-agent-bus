@@ -88,5 +88,5 @@ def test_the_hook_api_and_the_reminder_read_the_question_from_the_card():
     """RT-6.11 step 1: the hook API's posts carry a new ask's question after the
     mention; the open asks name it (RT-6.19)."""
     from mattermost_ai_agent_bus import hookapi, tasks
-    assert hookapi._slim(post_of(NEW_ASK), set(), set())["message"] == "\U0001F64B @dembaca — **Merge #4?**"
+    assert hookapi._slim(post_of(NEW_ASK), set(), set(), set())["message"] == "\U0001F64B @dembaca — **Merge #4?**"
     assert [a["need"] for a in tasks.open_asks([post_of(NEW_ASK)], {"u1": "agent-x"})] == ["Merge #4?"]

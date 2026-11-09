@@ -399,6 +399,30 @@ def test_wake_rules_match_the_listener():
     assert not wakes(_post("mail me at a@all.example"))
 
 
+def test_the_crown_leaves_a_post_to_another_agent_to_it():
+    """RT-6.6 step 5, RT-6.2 step 4: the coordinator wakes for a plain post,
+    not for one that names another agent (that agent's task, in its digest);
+    its own thread and an absent agent its server answers (RT-6.21) still wake it."""
+    def wakes(item, coordinator=True, in_my_thread=False):
+        return channel.wakes(item, coordinator=coordinator, in_my_thread=in_my_thread)
+
+    assert wakes(_post("deploy now?", trusted=True))
+    to_other = _post("@agent-hogan please deploy", trusted=True)
+    assert not wakes(to_other)
+    assert not wakes(_post("TASK · @agent-hogan deploy") | {"from_agent": True})
+    assert wakes(to_other, in_my_thread=True)
+    assert wakes(to_other | {"not_here": "agent-hogan (~ops)"})
+    assert wakes(to_other | {"departed": "agent-hogan"})
+    assert wakes(_post("@agent-hogan and @channel: main is red"))
+    # Mentioning the crown too is a mention of it: kind mention wins.
+    assert wakes(_post("@agent-x @agent-hogan deploy", kind="mention"))
+    # Also from someone not trusted, gated at the agent it names (RT-6.16): digest.
+    assert not wakes(_post("@agent-hogan deploy now"))
+    # Read as RT-6.21 reads a mention: any case, no address (a@agent-x.example).
+    assert not wakes(_post("@Agent-Hogan deploy", trusted=True))
+    assert wakes(_post("mail the log to ops@agent-infra.example", trusted=True))
+
+
 def test_an_fyi_post_wakes_only_whom_it_names():
     """RT-6.14, RT-6.12 step 3: an agent's fyi post (DONE, RESULT, IDLE…) wakes
     no coordinator and no one who only posted in the thread; it does wake

@@ -505,13 +505,20 @@ def test_listener_skips_posts_the_server_gated(mm, run):
         assert ("for you" in listen(run).stdout) is woken, listed
 
 
-def test_coordinator_wakes_for_every_post(mm, run):
-    """RT-6.2 step 4, RT-6.6: the 👑 holder sees the whole channel."""
+def test_coordinator_wakes_for_a_post_naming_no_agent(mm, run):
+    """RT-6.2 step 4, RT-6.6 step 5: the 👑 holder wakes for a post that names
+    no agent; one to another agent is that agent's, unless its server answers
+    it as an absent agent (ABSENT in gate-<uid>.env, RT-6.21)."""
     d = run.state_dir
     d.mkdir(parents=True, exist_ok=True)
     (d / f"coord-{ME}.env").write_text(f"CROWN_UNTIL={int(time.time()) + 600}\n")
     other_post(mm, "general chatter about lunch")
     assert "for you" in listen(run).stdout
+    for absent, woken in ((False, False), (True, True)):
+        mm.posts = []
+        other_post(mm, "@agent-hogan please deploy")
+        (d / f"gate-{ME}.env").write_text(f"ABSENT={mm.posts[0]['id'] if absent else 'x'} {int(time.time())}\n")
+        assert ("for you" in listen(run).stdout) is woken, absent
 
 
 def test_listener_digest_for_the_rest(mm, run):

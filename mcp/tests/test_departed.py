@@ -272,6 +272,7 @@ async def test_a_live_agent_not_in_the_channel_is_told_with_its_home(bus):
     _crown()
     e = await bus.arrive("q" * 26, "@agent-far wäre das")
     assert e.not_here == "agent-far (~bgl-infra)" and not e.departed
+    assert "q" * 26 in gate.absent(ME)  # for the listener and /v1/wake (RT-6.2 step 4)
     [reply] = bus.posted
     assert reply["root_id"] == "q" * 26
     assert reply["message"] == ("\U0001F451 agent-far is not in ~proj (home ~bgl-infra): "

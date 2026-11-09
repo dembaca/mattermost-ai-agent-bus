@@ -40,8 +40,10 @@ _LEAD = re.compile(r"^[^\w@#]*(TASK|DELEGATE)\b[\s·:–`-]*")  # `TASK` too (RT
 
 
 def _mentions(message: str) -> list[str]:
-    """Agents a post @-mentions: names with the registrar's prefix (arc42 §7.1)."""
-    return re.findall(rf"@({re.escape(session_file.agent_prefix())}[\w.-]*\w)", message)
+    """Agents a post @-mentions: names with the registrar's prefix (arc42 §7.1),
+    lower case, read as departed.mentioned does (no `a@agent-x.example`)."""
+    pattern = rf"(?<![\w.-])@({re.escape(session_file.agent_prefix())}[\w.-]*\w)"
+    return [m.lower() for m in re.findall(pattern, message, re.I)]
 
 
 def since_ms(now: float | None = None) -> int:

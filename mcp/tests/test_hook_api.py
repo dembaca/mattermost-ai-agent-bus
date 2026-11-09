@@ -184,29 +184,33 @@ async def test_signed_off_until_something_changes_on_the_bus(api):
 
 async def test_posts_say_what_the_listener_needs(api):
     """RT-6.17, RT-6.2 step 4: slim posts, newest first, with `to` all
-    (RT-6.11), an agent's fyi (RT-6.14: a person's props count for nothing)
-    and gated (RT-6.16)."""
+    (RT-6.11), an agent's fyi (RT-6.14: a person's props count for nothing),
+    gated (RT-6.16), naming an agent (RT-6.6 step 5) and absent (RT-6.21)."""
     fyi = {"a2a": {"v": 1, "kind": "done", "intent": "fyi"}}
     client = FakeClient(agents={OTHER}, posts=[
         post("p1", "DONE · merged", props=fyi),
         post("p2", "DONE · merged", user=PERSON, props=fyi),
         post("p3", "main is red", props={"a2a": {"v": 1, "to": "all"}}, root="r"),
         post("p4", "odd", props={"a2a": "all"}, type_="system_join_channel"),
+        post("p5", "@agent-hogan deploy"),
     ])
     d = session_file.state_dir()
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"gate-{UID}.env").write_text(f"GATED=p3 {int(time.time())}\n")
+    (d / f"gate-{UID}.env").write_text(f"GATED=p3 {int(time.time())}\nABSENT=p5 {int(time.time())}\n")
     _, h = await api(client)
     body = (await h.get("/v1/posts?limit=500")).json()
     assert body["channel"] == "agents"  # the work channel's name, for mm-agent-poll.sh
     got = body["posts"]
     assert client.calls == [("posts", 200, None)]
-    assert [p["id"] for p in got] == ["p1", "p2", "p3", "p4"]
-    assert [p["fyi"] for p in got] == [True, False, False, False]
-    assert [p["to"] for p in got] == ["", "", "all", ""]
-    assert [p["gated"] for p in got] == [False, False, True, False]
+    assert [p["id"] for p in got] == ["p1", "p2", "p3", "p4", "p5"]
+    assert [p["fyi"] for p in got] == [True, False, False, False, False]
+    assert [p["to"] for p in got] == ["", "", "all", "", ""]
+    assert [p["gated"] for p in got] == [False, False, True, False, False]
+    # RT-6.6 step 5, RT-6.21: for the agent it names; one this server answers as absent.
+    assert [(p["names_agent"], p["absent"]) for p in got][3:] == [(False, False), (True, True)]
     assert got[2] == {"id": "p3", "user_id": OTHER, "root_id": "r", "create_at": 1000, "type": "",
-                      "message": "main is red", "to": "all", "intent": "", "fyi": False, "gated": True}
+                      "message": "main is red", "to": "all", "intent": "", "fyi": False, "gated": True,
+                      "names_agent": False, "absent": False}
     assert got[3]["type"] == "system_join_channel" and "props" not in got[0]
     await h.get("/v1/posts?since=1234")
     assert client.calls[-1] == ("posts", None, 1234)

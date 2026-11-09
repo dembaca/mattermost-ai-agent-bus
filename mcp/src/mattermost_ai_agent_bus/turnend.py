@@ -130,8 +130,9 @@ def wake(posts: Iterable[Mapping[str, Any]], recent: Iterable[Mapping[str, Any]]
          me: str, username: str, since_ms: int, coordinator: bool, digest_sec: float,
          now: float | None = None) -> dict[str, Any]:
     """The listener's rules for the work channel's posts since `since_ms`
-    (RT-6.2 step 4): a post named for the agent, or in a thread it posted in
-    (any post while it holds the 👑), wakes it at once unless it is an agent's
+    (RT-6.2 step 4): a post named for the agent, one naming an absent agent
+    its server answers (RT-6.21), one in a thread it posted in, or holding the
+    👑 one that names no agent (RT-6.6 step 5), wakes it at once unless it is an agent's
     fyi post in a thread the agent did not start (RT-6.14) or gated (RT-6.16);
     the rest wakes it for a digest once the oldest is `digest_sec` old."""
     own = [p for p in recent if p.get("user_id") == me]
@@ -142,9 +143,10 @@ def wake(posts: Iterable[Mapping[str, Any]], recent: Iterable[Mapping[str, Any]]
         if p.get("user_id") == me or p.get("type") or int(p.get("create_at") or 0) < since_ms:
             continue
         root = p.get("root_id") or ""
-        seen = coordinator or (bool(root) and root in threads)
+        seen = (coordinator and not p.get("names_agent")) or (bool(root) and root in threads)
         mine = bool(root) and root in roots
-        if not p.get("gated") and (named(p, username) or (seen and (mine or not p.get("fyi")))):
+        if not p.get("gated") and (named(p, username) or p.get("absent")
+                                   or (seen and (mine or not p.get("fyi")))):
             addressed += 1
         else:
             others.append(p)
