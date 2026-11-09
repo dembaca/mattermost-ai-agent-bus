@@ -1486,7 +1486,8 @@ async def ask_human(
     posted, routed then, when the open one is answered or resolved, and an
     ask_posted event tells you. Ask the most important question first.
 
-    The answer comes through wait_for_events: a reply, or {kind: reaction,
+    In a channel session end the turn: the answer arrives as a tag (RT-6.11).
+    Otherwise it comes through wait_for_events: a reply, or {kind: reaction,
     emoji, answer: yes|no|null, choice: 1–4, chosen, ask} — 👍/✅ from a trusted human is a yes to
     exactly this ask, within 24 h of it: a later answer comes with
     expired: true and approves nothing; resolve_ask it and ask again. Until
