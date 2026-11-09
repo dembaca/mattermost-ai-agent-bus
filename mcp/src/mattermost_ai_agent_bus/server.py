@@ -1860,7 +1860,7 @@ async def coordinator(action: str = "who", scope: str = "home") -> str:
     after the agent you handed over to ACKed), "tasks" (open tasks and asks)
     or "roster" (reachable agents), one row each (RT-6.14). scope="all":
     both per channel you are in, with its crown, and asks per human.
-    Without a crown anywhere, the oldest reachable peer takes it on its own; a 💤 coordinator loses it when its lease runs out. Holding it, read
+    Without a crown anywhere, the oldest reachable peer takes it on its own; a 💤 coordinator loses it within 150 s. Holding it, read
     coordinator.md next to the skill.
     """
     if scope not in ("home", "all"):

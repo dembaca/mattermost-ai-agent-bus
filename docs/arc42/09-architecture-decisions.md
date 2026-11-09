@@ -919,8 +919,9 @@ reconnect already runs before the posts are judged, RT-6.6 step 6). Holds in
 every harness with an MCP server, corral or not.
 
 **Phases:** (1) the crown beat and the slot claim, with their rows in RT-6.6
-(steps 1 and 6, error rows 1, 2 and 4, a new row for a dead successor): needs
-the check that Mattermost keeps a status expiry of a few minutes (below). (2)
+(steps 1 and 6, error rows 1, 2 and 4, a new row for a dead successor); built
+without the check of Mattermost's short expiry (below), since the servers
+compare `expires_at` themselves. (2)
 the 👀 and the claim after a missing one, `crown_taken` and the yield, with
 RT-6.12 step 3 and RT-6.25 step 6. Each is a patch-sized change, 1 first.
 

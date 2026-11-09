@@ -397,11 +397,8 @@ async def test_without_a_holder_seen_only_the_oldest_plans(mm, client):
     assert not holds() and lease.look_due() == 0
 
 
-async def test_the_holder_beats_between_ticks(monkeypatch):
-    """ADR-007 step 1: between ticks the holder renews its status every beat,
-    without the roster read or the watch of a tick."""
-    calls: list[str] = []
-
+async def _run_heartbeat(monkeypatch, calls, until, *, holding, look_result=False, watch=None):
+    """Run lease.heartbeat with fakes until `until(calls)` holds (2 s at most)."""
     class _Client:
         token = "t"
         session = None
@@ -413,24 +410,115 @@ async def test_the_holder_beats_between_ticks(monkeypatch):
     async def fake_status(client, state, label=""):
         calls.append(state)
 
-    async def watch(client):
-        calls.append("watch")
-        return None
+    async def fake_look(client):
+        calls.append("look")
+        return look_result
 
     async def get_client():
         return _Client()
 
     monkeypatch.setattr(lease, "command", fake_command)
     monkeypatch.setattr(lease, "set_status", fake_status)
-    monkeypatch.setattr(lease, "crown_held", lambda uid: True)
+    monkeypatch.setattr(lease, "look", fake_look)
+    monkeypatch.setattr(lease, "crown_held", lambda uid: holding[0])
     monkeypatch.setattr(lease, "crown_beat_sec", lambda: 0.01)
     monkeypatch.setattr(lease, "heartbeat_sec", lambda: 60.0)
     monkeypatch.setenv("MM_BOT_USER_ID", UID)
     task = asyncio.create_task(lease.heartbeat(get_client, watch))
-    await asyncio.sleep(0.1)
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if until(calls):
+            break
     task.cancel()
+
+
+async def test_the_holder_beats_between_ticks(monkeypatch):
+    """ADR-007 step 1: between ticks the holder renews its status every beat,
+    without the roster read or the watch of a tick."""
+    calls: list[str] = []
+
+    async def watch(client):
+        calls.append("watch")
+        return None
+
+    await _run_heartbeat(monkeypatch, calls, lambda c: c.count("renew") >= 3, holding=[True], watch=watch)
     assert calls[:2] == ["tick", "watch"] and calls.count("tick") == 1
     assert calls.count("renew") >= 3 and calls.count("watch") == 1
+
+
+async def test_a_crown_taken_between_ticks_is_beaten_in_time(monkeypatch):
+    """ADR-007 step 1: the loop wakes at least every beat, so a crown taken
+    with coordinator("take") after a tick is renewed before its short lease
+    ends, not at the next tick."""
+    calls: list[str] = []
+    holding = [False]
+
+    def until(c):
+        if c.count("tick") == 1:
+            holding[0] = True  # the tool's take, while the loop sleeps
+        return c.count("renew") >= 2
+
+    await _run_heartbeat(monkeypatch, calls, until, holding=holding)
+    assert calls.count("tick") == 1 and calls.count("renew") >= 2
+
+
+async def test_a_member_looks_at_its_slot_and_a_claim_brings_the_tick(monkeypatch):
+    """ADR-007 step 2: between ticks a member looks, not ticks; a claim
+    brings the next tick forward to re-check for a second crown."""
+    calls: list[str] = []
+    monkeypatch.setattr(lease, "PENDING_POLL_SEC", 0.02)
+    await _run_heartbeat(monkeypatch, calls, lambda c: c.count("tick") >= 2,
+                         holding=[False], look_result=True)
+    assert calls[0] == "tick" and "look" in calls[1:calls.index("tick", 1)]
+
+
+async def test_a_released_crown_is_not_claimed_at_a_slot(mm, client):
+    """ADR-007 step 2, RT-6.6 step 4: a holder still reachable without the
+    👑 released or yielded it; the slot leaves that to the tick's election and
+    a pending take, and plans nothing more until the tick."""
+    me(mm)
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=150)
+    await lease.command(client, "tick")
+    mm.agent(OLDER, "agent-old", 1000, "hammer_and_wrench")   # released, still here
+    lease._look_at = time.time() - 1
+    assert not await lease.look(client) and not holds()
+    assert lease.look_due() == 0
+
+
+async def test_a_slot_claim_yields_to_an_older_crown_of_a_race(mm, client):
+    """ADR-007 step 2, RT-6.6 error handling: a slot claim and another claim at
+    once leave two crowns; the tick the claim brought forward yields to the older."""
+    me(mm)
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=150)
+    await lease.command(client, "tick")
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=-5)
+    lease._look_at = time.time() - 1
+    assert await lease.look(client) and holds()
+    mm.agent(MID, "agent-mid", 1500, "crown")   # claimed in the same second
+    await lease.command(client, "tick")
+    assert not holds()
+
+
+async def test_the_oldest_plans_after_its_release(mm, client, tmp_path, monkeypatch):
+    """ADR-007 step 2: with no holder seen the oldest plans a slot from now,
+    not before its YIELD_UNTIL (RT-6.6 step 4)."""
+    me(mm)
+    mm.agent(YOUNGER, "agent-young", 3000, "hammer_and_wrench")
+    _coord_file(tmp_path, monkeypatch, CROWN_UNTIL=0, PENDING=0, YIELD_UNTIL=int(time.time()) + 600)
+    await lease.command(client, "tick")
+    assert not holds() and lease.look_due() >= time.time() + 590
+
+
+async def test_a_claim_that_could_not_be_written_plans_no_look(mm, client, monkeypatch):
+    """ADR-007 step 2: a state directory that takes no write fails open: no
+    crown, and no look every second until the tick."""
+    me(mm)
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=150)
+    await lease.command(client, "tick")
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=-5)
+    monkeypatch.setattr(lease, "_save_coord", lambda *a: None)
+    lease._look_at = time.time() - 1
+    assert not await lease.look(client) and not holds() and lease.look_due() == 0
 
 
 # --- the roster ------------------------------------------------------------------------
@@ -576,6 +664,7 @@ def fresh_process(monkeypatch):
     monkeypatch.setattr(lease, "_header_seen", set())
     monkeypatch.setattr(lease, "_look_at", 0.0)
     monkeypatch.setattr(lease, "_vacant_at", 0.0)
+    monkeypatch.setattr(lease, "_holder_id", "")
 
 
 async def test_the_header_bus_part_is_static(mm, client):

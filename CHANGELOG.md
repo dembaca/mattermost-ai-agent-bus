@@ -18,8 +18,11 @@ before 0.5.0 are described in the git history.
   lease. What people notice: a coordinator idle or asleep for more than
   2.5 minutes loses the crown (it was 15), and the roster names a new one
   about 160 s after a holder died. Members' presence lease and heartbeat are
-  unchanged. Mixed versions: an older server still keeps a crown for 900 s
-  and claims only as the oldest; the new rules apply to what it receives.
+  unchanged. A slot claims only a crown whose holder is gone; a released
+  one still goes to the pending `take` or the tick's election. The hosts
+  need synchronised clocks: a holder more than about 90 s behind looks dead
+  between its beats. Mixed versions: an older server still keeps a crown for
+  900 s and claims only as the oldest; the new rules apply to what it receives.
 
 ## 0.74.0
 

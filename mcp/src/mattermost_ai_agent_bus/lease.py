@@ -253,7 +253,7 @@ async def set_status(client: ChatPort, state: str, label: str = "") -> None:
     task; without one, the directory the session works in. While the agent
     holds the crown, the emoji is 👑 and the text starts with "coordinator";
     the crown is extended only while the agent is reachable, so an idle
-    coordinator loses it when its lease runs out. Idle in a session started as
+    coordinator loses it when its crown lease runs out. Idle in a session started as
     a channel is reachable: the bus wakes it. ValueError for an unknown
     state; anything Mattermost answers is ignored."""
     if not client.token:
@@ -705,17 +705,18 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
     if cid not in _header_seen and _coord(uid).get("CROWN_UNTIL", 0) > now:
         # Once per process while holding: an upgrade finds an older header (step 7).
         await _header(client, cid)
-    await _plan(client, uid, rows)
+    _plan(uid, rows)
     return ""
 
 
 # --- the slot (ADR-007 step 2) -----------------------------------------------------------
 
-# When this server looks again for a free crown (epoch s; 0: no look planned),
-# and the end of the last holder's status it saw: the one time every server of
-# the home shares, so the slots keep their order.
+# When this server looks again for a free crown (epoch s; 0: no look planned);
+# the holder it last saw, and the end of that holder's status: the one time
+# every server of the home shares, so the slots keep their order.
 _look_at = 0.0
 _vacant_at = 0.0
+_holder_id = ""
 
 
 def look_due() -> float:
@@ -723,26 +724,25 @@ def look_due() -> float:
     return _look_at
 
 
-async def _plan(client: ChatPort, uid: str, rows: list[dict[str, Any]]) -> None:
+def _plan(uid: str, rows: list[dict[str, Any]]) -> None:
     """ADR-007 step 2: when this agent looks again for a free crown: the end
     of the holder's status plus this agent's slot (SLOT_SEC times its place
-    among the agents that stand, the holder left out, oldest first), not
-    before a release's YIELD_UNTIL. Never while it holds the crown, is not
-    reachable or does not stand (_election), nor for a crown without an end
-    (its lease rules, as before). With no holder seen yet only the oldest that
-    stands plans, a slot from now; the others wait for a holder. Under the lock."""
-    global _look_at, _vacant_at
+    among the reachable agents, the holder left out, oldest first), not before
+    a release's YIELD_UNTIL. Whether it stands (_election, descriptions read)
+    is asked only at the claim (look), so a plan costs no read. Never while it
+    holds the crown or is not reachable, nor for a crown without an end (its
+    lease rules, as before). With no holder seen yet only the oldest plans, a
+    slot from now; the others wait for a holder."""
+    global _look_at, _vacant_at, _holder_id
     now = time.time()
     state = _coord(uid)
     holder = next((r for r in rows if r["crown"] and r["id"] != uid), None)
     if holder is not None:
-        _vacant_at = holder["until_ms"] / 1000
+        _vacant_at, _holder_id = holder["until_ms"] / 1000, str(holder["id"])
     _look_at = 0.0
-    if (state.get("CROWN_UNTIL", 0) > now or not any(r["id"] == uid and r["reachable"] for r in rows)
+    ids = [str(r["id"]) for r in rows if r["reachable"] and (holder is None or r["id"] != holder["id"])]
+    if (state.get("CROWN_UNTIL", 0) > now or uid not in ids
             or (holder is not None and not _vacant_at)):
-        return
-    ids = [i for i in (await _election(client, rows)).ids if holder is None or i != holder["id"]]
-    if uid not in ids:
         return
     slot = SLOT_SEC * (ids.index(uid) + 1)
     if _vacant_at:
@@ -753,11 +753,16 @@ async def _plan(client: ChatPort, uid: str, rows: list[dict[str, Any]]) -> None:
 
 async def look(client: ChatPort) -> bool:
     """ADR-007 step 2: at this agent's slot, read the roster; the crown still
-    free, claim it by the rules of RT-6.6 step 2 save the oldest-first one:
-    the agents before this one had their slots. Plans the next look. True
-    when it claimed (the next tick re-checks for a second crown soon). Never
-    raises."""
-    if not client.token:
+    free because its holder is gone (its status ended, idle or offline),
+    claim it by the rules of RT-6.6 step 2 save the oldest-first one: the
+    agents before this one had their slots. A holder still reachable without
+    the 👑 released or yielded it: that is the tick's election and a pending
+    take's (RT-6.6 step 4), not a slot's. Plans the next look; a look that
+    could not claim plans none until the next tick. True when it claimed (the
+    next tick re-checks for a second crown soon). Before its time it reads
+    nothing. Never raises."""
+    global _look_at
+    if not client.token or not 0 < _look_at <= time.time():
         return False
     claimed: list[bool] = []
     try:
@@ -765,28 +770,31 @@ async def look(client: ChatPort) -> bool:
             uid = await _user_id(client)
             if not _UID.fullmatch(uid):
                 return False
-            now = time.time()
+            now = int(time.time())
             state = _coord(uid)
-            rows = _at_home(await _rows(client, await client.work_channel_id()), client.work_channel_name)
+            cid = await client.work_channel_id()
+            rows = _at_home(await _rows(client, cid), client.work_channel_name)
             free = not any(r["crown"] for r in rows)
-            due = 0 < _look_at <= now
+            gone = not any(r["id"] == _holder_id and r["reachable"] for r in rows)
             mine = any(r["id"] == uid and r["reachable"] for r in rows)
-            if (free and due and mine and state.get("CROWN_UNTIL", 0) <= now
+            if (free and gone and mine and state.get("CROWN_UNTIL", 0) <= now
                     and state.get("YIELD_UNTIL", 0) <= now and uid in (await _election(client, rows)).ids):
-                _save_coord(uid, int(now) + crown_lease_sec(), 0, 0)
+                _save_coord(uid, now + crown_lease_sec(), 0, 0)
                 await _render(client)
-                claimed.append(True)
+                claimed.append(_coord(uid).get("CROWN_UNTIL", 0) > now)
                 log.info("crown claimed at this agent's slot (ADR-007 step 2)")
-                await _header(client, await client.work_channel_id())
-            await _plan(client, uid, rows)
+                await _header(client, cid)
+            _plan(uid, rows)
+            if free and not any(claimed):
+                _look_at = 0.0  # nothing to claim here now: the tick plans again
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 — fail open, like the tick
         log.debug("lease look: %s", exc)
         return False
-    if claimed:
+    if any(claimed):
         await _crown_came()
-    return bool(claimed)
+    return any(claimed)
 
 
 # --- the work channel's header (RT-6.6 step 7) ---------------------------------------
@@ -871,8 +879,12 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
     due, PENDING_POLL_SEC apart at the least. Between ticks (ADR-007 phase 1)
     the crown's holder renews its status every crown_beat_sec(), and the
     others look for a free crown at their slot (look); a claim brings the next
-    tick forward, which yields to an older crown of a race."""
-    next_tick = 0.0
+    tick forward, which yields to an older crown of a race. It wakes at least
+    every beat, so a crown taken between ticks (coordinator("take"), a tick
+    at a reconnect) is beaten in time and a look planned there is not late; a
+    wake with nothing due reads one file. A crown that lapsed gets its plain
+    status at once."""
+    next_tick, held = 0.0, False
     while True:
         delay = heartbeat_sec()
         try:
@@ -890,16 +902,17 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
                     next_tick = time.time() + delay
                 elif crown_held(uid):
                     await set_status(client, "renew")  # the beat: no roster read, no watch
+                elif held:
+                    await set_status(client, "renew")  # the crown lapsed: the plain lease now
                 elif await look(client):
-                    next_tick = time.time() + PENDING_POLL_SEC
+                    next_tick = min(next_tick, time.time() + PENDING_POLL_SEC)
+                held = crown_held(uid)
                 now = time.time()
                 delay = next_tick - now
-                if crown_held(uid):
-                    delay = min(delay, crown_beat_sec())
-                elif _look_at:
+                if _look_at and not held:
                     delay = min(delay, max(1.0, _look_at - now))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             log.debug("lease heartbeat skipped: %s", exc)
-        await asyncio.sleep(max(0.0, delay))
+        await asyncio.sleep(max(0.0, min(delay, crown_beat_sec())))
