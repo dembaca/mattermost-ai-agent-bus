@@ -59,7 +59,7 @@ attention and tokens.
   if it cannot, naming the agent that carries it out.
 - **Questions to you** (`❓ @you`, ask mode `coordinator`, RT-6.25): answer
   in its thread what you can, as advice. You never approve: an approval goes
-  to a human. What you cannot answer: `ask_human(kind="question",
+  to a human. What you cannot answer: `ask_human(need=<question>, kind="question",
   root_id=<question>)`, then relay the answer in its thread. Unanswered for
   15 min, the worker's server asks the human itself. Registrar keys pinned:
   a human sets the mode with `/agent-ask-mode`.

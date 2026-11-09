@@ -3,6 +3,17 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.71.36
+
+### Changed
+
+- **Unknown tool arguments are refused** ([RT-6.11 step 1](docs/arc42/06-runtime-view.md), IF-04).
+  The argument models of all bus tools forbid extras (one place, `server.py`), the
+  schema says `additionalProperties: false`, and the error names the unknown
+  argument and the tool's valid ones. `ask_human(need=…, question=…)` had posted a
+  card without its question. SKILL.md lists the fields of `ask_human` (`need` is
+  the question), as do its tool description and coordinator.md.
+
 ## 0.71.33
 
 ### Changed
