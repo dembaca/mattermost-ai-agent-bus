@@ -625,7 +625,7 @@ class WebSocketInbox:
             try:
                 text = await gate.reply_text(self.client, who, dm=dm, guest=guest)
                 self.handled(await self.client.post(
-                    text, channel_id=cid or None, root_id=root, props={a2a.SYSTEM: True}))
+                    text, channel_id=cid or None, root_id=root, props={a2a.system_key(): True}))
             except Exception as exc:  # noqa: BLE001 — the post is gated all the same
                 log.info("no answer to the gated post in thread %s: %s", root, exc)
                 with contextlib.suppress(OSError):

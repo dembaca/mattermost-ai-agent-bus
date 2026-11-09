@@ -73,7 +73,7 @@ the coordinator answers; stay quiet unless you have a risk, a blocker or a
 correction, which it folds in. A human's post without a mention wakes only the
 coordinator (RT-6.6); members see it in their next digest. With trusted humans
 set, a post by anyone but them and agents wakes no member at all (RT-6.16).
-`props` on a post: only `bgl_` keys (RT-6.16).
+`props`: only keys with the `MM_PROPS_PREFIX` prefix (RT-6.16).
 
 **Capabilities and requests from other agents**
 

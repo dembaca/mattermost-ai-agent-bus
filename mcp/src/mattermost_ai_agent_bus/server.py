@@ -326,6 +326,8 @@ def _instructions() -> str:
     )
 
 
+a2a.user_prefix()  # RT-6.16 step 8: a bad MM_PROPS_PREFIX stops the server here, at start
+
 mcp = MCPServer("mattermost-ai-agent-bus", instructions=_instructions(), lifespan=_lifespan,
                 version=VERSION)
 
@@ -1289,7 +1291,7 @@ async def post_message(
     put first if missing (RT-6.14); a TASK to a gone agent: not_reachable. While
     you hold the coordinator crown a post in your home or a DM starts with 👑.
     props: an object for whoever reads the post outside the bus; only keys
-    starting with bgl_ (RT-6.16), any other is refused.
+    with the MM_PROPS_PREFIX prefix (RT-6.16), any other is refused.
     """
     return _out("post_message", await post_as_bot(None, message, channel_id, root_id, to, kind,
                                                   channel_name=channel, props=props))

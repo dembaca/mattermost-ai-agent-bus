@@ -19,6 +19,7 @@ people, hand-written) are read from their text with the same rules.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
@@ -220,24 +221,58 @@ def props(message: str = "", to: str = "", kind: str = "",
 
 
 # RT-6.16 step 8: the props an agent may add to its own posts (post_message,
-# reply_in_thread): only keys with this prefix, for what a caller outside the
-# bus (a bridge) reads from them. The bus's own keys (a2a, agent_card, ...) never
-# start with it, so no caller can overwrite them; SYSTEM is the bus's alone.
-USER_PREFIX = "bgl_"
-SYSTEM = "bgl_system"
+# reply_in_thread): only keys with the configured prefix, for what a caller outside
+# the bus (a bridge) reads from them. The bus's own keys (a2a, agent_card, ...) never
+# start with it (a prefix that one of them, or a Mattermost key, starts with is
+# refused at start), so no caller can overwrite them; `<prefix>system` is the bus's
+# alone. The prefix is one setting of the whole bus: MM_PROPS_PREFIX, the same on
+# every server, default `x_`.
+PREFIX_ENV = "MM_PROPS_PREFIX"
+DEFAULT_PREFIX = "x_"
+_PREFIX = re.compile(r"[a-z][a-z0-9]*_")
+# Keys the bus or Mattermost writes into post props; no prefix may match the start
+# of one, and `a2a_` stays the bus's namespace.
+_RESERVED_KEYS = ("a2a", "agent_card", "attachments", "card", "from_webhook", "from_bot",
+                  "from_plugin", "override_username", "override_icon_url",
+                  "override_icon_emoji", "webhook_display_name", "channel_mentions",
+                  "disable_group_highlight", "mentionhighlightdisabled", "username",
+                  "icon_url", "model", "ai_generated_by", "ai_generated_by_user_id")
+
+
+def user_prefix(environ: Mapping[str, str] | None = None) -> str:
+    """The props prefix: MM_PROPS_PREFIX, else `x_`. Raises ValueError for one
+    that is not `[a-z][a-z0-9]*_` or that a key of the bus or of Mattermost
+    starts with (the server checks it when it starts)."""
+    raw = ((environ if environ is not None else os.environ).get(PREFIX_ENV) or "").strip()
+    prefix = raw or DEFAULT_PREFIX
+    if not _PREFIX.fullmatch(prefix):
+        raise ValueError(f"{PREFIX_ENV}={raw!r} is no props prefix: lower-case letters and digits, "
+                         "starting with a letter, ending with _ (for example x_ or bgl_)")
+    if prefix == "a2a_" or any(k.startswith(prefix) for k in _RESERVED_KEYS):
+        raise ValueError(f"{PREFIX_ENV}={prefix!r} could clash with a key of the bus or of "
+                         "Mattermost: choose another")
+    return prefix
+
+
+def system_key() -> str:
+    """The prop that marks a system reply of the bus (RT-6.16 step 9)."""
+    return f"{user_prefix()}system"
+
+
 USER_PROPS_MAX = 2000  # serialised characters
 
 
 def user_props(raw: object) -> tuple[dict[str, Any], str]:
     """The caller's props and "", or {} and why they are refused: not an
-    object, a key without USER_PREFIX (or the bus's own SYSTEM), or too long."""
+    object, a key without the prefix (or the bus's own `<prefix>system`), or too long."""
     if raw is None or raw == {}:
         return {}, ""
     if not isinstance(raw, Mapping):
         return {}, "props must be an object"
-    bad = sorted(str(k) for k in raw if not str(k).startswith(USER_PREFIX) or k == SYSTEM)
+    prefix, system = user_prefix(), system_key()
+    bad = sorted(str(k) for k in raw if not str(k).startswith(prefix) or k == system)
     if bad:
-        return {}, (f"props: only keys starting with {USER_PREFIX} are allowed, and {SYSTEM} "
+        return {}, (f"props: only keys starting with {prefix} are allowed, and {system} "
                     f"is the bus's own (refused: {', '.join(bad)})")
     try:
         size = len(json.dumps(raw, ensure_ascii=False))
@@ -255,9 +290,9 @@ def with_user(bus: dict[str, Any] | None, user: Mapping[str, Any]) -> dict[str, 
 
 
 def system(post: Post) -> bool:
-    """A post the bus wrote as a system reply (props.bgl_system, RT-6.16 step 9).
+    """A post the bus wrote as a system reply (props.<prefix>system, RT-6.16 step 9).
     Anyone can write props: callers honour it only for a bus agent's post."""
-    return post.props.get(SYSTEM) is True
+    return post.props.get(system_key()) is True
 
 
 def intent_of(post: Mapping[str, Any]) -> str | None:
