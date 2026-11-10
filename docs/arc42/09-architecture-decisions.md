@@ -15,7 +15,7 @@ code does today and point here where a decision will change them.
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-ask-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phases 1 (0.71.0: the pinned post) and 2 (0.71.18: the registrar's signed `/agent-mandate` record) built, RT-6.26 | #141 |
-| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); amendment phases B (0.71.9: the crown only for peers) and C (0.71.11: stale copies stay off the bus) built, the rest not built | – |
+| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); phase 1 built (0.75.0: the crown beat and the slot); amendment phases B (0.71.9: the crown only for peers) and C (0.71.11: stale copies stay off the bus) built, the rest not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 open | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
@@ -800,7 +800,11 @@ not; without one nothing is marked, as today (Section 7.2).
 
 ## ADR-007: A dead 👑 is found in seconds
 
-**Status:** Proposed (2026-11-04); not built, except phases B (the crown only
+**Status:** Proposed (2026-11-04); phase 1 built (0.75.0: the crown beat and
+the slot, with the proposed numbers; the servers compare the status's
+`expires_at` themselves, so Mattermost's handling of a short expiry decides
+nothing, and with no holder seen only the oldest that stands looks, see RT-6.6
+step 2); phases B (the crown only
 for peers, 0.71.9) and C (stale copies stay off the bus, 0.71.11) of the amendment. Decided by a trusted human in
 the thread of 2026-11-04 (their steps 1 and 2, the crown stays with the new
 holder) and on 2026-11-04 (step 4: the `crown_taken` post); the numbers below
@@ -915,8 +919,9 @@ reconnect already runs before the posts are judged, RT-6.6 step 6). Holds in
 every harness with an MCP server, corral or not.
 
 **Phases:** (1) the crown beat and the slot claim, with their rows in RT-6.6
-(steps 1 and 6, error rows 1, 2 and 4, a new row for a dead successor): needs
-the check that Mattermost keeps a status expiry of a few minutes (below). (2)
+(steps 1 and 6, error rows 1, 2 and 4, a new row for a dead successor); built
+without the check of Mattermost's short expiry (below), since the servers
+compare `expires_at` themselves. (2)
 the 👀 and the claim after a missing one, `crown_taken` and the yield, with
 RT-6.12 step 3 and RT-6.25 step 6. Each is a patch-sized change, 1 first.
 

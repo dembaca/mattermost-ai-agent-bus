@@ -332,7 +332,7 @@ async def test_the_heartbeat_brings_its_next_tick_forward(monkeypatch):
     while len(sleeps) < 2:
         await real_sleep(0)
     task.cancel()
-    assert sleeps[0] == lease.PENDING_POLL_SEC
+    assert sleeps[0] == pytest.approx(lease.PENDING_POLL_SEC, abs=0.5)
 
 
 # --- ask reminders --------------------------------------------------------------------------

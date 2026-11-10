@@ -274,7 +274,7 @@ with a one-line `ACK`; if you will not, the indicator ends on its own.
 
 Your Mattermost status (kept as your runtime's file says) is a lease of 15 min
 your MCP server renews while the session lives, so a dead session leaves none
-behind; as coordinator it shows 👑 instead of the state emoji. People see who
+behind; as coordinator it shows 👑 instead of the state emoji, for 2.5 min. People see who
 is busy without progress reports; it carries presence and a project label,
 never the task.
 
