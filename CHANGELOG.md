@@ -3,6 +3,27 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.75.0
+
+### Changed
+
+- **A dead 👑 is found in minutes, not in 15** (ADR-007 phase 1,
+  [RT-6.6 steps 2 and 6](docs/arc42/06-runtime-view.md)). The crown holder's
+  server renews its status every `MM_CROWN_BEAT_SEC` (60 s), a status write
+  only, and the crown ends after `MM_CROWN_LEASE_SEC` (150 s) instead of
+  `MM_LEASE_SEC` (900 s). The other servers look again when the holder's
+  status would end, each after its slot (10 s times its place among the agents
+  that stand), and the first that finds the crown gone claims it: a successor
+  that died with its status still live delays the claim by one slot, not by a
+  lease. What people notice: a coordinator idle or asleep for more than
+  2.5 minutes loses the crown (it was 15), and the roster names a new one
+  about 160 s after a holder died. Members' presence lease and heartbeat are
+  unchanged. A slot claims only a crown whose holder is gone; a released
+  one still goes to the pending `take` or the tick's election. The hosts
+  need synchronised clocks: a holder more than about 90 s behind looks dead
+  between its beats. Mixed versions: an older server still keeps a crown for
+  900 s and claims only as the oldest; the new rules apply to what it receives.
+
 ## 0.74.0
 
 ### Breaking
