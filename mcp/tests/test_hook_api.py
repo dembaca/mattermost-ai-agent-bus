@@ -240,8 +240,10 @@ async def test_ask_reactions_counts_only_what_was_not_handed_over(api):
                                          {"user_id": UID, "emoji_name": "white_check_mark"}]})
     _, h = await api(client)
     assert (await h.get("/v1/ask-reactions")).json() == {"fresh": 0}
+    assert not life._untaken
     client.reacts[ASK].append({"user_id": PERSON, "emoji_name": "+1"})
     assert (await h.get("/v1/ask-reactions")).json() == {"fresh": 1}
+    assert life._untaken  # RT-6.6 step 1: the listener wakes the agent for it
     # RT-6.16 step 7: a reaction the server gated wakes nobody.
     (d / f"gate-{UID}.env").write_text(f"GATED={ASK}:{PERSON}:+1 {int(time.time())}\n")
     assert (await h.get("/v1/ask-reactions")).json() == {"fresh": 0}

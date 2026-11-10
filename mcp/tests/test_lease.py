@@ -707,7 +707,8 @@ async def test_a_silent_holder_drops_the_crown_and_does_not_claim(mm, client, tm
     _no_sign_since(monkeypatch, 901)
     await lease.set_status(client, "renew")
     assert not holds() and coord(tmp_path)["CROWN_UNTIL"] == 0
-    assert coord(tmp_path)["YIELD_UNTIL"] > time.time() + 1700
+    # One crown lease, not a release's two leases: the silence may end soon.
+    assert time.time() + 140 <= coord(tmp_path)["YIELD_UNTIL"] <= time.time() + 150
     assert mm.custom_status()["emoji"] == "zzz"
     _coord_file(tmp_path, monkeypatch, CROWN_UNTIL=0, PENDING=0, YIELD_UNTIL=0)
     me(mm, "zzz")
@@ -717,6 +718,51 @@ async def test_a_silent_holder_drops_the_crown_and_does_not_claim(mm, client, tm
     mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=-5)
     lease._holder_id, lease._look_at = OLDER, time.time() - 1
     assert not await lease.look(client) and not holds()
+
+
+async def test_a_silent_agent_never_claims_at_its_tick(mm, client, monkeypatch):
+    """RT-6.6 step 2: silent, the agent is no candidate, even where a roster
+    read before its 💤 arrived still shows it reachable."""
+    me(mm)
+    _no_sign_since(monkeypatch, 901)
+    await lease.command(client, "tick")
+    assert not holds()
+
+
+async def test_a_failed_write_is_not_taken_as_shown(mm, client, monkeypatch):
+    """RT-6.6 step 1: the flip counts as shown only once Mattermost took it,
+    so the heartbeat writes a failed one again."""
+    _no_sign_since(monkeypatch, 901)
+    mm.fail = True
+    await lease.set_status(client, "bus")
+    assert not life.is_shown() and lease._silent(UID)
+    mm.fail = False
+    await lease.set_status(client, "renew")
+    assert life.is_shown()
+
+
+async def test_a_listen_window_that_ran_out_is_idle_not_silent(mm, client, tmp_path, monkeypatch):
+    """RT-6.6 step 1, RT-6.2 step 3: a window that ended without the Stop hook
+    counts as 💤 idle, which is not reachable anyway; within it the window
+    rule holds (the listener's reads are the signs)."""
+    _no_sign_since(monkeypatch, 901)
+    _dir(tmp_path).mkdir(exist_ok=True)
+    (_dir(tmp_path) / f"presence-{UID}.env").write_text(f"STATE=listening\nLABEL={int(time.time()) + 600}\n")
+    assert lease._silent(UID)
+    (_dir(tmp_path) / f"presence-{UID}.env").write_text("STATE=listening\nLABEL=1\n")
+    assert not lease._silent(UID) and lease._judged(UID) == (False, False)
+
+
+async def test_a_server_restarted_during_a_turn_keeps_it(monkeypatch, tmp_path):
+    """RT-6.6 step 1: a new server whose presence file says working (a
+    reconnect during a turn) counts the turn as running, so a push it sends
+    then is the turn's; the Stop hook ends it."""
+    calls: list[str] = []
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    _dir(tmp_path).mkdir(exist_ok=True)
+    (_dir(tmp_path) / f"presence-{UID}.env").write_text("STATE=working\nLABEL=proj\n")
+    await _run_heartbeat(monkeypatch, calls, lambda c: "tick" in c, holding=[False])
+    assert life._turn
 
 
 async def test_a_silent_member_is_written_once_by_the_heartbeat(monkeypatch):

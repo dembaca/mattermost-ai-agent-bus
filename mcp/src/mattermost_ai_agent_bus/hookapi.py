@@ -407,10 +407,13 @@ class HookAPI:
 
     async def _run(self, route: Route, client: MattermostAdapter,
                    query: Mapping[str, str], payload: Mapping[str, Any]) -> Reply:
-        if route in _SIGN_ROUTES:
+        state = payload.get("state") if route is presence else None
+        if route in _SIGN_ROUTES or state == "bus":
             life.sign()
         elif route in _TAKE_UP_ROUTES:
             life.take_up()
+        elif state in PRESENCE:
+            life.turn(state == "working")  # before the slot: a turn begins or ends
         if route not in _HEAVY_ROUTES:
             reply = await route(client, query, payload)
         else:
@@ -418,7 +421,8 @@ class HookAPI:
                 reply = await route(client, query, payload)
         status, answer = reply
         if status == 200 and (answer.get("wake") if route is wake else
-                              route is pending and answer.get("count", 0) > 0):
+                              answer.get("count", 0) > 0 if route is pending else
+                              route is ask_reactions and answer.get("fresh", 0) > 0):
             life.pushed()  # the listener or the plugin wakes the agent with it
         return reply
 
@@ -770,11 +774,6 @@ async def presence(client: MattermostAdapter, query: Mapping[str, str],
         arg = label.strip().replace(" · ", " ")
         if len(arg) > MAX_LABEL or any(c < " " or c == "\x7f" for c in arg):
             raise BadRequest(f"label: one line, at most {MAX_LABEL} characters")
-    # ADR-007 amendment step 1: a turn begins (it takes up what was pushed) or ends.
-    if state == "bus":
-        life.sign()
-    else:
-        life.turn(state == "working")
     await lease.set_status(client, state, arg)
     tools = _tools()
     if state in ("idle", "listening") and tools is not None:
@@ -1022,7 +1021,7 @@ _ROUTES: dict[tuple[str, str], Route] = {
 _HEAVY_ROUTES = frozenset({pending, presence, post_route, reply_route, turn_end, wake, handoff})
 # ADR-007 amendment step 1: the hooks' and the listener's reads are a sign of
 # the agent, its posts through the shell take up what was pushed; presence
-# counts in its route (a turn begins or ends). Not /v1/me, /v1/usage or
+# begins or ends a turn (HookAPI._run). Not /v1/me, /v1/usage or
 # /v1/stat: the status line asks those, which shows a drawn screen, not a
 # working agent.
 _SIGN_ROUTES = frozenset({pending, last_post, posts, ask_reactions, turn_end, wake, handoff})

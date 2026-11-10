@@ -1221,7 +1221,11 @@ would otherwise read as silence. Measured on 2026-11-10: the prompt hook runs
 for a turn a push starts (the status showed 🛠 for such turns), so the take-up
 rests on it. Silent shows the 💤 with the text `silent · no sign since
 HH:MMZ`, not a new emoji: every plugin, older ones too, reads the 💤 as not
-reachable, so a silent agent is no candidate anywhere. The successor's
+reachable, so a silent agent is no candidate anywhere. A silent holder yields
+one crown lease, not a release's two `MM_LEASE_SEC` (decision step 1 said "as a
+`release` does"): a silence may be wrong for seconds (a prompt hook past its
+deadline, a push held while the human types), and the slots of step 2 come
+first anyway. The successor's
 `crown_taken` naming the silence comes with phase E, which builds that post.
 The ping, the prompt rule and E stay open.
 

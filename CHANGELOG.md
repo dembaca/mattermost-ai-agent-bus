@@ -18,11 +18,12 @@ before 0.5.0 are described in the git history.
   `MM_LEASE_SEC` (900 s) outside 👂 idle as a channel. Silent, its status
   shows 💤 `silent · no sign since HH:MMZ`, it is not reachable (no
   candidate, no slot; `not_reachable` names it `silent`), and a holder drops
-  the crown as by a release; the next sign brings it back as a member. What
-  people notice: a coordinator whose session stops taking up pushes loses the
-  crown about a minute after the first one; an agent of a runtime without
-  turn hooks (Cursor, Codex, `bus` state) shows 💤 `silent` 15 minutes after
-  its last tool call, as long as no prompt runs. A running turn counts as
+  the crown (no claim for one crown lease after); the next sign brings it back
+  as a member. What people notice: a coordinator whose session stops taking up
+  pushes loses the crown about a minute after the first one; an agent of a
+  runtime without turn hooks (Cursor, Codex, `bus` state) shows 💤 `silent`
+  15 minutes after its last bus tool call, unless it set `working` by hand;
+  the skill's Cursor listen timer now waits at most 10 min, not 15. A running turn counts as
   alive until it ends: the server's ping between events is not built, nor the
   rule for a permission prompt left open. Mixed versions: an older plugin reads
   the 💤 as not reachable too.

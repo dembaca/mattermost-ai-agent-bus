@@ -80,9 +80,9 @@ def heartbeat_sec() -> float:
 
 
 def lease_sec() -> int:
-    """How long a status lives without renewal (MM_LEASE_SEC, default 900 s)."""
-    s = os.environ.get("MM_LEASE_SEC", "")
-    return int(s) if s.isdigit() and int(s) > 0 else 900
+    """How long a status lives without renewal (MM_LEASE_SEC, default 900 s),
+    also the window of the agent's sign of life (life.window_sec)."""
+    return life.window_sec()
 
 
 def crown_beat_sec() -> int:
@@ -309,7 +309,6 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     if since:
         emoji, named, reachable = a2a.status_emoji(StatusMark.IDLE), "", False
         text = f"{SILENT} · no sign since {time.strftime('%H:%MZ', time.gmtime(since))}"
-    life.shown(bool(since))
 
     if state == "offline":
         for f in (pres, coord):
@@ -320,9 +319,10 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
 
     crown = _coord(uid).get("CROWN_UNTIL", 0)
     if since and crown > now:
-        # A silent holder drops the crown as a release does: no claim for two
-        # leases (RT-6.6 step 4); the next agent claims at its slot.
-        _save_coord(uid, 0, 0, now + 2 * lease)
+        # A silent holder drops the crown; the next agent claims at its slot. It
+        # yields one crown lease, not a release's two leases: a silence may end
+        # with the next tool call, and the slots come first anyway.
+        _save_coord(uid, 0, 0, now + crown_lease_sec())
         log.info("crown dropped: no sign of the agent since %s (ADR-007 amendment step 1)",
                  _rfc3339(int(since)))
         crown = 0
@@ -349,6 +349,7 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
             await client.set_custom_status(emoji, text[:STATUS_MAX], _rfc3339(until))
         else:
             await client.clear_custom_status()
+        life.shown(bool(since))  # only once written: a failed flip is written again
     except Exception as exc:  # noqa: BLE001
         log.debug("custom status: %s", exc)
 
@@ -717,7 +718,7 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
             _save_coord(uid, 0, pending, yield_until)
             await _render(client)
     elif not holding and not others and yield_until <= now:
-        me_reachable = any(r["id"] == uid and r["reachable"] for r in rows)
+        me_reachable = any(r["id"] == uid and r["reachable"] for r in rows) and not _silent(uid)
         # An explicit take (pending) is allowed; the election only among peers.
         if me_reachable and (pending == 1 or await _elected(client, uid, rows)):
             await take_now()
@@ -927,13 +928,19 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
     status at once, and so does an agent that turns silent or shows a sign
     again (ADR-007 amendment step 1): a silent holder drops its crown with
     that write. It wakes when the agent would turn silent."""
-    next_tick, held = 0.0, False
+    next_tick, held, seeded = 0.0, False, False
     while True:
         delay = heartbeat_sec()
         try:
             client = await get_client()
             if client is not None and client.token:
                 uid = await _user_id(client)
+                if not seeded:
+                    seeded = True
+                    if _read(_file("presence", uid)).get("STATE") == "working":
+                        # A server that restarts during a turn (a reconnect,
+                        # /reload-plugins) keeps it: the Stop hook ends it.
+                        life.turn(True)
                 if time.time() >= next_tick:
                     await command(client, "tick")
                     if take_pending(uid):
