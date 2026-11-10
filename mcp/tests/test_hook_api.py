@@ -10,7 +10,7 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import channel, hookapi, lease, ownpost, session_file, unread
+from mattermost_ai_agent_bus import channel, hookapi, lease, life, ownpost, session_file, unread
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import UnreadChannel
 
@@ -268,6 +268,43 @@ async def test_presence_sets_the_status_lease(api, monkeypatch):
     assert (await h.post("/v1/presence", content=b"[1]")).status_code == 400
     assert (await h.post("/v1/presence", content=b"{nope")).status_code == 400
     assert len(runs) == 4
+
+
+async def test_the_hooks_calls_are_the_agents_sign_of_life(api, monkeypatch):
+    """RT-6.17, RT-6.6 step 1 (ADR-007 amendment step 1): a turn begins with
+    the prompt hook's working, which takes up what was pushed, and ends with
+    the Stop hook's idle; the hooks' and the listener's reads are signs; a
+    pending count the listener wakes the agent for waits to be taken up.
+    /v1/me and /v1/usage, which the status line asks, are no sign."""
+    async def set_status(client, state, label=""):
+        pass
+
+    async def channels(client, watched):
+        return [unread.Pending(UnreadChannel("dm", "D"), waiting[0], [])]
+
+    waiting = [0]
+    monkeypatch.setattr(lease, "set_status", set_status)
+    monkeypatch.setattr(unread, "channels", channels)
+    _, h = await api(FakeClient())
+    monkeypatch.setattr(life, "_sign", 0.0)
+    await h.get("/v1/me")
+    await h.post("/v1/usage", json={"ctx": 10})
+    assert life._sign == 0.0
+    await h.get("/v1/pending")
+    assert life._sign > 0 and not life._untaken
+    waiting[0] = 1
+    await h.get("/v1/pending")  # the listener's count: it wakes the agent
+    assert life._untaken
+    await h.post("/v1/presence", json={"state": "working", "label": "proj"})
+    assert life._turn and not life._untaken
+    await h.get("/v1/pending")  # the Stop hook's drain: within the turn
+    assert not life._untaken
+    await h.post("/v1/presence", json={"state": "idle"})
+    assert not life._turn
+    monkeypatch.setattr(life, "_untaken", 1.0)
+    monkeypatch.setattr(life, "_sign", 0.0)
+    await h.post("/v1/presence", json={"state": "bus", "label": "proj"})
+    assert life._sign > 0 and life._untaken == 1.0
 
 
 async def test_the_file_names_endpoint_and_key_and_goes_at_exit(api, monkeypatch):

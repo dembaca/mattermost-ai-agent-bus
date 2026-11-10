@@ -11,7 +11,7 @@ from mcp.shared.message import SessionMessage
 from mcp_types import INVALID_REQUEST, JSONRPCNotification, JSONRPCRequest
 from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
-from mattermost_ai_agent_bus import channel, server, slim
+from mattermost_ai_agent_bus import channel, life, server, slim
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import Thread
 
@@ -260,6 +260,35 @@ async def test_unconfirmed_channel_reads_nothing():
     assert calls == 0
     assert pusher.connection.sent == [channel.check(pusher.code)]
     assert not pusher.confirm("deadbeef") and not pusher.confirmed.is_set()
+
+
+@pytest.mark.anyio
+async def test_a_push_waits_to_be_taken_up_the_check_does_not():
+    """RT-6.12 step 3, RT-6.6 step 1 (ADR-007 amendment step 1): a push or a
+    digest that went out waits until a turn or a tool call takes it up; the
+    channel check is no event, and a push that did not go out counts not."""
+    pusher = _pusher()
+    assert await pusher.send(channel.check(pusher.code), wakes=False)
+    assert not life._untaken
+    pusher.connection = None
+    assert not await pusher.send(channel.notification(MENTION))
+    assert not life._untaken
+    pusher.connection = Conn()
+    assert await pusher.send(channel.notification(MENTION))
+    assert life._untaken
+
+
+@pytest.mark.anyio
+async def test_a_tool_call_takes_the_push_up():
+    """RT-6.12 step 4, RT-6.6 step 1: any call of the server's tools is a sign
+    of the agent and takes up what was pushed, a refused one too."""
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    life.pushed()
+    sign = life._sign = 0.0
+    with pytest.raises(ToolError):
+        await server.mcp.call_tool("get_me", {"no_such_argument": "x"})
+    assert not life._untaken and life._sign > sign
 
 
 @pytest.mark.anyio

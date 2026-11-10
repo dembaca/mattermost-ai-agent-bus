@@ -23,7 +23,8 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from pydantic import ValidationError
 
 from . import (
-    __version__, a2a, askroute, asks, attest, channel, departed, files, gate, hookapi, lease, mandate, overhead, owners, ownpost, permission,
+    __version__, a2a, askroute, asks, attest, channel, departed, files, gate, hookapi, lease, life, mandate, overhead, owners, ownpost,
+    permission,
     profile, remind, session_file, slim, stall, stats, tasks, unread, usage,
 )
 from .client import InvalidId, MattermostAdapter, Refused, attachment_props, guest_ids, mm_id, mm_name
@@ -346,6 +347,7 @@ class _StrictServer(MCPServer):
 
     async def call_tool(self, name: str, arguments: dict[str, Any], *args: Any,
                         **kwargs: Any) -> Any:
+        life.take_up()  # ADR-007 amendment step 1: a sign of the agent, which takes up its pushes
         try:
             return await super().call_tool(name, arguments, *args, **kwargs)
         except ToolError as exc:

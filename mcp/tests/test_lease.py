@@ -8,7 +8,7 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import lease
+from mattermost_ai_agent_bus import lease, life
 from mattermost_ai_agent_bus.client import MattermostAdapter
 from mattermost_ai_agent_bus.model import RosterEntry
 
@@ -646,6 +646,92 @@ async def test_idle_in_a_channel_session_is_reachable_and_keeps_the_crown(mm, cl
     await lease.command(client, "release")
     await lease.set_status(client, "renew")
     assert mm.custom_status()["emoji"] == "ear"
+
+
+# --- the agent's sign of life (ADR-007 amendment step 1, phase D) --------------------------
+
+def _no_sign_since(monkeypatch, ago: float) -> float:
+    at = time.time() - ago
+    monkeypatch.setattr(life, "_sign", at)
+    return at
+
+
+async def test_an_agent_without_a_sign_is_silent_and_not_reachable(mm, client, monkeypatch):
+    """RT-6.6 step 1: the server's heartbeat is no sign of the agent; after the
+    window without one the status shows 💤 `silent`, which every plugin reads
+    as not reachable, and the next sign shows the state again."""
+    at = _no_sign_since(monkeypatch, 901)
+    await lease.set_status(client, "bus")
+    s = mm.custom_status()
+    assert s["emoji"] == "zzz"
+    assert s["text"] == f"silent · no sign since {time.strftime('%H:%MZ', time.gmtime(at))} · ~agents"
+    assert life.is_shown()
+    me(mm, "zzz")
+    mm.users[-1]["props"]["customStatus"] = json.dumps({**json.loads(mm.users[-1]["props"]["customStatus"]),
+                                                        "text": s["text"]})
+    rows = await lease._rows(client, CHANNEL)
+    assert lease.not_reachable(rows[0]) == "silent"
+    life.take_up()
+    await lease.set_status(client, "renew")
+    assert mm.custom_status()["text"] == "on the bus · proj · ~agents" and not life.is_shown()
+
+
+async def test_an_idle_agent_stays_idle_not_silent(mm, client, monkeypatch):
+    """RT-6.6 step 1: 💤 idle is not reachable anyway, so its text stays."""
+    _no_sign_since(monkeypatch, 3600)
+    await lease.set_status(client, "idle")
+    assert mm.custom_status()["text"].startswith("idle · until my human resumes")
+    assert not life.is_shown() and not lease._silent(UID)
+
+
+async def test_a_channel_session_is_silent_only_with_a_push_untaken(mm, client, tmp_path, monkeypatch):
+    """RT-6.6 step 1, RT-6.12: idle in a session started as a channel has
+    nothing to prove past the window; a push untaken for MM_ACK_WAIT_SEC
+    makes it silent (case 1 of the amendment)."""
+    _no_sign_since(monkeypatch, 3600)
+    _dir(tmp_path).mkdir(exist_ok=True)
+    (_dir(tmp_path) / f"channel-{UID}.env").write_text("CONFIRMED=1\n")
+    await lease.set_status(client, "idle")
+    assert mm.custom_status()["emoji"] == "ear"
+    monkeypatch.setattr(life, "_untaken", time.time() - 46)
+    await lease.set_status(client, "renew")
+    assert mm.custom_status()["emoji"] == "zzz" and mm.custom_status()["text"].startswith("silent · ")
+
+
+async def test_a_silent_holder_drops_the_crown_and_does_not_claim(mm, client, tmp_path, monkeypatch):
+    """RT-6.6 steps 1, 4 and 6: a holder that turns silent drops the crown with
+    that write, as a release does (no claim for two leases), and claims
+    neither at its tick nor at a slot while silent."""
+    me(mm)
+    assert await lease.command(client, "take") == "taken"
+    _no_sign_since(monkeypatch, 901)
+    await lease.set_status(client, "renew")
+    assert not holds() and coord(tmp_path)["CROWN_UNTIL"] == 0
+    assert coord(tmp_path)["YIELD_UNTIL"] > time.time() + 1700
+    assert mm.custom_status()["emoji"] == "zzz"
+    _coord_file(tmp_path, monkeypatch, CROWN_UNTIL=0, PENDING=0, YIELD_UNTIL=0)
+    me(mm, "zzz")
+    await lease.command(client, "tick")
+    assert not holds()
+    me(mm)  # an older plugin's view of the status, to reach the slot's own check
+    mm.agent(OLDER, "agent-old", 1000, "crown", expires_in=-5)
+    lease._holder_id, lease._look_at = OLDER, time.time() - 1
+    assert not await lease.look(client) and not holds()
+
+
+async def test_a_silent_member_is_written_once_by_the_heartbeat(monkeypatch):
+    """RT-6.6 step 1: between ticks the heartbeat writes the status when the
+    agent turns silent (one write per flip), not at every wake."""
+    calls: list[str] = []
+    _no_sign_since(monkeypatch, 901)
+
+    def until(c):
+        if c.count("renew") == 1:
+            life.shown(True)  # what the real set_status records
+        return c.count("look") >= 2
+
+    await _run_heartbeat(monkeypatch, calls, until, holding=[False])
+    assert calls[:2] == ["tick", "renew"] and calls.count("renew") == 1
 
 
 # --- the work channel's header (RT-6.6 step 7) ---------------------------------------

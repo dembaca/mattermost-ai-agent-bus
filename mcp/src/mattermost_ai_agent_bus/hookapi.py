@@ -83,7 +83,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import a2a, asks, channel, files, gate, lease, ownpost, session_file, stall, stats, tasks, turnend, unread, usage
+from . import (
+    a2a, asks, channel, files, gate, lease, life, ownpost, session_file, stall, stats, tasks, turnend, unread, usage,
+)
 from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
 from .model import Post
 
@@ -405,10 +407,20 @@ class HookAPI:
 
     async def _run(self, route: Route, client: MattermostAdapter,
                    query: Mapping[str, str], payload: Mapping[str, Any]) -> Reply:
+        if route in _SIGN_ROUTES:
+            life.sign()
+        elif route in _TAKE_UP_ROUTES:
+            life.take_up()
         if route not in _HEAVY_ROUTES:
-            return await route(client, query, payload)
-        async with self._heavy:  # each makes several Mattermost calls: a few at a time
-            return await route(client, query, payload)
+            reply = await route(client, query, payload)
+        else:
+            async with self._heavy:  # each makes several Mattermost calls: a few at a time
+                reply = await route(client, query, payload)
+        status, answer = reply
+        if status == 200 and (answer.get("wake") if route is wake else
+                              route is pending and answer.get("count", 0) > 0):
+            life.pushed()  # the listener or the plugin wakes the agent with it
+        return reply
 
     async def _wake_check(self, client: MattermostAdapter, query: Mapping[str, str],
                           payload: Mapping[str, Any]) -> Reply:
@@ -758,6 +770,11 @@ async def presence(client: MattermostAdapter, query: Mapping[str, str],
         arg = label.strip().replace(" · ", " ")
         if len(arg) > MAX_LABEL or any(c < " " or c == "\x7f" for c in arg):
             raise BadRequest(f"label: one line, at most {MAX_LABEL} characters")
+    # ADR-007 amendment step 1: a turn begins (it takes up what was pushed) or ends.
+    if state == "bus":
+        life.sign()
+    else:
+        life.turn(state == "working")
     await lease.set_status(client, state, arg)
     tools = _tools()
     if state in ("idle", "listening") and tools is not None:
@@ -1003,3 +1020,10 @@ _ROUTES: dict[tuple[str, str], Route] = {
 }
 # Routes that make several Mattermost calls: at most MAX_HEAVY_RUNS at once.
 _HEAVY_ROUTES = frozenset({pending, presence, post_route, reply_route, turn_end, wake, handoff})
+# ADR-007 amendment step 1: the hooks' and the listener's reads are a sign of
+# the agent, its posts through the shell take up what was pushed; presence
+# counts in its route (a turn begins or ends). Not /v1/me, /v1/usage or
+# /v1/stat: the status line asks those, which shows a drawn screen, not a
+# working agent.
+_SIGN_ROUTES = frozenset({pending, last_post, posts, ask_reactions, turn_end, wake, handoff})
+_TAKE_UP_ROUTES = frozenset({post_route, reply_route})

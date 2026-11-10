@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import a2a, channel, owners, session_file, usage
+from . import a2a, channel, life, owners, session_file, usage
 from .model import ChannelUser, Mark, RosterEntry, StatusMark
 
 if TYPE_CHECKING:
@@ -47,6 +47,8 @@ PENDING_POLL_SEC = 30.0
 # after the holder's status would end.
 SLOT_SEC = 10.0
 STATES = ("working", "listening", "idle", "bus", "offline")
+# The status text's first word for an agent without a sign (ADR-007 amendment step 1).
+SILENT = "silent"
 ACTIONS = ("who", "take", "release", "tick")
 _UID = re.compile(r"[a-z0-9]{26}")
 # One lock per event loop: a status, take, release or tick reads and writes
@@ -169,15 +171,18 @@ async def _channel_type(client: ChatPort, channel_id: str) -> str:
 
 def not_reachable(row: Mapping[str, Any] | None) -> str:
     """Why an agent of _rows is not reachable: `absent` (no row), `lease` (its
-    status lease ran out), `idle` (💤, until its human resumes), `offline`; ''
-    when it is reachable (RT-6.14 step 10)."""
+    status lease ran out), `silent` (no sign of the agent, ADR-007 amendment
+    step 1), `idle` (💤, until its human resumes), `offline`; '' when it is
+    reachable (RT-6.14 step 10)."""
     if row is None:
         return "absent"
     if row["reachable"]:
         return ""
     if not row["live"]:
         return "lease"
-    return "idle" if row["emoji"] == a2a.status_emoji(StatusMark.IDLE) else "offline"
+    if row["emoji"] != a2a.status_emoji(StatusMark.IDLE):
+        return "offline"
+    return "silent" if str(row.get("text", "")).startswith(f"{SILENT} ") else "idle"
 
 
 async def is_direct(client: ChatPort, channel_id: str, *, unsure: bool = False) -> bool:
@@ -298,6 +303,13 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
         emoji, text, named = a2a.status_emoji(StatusMark.BUS), "on the bus", label
     else:
         presence, emoji, text = "offline", "", ""
+    # ADR-007 amendment step 1: an agent that would be reachable but shows no
+    # sign is silent, shown with the 💤 every plugin reads as not reachable.
+    since = _silent(uid, state)
+    if since:
+        emoji, named, reachable = a2a.status_emoji(StatusMark.IDLE), "", False
+        text = f"{SILENT} · no sign since {time.strftime('%H:%MZ', time.gmtime(since))}"
+    life.shown(bool(since))
 
     if state == "offline":
         for f in (pres, coord):
@@ -307,6 +319,13 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
         _write(pres, f"STATE={state}\nLABEL={label}\n")
 
     crown = _coord(uid).get("CROWN_UNTIL", 0)
+    if since and crown > now:
+        # A silent holder drops the crown as a release does: no claim for two
+        # leases (RT-6.6 step 4); the next agent claims at its slot.
+        _save_coord(uid, 0, 0, now + 2 * lease)
+        log.info("crown dropped: no sign of the agent since %s (ADR-007 amendment step 1)",
+                 _rfc3339(int(since)))
+        crown = 0
     if state != "offline" and crown > now:
         if reachable:
             crown = now + crown_lease_sec()  # ADR-007 step 1: the beat renews it
@@ -776,7 +795,7 @@ async def look(client: ChatPort) -> bool:
             rows = _at_home(await _rows(client, cid), client.work_channel_name)
             free = not any(r["crown"] for r in rows)
             gone = not any(r["id"] == _holder_id and r["reachable"] for r in rows)
-            mine = any(r["id"] == uid and r["reachable"] for r in rows)
+            mine = any(r["id"] == uid and r["reachable"] for r in rows) and not _silent(uid)
             if (free and gone and mine and state.get("CROWN_UNTIL", 0) <= now
                     and state.get("YIELD_UNTIL", 0) <= now and uid in (await _election(client, rows)).ids):
                 _save_coord(uid, now + crown_lease_sec(), 0, 0)
@@ -871,6 +890,28 @@ async def usage_crossed(client: ChatPort) -> None:
         log.debug("usage band: %s", exc)
 
 
+def _judged(uid: str, state: str = "") -> tuple[bool, bool]:
+    """For ADR-007 amendment step 1, from `state` or the one presence-<uid>.env
+    holds (a listen window that ran out counts as idle, as at a renewal):
+    whether the state would be reachable (not offline, not 💤 idle), and
+    whether it is idle in a session started as a channel (RT-6.12), which
+    has nothing to prove while nothing waits untaken."""
+    if not state:
+        saved = _read(_file("presence", uid))
+        state, label = saved.get("STATE") or "bus", saved.get("LABEL", "")
+        if state == "listening" and not (label.isdigit() and int(label) > time.time()):
+            state = "idle"
+    listening = state == "idle" and channel.confirmed_file(uid).exists()
+    return state != "offline" and (state != "idle" or listening), listening
+
+
+def _silent(uid: str, state: str = "") -> float:
+    """Since when the agent, reachable by its state, shows no sign (epoch s,
+    ADR-007 amendment step 1); 0 when it does, or is not reachable anyway."""
+    counts, listening = _judged(uid, state)
+    return life.silent_since(listening=listening) if counts else 0.0
+
+
 async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
                     watch: Callable[[ChatPort], Awaitable[float | None]] | None = None) -> None:
     """Renew the lease until cancelled. Never raises: presence is cosmetic.
@@ -883,7 +924,9 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
     every beat, so a crown taken between ticks (coordinator("take"), a tick
     at a reconnect) is beaten in time and a look planned there is not late; a
     wake with nothing due reads one file. A crown that lapsed gets its plain
-    status at once."""
+    status at once, and so does an agent that turns silent or shows a sign
+    again (ADR-007 amendment step 1): a silent holder drops its crown with
+    that write. It wakes when the agent would turn silent."""
     next_tick, held = 0.0, False
     while True:
         delay = heartbeat_sec()
@@ -904,6 +947,8 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
                     await set_status(client, "renew")  # the beat: no roster read, no watch
                 elif held:
                     await set_status(client, "renew")  # the crown lapsed: the plain lease now
+                elif bool(_silent(uid)) != life.is_shown():
+                    await set_status(client, "renew")  # silent, or a sign again
                 elif await look(client):
                     next_tick = min(next_tick, time.time() + PENDING_POLL_SEC)
                 held = crown_held(uid)
@@ -911,6 +956,9 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
                 delay = next_tick - now
                 if _look_at and not held:
                     delay = min(delay, max(1.0, _look_at - now))
+                counts, listening = _judged(uid)
+                if counts and (silent_at := life.due(listening=listening)):
+                    delay = min(delay, max(1.0, silent_at - now))
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
