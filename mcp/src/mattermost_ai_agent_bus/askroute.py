@@ -95,11 +95,15 @@ _SEND_VERBS = (r"(?:send\w*|sent|post(?:s|ed|ing)?|writ\w*|repl(?:y|ies|ied)|not
                r"|e-?mail\w*|messag\w*)")
 _OUTSIDE = (r"(?:slack|teams|e-?mails?|mails?|customers?|upstream|external\w*"
             r"|mailing[ -]lists?)")
+# "tag" as a verb (a sentence's first word, or after to / should / we / and ...); "which key
+# signs the version tags?" names a thing, not an action. Anything else leans to approval.
+_TAG_VERB = (r"(?:^|[.?!:;]\s*|\b(?:to|should|shall|will|can|could|we|i|you|and|then|please|go)\s+)"
+             r"tag\b")
 FLOOR: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("merge", re.compile(r"\bmerg(?:e|es|ed|ing)\b", re.I)),
     ("deploy", re.compile(r"\b(?:deploy\w*|roll(?:s|ed|ing)?[ -]?out|ausroll\w*)\b", re.I)),
-    ("release", re.compile(r"\b(?:releas(?:e|es|ed|ing)|tag(?:s|ged|ging)?|publish\w*"
-                           r"|veröffentlich\w*)\b", re.I)),
+    ("release", re.compile(r"\b(?:releas(?:e|es|ed|ing)|tagged|tagging|git\s+tag|publish\w*"
+                           r"|veröffentlich\w*)\b|" + _TAG_VERB, re.I)),
     ("install", re.compile(r"\b(?:(?:un|re)?install\w*|installier\w*)\b", re.I)),
     ("delete", re.compile(r"\b(?:delet\w*|remov\w*|destroy\w*|wip(?:e|es|ed|ing)\b|purg\w*"
                           r"|lösch\w*|entfern\w*)|\brm\s+-", re.I)),
