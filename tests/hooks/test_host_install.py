@@ -21,9 +21,10 @@ from conftest import ROOT
 INSTALL = "bin/mm-agent-host-install.sh"
 
 
-def uv(tmp_path, fail: bool = False) -> dict:
+def uv(tmp_path, fail: bool | str = False) -> dict:
     """A stand-in for uv on PATH: `uv sync … --directory D` makes D/.venv/bin/python,
-    or fails with fail=True. The installer's own steps stay real (RT-6.28)."""
+    or fails: always with fail=True, for a D containing it with a string. The
+    installer's own steps stay real (RT-6.28)."""
     b = tmp_path / "fakeuv"
     if not b.exists():
         b.mkdir()
@@ -31,9 +32,11 @@ def uv(tmp_path, fail: bool = False) -> dict:
             '#!/bin/sh\n[ -z "$FAKE_UV_FAIL" ] || { echo "uv: sync failed" >&2; exit 1; }\n'
             'd=""\nwhile [ $# -gt 0 ]; do [ "$1" = --directory ] && d="$2"; shift; done\n'
             '[ -n "$d" ] || exit 2\n'
+            'if [ -n "$FAKE_UV_FAIL_IN" ]; then case "$d" in *"$FAKE_UV_FAIL_IN"*) exit 1 ;; esac; fi\n'
             f'mkdir -p "$d/.venv/bin" && ln -sf "{sys.executable}" "$d/.venv/bin/python"\n')
         (b / "uv").chmod(0o755)
-    return {"PATH": f"{b}{os.pathsep}{os.environ['PATH']}", **({"FAKE_UV_FAIL": "1"} if fail else {})}
+    how = {} if not fail else {"FAKE_UV_FAIL": "1"} if fail is True else {"FAKE_UV_FAIL_IN": fail}
+    return {"PATH": f"{b}{os.pathsep}{os.environ['PATH']}", **how}
 
 
 START = "adapters/corral/10-mm-session-start.sh"
@@ -262,6 +265,82 @@ def test_a_changed_dispatcher_waits_while_a_session_runs(run, tmp_path):
     r = install(run, tmp_path, dest)
     assert r.code == 0 and "corral asks to approve it" in r.stdout
     assert all((hooks / f).read_bytes() == d.read_bytes() for f in HOOK_FILES)
+
+
+def running_session(run, key="sess-old"):
+    """A host-managed corral session file whose corral process (this one) lives,
+    without a release record: started from a host copy before RT-6.28."""
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / f"{key}.env").write_text(
+        f"MM_REG_BOT_NAME=x\nMM_SESSION_PID={os.getpid()}\nMM_BUS_HOST_PID=999999\n")
+
+
+def test_no_migration_while_a_corral_session_runs_from_the_old_copy(run, tmp_path):
+    """RT-6.28 step 5: moving the old host copy would make corral skip the
+    postEnd of every session running from it."""
+    dest = tmp_path / "current"
+    tree(dest, "0.80.0")
+    (dest / "mcp").mkdir()
+    running_session(run)
+    r = install(run, tmp_path, dest)
+    assert r.code != 0 and "sess-old" in r.stderr and "end them, then rerun" in r.stderr
+    assert dest.is_dir() and not dest.is_symlink() and releases(dest) == []
+    (run.state_dir / "sess-old.env").unlink()
+    assert install(run, tmp_path, dest).code == 0 and dest.is_symlink()
+
+
+def test_a_switch_warns_of_running_sessions_without_a_record(run, tmp_path):
+    """RT-6.28 step 4: such a session may lose its postEnd; the installer names it."""
+    dest = tmp_path / "current"
+    assert install(run, tmp_path, dest).code == 0
+    running_session(run)
+    commit(clone(tmp_path))
+    r = install(run, tmp_path, dest)
+    assert r.code == 0 and "WARNING" in r.stderr and "sess-old" in r.stderr
+    r = run(INSTALL, "--rollback", MM_BUS_HOST_DIR=str(dest))
+    assert r.code == 0 and "sess-old" in r.stderr
+
+
+def test_a_record_outside_the_layout_still_holds_the_dispatcher(run, tmp_path):
+    """RT-6.28 step 4: any record means a session runs, whatever it names."""
+    dest = tmp_path / "current"
+    hooks = tmp_path / "current.hooks"
+    assert install(run, tmp_path, dest).code == 0
+    old = (hooks / HOOK_FILES[0]).read_bytes()
+    c = clone(tmp_path)
+    d = c / "adapters" / "corral" / "mm-hook-dispatch.sh"
+    d.write_text(d.read_text() + "# changed\n")
+    git(c, "commit", "-qam", "dispatcher")
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / "sess-x.release").write_text(f"{tmp_path / 'elsewhere'}\n")
+    (run.state_dir / "sess-x.env").write_text("MM_REG_BOT_NAME=x\n")
+    r = install(run, tmp_path, dest)
+    assert r.code == 0 and "sess-x" in r.stdout and "rerun this when none runs" in r.stdout
+    assert all((hooks / f).read_bytes() == old for f in HOOK_FILES)
+
+
+def test_no_garbage_collection_after_a_failed_step(run, tmp_path):
+    """RT-6.28 step 7: the old host copy whose environment could not be made
+    again stays, unlinked: it may be the only way back."""
+    dest = tmp_path / "current"
+    tree(dest, "0.80.0")
+    (dest / "mcp").mkdir()
+    r = install(run, tmp_path, dest, fail="legacy")
+    assert r.code == 0 and "previous: none" in r.stdout and "no release removed" in r.stderr
+    assert "0.80.0-legacy" in releases(dest) and not (dest.parent / "previous").exists()
+
+
+def test_one_installer_at_a_time(run, tmp_path):
+    """RT-6.28 step 1: a lock beside current; a second run is refused."""
+    dest = tmp_path / "current"
+    (tmp_path / ".install.lock").mkdir()
+    r = install(run, tmp_path, dest)
+    assert r.code != 0 and "another installer runs" in r.stderr and not dest.exists()
+    r = run(INSTALL, "--rollback", MM_BUS_HOST_DIR=str(dest))
+    assert r.code != 0 and "another installer runs" in r.stderr
+    (tmp_path / ".install.lock").rmdir()
+    assert install(run, tmp_path, dest).code == 0
+    assert not (tmp_path / ".install.lock").exists()
 
 
 def test_garbage_collection_keeps_what_is_in_use(run, tmp_path):

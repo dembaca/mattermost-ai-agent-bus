@@ -101,6 +101,11 @@ layout() {
   mkdir -p "$parent"
   parent="$(cd -P "$parent" && pwd -P)"
   ! sandbox_writable "$parent" || die "$DEST can be changed from inside a corral sandbox; pick another MM_BUS_HOST_DIR"
+  # One installer at a time: a second one's garbage collection could remove
+  # the release the first is preparing. mkdir is atomic (no flock on macOS).
+  mkdir "$parent/.install.lock" 2>/dev/null ||
+    die "another installer runs on $parent (remove $parent/.install.lock if none does)"
+  LOCK="$parent/.install.lock"
   DEST="$parent/$(basename "$DEST")"
   RELEASES="$parent/releases" PREV="$parent/previous" HOOKS="$DEST.hooks"
   [[ ! -L "$RELEASES" ]] || die "$RELEASES is a symlink; refused"
@@ -109,7 +114,16 @@ layout() {
   [[ ! -e "$DEST" || -L "$DEST" || -d "$DEST" ]] || die "$DEST is neither a directory nor a symlink; move it away, then rerun"
   mkdir -p "$RELEASES"
   chmod go-w "$RELEASES"
+  state_dir
 }
+
+# On every exit: the half-made release ($new, when set) and the lock.
+new="" LOCK=""
+cleanup() {
+  [[ -z "$new" ]] || rm -rf "$new"
+  [[ -z "$LOCK" ]] || rmdir "$LOCK" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 # The release a link points at, by name: only releases/<name> of this layout.
 release_of() {
@@ -144,37 +158,94 @@ sync_release() {
   (cd "$1/mcp" && uv sync --locked --no-dev --quiet --directory "$1/mcp") >&2
 }
 
-# The releases running sessions use: preStart records each session's in the
-# state directory (a file per session, removed by postEnd). Prints one line
-# per session (empty for a record that names no release of this layout); fails
-# when the state directory is one a sandbox can write, which is not read.
-recorded_releases() {
-  local d f rec state
-  state="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
-  [[ -d "$state" ]] || return 0
-  d="$(cd -P "$state" 2>/dev/null && pwd -P)" || d="$state"
-  if sandbox_writable "$d"; then
-    echo "mm-agent-host-install: $state can be changed from inside a corral sandbox; its session records are not read" >&2
-    return 1
+# The host state directory with the session records (RT-6.28): preStart
+# writes <session>.release there, postEnd removes it. STATE is its resolved
+# path ("" when there is none); STATE_OK=0 when it is one a sandbox can write,
+# which is then not read. A record without a session file, an hour old, is a
+# crash's and goes.
+state_dir() {
+  local s f
+  s="${XDG_STATE_HOME:-$HOME/.local/state}/mm-agent-bus"
+  STATE="" STATE_OK=1 STATE_SHOWN="$s"
+  [[ -d "$s" ]] || return 0
+  if ! s="$(cd -P "$s" 2>/dev/null && pwd -P)" || sandbox_writable "$s"; then
+    echo "mm-agent-host-install: $STATE_SHOWN can be changed from inside a corral sandbox; its session records are not read" >&2
+    STATE_OK=0
+    return 0
   fi
+  STATE="$s"
   shopt -s nullglob
-  for f in "$d"/*.release; do
-    [[ -f "$f" && ! -L "$f" ]] || continue
-    rec="$(mm_read_file "$f" 4096 | head -n1)" || rec=""
-    if [[ "$rec" == "$RELEASES"/* ]]; then printf '%s\n' "${rec#"$RELEASES"/}"; else echo; fi
+  for f in "$STATE"/*.release; do
+    [[ ! -e "${f%.release}.env" && -n "$(find "$f" -mmin +60 2>/dev/null)" ]] && rm -f "$f"
   done
   shopt -u nullglob
+}
+
+# The session keys of all records, whatever they name.
+recorded_keys() {
+  local f k
+  [[ -n "$STATE" ]] || return 0
+  shopt -s nullglob
+  for f in "$STATE"/*.release; do
+    k="$(basename "$f" .release)"
+    [[ "$k" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || k="?"
+    printf '%s\n' "$k"
+  done
+  shopt -u nullglob
+}
+
+# The releases the records name: one per record of this layout.
+recorded_releases() {
+  local f rec
+  [[ -n "$STATE" ]] || return 0
+  shopt -s nullglob
+  for f in "$STATE"/*.release; do
+    [[ -f "$f" && ! -L "$f" ]] || continue
+    rec="$(mm_read_file "$f" 4096 | head -n1)" || rec=""
+    if [[ "$rec" == "$RELEASES"/* ]]; then printf '%s\n' "${rec#"$RELEASES"/}"; fi
+  done
+  shopt -u nullglob
+}
+
+# Running corral sessions without a record: a host-managed session file
+# (MM_BUS_HOST_PID) whose corral process lives, and no <key>.release. Their
+# hooks run by an older path (current/adapters/corral/…, a host copy from
+# before RT-6.28) or preStart could not record them: a switch changes the file
+# corral runs at their end, and corral then skips their postEnd.
+unrecorded_sessions() {
+  local f k pid content
+  [[ -n "$STATE" ]] || return 0
+  shopt -s nullglob
+  for f in "$STATE"/*.env; do
+    [[ -f "$f" && ! -L "$f" ]] || continue
+    k="$(basename "$f" .env)"
+    [[ "$k" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ && ! -e "$STATE/$k.release" ]] || continue
+    content="$(mm_read_file "$f")" || continue
+    [[ $'\n'"$content" == *$'\n'MM_BUS_HOST_PID=* ]] || continue
+    pid="$(sed -n 's/^MM_SESSION_PID=//p' <<<"$content" | head -n1)"
+    [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && printf '%s\n' "$k"
+  done
+  shopt -u nullglob
+  return 0
+}
+
+# Before a switch: name the sessions it may cost their postEnd.
+warn_unrecorded() {
+  local running
+  running="$(unrecorded_sessions | tr '\n' ' ')"
+  [[ -z "$running" ]] ||
+    echo "mm-agent-host-install: WARNING: corral sessions without a release record run (${running% }): corral may skip their postEnd after this switch; their bots go with the host process's watchdog or bin/mm-agent-sweep.sh" >&2
 }
 
 # Remove each release neither link nor a running session uses; without the
 # session records nothing goes.
 collect_garbage() {
-  local keep=" " n d recs
+  local keep=" " n d
   for d in "$DEST" "$PREV"; do
     if n="$(release_of "$d")"; then keep+="$n "; fi
   done
-  recs="$(recorded_releases)" || { echo "no release removed" >&2; return 0; }
-  while IFS= read -r n; do [[ -z "$n" ]] || keep+="$n "; done <<<"$recs"
+  [[ "$STATE_OK" -eq 1 ]] || { echo "no release removed" >&2; return 0; }
+  while IFS= read -r n; do [[ -z "$n" ]] || keep+="$n "; done < <(recorded_releases)
   shopt -s nullglob
   for d in "$RELEASES"/*; do
     n="$(basename "$d")"
@@ -191,7 +262,7 @@ collect_garbage() {
 # are replaced only when the dispatcher's own text changed, and not while a
 # session runs (or none can be told): its postEnd would be skipped.
 install_dispatcher() {
-  local src="$RELEASES/$1/adapters/corral/mm-hook-dispatch.sh" f tmp changed=0 recs
+  local src="$RELEASES/$1/adapters/corral/mm-hook-dispatch.sh" f tmp changed=0 busy
   [[ -f "$src" && ! -L "$src" ]] || die "release $1 has no hook dispatcher"
   mkdir -p "$HOOKS"
   chmod go-w "$HOOKS"
@@ -200,8 +271,9 @@ install_dispatcher() {
   done
   [[ "$changed" -eq 1 ]] || return 0
   if [[ -e "$HOOKS/mm-session-start.sh" || -e "$HOOKS/mm-session-stop.sh" ]]; then
-    if ! recs="$(recorded_releases)" || [[ -n "$recs" ]]; then
-      dispatch_line="WARNING: the hook dispatcher changed, but corral sessions run (or the state directory cannot tell): $HOOKS kept as it was, since corral would skip their postEnd; rerun this when none runs"
+    busy="$( { recorded_keys; unrecorded_sessions; } | sort -u | tr '\n' ' ')"
+    if [[ "$STATE_OK" -eq 0 || -n "$busy" ]]; then
+      dispatch_line="WARNING: the hook dispatcher changed, but corral sessions run (${busy:-the state directory cannot tell}): $HOOKS kept as it was, since corral would skip their postEnd; rerun this when none runs"
       return 0
     fi
   fi
@@ -220,10 +292,12 @@ if [[ "$ROLLBACK" -eq 1 ]]; then
   prev="$(release_of "$PREV")" || die "no previous release to roll back to"
   [[ -f "$RELEASES/$prev/SOURCE" && -e "$RELEASES/$prev/mcp/.venv/bin/python" ]] ||
     die "the previous release $prev has no Python environment; install a release instead"
+  warn_unrecorded
   set_link "$DEST" "releases/$prev" || die "could not switch $DEST; it is unchanged"
   set_link "$PREV" "releases/$cur" || die "switched to $prev, but could not point $PREV at $cur"
   echo "Rolled back: $DEST -> releases/$prev; previous -> releases/$cur (--rollback again returns to it)"
   echo "corral's hook files ($HOOKS) are unchanged, so corral asks nothing: this run was the check. Running sessions keep their release."
+  echo "Session records read from ${STATE:-$STATE_SHOWN}."
   collect_garbage
   exit 0
 fi
@@ -296,8 +370,15 @@ command -v uv >/dev/null 2>&1 ||
 # starting meanwhile sees the old or the new release, never half of one, and a
 # failed step leaves current as it was.
 layout
+# A host copy from before this layout moves (step 5): every corral session
+# running from it would lose its postEnd, since corral runs it by a path whose
+# file changes. Done with no session running.
+if [[ -d "$DEST" && ! -L "$DEST" ]]; then
+  running="$(unrecorded_sessions | tr '\n' ' ')"
+  [[ -z "$running" ]] ||
+    die "corral sessions run from the host copy in $DEST (${running% }): moving it into releases/ would make corral skip their postEnd; end them, then rerun (a session file a crash left: bin/mm-agent-sweep.sh)"
+fi
 new="$(mktemp -d "$RELEASES/.install.XXXXXX")"
-trap 'rm -rf "$new"' EXIT
 # The MCP server, for the host process (RT-6.18); the skill, whose size its
 # overhead stats count (RT-6.9).
 head_sha="$(git_ rev-parse --verify 'HEAD^{commit}')" || die "$FROM has no commit to install"
@@ -328,7 +409,7 @@ rel="$RELEASES/$name"
 if [[ "$cur" == "$name" ]]; then
   # The same commit again: it is current, complete and in use; nothing changes.
   rm -rf "$new"
-  trap - EXIT
+  new=""
   echo "mattermost-ai-agent-bus $name is already the current release in $DEST; nothing changed"
   dispatch_line=""
   install_dispatcher "$name"
@@ -336,10 +417,10 @@ if [[ "$cur" == "$name" ]]; then
   collect_garbage
   exit 0
 fi
-if [[ -d "$rel" && ! -L "$rel" && -f "$rel/SOURCE" ]]; then
+if [[ -d "$rel" && ! -L "$rel" && -f "$rel/SOURCE" && -e "$rel/mcp/.venv/bin/python" ]]; then
   # Installed before and complete (SOURCE comes last): switch back to it.
   rm -rf "$new"
-  trap - EXIT
+  new=""
   server="MCP server environment ready (release installed before): the bot token stays on the host (RT-6.18)"
 else
   rm -rf "$rel"
@@ -351,7 +432,7 @@ else
   # Until releases are signed (ADR-011 phase 1b), every install is from a clone.
   printf 'SOURCE=unsigned\nCOMMIT=%s\n' "$head_sha" >"$rel/SOURCE"
   chmod go-w "$rel/SOURCE"
-  trap - EXIT
+  new=""
   server="MCP server environment ready: the bot token stays on the host (RT-6.18)"
 fi
 
@@ -367,16 +448,18 @@ if [[ -d "$DEST" && ! -L "$DEST" ]]; then
   mv "$DEST" "$RELEASES/$migrated"
   old="$migrated"
 fi
+warn_unrecorded
 if ! set_link "$DEST" "releases/$name"; then
   [[ -z "$migrated" || -e "$DEST" ]] || mv "$RELEASES/$migrated" "$DEST"
   die "could not switch $DEST to $rel; it is unchanged"
 fi
-prev_line="previous: none"
+prev_line="previous: none" gc=1
 if [[ -n "$old" ]]; then
   if set_link "$PREV" "releases/$old"; then
     prev_line="previous: releases/$old (--rollback returns to it)"
   else
     echo "mm-agent-host-install: WARNING: could not point $PREV at releases/$old" >&2
+    gc=0
   fi
 fi
 # The migrated copy's environment did not survive its move: prepare it again,
@@ -386,12 +469,15 @@ if [[ -n "$migrated" ]]; then
     printf 'SOURCE=unsigned\n' >"$RELEASES/$migrated/SOURCE"
   else
     rm -f "$PREV"
-    prev_line="previous: none (the old host copy $migrated has no Python environment; no rollback)"
+    prev_line="previous: none (the old host copy $migrated, kept in releases/, has no Python environment; no rollback)"
+    gc=0
   fi
 fi
 dispatch_line="corral's hook files in $HOOKS are unchanged: corral asks nothing for this switch, so this run was the check."
 install_dispatcher "$name"
-collect_garbage
+# Not after a step that went wrong: the release it left unlinked may be the
+# only way back.
+if [[ "$gc" -eq 1 ]]; then collect_garbage; else echo "no release removed: a step above failed" >&2; fi
 
 cat <<EOF
 Installed mattermost-ai-agent-bus $version host hooks (unsigned: from a clone, not a signed release)
@@ -418,4 +504,6 @@ corral config (~/.config/corral/config.yml), set once:
 
 $dispatch_line
 Running sessions keep the release they started with and end with it.
+Session records read from ${STATE:-$STATE_SHOWN}: corral's hooks must see the
+same XDG_STATE_HOME as this shell.
 EOF

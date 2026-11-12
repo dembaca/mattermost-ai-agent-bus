@@ -306,7 +306,7 @@ fi
 unset MM_BUS_HOOK_DISPATCH
 if ! { rel_tmp="$(umask 077 && mktemp "${STATE_DIR}/.${SESSION_KEY}.release.XXXXXX")" &&
        printf '%s\n' "$ROOT" >"$rel_tmp" && mv -f "$rel_tmp" "${STATE_DIR}/${SESSION_KEY}.release"; }; then
-  log "WARNING: could not record this session's release; postEnd ends it with the current one"
+  log "WARNING: could not record this session's release; postEnd ends it with the current one; the installer then knows this session only by its session file and may remove its release"
 fi
 
 # --- take over a kept bot (RT-6.18 step 10) -----------------------------------

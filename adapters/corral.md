@@ -62,7 +62,16 @@ mm-agent-host-install.sh --downgrade    # needed to install an older version tha
 A failed install leaves `current` as it was; a running session keeps the release it
 started with and ends with it; a release goes once neither `current`, `previous` nor
 a running session uses it. A host copy from before 0.81.0 (a directory `current`)
-becomes `previous` on the first install
+becomes `previous` on the first install. **Do the first 0.81.0 install with no corral
+session running**: the installer refuses to move the old copy while one runs from it,
+since corral would then skip that session's `postEnd`. One installer runs at a time
+(`.install.lock` beside `current`; remove it if a killed run left it).
+
+Running sessions are known by their records in the host state directory
+(`$XDG_STATE_HOME/mm-agent-bus`, default `~/.local/state/mm-agent-bus`); the installer
+prints which one it read. `XDG_STATE_HOME` must be the same in the shell you run the
+installer from and in corral's hook environment, or the installer does not see the
+sessions and may remove a release one still runs
 ([arc42 RT-6.28](../docs/arc42/06-runtime-view.md#628-host-copy-install-switch-and-rollback)).
 
 **The installed copy is the only mode.** Pointing `exec` at the marketplace clone
@@ -100,9 +109,9 @@ it started with. corral approves a hook by the content of the configured file on
 whose file changed during the session; the dispatcher stays byte for byte the same
 across releases, so an install or `--rollback` does **not** make corral ask again:
 your check of new host code is reviewing the clone and running the installer. When
-the dispatcher itself changes in a release, corral asks once at the next launch;
-declining refuses that session, and no hook runs. The installer does not replace the
-dispatcher while a session runs, and says so. Before 0.81.0 `exec` pointed at
+the dispatcher itself changes in a release, corral asks at the next launch, once for
+each of the two files; declining refuses that session, and no hook runs. The installer
+does not replace the dispatcher while a session runs, and names the sessions. Before 0.81.0 `exec` pointed at
 `current/adapters/corral/…`: change it once; that path still works, but a switch
 during a session then makes corral skip its `postEnd`.
 

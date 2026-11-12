@@ -38,8 +38,11 @@ before 0.5.0 are described in the git history.
   current one.
 - **Migration:** a host copy from before (a directory `current`) moves to
   `releases/<version>-legacy/` on the first install, gets its Python
-  environment again and becomes `previous`. Installing the commit `current`
-  already runs changes nothing.
+  environment again and becomes `previous`. **Do it with no corral session
+  running**: the installer refuses while one runs from the old copy (corral
+  would skip its `postEnd`), and before any switch it warns of running
+  sessions without a release record. Installing the commit `current` already
+  runs changes nothing. One installer at a time (`.install.lock`).
 
 ## 0.80.0
 
