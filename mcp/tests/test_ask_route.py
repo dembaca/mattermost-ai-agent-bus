@@ -90,6 +90,10 @@ def _fields(posted):
     ("Delete the stale branch feat/x?", "delete"),
     ("Remove the old VM 399?", "delete"),
     ("Force-push feat/x?", "push"),
+    ("Should we tag 0.82.0 now?", "release"),
+    ("Let's tag v1", "release"),
+    ("Just tag v1", "release"),
+    ("Install 0.81 on hogan?", "install"),
     ("Open an issue upstream for the flaky test?", "external write"),
     ("Comment on PR #12 with the benchmark?", "external write"),
     ("Send the customer the report by e-mail?", "external write"),
@@ -107,6 +111,9 @@ def test_the_floor_names_an_action_with_effect(text, named):
     "Who takes the review of PR #5?",
     "Write the tests for PR #12 first, or the docs?",
     "Is agent-x still on the lease bug?",
+    "ADR-011 phase 1b: which key signs the version tags?",
+    "ADR-011: whose key should the version tags carry?",
+    "ADR-011: whose SSH key should vouch for each version?",
 ])
 def test_a_question_of_content_names_none(text):
     assert askroute.floor(text) is None
@@ -632,3 +639,51 @@ async def test_a_foreign_crowns_answer_closes_nothing(monkeypatch, kind):
         c.reacts = {ASK: [{"user_id": COORD, "post_id": ASK, "emoji_name": "+1"}]}
     await askroute.tick(c, BOT, at + WAIT)
     assert called == [(ASK, "dembaca", "agent-coord")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("need,context", [
+    ("ADR-011 phase 1b: which key signs the version tags?",
+     "The installer verifies a tag with git tag -s before the merge, then the update and release."),
+    ("ADR-011: whose key should the version tags carry?",
+     "accepts only version tags with a valid SSH signature. The tags are made by you, never by agents."),
+    ("ADR-011: whose SSH key should vouch for each version?", "channel pushes, installer, release"),
+])
+async def test_a_question_that_only_mentions_tags_stays_a_question(monkeypatch, need, context):
+    """RT-6.11, RT-6.25 step 1: nouns and the context name no action; three answers pass."""
+    c = _Client()
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need=need, context=context, kind="question",
+                                            answers=["me", "you", "a CI key"]))
+    assert out.get("posted") is not False and out["kind"] == "question" and "floor" not in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("need,decision,answers,named", [
+    ("Let's tag v1", "", None, "release"),
+    ("I'll tag v1", "", None, "release"),
+    ("Should we tag 0.82.0?", "", None, "release"),
+    ("Which one?", "", ["me", "tag it now"], "release"),
+    ("Go ahead?", "tag v1 after CI", None, "release"),
+    ("Merge PR #5?", "", None, "merge"),
+    ("Install 0.81 on hogan?", "", None, "install"),
+    ("Push the branch?", "", None, "push"),
+])
+async def test_an_action_declared_a_question_is_still_an_approval(monkeypatch, need, decision, answers, named):
+    """RT-6.11, RT-6.25 step 1, security: calling an action a question dodges nothing;
+    only the plural nouns tags and pushes are exempt."""
+    c = _Client()
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need=need, decision=decision, answers=answers,
+                                            kind="question"))
+    assert (out["kind"], out["floor"]) == ("approval", named)
+
+
+@pytest.mark.asyncio
+async def test_a_plural_push_noun_in_an_answer_stays_a_question(monkeypatch):
+    """RT-6.11, RT-6.25 step 1."""
+    c = _Client()
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need="Which keys?", kind="question",
+                                            answers=["only for channel pushes", "all", "none"]))
+    assert out.get("posted") is not False and out["kind"] == "question" and "floor" not in out
