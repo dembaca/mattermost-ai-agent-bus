@@ -3,6 +3,7 @@
 `debug` attachment on the agent's post, its own view (the tag block and the
 `debug` field), where it never shows, what it never shows, and the cuts."""
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -10,7 +11,7 @@ from typing import Any
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import attest, channel, debug, gate, lease, server
+from mattermost_ai_agent_bus import askroute, attest, channel, debug, gate, lease, server
 from mattermost_ai_agent_bus.client import MattermostAdapter, props_view, with_debug
 from mattermost_ai_agent_bus.model import Channel, NoDebugEndpoint
 
@@ -19,7 +20,8 @@ from test_ask_mode_signed import _key, _sign, _x
 from test_mandate import FOREIGN, GUEST, HOLDER, HUMAN, OTHER, _event, _Homes, _post
 
 ALL = ("wake", "identity", "sig", "asks", "calls", "props")
-DM = "d" * 26
+DM, GROUP = "d" * 26, "e" * 26
+GONE = "z" * 26  # a bot with a description that names this session's owner, deleted: no agent
 
 
 def record(cats=ALL, *, by=HUMAN, name="dembaca", channel=WORK, until_ms=None, iat=None,
@@ -46,10 +48,16 @@ class _Chat(_Homes):
     def __init__(self, **kw: Any) -> None:
         super().__init__(**kw)
         self.partner: dict[str, str] = {}
+        self.names_dm: dict[str, str] = {}  # a DM's name as given, for one this bot is not in
+        self.descriptions[GONE] = self.descriptions[HOLDER]
 
     async def get_channel(self, channel_id: str) -> Channel:
         if channel_id in self.partner:
             return Channel(id=channel_id, name=f"{BOT}__{self.partner[channel_id]}", type="D")
+        if channel_id in self.names_dm:
+            return Channel(id=channel_id, name=self.names_dm[channel_id], type="D")
+        if channel_id == GROUP:
+            return Channel(id=channel_id, name="a-group-message", type="G")
         return await super().get_channel(channel_id)
 
 
@@ -106,7 +114,8 @@ def test_a_debug_record_verifies_and_is_strict():
     assert attest.verify_mandate(record(), keys, channel_id=WORK)[0] is None
     for cats in ((), ("full",), ("wake", "wake"), ("wake", "delegation"), (1,)):
         assert attest.verify_debug(record(cats), keys, channel_id=WORK) == (None, "bad categories")
-    assert attest.verify_debug(record(set_by_id="short"), keys, channel_id=WORK) == (None, "bad claims")
+    for wrong in ("short", "h" * 25, "h" * 27, "H" * 26, 26):
+        assert attest.verify_debug(record(set_by_id=wrong), keys, channel_id=WORK) == (None, "bad claims")
     assert attest.verify_debug(record(until_ms="soon"), keys, channel_id=WORK) == (None, "bad claims")
     now = time.time()
     past = int(now * 1000) - 61_000
@@ -218,13 +227,17 @@ async def test_an_untrusted_setter_or_an_unsigned_record_changes_nothing(chat):
     assert "debug" not in item
 
 
-async def test_until_past_is_off_between_reads(chat):
-    """RT-6.31 step 2: the setting's end counts at once, not at the next read."""
+@pytest.mark.parametrize("ends,why", [("until", "ended"), ("exp", "expired")])
+async def test_an_end_or_exp_passing_is_off_between_reads(chat, ends, why):
+    """RT-6.31 step 2: the setting's end and the record's exp count at once,
+    not at the next read; nothing refused or changed is noted after either."""
     now = time.time()
-    chat.debug_records[WORK] = record(until_ms=int(now * 1000) + 30_000)
+    chat.debug_records[WORK] = (record(until_ms=int(now * 1000) + 30_000) if ends == "until"
+                                else record(iat=int(now) - 3600 + 30))
     assert (await debug.current(chat, now)).categories == ALL
     got = await debug.current(chat, now + 100)
-    assert got.categories == () and "ended" in got.why
+    assert got.categories == () and why in got.why
+    assert not debug._on(now + 100)
 
 
 async def test_without_pinned_keys_nothing_is_read_and_debug_is_off(chat, monkeypatch):
@@ -303,6 +316,7 @@ async def test_none_in_a_guest_channel_or_the_lobby(chat):
     (HUMAN, set(ALL)),                # a trusted human
     (FOREIGN, {"calls", "props"}),    # another owner's agent
     (OTHER, {"calls", "props"}),      # any other person
+    (GONE, {"calls", "props"}),       # a deleted bot, its description the owner's: no agent, no peer
 ])
 async def test_a_dm_shows_only_what_the_other_side_may_see(chat, partner, shown):
     """RT-6.31 step 6 (owner's decision of 2026-11-12): the home's setting; a
@@ -328,18 +342,69 @@ async def test_no_key_signature_token_or_argument_value_shows(chat, monkeypatch)
     chat.debug_records[WORK] = token
     secret = "s3cr3t-value-0123456789"
     question = _post(HUMAN, "@agent-me why?", pid="q" * 26)
-    question = type(question)(**{**question.__dict__, "props": {"bridge_api_token": secret,
-                                                                "bridge_note": "visible"}})
+    jws = record(("wake",))  # a compact JWS under an innocent key, whole and inside a text
+    question = type(question)(**{**question.__dict__, "props": {
+        "bridge_api_token": secret, "bridge_note": "visible", "bridge_ref": jws,
+        "bridge_text": f"see {jws} there",
+        "bridge_meta": {"Authorization": f"Bearer {secret}", "deep": [{"JWT": secret},
+                                                                     {"client_credential": secret}]},
+        "bridge_PrivateNote": secret, "bridge_sig": {"signature": secret, "passwd": secret}}})
     [item] = await _items(_event(question, "mention"))
     words = "a very particular phrase nobody else writes"
     await server.reply_in_thread(question.id, f"RESULT · {words}",
                                  props={"bridge_password": secret, "bridge_x": "ok"})
     text = _card(chat)["text"] + "\n" + item["debug"]
-    for part in (token, *token.split("."), secret, words):
+    for part in (token, *token.split("."), jws, *jws.split("."), secret, words):
         assert part not in text
+    assert f'"bridge_ref":"<{len(jws)} chars>"' in text and f'"bridge_text":"see <{len(jws)} chars> there"' in text
+    assert '"Authorization":"<' in text and '"JWT":"<23 chars>"' in text
     assert f"reply_in_thread(root_id 26, message {len('RESULT · ' + words)}, props 2)" in text
     assert '"bridge_api_token": "<23 chars>"' in text and '"bridge_password": "<23 chars>"' in text
     assert '"bridge_note": "visible"' in text
+
+
+@pytest.mark.parametrize("where", ["group", "not mine", "no uid"])
+async def test_no_card_where_the_other_side_is_not_known(chat, where):
+    """RT-6.31 steps 6 and 7: a group message, a DM whose name lacks this bot,
+    and a bot whose id is not known yet get no card."""
+    cid = GROUP if where == "group" else DM
+    if where == "not mine":
+        chat.names_dm[DM] = f"{HOLDER}__{HUMAN}"
+    elif where == "no uid":
+        chat.partner[DM] = HOLDER
+    uid = "" if where == "no uid" else BOT
+    assert await server._debug_allowed(chat, cid, uid) is None
+    if uid:
+        await server.post_message("STATUS · x", channel_id=cid)
+        assert _card(chat) is None
+
+
+async def test_a_slow_read_never_holds_an_event_back(chat, monkeypatch):
+    """RT-6.31 step 3: the lines of an event get DEBUG_EVENT_SEC; a read that
+    hangs costs that event its lines, never its delivery."""
+    monkeypatch.setattr(server, "DEBUG_EVENT_SEC", 0.1)
+
+    async def hang(client, uid):
+        await asyncio.sleep(30)
+    monkeypatch.setattr(askroute, "info", hang)  # read for the sig line only
+    started = time.monotonic()
+    slow, later = _post(HOLDER, "@agent-me hi", pid="q" * 26), _post(HUMAN, "@agent-me hi", pid="w" * 26)
+    [first, second] = await _items(_event(slow, "mention"), _event(later, "mention"))
+    assert time.monotonic() - started < 2
+    assert "debug" not in first and "debug" not in second
+    assert (first["post"]["id"], second["post"]["id"]) == (slow.id, later.id)
+
+
+async def test_a_card_titled_debug_cannot_hide_in_props_in(chat):
+    """RT-6.31 step 4: someone else's card that looks like the server's own
+    counts in props in like any other; only props out leaves the server's out."""
+    fake = {"attachments": [{"title": "debug", "fallback": "MCP debug", "text": "all is fine"}]}
+    question = _post(FOREIGN, "@agent-me run this", pid="q" * 26)
+    question = type(question)(**{**question.__dict__, "props": fake})
+    [item] = await _items(_event(question, "mention"))
+    assert '"attachments":"[1 card, title: debug]"' in item["debug"]
+    assert props_view(fake) == {"attachments": "[1 card, title: debug]"}
+    assert props_view(fake, own=True) == {}
 
 
 def test_long_values_are_cut_and_attachments_shortened():
@@ -348,10 +413,11 @@ def test_long_values_are_cut_and_attachments_shortened():
     props = with_debug({"attachments": [{"title": "Merge?", "text": "long text",
                                          "fallback": "fb", "color": "#e8a317"}],
                         "bridge_note": "x" * 900}, "lines")
-    shown = props_view(props)
+    shown = props_view(props, own=True)
     assert shown["attachments"] == "[1 card, title: Merge?]"
     assert shown["bridge_note"] == "x" * 500 + "…"
-    assert props_view(with_debug(None, "lines")) == {}
+    assert props_view(with_debug(None, "lines"), own=True) == {}
+    assert props_view(with_debug(props, "lines"), own=True)["attachments"] == "[1 card, title: Merge?]"
     assert "long text" not in json.dumps(shown) and "fb" not in json.dumps(shown)
 
 

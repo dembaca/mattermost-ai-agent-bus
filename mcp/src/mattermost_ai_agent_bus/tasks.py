@@ -39,7 +39,7 @@ _SPEC = re.compile(r"\bRT-\d+\.\d+\b|\b[A-Z][A-Z0-9]+-\d+\b(?!\.\d)")
 _LEAD = re.compile(r"^[^\w@#]*(TASK|DELEGATE)\b[\s·:–`-]*")  # `TASK` too (RT-6.14 step 2)
 
 
-def _mentions(message: str) -> list[str]:
+def mentions(message: str) -> list[str]:
     """Agents a post @-mentions: names with the registrar's prefix (arc42 §7.1),
     lower case, read as departed.mentioned does (no `a@agent-x.example`)."""
     pattern = rf"(?<![\w.-])@({re.escape(session_file.agent_prefix())}[\w.-]*\w)"
@@ -120,7 +120,7 @@ def build(
                 "status": "open", "spec": ", ".join(dict.fromkeys(refs).keys()) or None,
                 "pr": None, "branch": None, "updated": p.create_at,
                 "mandated": (mandated or {}).get(p.id),
-                "_candidates": [m for m in _mentions(msg) if m != who(p)],
+                "_candidates": [m for m in mentions(msg) if m != who(p)],
             }
     for p in order:
         if p.root_id in tasks:

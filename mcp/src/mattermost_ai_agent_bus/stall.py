@@ -213,7 +213,7 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
                 or (cls[pid] in gate.AGENTS and p.intent == a2a.FYI)):
             continue
         thread = by_thread.get(p.root_id or pid, [])
-        for agent in dict.fromkeys(tasks._mentions(p.message)):
+        for agent in dict.fromkeys(tasks.mentions(p.message)):
             if agent == who(p) or agent not in reachable:
                 continue
             if any(who(q) == agent and _at(q) > _at(p) for q in thread):

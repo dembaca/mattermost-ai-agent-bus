@@ -109,7 +109,8 @@ def _iso(ms: int) -> str:
 # --- the record (step 2) ----------------------------------------------------------
 
 async def _read(client: ChatPort, home: str, now: float) -> State:
-    if not attest.pinned():
+    keys = attest.pinned()  # once per read
+    if not keys:
         return State(why=NO_KEYS, at=now)
     try:
         token = await client.debug_record(home)
@@ -122,7 +123,7 @@ async def _read(client: ChatPort, home: str, now: float) -> State:
                          "until a read goes through", at=now)
     if token is None:
         return State(why="none set with /agent-debug", at=now)
-    record, why = attest.verify_debug(token, attest.pinned(), channel_id=home, now=now)
+    record, why = attest.verify_debug(token, keys, channel_id=home, now=now)
     if record is None:
         _note(("refused", home, why), "debug: the registrar's record for %s refused: %s", home, why)
         return State(why=("the setting ended" if why == "ended"
@@ -165,6 +166,12 @@ async def current(client: ChatPort, now: float | None = None) -> State:
     got = _states.get(home)
     if got is None or now - got.at >= REFRESH_SEC:
         got = await refresh(client, now)
+    return _live(got, now)
+
+
+def _live(got: State, now: float) -> State:
+    """The state as it holds at `now`: off once its end or the record's exp
+    passed (with attest.SKEW_SEC), or once the next read is due."""
     if got.categories and got.until_ms + attest.SKEW_SEC * 1000 <= now * 1000:
         return State(why=f"the setting ended at {_iso(got.until_ms)}", at=got.at)
     if got.categories and got.exp + attest.SKEW_SEC <= now:
@@ -214,9 +221,9 @@ def _wake(item: Mapping[str, Any], *, mine: bool | None, crown: bool) -> str:
         why = "a broadcast (@channel, @here or @all)"
     elif mine:
         why = "a reply in its own thread" + (": fyi, wakes only the thread's starter" if fyi else "")
-    elif crown and not tasks._mentions(text):
+    elif crown and not tasks.mentions(text):
         why = "a plain post naming no agent: wakes only the coordinator, which routes it"
-    elif tasks._mentions(text):
+    elif tasks.mentions(text):
         why = "names another agent: for that one, here in the digest"
     else:
         why = "a post in the channel for no one: the digest"
@@ -332,8 +339,11 @@ def call_line(tool: str, notes: Collection[str] = (), /, **args: object) -> str:
     return f"{tool}({shown})" + (": " + "; ".join(notes) if notes else ": as called")
 
 
-def _on() -> bool:
-    return any(s.categories for s in _states.values())
+def _on(now: float | None = None) -> bool:
+    """Whether a category holds now, as current() would say without a read:
+    its end, the record's exp and the next read due all count."""
+    now = time.time() if now is None else now
+    return any(_live(s, now).categories and now - s.at < REFRESH_SEC for s in _states.values())
 
 
 def refused(tool: str) -> None:
@@ -359,6 +369,13 @@ def _take_calls() -> str:
 
 
 # --- display (steps 5 and 6) ----------------------------------------------------------
+
+def _ago(sec: float) -> str:
+    """How long ago, roughly: the weaker a guess, the older its event."""
+    if sec < 60:
+        return "just now"
+    return f"{int(sec // 60)} min ago" if sec < 3600 else f"{int(sec // 3600)} h ago"
+
 
 def _line(name: str, text: str) -> str:
     line = f"{name}: {' '.join(text.split())}"
@@ -402,7 +419,8 @@ def attachment(state: State, trace: Trace | None, guess: bool, *, call: str,
     if trace is None:
         head = "event: none delivered here while debug is on"
     elif guess:
-        head = f"event: post {trace.post_id}, the last delivered here (a guess: none in this thread)"
+        head = (f"event: post {trace.post_id}, the last delivered here (a guess: none in this "
+                f"thread, {_ago(time.time() - trace.at)})")
     else:
         head = f"event: post {trace.post_id}, the last delivered in this thread"
     lines = [head]

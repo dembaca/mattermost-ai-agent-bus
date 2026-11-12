@@ -399,7 +399,7 @@ _SKILL = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-
 # Per-load budgets, about 10 % over the 0.57.0 size (in brackets): SKILL.md is
 # the core every agent loads; the files next to it are read only when they apply.
 _SKILL_BUDGET = {
-    "SKILL.md": 17_510,                 # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 160: the fields of ask_human (RT-6.11), + 120: the 👑's receipts (RT-6.12 step 7), + 110: `debug` grants nothing (RT-6.31)
+    "SKILL.md": 17_480,                 # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 160: the fields of ask_human (RT-6.11), + 120: the 👑's receipts (RT-6.12 step 7), + 80: `debug` grants nothing (RT-6.31)
     "runtime-claude-code.md": 4_850,    # (4417)
     "runtime-no-hooks.md": 2_760,       # (2381) + 160: no ⏳ without turn hooks (RT-6.6 step 10)
     "self-registration.md": 2_450,      # (2234)

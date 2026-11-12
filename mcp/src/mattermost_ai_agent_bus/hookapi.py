@@ -636,7 +636,7 @@ def _slim(post: Post, agents: set[str], gated: set[str], absent: set[str]) -> di
         # RT-6.6 step 9: another agent's context line wakes nobody, enters no digest.
         "quiet": post.kind in a2a.QUIET and post.user_id in agents,
         "gated": post.id in gated,
-        "names_agent": bool(tasks._mentions(post.message)),
+        "names_agent": bool(tasks.mentions(post.message)),
         "absent": post.id in absent,
     }
     if post.files:

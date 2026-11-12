@@ -219,7 +219,7 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
         coordinator = False  # RT-6.22 step 3: not the home, no routing here
     if coordinator and routes is not None and where and where not in routes:
         coordinator = False  # a guest here: this channel has its own crown
-    if coordinator and tasks._mentions(str((item.get("post") or {}).get("message", ""))):
+    if coordinator and tasks.mentions(str((item.get("post") or {}).get("message", ""))):
         coordinator = False  # RT-6.6 step 5: for the agent it names, not to route
     if coordinator or in_my_thread:
         return my_root or item.get("intent") != a2a.FYI

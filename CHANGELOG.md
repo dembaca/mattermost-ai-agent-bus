@@ -21,6 +21,8 @@ before 0.5.0 are described in the git history.
   the registrar's exact 404 `no debug set`, a failed read and a record by
   someone not trusted are off at the next read; `bus_info` shows `debug`.
 
+Needs: registrar 0.8.0 for debug
+
 ## 0.84.0
 
 ### Added

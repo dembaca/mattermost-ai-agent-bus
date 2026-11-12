@@ -245,9 +245,12 @@ def attachment_props(fields: list[tuple[str, str, bool]], *, fallback: str,
 # RT-6.31: the grey attachment the server adds to its agent's post while debug is
 # on, after any other (an ask's card); known by its title and fallback together.
 DEBUG_TITLE, _DEBUG_FALLBACK, _DEBUG_COLOR = "debug", "MCP debug", "#8b8b8b"
-# RT-6.31 step 4: a value under a key naming a secret shows as its length; any
-# other text over PROP_VALUE_MAX characters is cut.
-_SECRET_KEY = re.compile(r"token|key|secret|password", re.I)
+# RT-6.31 step 4: a value under a key naming a secret shows as its length, at
+# any depth, and so does a text that looks like a compact JWS, whatever its key;
+# any other text over PROP_VALUE_MAX characters is cut.
+_SECRET_KEY = re.compile(r"token|key|secret|passw|auth|bearer|credential|jwt|private|signature", re.I)
+_JWS = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?![A-Za-z0-9_.-])")
+JWS_MIN = 40  # a shorter dotted word (a host name, a version) stays
 PROP_VALUE_MAX = 500
 
 
@@ -257,8 +260,8 @@ def _is_debug(card: object) -> bool:
 
 
 def with_debug(props: Mapping[str, Any] | None, text: str) -> dict[str, Any]:
-    """props with the `debug` attachment holding text added last, after any card
-    the post has (an ask's), and none it had before (RT-6.31 step 5)."""
+    """The server's own props with the `debug` attachment holding text added
+    last, after any card the post has (an ask's) (RT-6.31 step 5)."""
     out = dict(props or {})
     cards = out.get("attachments")
     kept = [c for c in cards if not _is_debug(c)] if isinstance(cards, list) else []
@@ -267,18 +270,30 @@ def with_debug(props: Mapping[str, Any] | None, text: str) -> dict[str, Any]:
     return out
 
 
-def props_view(props: Mapping[str, Any] | None) -> dict[str, Any]:
+def _unjws(text: str) -> str:
+    """A text with each compact-JWS look-alike as its length (RT-6.31 step 4)."""
+    return _JWS.sub(lambda m: f"<{len(m[0])} chars>" if len(m[0]) >= JWS_MIN else m[0], text)
+
+
+def props_view(props: Mapping[str, Any] | None, *, own: bool = False) -> dict[str, Any]:
     """A post's props as debug shows them (RT-6.31 step 4): `attachments` as one
-    line with their count and titles, no text or fallback, the `debug` one left
-    out; a value under a key naming a secret (token, key, secret, password, any
-    case) as its length; every other text over PROP_VALUE_MAX characters cut."""
+    line with their count and titles, no text or fallback; a value under a key
+    naming a secret (token, key, secret, passw, auth, bearer, credential, jwt,
+    private, signature; any case, any depth) and a compact-JWS look-alike as
+    their length; every other text over PROP_VALUE_MAX characters cut. `own`:
+    the server's own props (`props out`), whose `debug` attachment is left out;
+    in anyone else's (`props in`) a card titled `debug` counts like any other,
+    so a post cannot hide a card behind that title."""
     def length(value: object) -> str:
         n = len(value) if isinstance(value, str) else len(json.dumps(value, default=str))
         return f"<{n} chars>"
 
+    def counted(card: object) -> bool:
+        return not (own and _is_debug(card))
+
     def cards(value: list[Any]) -> str:
-        shown = [c for c in value if not _is_debug(c)]
-        titles = [" ".join(str(c.get("title"))[:100].split()) for c in shown
+        shown = [c for c in value if counted(c)]
+        titles = [_unjws(" ".join(str(c.get("title"))[:100].split())) for c in shown
                   if isinstance(c, Mapping) and c.get("title")]
         return (f"[{len(shown)} card{'' if len(shown) == 1 else 's'}"
                 + (f", title: {'; '.join(titles)}" if titles else "") + "]")
@@ -288,12 +303,12 @@ def props_view(props: Mapping[str, Any] | None) -> dict[str, Any]:
             return length(value)
         if isinstance(value, Mapping):
             return {str(k): shown(k, v) for k, v in value.items()
-                    if not (k == "attachments" and isinstance(v, list)
-                            and not any(not _is_debug(c) for c in v))}
+                    if not (k == "attachments" and isinstance(v, list) and not any(map(counted, v)))}
         if isinstance(value, list):
             return cards(value) if key == "attachments" else [shown("", v) for v in value]
-        if isinstance(value, str) and len(value) > PROP_VALUE_MAX:
-            return value[:PROP_VALUE_MAX] + "…"
+        if isinstance(value, str):
+            value = _unjws(value)
+            return value[:PROP_VALUE_MAX] + "…" if len(value) > PROP_VALUE_MAX else value
         return value
 
     out = shown("", dict(props or {}))
@@ -911,9 +926,14 @@ class MattermostAdapter:
         async with self._http().stream("GET", url, timeout=5.0,
                                        headers={"Accept": "application/json"}) as resp:
             if resp.status_code == 404:
-                body = await resp.aread() if none_error else b""
-                if none_error and (_error_of(body) != none_error
-                                   or (exact and _json_object(body) != {"error": none_error})):
+                body = bytearray()
+                if none_error:  # read at most MODE_RECORD_MAX, as a record
+                    async for chunk in resp.aiter_bytes():
+                        body += chunk
+                        if len(body) > MODE_RECORD_MAX:
+                            raise missing(f"registrar has no {name} endpoint: its 404 is too long")
+                if none_error and (_error_of(bytes(body)) != none_error
+                                   or (exact and _json_object(bytes(body)) != {"error": none_error})):
                     raise missing(f"registrar has no {name} endpoint")
                 return None
             resp.raise_for_status()

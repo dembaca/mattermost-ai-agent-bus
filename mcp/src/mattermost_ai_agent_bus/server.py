@@ -30,7 +30,7 @@ from . import (
 from .client import (InvalidId, MattermostAdapter, attachment_props, dm_partner, guest_ids, mm_id, mm_name,
                      props_view, with_debug)
 from .model import Answer, Mark, Post, Refused
-from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox, _channel_type
+from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox, channel_type
 
 log = logging.getLogger(__name__)
 
@@ -1265,7 +1265,19 @@ async def _with_debug(client: MattermostAdapter, uid: str, props: dict[str, Any]
     """RT-6.31 step 5: the props of the agent's post with the grey `debug`
     attachment while a category of its home is on and the channel may show it,
     about the event the post answers (in `thread`, else `root_id`'s). Never
-    stops a post: on any error the props stay as they were."""
+    stops a post: on any error, or after DEBUG_EVENT_SEC, the props stay as
+    they were."""
+    try:
+        return await asyncio.wait_for(_debug_card(client, uid, props, channel_id=channel_id,
+                                                  root_id=root_id, call=call, thread=thread),
+                                      DEBUG_EVENT_SEC)
+    except Exception as exc:  # noqa: BLE001 — the post goes out without it (a timeout too)
+        log.info("debug attachment not made: %s", type(exc).__name__)
+        return props
+
+
+async def _debug_card(client: MattermostAdapter, uid: str, props: dict[str, Any] | None, *,
+                      channel_id: str, root_id: str, call: str, thread: str) -> dict[str, Any] | None:
     try:
         state = await debug.current(client)
         if not state.categories:
@@ -1276,40 +1288,56 @@ async def _with_debug(client: MattermostAdapter, uid: str, props: dict[str, Any]
         if allowed is None:
             return props
         trace, guess = debug.about(cid, thread or root_id)
-        text = debug.attachment(state, trace, guess, call=call, props_out=props_view(props),
-                                allowed=allowed)
+        text = debug.attachment(state, trace, guess, call=call,
+                                props_out=props_view(props, own=True), allowed=allowed)
         return with_debug(props, text) if text else props
     except Exception as exc:  # noqa: BLE001 — the post goes out without it
         log.info("debug attachment not made: %s", exc)
         return props
 
 
+# RT-6.31 step 3: the most the lines of one event may take (their reads: a thread,
+# an owner, an attestation, the ask mode, the mandate); the event never waits longer.
+DEBUG_EVENT_SEC = 2.0
+
+
 async def _debug_items(events: list[Any], payload: list[dict[str, Any]]) -> None:
     """RT-6.31 steps 3 and 6: while a category is on, each event of the home or
     a DM is remembered with its lines (a post answering it shows them), and an
     event of the home carries them as `debug`. Never in a guest channel or the
-    lobby; the server's own events (stall) carry none."""
+    lobby; the server's own events (stall) carry none. Each event's lines get
+    DEBUG_EVENT_SEC: delivery does not wait for a slow read, the event goes
+    without them."""
     try:
         client = _get_client()
-        state = await debug.current(client)
-        if not state.categories or not events:
+        state = await asyncio.wait_for(debug.current(client), DEBUG_EVENT_SEC) if events else None
+        if state is None or not state.categories:
             return
         uid = await _my_id(client)
         home = await client.work_channel_id()
         crown = bool(uid) and lease.crown_held(uid)
-        for e, item in zip(events, payload, strict=False):
-            where = e.post.channel_id
-            if e.kind in OWN_EVENTS or e.guest or e.lobby or not where:
-                continue
-            if where != home and _channel_type(e) != "D":
-                continue
-            mine = await _in_my_thread(item, uid) if uid else None
-            trace = await debug.remember(client, item, e.post, state=state, uid=uid, mine=mine,
-                                         crown=crown, props_in=props_view(e.post.props))
-            if where == home:
-                item["debug"] = debug.block(trace, state)
-    except Exception as exc:  # noqa: BLE001 — the events go out without it
-        log.info("debug lines not made: %s", exc)
+    except Exception as exc:  # noqa: BLE001 — the events go out without it (a timeout too)
+        log.info("debug lines not made: %s", type(exc).__name__)
+        return
+
+    async def lines(e: Any, item: dict[str, Any]) -> debug.Trace:
+        mine = await _in_my_thread(item, uid) if uid else None
+        return await debug.remember(client, item, e.post, state=state, uid=uid, mine=mine,
+                                    crown=crown, props_in=props_view(e.post.props))
+
+    for e, item in zip(events, payload, strict=True):
+        where = e.post.channel_id
+        if e.kind in OWN_EVENTS or e.guest or e.lobby or not where:
+            continue
+        if where != home and channel_type(e) != "D":
+            continue
+        try:
+            trace = await asyncio.wait_for(lines(e, item), DEBUG_EVENT_SEC)
+        except Exception as exc:  # noqa: BLE001 — this event goes out without lines
+            log.info("debug lines of %s not made: %s", e.post.id, type(exc).__name__)
+            continue
+        if where == home:
+            item["debug"] = debug.block(trace, state)
 
 
 @mcp.tool()
@@ -2152,7 +2180,7 @@ def _human_task(event: Any, item: dict[str, Any]) -> bool:
     post = event.post
     return bool(event.kind == "watched_channel" and not item.get("gated") and not item.get("from_agent")
                 and item.get("intent") != a2a.FYI and not post.type and not post.from_webhook
-                and not tasks._mentions(post.message) and not channel.broadcast(post.message))
+                and not tasks.mentions(post.message) and not channel.broadcast(post.message))
 
 
 def _ask_answer(event: Any, item: dict[str, Any]) -> bool:

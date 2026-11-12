@@ -1906,9 +1906,11 @@ not know that either). A view across several servers (`/agent-explain
   `a2a`, the crown, the kind, and what else the server sets), keys sorted and
   indented. Shortened before they show: `attachments` to one line with their
   count and titles (`"[1 card, title: …]"`, no text or fallback), a value under
-  a key that names a secret (`token`, `key`, `secret`, `password`, any case) to
-  its length, every other value over 500 characters cut; the `debug`
-  attachment itself left out.
+  a key that names a secret (`token`, `key`, `secret`, `passw`, `auth`,
+  `bearer`, `credential`, `jwt`, `private`, `signature`; any case, any depth)
+  and a text that looks like a compact JWS to its length, every other value
+  over 500 characters cut; the server's own `debug` attachment left out of
+  **out** (in **in** a card titled `debug` counts like any other).
 - `full`: all of them.
 
 No `delegation` while ADR-004 is not built: nothing of it exists yet, and
@@ -1943,7 +1945,7 @@ one line per active category, about the event the post answers; `props` as a
 `json` code block. An ask card keeps its own attachment, the `debug` one comes
 after it (`attachments` is a list). An agent that posts nothing adds nothing:
 the channel stays quiet, and Mattermost collapses a long attachment behind
-"Show more". The whole attachment is cut at 4,000 characters, `props` first.
+"Show more". The server's posts that answer no event carry no card: `announce` (HELLO, BYE), an ask's link post in the thread it came from, the 👀/⏳ notes, the permission-relay DMs (which may go to a human this session does not trust) and the server's stall and system replies; its own events carry no block either. The whole attachment is cut at 4,000 characters, `props` first.
 Never in a guest channel or the lobby: props and author classes may name
 people, and the setting is the home's; a DM as *DMs* below. The agent itself gets
 the same lines with the events of its home, in the body of its channel tag
