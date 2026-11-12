@@ -82,7 +82,8 @@ READ_POSTS = 200
 ENV_SOURCE = "env"
 
 # --- the floor: actions with effect (step 1) -------------------------------------------
-# One list, tested in test_ask_route.py. A hit makes an ask an approval whatever
+# The plural nouns "tags" and "pushes" name things, not actions, and do not lift; every
+# other form does. One list, tested in test_ask_route.py. A hit makes an ask an approval whatever
 # the agent declared; a word that only looks like one leans to approval too.
 # External writes: a forge or tracker changed, or a message sent outside the bus.
 # "the open PRs" or "write tests for the PR" name none.
@@ -95,19 +96,15 @@ _SEND_VERBS = (r"(?:send\w*|sent|post(?:s|ed|ing)?|writ\w*|repl(?:y|ies|ied)|not
                r"|e-?mail\w*|messag\w*)")
 _OUTSIDE = (r"(?:slack|teams|e-?mails?|mails?|customers?|upstream|external\w*"
             r"|mailing[ -]lists?)")
-# "tag" as a verb (a sentence's first word, or after to / should / we / and ...); "which key
-# signs the version tags?" names a thing, not an action. Anything else leans to approval.
-_TAG_VERB = (r"(?:^|[.?!:;]\s*|\b(?:to|should|shall|will|can|could|we|i|you|and|then|please|go)\s+)"
-             r"tag\b")
 FLOOR: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("merge", re.compile(r"\bmerg(?:e|es|ed|ing)\b", re.I)),
     ("deploy", re.compile(r"\b(?:deploy\w*|roll(?:s|ed|ing)?[ -]?out|ausroll\w*)\b", re.I)),
-    ("release", re.compile(r"\b(?:releas(?:e|es|ed|ing)|tagged|tagging|git\s+tag|publish\w*"
-                           r"|veröffentlich\w*)\b|" + _TAG_VERB, re.I)),
+    ("release", re.compile(r"\b(?:releas(?:e|es|ed|ing)|tag(?:ged|ging)?|publish\w*"
+                           r"|veröffentlich\w*)\b", re.I)),
     ("install", re.compile(r"\b(?:(?:un|re)?install\w*|installier\w*)\b", re.I)),
     ("delete", re.compile(r"\b(?:delet\w*|remov\w*|destroy\w*|wip(?:e|es|ed|ing)\b|purg\w*"
                           r"|lösch\w*|entfern\w*)|\brm\s+-", re.I)),
-    ("push", re.compile(r"\bpush\w*", re.I)),
+    ("push", re.compile(r"\bpush(?:ed|ing)?\b", re.I)),
     ("external write", re.compile(rf"\b{_FORGE_VERBS}[^.?!\n]{{0,40}}?\b{_FORGE}\b", re.I)),
     ("external write", re.compile(rf"\b{_SEND_VERBS}\b[^.?!\n]{{0,40}}?\b{_OUTSIDE}\b", re.I)),
     ("spending", re.compile(r"\b(?:spen[dt]\w*|pa(?:y|ys|ying|id|yment\w*)\b|purchas\w*"

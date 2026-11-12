@@ -8,12 +8,12 @@ before 0.5.0 are described in the git history.
 ### Fixed
 
 - **A question about version tags is no longer lifted to an approval** ([RT-6.25](docs/arc42/06-runtime-view.md) step 1, RT-6.11).
-  The floor's word `tag` matched the noun ("which key signs the version
-  tags?"), so a `kind=question` with three answers was refused. `tag` now
-  counts as an action only as a verb (first word of a sentence, after
-  to / should / we / and ..., `tagged`, `tagging`, `git tag`); the floor still
-  scans only `need`, `decision` and `answers`, never `context`, and "Merge
-  PR #5?" or "Install 0.81 on hogan?" stay approvals.
+  The floor's words `tag` and `push` matched the plural nouns ("which key
+  signs the version tags?", "channel pushes"), so a `kind=question` with three
+  answers was refused. The plural nouns `tags` and `pushes` no longer lift; every
+  other form (`tag`, `tagged`, `tagging`, `push`, `pushed`, `pushing`) does. The
+  floor still scans only `need`, `decision` and `answers`, never `context`, and
+  "Merge PR #5?", "Install 0.81 on hogan?" or "Let's tag v1" stay approvals.
 
 ## 0.81.0
 

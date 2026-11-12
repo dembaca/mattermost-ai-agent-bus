@@ -91,6 +91,8 @@ def _fields(posted):
     ("Remove the old VM 399?", "delete"),
     ("Force-push feat/x?", "push"),
     ("Should we tag 0.82.0 now?", "release"),
+    ("Let's tag v1", "release"),
+    ("Just tag v1", "release"),
     ("Install 0.81 on hogan?", "install"),
     ("Open an issue upstream for the flaky test?", "external write"),
     ("Comment on PR #12 with the benchmark?", "external write"),
@@ -657,11 +659,31 @@ async def test_a_question_that_only_mentions_tags_stays_a_question(monkeypatch, 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("need,named", [("Merge PR #5?", "merge"), ("Install 0.81 on hogan?", "install"),
-                                        ("Should we tag 0.82.0?", "release")])
-async def test_an_imperative_action_declared_a_question_is_still_an_approval(monkeypatch, need, named):
-    """RT-6.11, RT-6.25 step 1, security: calling an action a question dodges nothing."""
+@pytest.mark.parametrize("need,decision,answers,named", [
+    ("Let's tag v1", "", None, "release"),
+    ("I'll tag v1", "", None, "release"),
+    ("Should we tag 0.82.0?", "", None, "release"),
+    ("Which one?", "", ["me", "tag it now"], "release"),
+    ("Go ahead?", "tag v1 after CI", None, "release"),
+    ("Merge PR #5?", "", None, "merge"),
+    ("Install 0.81 on hogan?", "", None, "install"),
+    ("Push the branch?", "", None, "push"),
+])
+async def test_an_action_declared_a_question_is_still_an_approval(monkeypatch, need, decision, answers, named):
+    """RT-6.11, RT-6.25 step 1, security: calling an action a question dodges nothing;
+    only the plural nouns tags and pushes are exempt."""
     c = _Client()
     _coordinator_mode(monkeypatch, c)
-    out = json.loads(await server.ask_human(need=need, kind="question"))
+    out = json.loads(await server.ask_human(need=need, decision=decision, answers=answers,
+                                            kind="question"))
     assert (out["kind"], out["floor"]) == ("approval", named)
+
+
+@pytest.mark.asyncio
+async def test_a_plural_push_noun_in_an_answer_stays_a_question(monkeypatch):
+    """RT-6.11, RT-6.25 step 1."""
+    c = _Client()
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need="Which keys?", kind="question",
+                                            answers=["only for channel pushes", "all", "none"]))
+    assert out.get("posted") is not False and out["kind"] == "question" and "floor" not in out
