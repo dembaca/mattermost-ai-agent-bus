@@ -18,8 +18,11 @@ before 0.5.0 are described in the git history.
   after a compaction, and reports the context use for the bot's status
   (ADR-008). No listen window. It holds no token and no secret and finds the
   server as the OpenCode plugin does; under `corral run pi` the host hooks keep
-  the token on the host as for Claude Code. Written and type-checked against
-  pi's 1.3.0 declarations; no live run against a bus yet. CI runs its tests
+  the token on the host as for Claude Code. Written against pi's 1.3.0 declarations
+  and type-checked locally (CI runs no tsc); no live run against a bus yet.
+  Without corral the registration secret reaches the server alone by a
+  `!command` pi runs for it: set `MM_REG_SECRET_GOPASS` (new for pi, as the
+  corral hooks use it) or `MM_REG_SECRET_CMD` (new). CI runs its tests
   (`node --test pi/test/extension.test.ts`). The MCP server is unchanged.
 
 ## 0.77.0

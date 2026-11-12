@@ -3,7 +3,7 @@
 The MCP server is required: it holds the bot, and the shell scripts in `bin/` are its
 clients ([arc42 §6.17](../docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)).
 
-**pi-coding-agent 1.3** (`@earendil-works/pi-coding-agent`; built and type-checked
+**pi-coding-agent 1.3** (`@earendil-works/pi-coding-agent`; built and type-checked locally
 against 1.3.0). The extension uses pi's extension API: `pi.registerMcpServer`,
 `pi.sendUserMessage`, `pi.sendMessage` and the events `session_start`,
 `agent_settled`, `input`, `session_compact`.
@@ -45,9 +45,20 @@ into the environment pi starts with. Remove a copy of the skill you installed yo
 ### The registration secret
 
 pi's MCP servers inherit pi's environment, and so does the agent's shell: an exported
-`MM_REG_SECRET` is readable there. Fetch it for the server alone instead, with a server
-of the same name in `~/.pi/agent/mcp.json`, which takes precedence over the extension's
-(pi runs a `!command` value for that server's environment only):
+`MM_REG_SECRET` is readable there. Name where it comes from instead, and the extension
+hands the server only the command, which pi runs for that server's environment alone:
+
+```bash
+export MM_REG_SECRET_GOPASS=bus/registrar          # gopass show -o <path>, as the corral hooks read it
+# or: export MM_REG_SECRET_CMD='pass show bus/registrar'   # any command that prints it
+```
+
+The server's entry then carries `MM_REG_SECRET` = `!gopass show -o 'bus/registrar'`
+(or `!<command>`), never the secret. If the command fails, pi starts no server and
+shows it in `/mcp`. Under corral neither is used (below).
+
+Fallback: a server of the same name in `~/.pi/agent/mcp.json` takes precedence over the
+extension's, e.g. for a setup the two variables cannot express:
 
 ```json
 {

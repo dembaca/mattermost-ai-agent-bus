@@ -3,7 +3,7 @@
 //   node --test pi/test/extension.test.ts
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -12,8 +12,8 @@ import { fileURLToPath } from "node:url"
 
 import ocBus from "../../opencode/plugin/mattermost-agent-bus.ts"
 import { busFile as ocBusFile } from "../../opencode/plugin/mattermost-agent-bus.ts"
-import mattermostAgentBus, { busFile, busRoot, create, hookApi, MCP_TIMEOUT_SEC, SERVER, SKILL, timing, waitSec,
-  wakeBackoffMs } from "../mattermost-agent-bus.ts"
+import mattermostAgentBus, { busFile, busRoot, create, hookApi, MCP_TIMEOUT_SEC, mcpConfig, secretCommand, SERVER, SKILL,
+  timing, waitSec, wakeBackoffMs } from "../mattermost-agent-bus.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = dirname(dirname(HERE))
@@ -144,7 +144,8 @@ test("RT-6.27 step 1: the MCP server and the skill at session_start, nothing whe
   const f = fakePi()
   assert.deepEqual(f.registered, [])
   assert.deepEqual(Object.keys(f.handlers).sort(), ["agent_settled", "agent_start", "input", "resources_discover",
-    "session_compact", "session_shutdown", "session_start", "turn_end"])
+    "session_before_compact", "session_compact", "session_compact_failed", "session_shutdown", "session_start",
+    "turn_end"])
   await settle(30)
   assert.equal(calls.length, 0, "no request before the session starts")
   await f.emit("session_start", { reason: "startup" })
@@ -328,19 +329,24 @@ test("RT-6.27 step 4 (ADR-008): the context use for the status, when it moved or
   try {
     const f = await started()
     f.box.usage = { tokens: 84_800, contextWindow: 200_000, percent: 42.4 }
+    assert.equal(f.handlers.turn_end[0]({ type: "turn_end" }, { ...f.box, getContextUsage: () => f.box.usage }),
+                 undefined, "not awaited: the run does not wait for the bus")
+    await until(() => bodies("/v1/usage").length === 1, "reported")
     await f.emit("turn_end")
-    await f.emit("turn_end")
+    await settle(30)
     assert.deepEqual(bodies("/v1/usage"), [{ ctx: 42, ctx_size: 200_000 }])
     f.box.usage = { tokens: 87_200, contextWindow: 200_000, percent: 43.6 }
     await f.emit("turn_end")
+    await until(() => bodies("/v1/usage").length === 2, "moved a point")
     f.box.usage = { tokens: null, contextWindow: 200_000, percent: null } // right after a compaction
     await f.emit("turn_end")
-    assert.equal(bodies("/v1/usage").length, 2)
     f.box.usage = { tokens: 87_400, contextWindow: 200_000, percent: 43.7 }
     await f.emit("turn_end")
-    assert.equal(bodies("/v1/usage").length, 2, "under a point within the minute")
+    await settle(30)
+    assert.equal(bodies("/v1/usage").length, 2, "unknown, or under a point within the minute")
     mock.timers.tick(61_000)
     await f.emit("turn_end")
+    await until(() => bodies("/v1/usage").length === 3, "once a minute")
     assert.deepEqual(bodies("/v1/usage"), [{ ctx: 42, ctx_size: 200_000 }, { ctx: 44, ctx_size: 200_000 },
                                            { ctx: 44, ctx_size: 200_000 }])
   } finally {
@@ -371,4 +377,46 @@ test("RT-6.27: the default export is pi's factory and starts nothing", async () 
   await settle(30)
   assert.ok(handlers.includes("session_start") && handlers.includes("agent_settled"))
   assert.equal(calls.length, 0)
+})
+
+test("RT-6.27 step 1: the secret by its command for the server alone, never its value", () => {
+  const secret = "s3cr3t-enrollment-token"
+  const gopass = mcpConfig(REPO, ws, { MM_REG_SECRET_GOPASS: "bus/it's registrar", MM_REG_SECRET: secret })
+  assert.equal(gopass.env.MM_REG_SECRET, "!gopass show -o 'bus/it'\\''s registrar'")
+  assert.ok(!JSON.stringify(gopass).includes(secret), "the value never goes into the config")
+  assert.equal(mcpConfig(REPO, ws, { MM_REG_SECRET_CMD: " pass show bus/registrar " }).env.MM_REG_SECRET,
+               "!pass show bus/registrar")
+  assert.equal(secretCommand({ MM_REG_SECRET_GOPASS: "a", MM_REG_SECRET_CMD: "b" }), "!gopass show -o 'a'")
+  const none = mcpConfig(REPO, ws, { MM_REG_SECRET: secret })
+  assert.ok(!("MM_REG_SECRET" in none.env) && !JSON.stringify(none).includes(secret), "none: pi's environment")
+  // Under corral the host hooks registered the bot: the server is a relay.
+  assert.equal(secretCommand({ MM_BUS_MCP_ENDPOINT: "tcp://127.0.0.1:1", MM_REG_SECRET_GOPASS: "a" }), null)
+})
+
+test("RT-6.27 step 5: no wake-up while pi compacts; a poll that was out is dropped", async () => {
+  const f = await started()
+  await f.emit("session_before_compact", { reason: "threshold" })
+  answerWake({ wake: true, reason: "mentions", count: 1, text: "collect" })
+  await settle(100)
+  assert.equal(f.sent.length, 0, "pi refuses a prompt while it compacts")
+  assert.equal(held.length, 0, "no poll meanwhile")
+  await f.emit("session_compact", { reason: "threshold", willRetry: false, fromExtension: false })
+  await until(() => held.length === 1, "polled again after it")
+  answerWake({ wake: true, reason: "mentions", count: 1, text: "collect" })
+  await until(() => f.sent.length === 1, "woken")
+  await f.emit("agent_settled", { aborted: false })
+  await f.emit("session_before_compact", { reason: "manual" })
+  await f.emit("session_compact_failed", { reason: "manual", aborted: true })
+  await until(() => held.length === 1, "a failed compaction ends the pause too")
+})
+
+test("RT-6.27 step 2: the keep-in-step helpers are the OpenCode plugin's, to the letter", () => {
+  const block = (path: string) => {
+    const text = readFileSync(path, "utf8")
+    const m = text.match(/\/\/ keep-in-step: from here[\s\S]*?\/\/ keep-in-step: end\n/)
+    assert.ok(m, `no keep-in-step block in ${path}`)
+    return m![0]
+  }
+  assert.equal(block(join(REPO, "pi", "mattermost-agent-bus.ts")),
+               block(join(REPO, "opencode", "plugin", "mattermost-agent-bus.ts")))
 })

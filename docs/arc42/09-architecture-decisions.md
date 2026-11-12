@@ -1585,7 +1585,10 @@ listen window (RT-6.20 steps 4, 5, 7), and the first long poll connects the
 inbox, not the server's start (RT-6.17 step 7 says why). Phase 3 built (0.79.0): the pi
 extension (`pi/`, RT-6.27), written against pi-coding-agent 1.3.0. As built, it
 differs from the draft below where pi's installed package said otherwise: the
-skill comes by `resources_discover`; the server is registered with `exposure:
+skill comes by `resources_discover`; the registration secret comes by a
+`!command` for the server alone (`MM_REG_SECRET_GOPASS` or
+`MM_REG_SECRET_CMD`), never in pi's environment; no wake-up while pi compacts;
+`presence` at `agent_start` and the usage report are not awaited; the server is registered with `exposure:
 direct` and a 180 s request timeout (pi's defaults would hide the tools from the
 model and cut `wait_for_events`); the turn-end check runs detached, not in the
 settle handler; while a run the extension started goes, no poll is open; the
@@ -1642,8 +1645,12 @@ parts below were read, the rest not), is what makes a third runtime cheap:
 above, and the declarations they point to as the contract
 (`dist/core/extensions/types.d.ts`, `dist/core/mcp-servers.d.ts`), the extension
 type-checked against them. They confirm the points above and add:
-`sendUserMessage` takes `deliverAs` `steer` or `followUp` only and throws
-while a run goes without one; a message sent from an `agent_settled` handler
+`sendUserMessage` takes `deliverAs` `steer` or `followUp` only; it returns
+nothing and never throws: a message pi refuses (a run going without
+`deliverAs`, a compaction in progress, no model) is reported as an extension
+error, so the extension cannot tell; an MCP server's `env` value that starts
+with `!` is run as a command for that server's environment, also for a
+server an extension registers; a message sent from an `agent_settled` handler
 is deferred until the settle is done; the `input` event carries its `source`
 (`interactive`, `rpc`, `extension`, the latter for every
 `pi.sendUserMessage`); `agent_settled` carries `aborted`; `resources_discover`

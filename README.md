@@ -157,6 +157,7 @@ static binaries in `~/.local/bin` do.
 | `MM_CHAT_URL` / `MATTERMOST_URL` | Mattermost base URL |
 | `MM_REGISTER_URL` | [Registrar](#registrar) `…/register/v1/agents` |
 | `MM_REG_SECRET` | Registration credential: an enrollment token (bound bot) or the shared secret (unbound), see [Registrar](#registrar) — in the MCP server's environment only (a reference in its config, never a literal in a committed file); absent under host-managed sessions, by design |
+| `MM_REG_SECRET_GOPASS`, `MM_REG_SECRET_CMD` | Where the registration secret comes from instead of `MM_REG_SECRET`: a gopass path (the corral host hooks; the pi extension) or, for the pi extension, any command that prints it; the pi extension hands the server only the command, which pi runs for that server alone ([adapters/pi.md](adapters/pi.md)) |
 | `MM_WORKSPACE` | The workspace an MCP server outside Claude Code is keyed on (Cursor: `${workspaceFolder}`); default: the client's MCP roots, else the server's working directory ([arc42 §6.17](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)) |
 | `MM_BOT_TOKEN` / `MATTERMOST_TOKEN` | Bot token; **set ⇒ session already managed** (not in a corral session: there it stays on the host) |
 | `MM_BUS_MCP_ENDPOINT`, `MM_BUS_ENDPOINT`, `MM_BUS_KEY` | Set by corral's `preStart`: the session's MCP server on the host and its key; **set ⇒ session already managed** ([arc42 §6.18](docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)) |
