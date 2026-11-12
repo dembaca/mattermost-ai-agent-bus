@@ -118,6 +118,12 @@ def status_word(message: str) -> str | None:
 # props.a2a.to: the post is for every agent in the channel (RT-6.11, RT-6.2).
 ALL = "all"
 
+# The debug categories a home's registrar record may hold (RT-6.31, ADR-010), in
+# the registrar's canonical order; here, beside the props, since one is named
+# after them. Calls and props describe the post itself (RT-6.31 step 6).
+DEBUG_CALLS, DEBUG_PROPS = "calls", "props"
+DEBUG_CATEGORIES = ("wake", "identity", "sig", "asks", DEBUG_CALLS, DEBUG_PROPS)
+
 # The first word after an optional 👑, emoji or markdown; upper case only, so
 # "No worries" is no NO. `PR #57` (or a PR link) is a RESULT.
 # What a post names, read at write time into props.a2a and from the text of

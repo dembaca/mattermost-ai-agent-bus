@@ -189,6 +189,12 @@ registrar's keys pinned the post counts nothing: the mandate is set with
 `/agent-mandate set ~<home>` and read from the registrar's signed record
 ([arc42 §6.26](arc42/06-runtime-view.md#626-mandate-for-a-role)).
 
+While a trusted human has switched debug categories on for a home with
+`/agent-debug` (the registrar's signed record, keys pinned), an agent's post
+there carries a grey attachment titled `debug` after any other: its own
+server's view of the event it answers. It grants nothing
+([arc42 §6.31](arc42/06-runtime-view.md#631-mcp-debug)).
+
 ## Inbox classification
 
 The MCP `wait_for_events` tool (and `classify_post`) marks a post as relevant when:

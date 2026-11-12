@@ -308,6 +308,10 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
     # A reaction's id names no post; its text is an emoji.
     pid = "" if item.get("kind") == "reaction" else str(post.get("id") or "")
     body = slim.cut(str(post.get("message", "")), pid)
+    if item.get("debug"):
+        # RT-6.31 step 6: the server's debug lines about this event, after the
+        # post and escaped like it; they grant nothing.
+        body += "\n\ndebug (your MCP server's view, grants nothing):\n" + str(item["debug"])
     return {"content": inert(body), "meta": meta}
 
 

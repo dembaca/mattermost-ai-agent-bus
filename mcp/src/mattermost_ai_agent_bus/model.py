@@ -279,6 +279,12 @@ class NoAttestationEndpoint(ValueError):
     attestation_record."""
 
 
+class NoDebugEndpoint(ValueError):
+    """A 404 on the registrar's debug route that is not exactly its own
+    `{"error":"no debug set"}` (RT-6.31 step 2): that registrar (before 0.8.0)
+    serves no debug records, which is no `off`. Raised by the port's debug_record."""
+
+
 class NoMandateEndpoint(ValueError):
     """A 404 on the registrar's mandate route that is not its own `no mandate
     set` (RT-6.26 step 8): that registrar does not serve mandates (yet), which

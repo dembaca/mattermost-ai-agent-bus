@@ -3,6 +3,24 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.85.0
+
+### Added
+
+- **MCP debug, the bus side** (ADR-010 phase 2, [RT-6.31](docs/arc42/06-runtime-view.md#631-mcp-debug)):
+  with the registrar's keys pinned, each server reads its home's `/agent-debug`
+  record (registrar 0.8.0, `GET …/register/v1/debug/<channel id>`), verifies it
+  like the ask mode's and counts it only when a trusted human of this session
+  set it. While a category (`wake`, `identity`, `sig`, `asks`, `calls`, `props`)
+  is on, the agent's post in its home gets a grey `debug` attachment after any
+  ask card, about the event it answers; the agent gets the same lines as a
+  `debug` field in `wait_for_events` and as a block in its channel tag. Never a
+  key, signature, token or argument value; secrets' values as their length.
+  Never in a guest channel or the lobby; a DM shows all categories to a peer
+  agent or a trusted human, else only `props` and `calls`. No last good record:
+  the registrar's exact 404 `no debug set`, a failed read and a record by
+  someone not trusted are off at the next read; `bus_info` shows `debug`.
+
 ## 0.84.0
 
 ### Added

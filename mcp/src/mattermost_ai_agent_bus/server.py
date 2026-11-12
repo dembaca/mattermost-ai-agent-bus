@@ -23,13 +23,14 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from pydantic import ValidationError
 
 from . import (
-    __version__, a2a, askroute, asks, attest, channel, departed, files, gate, hookapi, lease, life, mandate, overhead, owners, ownpost,
-    permission,
+    __version__, a2a, askroute, asks, attest, channel, debug, departed, files, gate, hookapi, lease, life, mandate, overhead,
+    owners, ownpost, permission,
     profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unread, usage,
 )
-from .client import InvalidId, MattermostAdapter, attachment_props, guest_ids, mm_id, mm_name
+from .client import (InvalidId, MattermostAdapter, attachment_props, dm_partner, guest_ids, mm_id, mm_name,
+                     props_view, with_debug)
 from .model import Answer, Mark, Post, Refused
-from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox
+from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox, _channel_type
 
 log = logging.getLogger(__name__)
 
@@ -764,6 +765,8 @@ def _out(tool: str, obj: Any) -> str:
     """A tool's result, counted: bus data that stays in the agent's context (RT-6.9)."""
     text = _dump(obj)
     stats.record("tool", name=tool, chars=len(text))
+    if isinstance(obj, dict) and obj.get("refused"):
+        debug.refused(tool)  # RT-6.31: for the agent's next view, while debug is on
     return text
 
 
@@ -911,6 +914,8 @@ async def bus_info() -> str:
         "ask_mode": await askroute.info(client, me.id),
         # RT-6.26 step 6: the home's mandate for a role, or why none holds.
         "mandate": await mandate.info(client),
+        # RT-6.31 step 8: the home's debug categories, until and by whom, or why off.
+        "debug": await debug.info(client),
         # RT-6.26 step 9: the guest channels this coordinator watches under a mandate.
         **({"mandate_holds": holds} if (holds := await mandate.holds(client, me.id)) else {}),
         "permission_relay": RELAY,
@@ -1232,6 +1237,81 @@ def _bad_id(**ids: str) -> str:
     return ""
 
 
+def _changed(call: str, notes: list[str]) -> str:
+    """A call the server changed goes into the agent's next debug view too."""
+    if notes:
+        debug.rewritten(call)
+    return call
+
+
+async def _debug_allowed(client: MattermostAdapter, channel_id: str, uid: str) -> frozenset[str] | None:
+    """RT-6.31 steps 6 and 7: the categories a post of this agent in `channel_id`
+    may show: all in its home, and in a DM with a peer agent or a trusted human;
+    in a DM with anyone else only what describes the post itself (calls, props);
+    None in a guest channel, the lobby or a group message."""
+    if channel_id == await client.work_channel_id():
+        return frozenset(debug.CATEGORIES)
+    partner = dm_partner(await client.get_channel(channel_id), uid)
+    if not partner:
+        return None
+    if partner in await client.trusted_humans() or (
+            partner in await client.agents({partner}) and await owners.peer(client, partner)):
+        return frozenset(debug.CATEGORIES)
+    return debug.SHARED
+
+
+async def _with_debug(client: MattermostAdapter, uid: str, props: dict[str, Any] | None, *,
+                      channel_id: str, root_id: str, call: str, thread: str = "") -> dict[str, Any] | None:
+    """RT-6.31 step 5: the props of the agent's post with the grey `debug`
+    attachment while a category of its home is on and the channel may show it,
+    about the event the post answers (in `thread`, else `root_id`'s). Never
+    stops a post: on any error the props stay as they were."""
+    try:
+        state = await debug.current(client)
+        if not state.categories:
+            return props
+        cid = channel_id or (await client.post_channel_id(root_id) if root_id
+                             else await client.work_channel_id())
+        allowed = await _debug_allowed(client, cid, uid)
+        if allowed is None:
+            return props
+        trace, guess = debug.about(cid, thread or root_id)
+        text = debug.attachment(state, trace, guess, call=call, props_out=props_view(props),
+                                allowed=allowed)
+        return with_debug(props, text) if text else props
+    except Exception as exc:  # noqa: BLE001 — the post goes out without it
+        log.info("debug attachment not made: %s", exc)
+        return props
+
+
+async def _debug_items(events: list[Any], payload: list[dict[str, Any]]) -> None:
+    """RT-6.31 steps 3 and 6: while a category is on, each event of the home or
+    a DM is remembered with its lines (a post answering it shows them), and an
+    event of the home carries them as `debug`. Never in a guest channel or the
+    lobby; the server's own events (stall) carry none."""
+    try:
+        client = _get_client()
+        state = await debug.current(client)
+        if not state.categories or not events:
+            return
+        uid = await _my_id(client)
+        home = await client.work_channel_id()
+        crown = bool(uid) and lease.crown_held(uid)
+        for e, item in zip(events, payload, strict=False):
+            where = e.post.channel_id
+            if e.kind in OWN_EVENTS or e.guest or e.lobby or not where:
+                continue
+            if where != home and _channel_type(e) != "D":
+                continue
+            mine = await _in_my_thread(item, uid) if uid else None
+            trace = await debug.remember(client, item, e.post, state=state, uid=uid, mine=mine,
+                                         crown=crown, props_in=props_view(e.post.props))
+            if where == home:
+                item["debug"] = debug.block(trace, state)
+    except Exception as exc:  # noqa: BLE001 — the events go out without it
+        log.info("debug lines not made: %s", exc)
+
+
 @mcp.tool()
 async def announce(
     project: str,
@@ -1362,10 +1442,15 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
     """post_message's work, for the tool and for the shell's POST /v1/post
     (RT-6.17): one implementation. client None: this server's own."""
     _done_typing()
+    # RT-6.31 step 4: the call by argument names and lengths, never their values.
+    given = dict(message=message, channel_id=channel_id, root_id=root_id, to=to, kind=kind,
+                 channel=channel_name, props=props)
+    asked = message
     try:
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refusal(str(exc), kinds=True)
+    notes = [f"kind {a2a.word(message)} put first"] if message != asked else []
     extra, bad = a2a.user_props(props)
     if bad:
         return _refusal(bad)
@@ -1398,6 +1483,7 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
         try:
             posts, names = await _work_posts(client)
             message = message.rstrip() + "\n" + tasks.table(await _tasks(client, posts, names))
+            notes.append("the task table appended")
         except Exception as exc:  # noqa: BLE001 — the post still goes out, without a table
             log.warning("ASSIGNMENTS without a table: %s", exc)
     guest = await _guest_target(client, channel_id, root_id)
@@ -1406,13 +1492,17 @@ async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id
     message = a2a.styled(message)  # `IDLE` and a blank line after it (RT-6.14 step 2)
     stats.record("post", chars=len(message))
     here = await lease.crown_here(client, uid, channel_id, root_id)
+    if removed:
+        notes.append(f"{len(removed)} @-mention(s) removed (unmentioned)")
     try:
         post = await client.post(
             lease.with_crown(message, uid, here=here),
             channel_id=channel_id or None,
             root_id=root_id or None,
-            props=a2a.with_user(a2a.props(message, a2a.ALL if everyone else "", crown=here,
-                                          home=client.work_channel_name if guest else ""), extra),
+            props=await _with_debug(
+                client, uid, a2a.with_user(a2a.props(message, a2a.ALL if everyone else "", crown=here,
+                                                     home=client.work_channel_name if guest else ""), extra),
+                channel_id=channel_id, root_id=root_id, call=_changed(debug.call_line("post_message", notes, **given), notes)),
         )
     except Refused as exc:
         return _refusal(str(exc))
@@ -1446,10 +1536,14 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
                        props: dict[str, Any] | None = None) -> dict[str, Any]:
     """reply_in_thread's work, for the tool and for POST /v1/reply (RT-6.17)."""
     _done_typing()
+    # RT-6.31 step 4: the call by argument names and lengths, never their values.
+    given = dict(root_id=root_id, message=message, channel_id=channel_id, to=to, kind=kind, props=props)
+    asked = message
     try:
         message = a2a.lead(message, kind)
     except ValueError as exc:
         return _refusal(str(exc), kinds=True)
+    notes = [f"kind {a2a.word(message)} put first"] if message != asked else []
     extra, bad = a2a.user_props(props)
     if bad:
         return _refusal(bad)
@@ -1468,13 +1562,17 @@ async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: 
     message = a2a.styled(message)  # `IDLE` and a blank line after it (RT-6.14 step 2)
     stats.record("post", chars=len(message))
     here = await lease.crown_here(client, uid, channel_id, root_id)
+    if removed:
+        notes.append(f"{len(removed)} @-mention(s) removed (unmentioned)")
     try:
         post = await client.post(
             lease.with_crown(message, uid, here=here),
             channel_id=channel_id or None,
             root_id=root_id,
-            props=a2a.with_user(a2a.props(message, a2a.ALL if everyone else "", crown=here,
-                                          home=client.work_channel_name if guest else ""), extra),
+            props=await _with_debug(
+                client, uid, a2a.with_user(a2a.props(message, a2a.ALL if everyone else "", crown=here,
+                                                     home=client.work_channel_name if guest else ""), extra),
+                channel_id=channel_id, root_id=root_id, call=_changed(debug.call_line("reply_in_thread", notes, **given), notes)),
         )
     except Refused as exc:
         return _refusal(str(exc))
@@ -1771,9 +1869,14 @@ async def _post_ask(client: MattermostAdapter, me: Any, *, to: str, head: str, n
                               title=head)
              | (a2a.props(kind=a2a.ASK) or {}))
     stats.record("post", chars=len(text))
+    # RT-6.31 step 5: the debug card after the ask's own, about the thread it came from.
+    shown = await _with_debug(client, me.id, props, channel_id="", root_id="", thread=root_id,
+                              call=debug.call_line("ask_human", (), need=need, context=context,
+                                                   recommendation=recommendation, decision=decision,
+                                                   where=where, answers=answers))
     # Always top-level, its thread its own: only a reply there answers it, not
     # a later post in a shared thread; too late after 24 h (RT-6.11).
-    post = await client.post(text, props=props)
+    post = await client.post(text, props=shown)
     asks.add(me.id, post.id, to, post.id, title=head, question=human, blocking=blocking,
              answers=answers or None)
     stats.record("ask", id=post.id)  # RT-6.9
@@ -2026,6 +2129,8 @@ async def wait_for_events(
         _tool_idle.set()
     receipt.delivered(e.post.id for e in events)  # RT-6.12 step 7: the 👑's 👀 with the return
     payload = await _event_items(events, raw)
+    for e in events:
+        debug.delivered_via(e.post.id, "returned by wait_for_events")  # RT-6.31
     await _typing_for_task(events, payload)
     await _note_delivered(events, payload)
     if not raw:
@@ -2236,6 +2341,7 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         else:
             item["post"] = next(lean)
         payload.append(item)
+    await _debug_items(events, payload)  # RT-6.31
     return payload
 
 
@@ -2393,6 +2499,8 @@ async def _push_delivered(item: dict[str, Any]) -> None:
     inbox = _get_inbox()
     await inbox.ack([item.event], typing=False)
     try:
+        debug.delivered_via(item.event.post.id, "held for the digest"  # RT-6.31
+                            if any(h is item for h in _pusher.held) else "pushed")
         batch = item.batch
         if not batch.typed:
             batch.typed = True

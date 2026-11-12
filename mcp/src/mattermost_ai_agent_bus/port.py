@@ -149,6 +149,13 @@ class ChatPort(Protocol):
         read on the port: it is about a chat channel, and the tests fake it."""
         ...
 
+    async def debug_record(self, channel_id: str) -> str | None:
+        """The registrar's signed debug record of a home (RT-6.31 step 2),
+        unverified (attest.verify_debug checks it): the compact JWS, None when
+        debug is off there (exactly the registrar's 404 `no debug set`). Raises
+        on any other failure; any other 404 raises NoDebugEndpoint."""
+        ...
+
     async def mandate_record(self, channel_id: str) -> str | None:
         """The registrar's signed mandate record of a home (RT-6.26 step 8),
         unverified (attest.verify_mandate checks it): the compact JWS, None when
