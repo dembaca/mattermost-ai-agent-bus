@@ -100,29 +100,35 @@ the dispatcher itself changes, corral asks once; declined, it refuses the sessio
 runs no hook. A host copy from before this layout (a directory `current`) moves to
 `releases/<version>-legacy` and becomes `previous`.
 
-**From a signed release** (ADR-011 phase 1b, RT-6.29). `--release v<x.y.z>` takes no
+**From a release tag** (ADR-011 phase 1b, RT-6.29). `--release v<x.y.z>` takes no
 clone: it fetches that annotated tag from `MM_RELEASE_URL` (default the GitHub
-repository, `https://` or a local mirror) into the bare `src.git` beside `releases/`,
-without `+`, so a tag fetched before never moves; verifies it with `git verify-tag`
-(`gpg.format=ssh`) against an allowed-signers file it writes from the host's
-`MM_RELEASE_SIGNERS`, the pinned Ed25519 public keys of the owner's release key and
-its offline backup; checks that the tag object carries the asked name and that the
-three version files in its tree say that version; and installs `git archive` of the
-tagged commit as `releases/<x.y.z>/` with `SOURCE=signed`, the tag, its object, the
-commit and the signer's fingerprint. Only the owner signs, once per release, after
-the merge (CLAUDE.md, "Releasing"); agents never sign. The pinned keys come, like
-`MM_REGISTRAR_KEYS`, from the host's own environment and are compared out of band; to
-rotate, pin old and new together. An unsigned or lightweight tag, a signature by
-another key, a tag named otherwise, a moved tag, another version in the tree or a
-failed fetch install nothing and leave `current` as it was, and so does the same
-version from another tag object than the one `releases/` holds. The signature covers
-what is installed, not the installer: it runs on the host, so it must be the host
-copy's (`<MM_BUS_HOST_DIR>/bin/mm-agent-host-install.sh`) or a reviewed clone's, not
-the plugin cache's or a workdir's. In every mode it refuses to run from a tree a
-sandbox can write, but only after it sourced `mm-agent-lib.sh` from there: that
-catches a mistake, and running the right installer is the control. The installer's output,
-`--check` and the start hook say which kind runs: `signed release v<x.y.z>` or
-`unsigned`.
+repository, `https://` or a local path, which is for a mirror and the tests) into the
+bare `src.git` beside `releases/`, without `+`, so a tag fetched before never moves;
+checks that the tag object carries the asked name and that the three version files in
+its tree say that version; and installs `git archive` of the tagged commit as
+`releases/<x.y.z>/`. The signature check is opt-in (decided 2026-11-12): with
+`MM_RELEASE_SIGNERS` set, the pinned Ed25519 public keys of the owner's release key and
+its offline backup, it verifies the tag with `git verify-tag` (`gpg.format=ssh`)
+against an allowed-signers file it writes from them and marks the release
+`SOURCE=signed` with the tag, its object, the commit and the signer's fingerprint.
+Unset, it warns on stderr that the signature is not checked and marks the release
+`SOURCE=release`, `VERIFIED=no`, with tag, object and commit: the trust then rests on
+the repository over https and on the tag object pinned in `releases/`. Only the owner
+signs, once per release, after the merge (CLAUDE.md, "Releasing"); agents never sign.
+The pinned keys come, like `MM_REGISTRAR_KEYS`, from the host's own environment and are
+compared out of band; to rotate, pin old and new together. A lightweight tag, a tag
+named otherwise, a moved tag, another version in the tree, a failed fetch, and with
+keys an unsigned tag or a signature by another key, install nothing and leave
+`current` as it was, and so does the same version from another tag object than the one
+`releases/` holds. A release's record is never marked down: one verified before stays
+`signed` in a run without keys. The signature covers what is installed, not the
+installer: it runs on the host, so it must be the host copy's
+(`<MM_BUS_HOST_DIR>/bin/mm-agent-host-install.sh`) or a reviewed clone's, not the
+plugin cache's or a workdir's. In every mode it refuses to run from a tree a sandbox
+can write, but only after it sourced `mm-agent-lib.sh` from there: that catches a
+mistake, and running the right installer is the control. The installer's output,
+`--check` and the start hook say which kind runs: `signed release v<x.y.z>`,
+`release v<x.y.z> (signature not checked)` or `unsigned`.
 
 **From a clone** (`--from`, or the checkout the installer is in) every install is
 marked `SOURCE=unsigned`, for development. It copies only what is

@@ -27,9 +27,10 @@
 # releases/<version>-dev.<commit>/, marked SOURCE=unsigned. `--release vX.Y.Z`
 # instead fetches that annotated tag from MM_RELEASE_URL (default: the GitHub
 # repository) into src.git beside releases/, never moving a tag it fetched
-# before, verifies its SSH signature against the public keys in
-# MM_RELEASE_SIGNERS (one per line) and the version in its tree, and installs
-# git archive of it into releases/X.Y.Z/, marked SOURCE=signed (ADR-011
+# before, checks its name and the version in its tree and, when
+# MM_RELEASE_SIGNERS is set (opt-in; public keys, one per line), its SSH
+# signature, and installs git archive of it into releases/X.Y.Z/, marked
+# SOURCE=signed, or SOURCE=release VERIFIED=no without the variable (ADR-011
 # phase 1b, RT-6.29). `current` is a symlink to one of them, switched in one
 # rename once the release is complete; the one before stays as `previous`, and
 # --rollback swaps the two. The sandbox neither sees nor writes any of it.
@@ -57,7 +58,7 @@ mm_safe_path
 
 die() { echo "mm-agent-host-install: $*" >&2; exit 1; }
 
-FROM="" RELEASE="" CHECK=0 ROLLBACK=0 DOWNGRADE=0
+FROM="" RELEASE="" ENFORCE=0 CHECK=0 ROLLBACK=0 DOWNGRADE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="${2:-}"; shift 2 ;;
@@ -352,8 +353,16 @@ OPTIONAL=(mcp/README.md skills/mattermost-ai-agent-bus)
 # attributes file, fetches over https (or from a local path for a mirror) with
 # no credential, and checks every object it receives.
 if [[ -n "$RELEASE" ]]; then
-  [[ -n "${MM_RELEASE_SIGNERS:-}" ]] ||
-    die "MM_RELEASE_SIGNERS is not set: pin the release keys (ssh-ed25519 public key lines) before installing a release; nothing changed"
+  # The signature check is opt-in (dembaca, 2026-11-12): set MM_RELEASE_SIGNERS
+  # and it is enforced; unset, the release installs with every other check,
+  # trusting the repository over https and the tag object pinned in releases/.
+  # Set but empty is a mistake, not opt-out: refused.
+  ENFORCE=0
+  if [[ -n "${MM_RELEASE_SIGNERS+set}" ]]; then
+    ENFORCE=1
+  else
+    echo "mm-agent-host-install: WARNING: MM_RELEASE_SIGNERS is not set: the release's signature is NOT checked; set it to the pinned release keys to enforce it" >&2
+  fi
   SIGNERS=""
   while IFS= read -r line; do
     line="${line#"${line%%[![:space:]]*}"}"
@@ -361,8 +370,9 @@ if [[ -n "$RELEASE" ]]; then
     [[ "$line" =~ ^(ssh-ed25519|sk-ssh-ed25519@openssh\.com)[[:space:]]+([A-Za-z0-9+/]+={0,2})([[:space:]].*)?$ ]] ||
       die "MM_RELEASE_SIGNERS has a line that is no Ed25519 public key (ssh-ed25519 AAAA…); refused"
     SIGNERS+="mm-release namespaces=\"git\" ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"$'\n'
-  done <<<"${MM_RELEASE_SIGNERS//;/$'\n'}"
-  [[ -n "$SIGNERS" ]] || die "MM_RELEASE_SIGNERS holds no public key; nothing changed"
+  done <<<"${MM_RELEASE_SIGNERS:+${MM_RELEASE_SIGNERS//;/$'\n'}}"
+  [[ "$ENFORCE" -eq 0 || -n "$SIGNERS" ]] ||
+    die "MM_RELEASE_SIGNERS is set but holds no public key (unset it to install without a signature check); nothing changed"
   URL="${MM_RELEASE_URL:-https://github.com/dembaca/mattermost-ai-agent-bus.git}"
   case "$URL" in
     https://*)
@@ -374,15 +384,17 @@ if [[ -n "$RELEASE" ]]; then
       URL="$u" ;;
     *) die "MM_RELEASE_URL must be an https:// URL or an absolute path; refused" ;;
   esac
-  command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen is required to verify the release's signature"
-  # git verifies an SSH signature with ssh-keygen -Y find-principals (OpenSSH 8.2+).
-  case "$(LC_ALL=C ssh-keygen -Y find-principals -f /dev/null -s /dev/null 2>&1 || true)" in
-    *[Uu]nsupported* | *"illegal option"* | *"unknown option"* | *"invalid option"*)
-      die "this ssh-keygen cannot verify SSH signatures (-Y find-principals, OpenSSH 8.2 or newer); nothing changed" ;;
-  esac
-  gv="$(git --version | sed -n 's/^git version \([0-9]*\.[0-9]*\).*/\1/p')"
-  if [[ -z "$gv" ]] || mm_version_newer "$gv.0" "2.34.0"; then
-    die "git 2.34 or newer is required to verify SSH signatures"
+  if [[ "$ENFORCE" -eq 1 ]]; then
+    command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen is required to verify the release's signature"
+    # git verifies an SSH signature with ssh-keygen -Y find-principals (OpenSSH 8.2+).
+    case "$(LC_ALL=C ssh-keygen -Y find-principals -f /dev/null -s /dev/null 2>&1 || true)" in
+      *[Uu]nsupported* | *"illegal option"* | *"unknown option"* | *"invalid option"*)
+        die "this ssh-keygen cannot verify SSH signatures (-Y find-principals, OpenSSH 8.2 or newer); nothing changed" ;;
+    esac
+    gv="$(git --version | sed -n 's/^git version \([0-9]*\.[0-9]*\).*/\1/p')"
+    if [[ -z "$gv" ]] || mm_version_newer "$gv.0" "2.34.0"; then
+      die "git 2.34 or newer is required to verify SSH signatures"
+    fi
   fi
   rgit() {
     # LC_ALL=C: its messages are matched below. TMPDIR: verify-tag's temporary
@@ -406,43 +418,47 @@ if [[ -n "$RELEASE" ]]; then
     if ! out="$(rgit fetch --no-tags --no-recurse-submodules --no-write-fetch-head \
           "$URL" "refs/tags/$TAG:refs/tags/$TAG" 2>&1)"; then
       if [[ -n "$old_id" && "$out" == *"would clobber existing tag"* ]]; then
-        die "the tag $TAG at $URL moved since this host fetched it (it was ${old_id:0:12}): a signed release never moves; refused, $DEST is unchanged"
+        die "the tag $TAG at $URL moved since this host fetched it (it was ${old_id:0:12}): a release tag never moves; refused, $DEST is unchanged"
       fi
       die "could not fetch $TAG from $URL; $DEST is unchanged:"$'\n'"$(tail -n 5 <<<"$out" | tr -cd '[:print:]\n')"
     fi
     tag_id="$(rgit rev-parse -q --verify "refs/tags/$TAG")" || die "$TAG is not in $SRC_GIT after the fetch"
+    # Annotated in both modes, so the same tags serve hosts with and without keys.
     [[ "$(rgit cat-file -t "$tag_id")" == tag ]] ||
       die "$TAG is a lightweight tag (no tag object, so no signature): not a release; refused, $DEST is unchanged"
-    # An SSH signature only: a PGP or X.509 one would be checked by another
-    # program, against another trust store.
     tobj="$(rgit cat-file tag "$tag_id")"
-    case "$tobj" in
-      *"-----BEGIN PGP SIGNATURE-----"* | *"-----BEGIN SIGNED MESSAGE-----"*)
-        die "$TAG carries a signature that is not an SSH signature (PGP or X.509); refused, $DEST is unchanged" ;;
-      *"-----BEGIN SSH SIGNATURE-----"*) ;;
-      *) die "$TAG carries no signature: not a signed release; refused, $DEST is unchanged" ;;
-    esac
-    printf '%s' "$SIGNERS" >"$LOCK/allowed_signers"
-    vout="$(rgit -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$LOCK/allowed_signers" \
-              -c gpg.ssh.program=ssh-keygen verify-tag "$tag_id" 2>&1)" || vrc=$?
-    if [[ "$vout" == *"no signature found"* ]]; then
-      die "$TAG carries no signature: not a signed release; refused, $DEST is unchanged"
-    fi
-    # SSH signatures: verify-tag's exit code with allowedSignersFile set, and
-    # the one principal the installer wrote, nothing else.
-    SIGNER="$(sed -n 's/^Good "git" signature for mm-release with [A-Z0-9-]* key \(SHA256:[A-Za-z0-9+/]*\)$/\1/p' <<<"$vout" | head -n1)"
-    if [[ "$vrc" -ne 0 || -z "$SIGNER" ]]; then
-      if [[ "$vout" == *"No principal matched"* ]]; then
-        die "$TAG is signed by a key not pinned in MM_RELEASE_SIGNERS ($(grep -o 'SHA256:[A-Za-z0-9+/]*' <<<"$vout" | head -n1)); refused, $DEST is unchanged"
+    SIGNER=""
+    if [[ "$ENFORCE" -eq 1 ]]; then
+      # An SSH signature only: a PGP or X.509 one would be checked by another
+      # program, against another trust store.
+      case "$tobj" in
+        *"-----BEGIN PGP SIGNATURE-----"* | *"-----BEGIN SIGNED MESSAGE-----"*)
+          die "$TAG carries a signature that is not an SSH signature (PGP or X.509); refused, $DEST is unchanged" ;;
+        *"-----BEGIN SSH SIGNATURE-----"*) ;;
+        *) die "$TAG carries no signature: not a signed release; refused, $DEST is unchanged" ;;
+      esac
+      printf '%s' "$SIGNERS" >"$LOCK/allowed_signers"
+      vout="$(rgit -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$LOCK/allowed_signers" \
+                -c gpg.ssh.program=ssh-keygen verify-tag "$tag_id" 2>&1)" || vrc=$?
+      if [[ "$vout" == *"no signature found"* ]]; then
+        die "$TAG carries no signature: not a signed release; refused, $DEST is unchanged"
       fi
-      die "$TAG does not verify against MM_RELEASE_SIGNERS; refused, $DEST is unchanged:"$'\n'"$(tail -n 3 <<<"$vout" | tr -cd '[:print:]\n')"
+      # SSH signatures: verify-tag's exit code with allowedSignersFile set, and
+      # the one principal the installer wrote, nothing else.
+      SIGNER="$(sed -n 's/^Good "git" signature for mm-release with [A-Z0-9-]* key \(SHA256:[A-Za-z0-9+/]*\)$/\1/p' <<<"$vout" | head -n1)"
+      if [[ "$vrc" -ne 0 || -z "$SIGNER" ]]; then
+        if [[ "$vout" == *"No principal matched"* ]]; then
+          die "$TAG is signed by a key not pinned in MM_RELEASE_SIGNERS ($(grep -o 'SHA256:[A-Za-z0-9+/]*' <<<"$vout" | head -n1)); refused, $DEST is unchanged"
+        fi
+        die "$TAG does not verify against MM_RELEASE_SIGNERS; refused, $DEST is unchanged:"$'\n'"$(tail -n 3 <<<"$vout" | tr -cd '[:print:]\n')"
+      fi
     fi
     hdr="$(sed '/^$/q' <<<"$tobj")"
     tname="$(sed -n 's/^tag //p' <<<"$hdr" | head -n1)"
     ttype="$(sed -n 's/^type //p' <<<"$hdr" | head -n1)"
     obj="$(sed -n 's/^object //p' <<<"$hdr" | head -n1)"
     [[ "$tname" == "$TAG" ]] ||
-      die "the tag $TAG is a signed tag object named $(tr -cd '[:alnum:]._-' <<<"$tname" | cut -c1-40): a ref pointed at another release; refused, $DEST is unchanged"
+      die "the tag $TAG is a tag object named $(tr -cd '[:alnum:]._-' <<<"$tname" | cut -c1-40): a ref pointed at another release; refused, $DEST is unchanged"
     [[ "$ttype" == commit && "$obj" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
       die "$TAG does not tag a commit; refused"
     head_sha="$obj" TAG_ID="$tag_id"
@@ -541,17 +557,22 @@ new="$(mktemp -d "$RELEASES/.install.XXXXXX")"
 if [[ -n "$RELEASE" ]]; then
   stage_release
   # The same version from another tag object (src.git deleted, the tag signed
-  # again): a signed release never moves, whether it is current, previous or
+  # again): a release never moves, whether it is current, previous or
   # only kept; neither "already current" nor a replacement.
   was=""
   if [[ -f "$RELEASES/$VER/SOURCE" && ! -L "$RELEASES/$VER/SOURCE" ]]; then
     was="$(sed -n 's/^TAG_OBJECT=//p' "$RELEASES/$VER/SOURCE" | head -n1 | tr -cd '0-9a-f')"
   fi
   [[ -z "$was" || "$was" == "$TAG_ID" ]] ||
-    die "$TAG was installed on this host from tag object ${was:0:12}, upstream it is now ${TAG_ID:0:12}: a signed release never moves; refused (remove $RELEASES/$VER on purpose to accept it)"
+    die "$TAG was installed on this host from tag object ${was:0:12}, upstream it is now ${TAG_ID:0:12}: a release never moves; refused (remove $RELEASES/$VER on purpose to accept it)"
   ORIGIN="$URL, tag $TAG"
   name="$VER"
-  source_text="SOURCE=signed"$'\n'"TAG=$TAG"$'\n'"TAG_OBJECT=$TAG_ID"$'\n'"COMMIT=$head_sha"$'\n'"SIGNER=$SIGNER"$'\n'
+  if [[ "$ENFORCE" -eq 1 ]]; then
+    source_text="SOURCE=signed"$'\n'"TAG=$TAG"$'\n'"TAG_OBJECT=$TAG_ID"$'\n'"COMMIT=$head_sha"$'\n'"SIGNER=$SIGNER"$'\n'
+  else
+    # A release tag whose signature this host did not check (opt-in, RT-6.29).
+    source_text="SOURCE=release"$'\n'"VERIFIED=no"$'\n'"TAG=$TAG"$'\n'"TAG_OBJECT=$TAG_ID"$'\n'"COMMIT=$head_sha"$'\n'
+  fi
 else
   ORIGIN="$FROM"
   head_sha="$(git_ rev-parse --verify 'HEAD^{commit}')" || die "$FROM has no commit to install"
@@ -579,12 +600,24 @@ if [[ -e "$DEST" ]]; then
   fi
 fi
 
+# A release dir kept for the same tag object (checked above) keeps its SOURCE,
+# never marked down: one verified before stays signed in an unchecked run. A
+# run that verified the signature marks one installed unchecked as signed.
+mark_signed() {
+  local s="$RELEASES/$1/SOURCE" tmp
+  [[ -n "$RELEASE" && "$ENFORCE" -eq 1 && -f "$s" && ! -L "$s" ]] || return 0
+  ! grep -qx 'SOURCE=signed' "$s" || return 0
+  tmp="$RELEASES/$1/.SOURCE.$$"
+  { printf '%s' "$source_text" >"$tmp" && chmod go-w "$tmp" && mv -f "$tmp" "$s"; } ||
+    { rm -f "$tmp"; echo "mm-agent-host-install: WARNING: could not mark $1 as signed" >&2; }
+}
 cur="$(release_of "$DEST" || true)"
 rel="$RELEASES/$name"
 if [[ "$cur" == "$name" ]]; then
   # The same commit again: it is current, complete and in use; nothing changes.
   rm -rf "$new"
   new=""
+  mark_signed "$name"
   echo "mattermost-ai-agent-bus $name is already the current release in $DEST; nothing changed"
   dispatch_line=""
   install_dispatcher "$name"
@@ -592,12 +625,13 @@ if [[ "$cur" == "$name" ]]; then
   collect_garbage
   exit 0
 fi
-# A signed release is reused only for the same tag object.
+# A release from a tag is reused only for the same tag object.
 if [[ -d "$rel" && ! -L "$rel" && -f "$rel/SOURCE" && -e "$rel/mcp/.venv/bin/python" ]] &&
    { [[ -z "$RELEASE" ]] || grep -qx "TAG_OBJECT=$TAG_ID" "$rel/SOURCE"; }; then
   # Installed before and complete (SOURCE comes last): switch back to it.
   rm -rf "$new"
   new=""
+  mark_signed "$name"
   server="MCP server environment ready (release installed before): the bot token stays on the host (RT-6.18)"
 else
   rm -rf "$rel"
@@ -656,10 +690,14 @@ install_dispatcher "$name"
 # only way back.
 if [[ "$gc" -eq 1 ]]; then collect_garbage; else echo "no release removed: a step above failed" >&2; fi
 
-if [[ -n "$RELEASE" ]]; then
+if [[ -n "$RELEASE" && "$ENFORCE" -eq 1 ]]; then
   kind="signed release $TAG, signed by $SIGNER, a key pinned in MM_RELEASE_SIGNERS"
   head_line="$head_sha (tag object $TAG_ID)"
   check="Verified: the tag's signature, its name and the version in its tree."
+elif [[ -n "$RELEASE" ]]; then
+  kind="release $TAG, signature NOT checked: MM_RELEASE_SIGNERS is not set"
+  head_line="$head_sha (tag object $TAG_ID)"
+  check="Checked: the tag's name, its object (pinned in releases/) and the version in its tree; not its signature."
 else
   kind="unsigned: from a clone, not a signed release"
   check="Compare the commit with the one you reviewed."

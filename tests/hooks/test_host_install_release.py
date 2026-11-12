@@ -151,14 +151,15 @@ def test_release_installs_a_signed_tag_and_switches(run, tmp_path, keys):
     assert os.readlink(dest) == f"releases/{VERSION}" and "installed before" in back.stdout
 
 
-def test_release_needs_pinned_keys(run, tmp_path, keys, host):
-    """RT-6.29: no MM_RELEASE_SIGNERS, or a line that is no Ed25519 key: refused."""
+def test_release_refuses_signers_set_but_without_a_key(run, tmp_path, keys, host):
+    """RT-6.29: MM_RELEASE_SIGNERS set but empty, or a line that is no Ed25519
+    key: refused (set means enforced; only unset installs unchecked)."""
     origin = clone(tmp_path)
     set_version(origin, "90.0.0")
     sign(origin, "v90.0.0", keys["owner"])
     before, names = os.readlink(host), releases(host)
-    r = install(run, tmp_path, host, "v90.0.0", None)
-    unchanged(r, host, before, names, "MM_RELEASE_SIGNERS is not set")
+    r = install(run, tmp_path, host, "v90.0.0", "")
+    unchanged(r, host, before, names, "set but holds no public key")
     r = install(run, tmp_path, host, "v90.0.0", "ssh-rsa AAAAB3NzaC1yc2E user@host")
     unchanged(r, host, before, names, "no Ed25519 public key")
 
@@ -194,7 +195,7 @@ def test_release_refuses_a_tag_named_otherwise_or_with_another_version(run, tmp_
     sign(origin, "v90.0.3", keys["owner"])
     g(origin, "update-ref", "refs/tags/v90.0.4", g(origin, "rev-parse", "v90.0.3").strip())
     unchanged(install(run, tmp_path, host, "v90.0.4", pinned), host, before, names,
-              "signed tag object named v90.0.3")
+              "tag object named v90.0.3")
     sign(origin, "v90.0.5", keys["owner"])  # tree says 90.0.3
     unchanged(install(run, tmp_path, host, "v90.0.5", pinned), host, before, names,
               "not 90.0.5")
@@ -254,6 +255,10 @@ def test_release_kind_tells_signed_from_unsigned(tmp_path):
     (unsigned / "SOURCE").write_text("SOURCE=unsigned\nCOMMIT=abc\n")
     (odd / "SOURCE").write_text("SOURCE=signed\nTAG=v1.2.3; run me\n")
     assert kind(signed) == "signed release v1.2.3"
+    unchecked = tmp_path / "r"
+    unchecked.mkdir()
+    (unchecked / "SOURCE").write_text("SOURCE=release\nVERIFIED=no\nTAG=v1.2.4\n")
+    assert kind(unchecked) == "release v1.2.4 (signature not checked)"
     assert kind(unsigned) == "unsigned" and kind(odd) == "unsigned"
     assert kind(tmp_path / "none") == "unsigned"
 
@@ -296,7 +301,7 @@ def test_release_refuses_the_same_version_from_another_tag_object(run, tmp_path,
     assert os.readlink(dest.parent / "previous") == f"releases/{VERSION}"
     before, names = os.readlink(dest), releases(dest)
     r = install(run, tmp_path, dest, f"v{VERSION}", pinned, "--downgrade")
-    unchanged(r, dest, before, names, "a signed release never moves")
+    unchanged(r, dest, before, names, "a release never moves")
 
 
 def test_release_refuses_a_signature_that_is_not_ssh(run, tmp_path, keys, host):
@@ -311,3 +316,71 @@ def test_release_refuses_a_signature_that_is_not_ssh(run, tmp_path, keys, host):
     before, names = os.readlink(host), releases(host)
     unchanged(install(run, tmp_path, host, "v90.3.0", pub(keys["owner"])), host, before, names,
               "not an SSH signature")
+
+
+def test_release_without_signers_installs_unchecked_with_a_warning(run, tmp_path, keys):
+    """RT-6.29 (opt-in): MM_RELEASE_SIGNERS unset installs an annotated tag
+    without checking its signature, warns, and marks it SOURCE=release
+    VERIFIED=no; a lightweight tag is still refused."""
+    origin = clone(tmp_path)
+    sha = g(origin, "rev-parse", "HEAD").strip()
+    g(origin, "tag", "-a", "-m", "unsigned", f"v{VERSION}")
+    dest = tmp_path / "host" / "current"
+    r = install(run, tmp_path, dest, f"v{VERSION}", None)
+    assert r.code == 0, r.stderr
+    assert "WARNING: MM_RELEASE_SIGNERS is not set" in r.stderr and "NOT checked" in r.stderr
+    assert os.readlink(dest) == f"releases/{VERSION}"
+    source = (dest / "SOURCE").read_text()
+    assert source.startswith("SOURCE=release\nVERIFIED=no\n")
+    assert f"TAG=v{VERSION}\n" in source and f"COMMIT={sha}\n" in source and "SIGNER" not in source
+    assert "signature NOT checked" in r.stdout
+    nxt = bump(VERSION)
+    set_version(origin, nxt)
+    g(origin, "tag", f"v{nxt}")
+    before, names = os.readlink(dest), releases(dest)
+    unchanged(install(run, tmp_path, dest, f"v{nxt}", None), dest, before, names, "lightweight tag")
+
+
+def test_release_without_signers_keeps_every_other_check(run, tmp_path, keys, host):
+    """RT-6.29 (opt-in): unset, a moved tag, another version in the tree and a
+    tag object named otherwise are refused as with keys."""
+    origin = clone(tmp_path)
+    before, names = os.readlink(host), releases(host)
+    set_version(origin, "90.4.0")
+    g(origin, "tag", "-a", "-m", "x", "v90.4.0")
+    g(origin, "update-ref", "refs/tags/v90.4.1", g(origin, "rev-parse", "v90.4.0").strip())
+    unchanged(install(run, tmp_path, host, "v90.4.1", None), host, before, names,
+              "tag object named v90.4.0")
+    g(origin, "tag", "-a", "-m", "x", "v90.4.2")  # tree says 90.4.0
+    unchanged(install(run, tmp_path, host, "v90.4.2", None), host, before, names, "not 90.4.2")
+    assert install(run, tmp_path, host, "v90.4.0", None).code == 0
+    before, names = os.readlink(host), releases(host)
+    readme = origin / "mcp" / "README.md"
+    readme.write_text(readme.read_text() + "\nmoved\n")
+    g(origin, "commit", "-qam", "after the release")
+    g(origin, "tag", "-d", "v90.4.0")
+    g(origin, "tag", "-a", "-m", "again", "v90.4.0")
+    unchanged(install(run, tmp_path, host, "v90.4.0", None), host, before, names,
+              "moved since this host fetched it")
+
+
+def test_release_marks_are_never_lowered(run, tmp_path, keys):
+    """RT-6.29 (opt-in): an unchecked run over a release verified before keeps
+    it signed; a checked run over one installed unchecked marks it signed."""
+    origin = clone(tmp_path)
+    sign(origin, f"v{VERSION}", keys["owner"])
+    pinned = pub(keys["owner"])
+    dest = tmp_path / "host" / "current"
+    assert install(run, tmp_path, dest, f"v{VERSION}", pinned).code == 0
+    r = install(run, tmp_path, dest, f"v{VERSION}", None)
+    assert r.code == 0 and "already the current release" in r.stdout
+    assert (dest / "SOURCE").read_text().startswith("SOURCE=signed\n")
+    nxt = bump(VERSION)
+    set_version(origin, nxt)
+    sign(origin, f"v{nxt}", keys["owner"])
+    assert install(run, tmp_path, dest, f"v{nxt}", None).code == 0
+    assert (dest / "SOURCE").read_text().startswith("SOURCE=release\nVERIFIED=no\n")
+    r = install(run, tmp_path, dest, f"v{nxt}", pinned)
+    assert r.code == 0, r.stderr
+    source = (dest / "SOURCE").read_text()
+    assert source.startswith("SOURCE=signed\n") and f"SIGNER={fpr(keys['owner'])}" in source

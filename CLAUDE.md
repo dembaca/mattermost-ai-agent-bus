@@ -27,7 +27,8 @@ is not done until the docs say what the code now does:
 
 ## Releasing
 
-A version reaches hosts only as a signed tag (ADR-011, RT-6.29). After the
+A version reaches hosts as a release tag (ADR-011, RT-6.29); every tag is signed,
+since hosts that pin the release keys install nothing else. After the
 merge the owner, and only the owner, creates the annotated SSH-signed tag
 `v<version>` (the version in `.claude-plugin/plugin.json`) on the merge commit
 and pushes it: `git tag -s v<version> -m v<version> <merge commit>`
