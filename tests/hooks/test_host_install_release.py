@@ -372,6 +372,8 @@ def test_release_marks_are_never_lowered(run, tmp_path, keys):
     pinned = pub(keys["owner"])
     dest = tmp_path / "host" / "current"
     assert install(run, tmp_path, dest, f"v{VERSION}", pinned).code == 0
+    # The keyed run pinned the keys on the host (decision (4)): forget them.
+    assert run(INSTALL, "--forget-signers").code == 0
     r = install(run, tmp_path, dest, f"v{VERSION}", None)
     assert r.code == 0 and "already the current release" in r.stdout
     assert (dest / "SOURCE").read_text().startswith("SOURCE=signed\n")

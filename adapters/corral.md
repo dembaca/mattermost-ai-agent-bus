@@ -59,6 +59,20 @@ verified once stays marked signed when you later run without the keys.
 Every refusal leaves `current` as it was. For a new release, run it again with the new
 tag; to rotate a key, pin old and new together
 ([arc42 RT-6.29](../docs/arc42/06-runtime-view.md#629-host-copy-from-a-signed-release)).
+
+**Pin the keys once per host** (from 0.84.0). The first `--release` run with
+`MM_RELEASE_SIGNERS` keeps the keys that verified the tag in
+`~/.local/state/mm-agent-bus/release-signers` (0600). Later runs without the variable,
+and the release check the MCP server runs once a day (which under corral does not see
+your shell's environment), verify against that file; the output says where the keys
+came from. Run once with other keys to replace them (the installer says so), or forget
+them with `mm-agent-host-install.sh --forget-signers`. A file that is a symlink, writable
+by others or by a sandbox, or holds anything but keys refuses the run rather than
+installing unchecked.
+
+**A withdrawn version** (one a later release's CHANGELOG withdrew, as the host's release
+check recorded it) is refused by `--release` and `--rollback`, naming the release that
+withdrew it; `--withdrawn-ok` installs or rolls back to it on purpose.
 The output, `--check` and the start hook say `signed release v<x.y.z>`,
 `release v<x.y.z> (signature not checked)`, or `unsigned` for an install from a clone
 (below).

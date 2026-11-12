@@ -12,7 +12,9 @@
 # releases/ (MM_BUS_HOST_DIR's parent) with --depth=1 and without `+`, so a tag
 # fetched before never moves, and checks each as the installer does (RT-6.29):
 # an annotated tag, its own name, a commit, the version in its plugin.json, and
-# with MM_RELEASE_SIGNERS set its SSH signature by a pinned key. From the
+# with keys its SSH signature by a pinned key: MM_RELEASE_SIGNERS when set,
+# else the release-signers file the installer pinned in the state directory
+# (mm_release_signers; the output says which). From the
 # CHANGELOG.md of the first that passes it reads the entries up to its version:
 # `### Breaking`, `Needs:` lines in their grammar (mm_release_needs_ok; any
 # other is dropped and logged) and `Withdrawn: v<x.y.z>` lines. It writes them
@@ -66,7 +68,9 @@ parent="$(cd -P "$parent" && pwd -P)"
 SRC_GIT="$parent/src.git"
 [[ ! -L "$SRC_GIT" ]] || die "$SRC_GIT is a symlink; refused"
 
-mm_release_signers || die "$MM_REL_ERR"
+# The keys: MM_RELEASE_SIGNERS, else release-signers in this state directory
+# (RT-6.30 step 1); a bad file fails the check, never skips the signature.
+mm_release_signers "$STATE" || die "$MM_REL_ERR; release.env unchanged"
 mm_release_url || die "$MM_REL_ERR"
 mm_release_tools || die "$MM_REL_ERR"
 
@@ -213,7 +217,7 @@ tmp="$STATE/.release.env.$$"
 # The last check that succeeded: --if-due counts from it.
 printf '%s\n' "$now" >"$STATE/release-check.at"
 if [[ "$verified" == yes ]]; then
-  echo "newest release v$newest, its signature checked (signed by $MM_REL_SIGNER)"
+  echo "newest release v$newest, its signature checked (signed by $MM_REL_SIGNER; keys from $MM_REL_FROM_TEXT)"
 else
-  echo "newest release v$newest, its signature not checked (MM_RELEASE_SIGNERS is not set)"
+  echo "newest release v$newest, its signature not checked (MM_RELEASE_SIGNERS is not set and no keys are pinned in $STATE/$MM_SIGNERS_FILE)"
 fi

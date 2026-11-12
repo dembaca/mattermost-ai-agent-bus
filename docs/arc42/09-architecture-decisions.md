@@ -19,7 +19,7 @@ code does today and point here where a decision will change them.
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 built (0.79.0: the pi extension, RT-6.27) | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
-| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); phase 3 open | – |
+| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); 0.84.0, decisions (4) and (5) of 2026-11-12: keys pinned once per host in `release-signers`, `--forget-signers`, a withdrawn version refused unless `--withdrawn-ok` (RT-6.29, RT-6.30); phase 3 open | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2024,7 +2024,7 @@ on: the end, and `status` and `bus_info` show it.
 
 ## ADR-011: Updates from a signed release only
 
-**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy; phase 1b built (0.82.0, RT-6.29): `--release v<x.y.z>`, the tag verified against pinned keys when the host sets them (opt-in, decision (3) below); phase 2 built (0.83.0, RT-6.30): the release check and the notice, as point 3 and the open questions' recommendations (*Phase 2 as built* below). Proposed 2026-11-09. Asked for by a trusted human on
+**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy; phase 1b built (0.82.0, RT-6.29): `--release v<x.y.z>`, the tag verified against pinned keys when the host sets them (opt-in, decision (3) below); phase 2 built (0.83.0, RT-6.30): the release check and the notice, as point 3 and the open questions' recommendations (*Phase 2 as built* below); decisions (4) and (5) of 2026-11-12 built (0.84.0, RT-6.29, RT-6.30): the pinned keys as a host property, a withdrawn version refused. Proposed 2026-11-09. Asked for by a trusted human on
 2026-11-09 ("probably not quite simple with plugin incl. MCP server and
 sandbox hooks"). Options, a recommendation and open questions; command words,
 file names and variables below are proposals. Builds on Section 7.1 (the
@@ -2061,6 +2061,32 @@ not checked)`; one verified before is never marked down. This weakens point 1
 (the source is a signed release) to "a signed release where the host pins the
 keys": the owner still signs every tag, so a host can switch to enforcing at any
 time without new tags.
+
+*Decision (4) of 2026-11-12 (dembaca): the pinned keys are a host property.*
+`MM_RELEASE_SIGNERS` lives in the operator's shell, which neither corral's hook
+environment nor the MCP server's daily check sees; so a `--release` run with
+keys that verified the tag keeps them in `release-signers` in the host state
+directory (the one `release.env` uses): only `ssh-ed25519` /
+`sk-ssh-ed25519@openssh.com` type and base64 per line, 0600, in one rename. The
+source of the keys is then `MM_RELEASE_SIGNERS` when it is set (set but empty
+stays refused: fail closed), else that file when it exists, else none
+(unchecked, with the WARNING of decision (3)). The installer and the release
+check (and so the server's child under corral) read it with the care given to
+`release.env` and more: a regular file, no symlink, the user's own and writable
+by no one else, at most 16 KiB, in a state directory no sandbox can write,
+every line checked again as a key; anything else refuses the run rather than
+going unchecked. A run with other keys in the variable replaces the file and
+says so; `--forget-signers` removes it. Both outputs name where the keys came
+from (RT-6.29 step 1, RT-6.30 step 1).
+
+*Decision (5) of 2026-11-12 (dembaca): a withdrawn version is refused.*
+`--release v<x.y.z>` refuses a version that the host's `release.env` (written
+by the release check, RT-6.30) lists as withdrawn, naming the newer release
+whose CHANGELOG withdrew it (`NEWEST`); `--withdrawn-ok` overrides on purpose
+and is printed. No network for this; a missing or unreadable `release.env`
+refuses nothing. `--rollback` to a withdrawn version is refused the same way:
+a rollback target can be withdrawn too, and in an emergency `--withdrawn-ok`
+is one word away (RT-6.29 step 2).
 
 **Context:** One release has several parts, installed in different places
 and restarted by different things:
@@ -2293,7 +2319,7 @@ when the text is too long (the HELLO card's `version` stands in), with `unchecke
 for a release without a checked signature, `unsigned` for a host copy from a clone,
 and `plugin` for a tree without a `SOURCE` (the plugin, a checkout).
 
-**Tests (phases 1a, 1b and 2 built: `tests/hooks/test_host_install.py`, `test_host_install_release.py`, `test_release_check.py`, `mcp/tests/test_release.py`; the rest when built):** `tests/hooks/`: `--release` installs a tag signed by a
+**Tests (phases 1a, 1b and 2 built: `tests/hooks/test_host_install.py`, `test_host_install_release.py`, `test_release_check.py`, `test_release_signers.py` (decisions (4) and (5)), `mcp/tests/test_release.py`; the rest when built):** `tests/hooks/`: `--release` installs a tag signed by a
 pinned key; refuses an unsigned one, one signed by another key, one whose
 name differs from its tag object's or whose tree has another version, one that
 moved, and a malformed version; refuses an older version without

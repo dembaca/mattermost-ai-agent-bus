@@ -6,6 +6,8 @@
 #   mm-agent-host-install.sh --from DIR      # from another checkout you reviewed
 #   mm-agent-host-install.sh --downgrade ... # allow an older version than current
 #   mm-agent-host-install.sh --rollback      # swap current and previous
+#   mm-agent-host-install.sh --withdrawn-ok ... # --release/--rollback to a withdrawn version
+#   mm-agent-host-install.sh --forget-signers   # remove the release keys pinned on this host
 #   mm-agent-host-install.sh --check         # compare host copy vs installed plugin
 #
 # Run it on the HOST, in a normal terminal — never inside corral — from a git
@@ -34,6 +36,11 @@
 # phase 1b, RT-6.29). `current` is a symlink to one of them, switched in one
 # rename once the release is complete; the one before stays as `previous`, and
 # --rollback swaps the two. The sandbox neither sees nor writes any of it.
+# A --release run with MM_RELEASE_SIGNERS stores the keys in release-signers in
+# the host state directory once they verified the tag; later runs and the
+# release check use that file when the variable is unset (--forget-signers
+# removes it). A version the host's release check saw withdrawn (release.env,
+# RT-6.30) is refused by --release and --rollback unless --withdrawn-ok.
 # Point corral's `exec` once at current.hooks/, a dispatcher that stays the
 # same across releases; rerun this after a plugin update. corral asks again
 # only when the dispatcher itself changes: the check of a switch is you
@@ -58,7 +65,7 @@ mm_safe_path
 
 die() { echo "mm-agent-host-install: $*" >&2; exit 1; }
 
-FROM="" RELEASE="" ENFORCE=0 CHECK=0 ROLLBACK=0 DOWNGRADE=0
+FROM="" RELEASE="" ENFORCE=0 CHECK=0 ROLLBACK=0 DOWNGRADE=0 WITHDRAWN_OK=0 FORGET=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="${2:-}"; shift 2 ;;
@@ -66,6 +73,8 @@ while [[ $# -gt 0 ]]; do
     --check) CHECK=1; shift ;;
     --rollback) ROLLBACK=1; shift ;;
     --downgrade) DOWNGRADE=1; shift ;;
+    --withdrawn-ok) WITHDRAWN_OK=1; shift ;;
+    --forget-signers) FORGET=1; shift ;;
     -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -77,6 +86,9 @@ if [[ -n "$RELEASE" ]]; then
   VER="${BASH_REMATCH[1]}" TAG="v${BASH_REMATCH[1]}"
   [[ -z "$FROM" && "$ROLLBACK" -eq 0 && "$CHECK" -eq 0 ]] || die "--release takes no --from, --rollback or --check"
 fi
+[[ "$WITHDRAWN_OK" -eq 0 || -n "$RELEASE" || "$ROLLBACK" -eq 1 ]] || die "--withdrawn-ok goes with --release or --rollback"
+[[ "$FORGET" -eq 0 || ( -z "$FROM$RELEASE" && "$CHECK$ROLLBACK$DOWNGRADE$WITHDRAWN_OK" == 0000 ) ]] ||
+  die "--forget-signers takes no other option"
 
 DEST="${MM_BUS_HOST_DIR:-$HOME/.local/share/mm-agent-bus/current}"
 # Relative paths are the operator's; then work from /, never from a checkout.
@@ -128,6 +140,36 @@ if [[ -n "${CORRAL_WORKDIR:-}" ]]; then
 fi
 ! sandbox_writable "$SELF" ||
   die "this installer lies in $SELF, which can be changed from inside a corral sandbox; $not_from_here"
+
+# Forget the release keys pinned on this host (RT-6.29, decision (4) of
+# 2026-11-12): the next --release run and the release check go without them,
+# unless MM_RELEASE_SIGNERS is set.
+if [[ "$FORGET" -eq 1 ]]; then
+  f="$(mm_state_dir)/$MM_SIGNERS_FILE"
+  if [[ -e "$f" || -L "$f" ]]; then
+    rm -f "$f" || die "could not remove $f"
+    echo "Forgot the release keys pinned in $f: without MM_RELEASE_SIGNERS, --release installs and the release check run unchecked, with a WARNING."
+  else
+    echo "No release keys pinned in $f; nothing changed."
+  fi
+  [[ -z "${MM_RELEASE_SIGNERS+set}" ]] ||
+    echo "MM_RELEASE_SIGNERS is set in this shell: runs from it still check the signature, and a --release run pins its keys again."
+  exit 0
+fi
+
+# Whether release.env (the host's release check, RT-6.30) lists version $1 as
+# withdrawn: refused unless --withdrawn-ok (decision (5) of 2026-11-12). No
+# network; without a state directory out of every sandbox's reach or without
+# release.env nothing is refused.
+refuse_withdrawn() {
+  local by
+  if [[ -z "$STATE" ]] || ! by="$(mm_release_withdrawn "$1" "$STATE")"; then return 0; fi
+  if [[ "$WITHDRAWN_OK" -eq 1 ]]; then
+    echo "mm-agent-host-install: $1 is withdrawn (by the CHANGELOG of v$by, per $STATE/release.env); going on, as --withdrawn-ok asks" >&2
+    return 0
+  fi
+  die "$1 is withdrawn: the CHANGELOG of v$by withdrew it (per the host's release check, $STATE/release.env); $2, or pass --withdrawn-ok to use it on purpose; nothing changed"
+}
 
 # --- the layout (RT-6.28) ------------------------------------------------------
 # Beside the target: releases/<name>/ per release, and the target's own name
@@ -337,12 +379,14 @@ install_dispatcher() {
 }
 
 if [[ "$ROLLBACK" -eq 1 ]]; then
-  [[ -z "$FROM" && "$DOWNGRADE" -eq 0 ]] || die "--rollback takes no other option"
+  [[ -z "$FROM" && "$DOWNGRADE" -eq 0 ]] || die "--rollback takes no other option but --withdrawn-ok"
   layout
   cur="$(release_of "$DEST")" || die "$DEST is not a link to a release; nothing to roll back"
   prev="$(release_of "$PREV")" || die "no previous release to roll back to"
   [[ -f "$RELEASES/$prev/SOURCE" && -e "$RELEASES/$prev/mcp/.venv/bin/python" ]] ||
     die "the previous release $prev has no Python environment; install a release instead"
+  # A rollback target can be withdrawn too (decision (5) of 2026-11-12).
+  refuse_withdrawn "$(version_of "$RELEASES/$prev")" "install a newer release instead (--release v<version>)"
   warn_unrecorded
   set_link "$DEST" "releases/$prev" || die "could not switch $DEST; it is unchanged"
   set_link "$PREV" "releases/$cur" || die "switched to $prev, but could not point $PREV at $cur"
@@ -362,25 +406,58 @@ paths=(bin adapters/corral .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.
 OPTIONAL=(mcp/README.md skills/mattermost-ai-agent-bus)
 
 # --- a signed release (RT-6.29) -------------------------------------------------
-# The pinned keys come from the host's environment only, never from the plugin,
-# a workdir or a session; git runs without system or global config, hook or
-# attributes file, fetches over https (or from a local path for a mirror) with
-# no credential, and checks every object it receives.
+# The pinned keys come from the host only, never from the plugin, a workdir or
+# a session: MM_RELEASE_SIGNERS in the installer's environment, else the file
+# release-signers a keyed run left in the host state directory; git runs
+# without system or global config, hook or attributes file, fetches over https
+# (or from a local path for a mirror) with no credential, and checks every
+# object it receives.
 if [[ -n "$RELEASE" ]]; then
-  # The signature check is opt-in (dembaca, 2026-11-12): set MM_RELEASE_SIGNERS
-  # and it is enforced; unset, the release installs with every other check,
+  # The signature check is opt-in (dembaca, 2026-11-12, decision (3)): with
+  # keys it is enforced; without, the release installs with every other check,
   # trusting the repository over https and the tag object pinned in releases/.
-  # Set but empty is a mistake, not opt-out: refused.
-  if [[ -z "${MM_RELEASE_SIGNERS+set}" ]]; then
-    echo "mm-agent-host-install: WARNING: MM_RELEASE_SIGNERS is not set: the release's signature is NOT checked; set it to the pinned release keys to enforce it" >&2
-  fi
-  # Shared with the release check (mm-agent-lib.sh, RT-6.30): the keys, the
-  # URL, the tools, git's clean environment and the tag's checks.
+  # Set but empty is a mistake, not opt-out: refused. Shared with the release
+  # check (mm-agent-lib.sh, RT-6.30): the keys, the URL, the tools, git's clean
+  # environment and the tag's checks.
   mm_release_signers || die "$MM_REL_ERR"
   ENFORCE="$MM_REL_ENFORCE"
+  case "$MM_REL_FROM" in
+    env) echo "mm-agent-host-install: release keys from MM_RELEASE_SIGNERS" >&2 ;;
+    file) echo "mm-agent-host-install: release keys from $MM_REL_FROM_TEXT (pinned by an earlier run; MM_RELEASE_SIGNERS is not set)" >&2 ;;
+    *) echo "mm-agent-host-install: WARNING: MM_RELEASE_SIGNERS is not set and no release keys are pinned on this host ($(mm_state_dir)/$MM_SIGNERS_FILE): the release's signature is NOT checked; set MM_RELEASE_SIGNERS to the release keys to enforce it (a run with it pins them)" >&2 ;;
+  esac
   mm_release_url || die "$MM_REL_ERR"
   URL="$MM_REL_URL"
   mm_release_tools || die "$MM_REL_ERR"
+  # Keys from MM_RELEASE_SIGNERS that verified the tag become the host's
+  # (decision (4) of 2026-11-12): release-signers in the host state directory,
+  # only `<type> <base64>` lines, 0600, in one rename; later runs and the
+  # release check read it when the variable is unset. Not in a state directory
+  # a sandbox can write, and never through a symlink.
+  store_signers() {
+    local d f tmp text verb
+    d="$(mm_state_dir)"
+    { mkdir -p "$d" && chmod 700 "$d"; } 2>/dev/null &&
+      d="$(cd -P "$d" 2>/dev/null && pwd -P)" && ! sandbox_writable "$d" || {
+      echo "mm-agent-host-install: WARNING: the state directory $(mm_state_dir) is missing or a corral sandbox can write it: the release keys are not pinned on this host" >&2
+      return 0
+    }
+    f="$d/$MM_SIGNERS_FILE" tmp="$d/.$MM_SIGNERS_FILE.$$"
+    text="# Release keys pinned by mm-agent-host-install.sh --release (RT-6.29); --forget-signers removes them."$'\n'"$MM_REL_KEYS"
+    if [[ -L "$f" || ( -e "$f" && ! -f "$f" ) ]]; then
+      echo "mm-agent-host-install: WARNING: $f is a symlink or no regular file: the release keys are not pinned; remove it" >&2
+      return 0
+    fi
+    if [[ -f "$f" ]]; then
+      [[ "$(mm_read_file "$f" "$MM_SIGNERS_MAX" || true)"$'\n' != "$text" ]] || return 0
+      verb="Replaced the release keys pinned in $f with those of MM_RELEASE_SIGNERS"
+    else
+      verb="Pinned the release keys of MM_RELEASE_SIGNERS in $f"
+    fi
+    { (umask 077 && printf '%s' "$text" >"$tmp") && chmod 600 "$tmp" && mv -f "$tmp" "$f"; } ||
+      { rm -f "$tmp"; echo "mm-agent-host-install: WARNING: could not write $f: the release keys are not pinned" >&2; return 0; }
+    echo "$verb: later runs and the release check use them when MM_RELEASE_SIGNERS is unset (--forget-signers removes them)."
+  }
   # verify-tag's temporary files go into the installer's own lock directory,
   # which only the host sees (set by layout()).
   rgit() { MM_REL_GIT_DIR="$SRC_GIT" MM_REL_TMP="$LOCK" mm_rgit "$@"; }
@@ -405,6 +482,7 @@ if [[ -n "$RELEASE" ]]; then
     MM_REL_GIT_DIR="$SRC_GIT" MM_REL_TMP="$LOCK" mm_release_tag "$TAG" "$tag_id" ||
       die "$MM_REL_ERR; refused, $DEST is unchanged"
     SIGNER="$MM_REL_SIGNER" obj="$MM_REL_COMMIT"
+    [[ "$MM_REL_FROM" != env ]] || store_signers
     head_sha="$obj" TAG_ID="$tag_id"
     for f in "${OPTIONAL[@]}"; do
       if rgit cat-file -e "$head_sha:$f" 2>/dev/null; then paths+=("$f"); fi
@@ -499,6 +577,7 @@ new="$(mktemp -d "$RELEASES/.install.XXXXXX")"
 # The MCP server, for the host process (RT-6.18); the skill, whose size its
 # overhead stats count (RT-6.9).
 if [[ -n "$RELEASE" ]]; then
+  refuse_withdrawn "$VER" "install a newer release instead"
   stage_release
   # The same version from another tag object (src.git deleted, the tag signed
   # again): a release never moves, whether it is current, previous or
@@ -635,11 +714,11 @@ install_dispatcher "$name"
 if [[ "$gc" -eq 1 ]]; then collect_garbage; else echo "no release removed: a step above failed" >&2; fi
 
 if [[ -n "$RELEASE" && "$ENFORCE" -eq 1 ]]; then
-  kind="signed release $TAG, signed by $SIGNER, a key pinned in MM_RELEASE_SIGNERS"
+  kind="signed release $TAG, signed by $SIGNER, a key pinned in $MM_REL_FROM_TEXT"
   head_line="$head_sha (tag object $TAG_ID)"
   check="Verified: the tag's signature, its name and the version in its tree."
 elif [[ -n "$RELEASE" ]]; then
-  kind="release $TAG, signature NOT checked: MM_RELEASE_SIGNERS is not set"
+  kind="release $TAG, signature NOT checked: MM_RELEASE_SIGNERS is not set and no keys are pinned on this host"
   head_line="$head_sha (tag object $TAG_ID)"
   check="Checked: the tag's name, its object (pinned in releases/) and the version in its tree; not its signature."
 else

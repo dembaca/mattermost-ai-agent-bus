@@ -116,7 +116,18 @@ Unset, it warns on stderr that the signature is not checked and marks the releas
 the repository over https and on the tag object pinned in `releases/`. Only the owner
 signs, once per release, after the merge (CLAUDE.md, "Releasing"); agents never sign.
 The pinned keys come, like `MM_REGISTRAR_KEYS`, from the host's own environment and are
-compared out of band; to rotate, pin old and new together. A lightweight tag, a tag
+compared out of band; to rotate, pin old and new together. Keys from the variable that
+verified a tag become a host property (ADR-011 decision (4)): the installer keeps them
+in `release-signers` in the host state directory (0600, `<type> <base64>` per line, one
+rename), and later runs and the release check use that file when the variable is
+unset, so the MCP server's check under corral, which does not see the operator's shell,
+verifies too. The variable, when set, wins; other keys in it replace the file, and the
+installer says so; `--forget-signers` removes it. The file is read like `release.env`
+and more strictly: a regular file of the user's own, writable by no one else, at most
+16 KiB, in a state directory no sandbox can write, each line checked again as a key;
+anything else refuses the run instead of going unchecked. `--release` and `--rollback`
+refuse a version `release.env` lists as withdrawn, naming the release that withdrew it,
+unless `--withdrawn-ok` (decision (5)); without `release.env` nothing is refused. A lightweight tag, a tag
 named otherwise, a moved tag, another version in the tree, a failed fetch, and with
 keys an unsigned tag or a signature by another key, install nothing and leave
 `current` as it was, and so does the same version from another tag object than the one
