@@ -241,6 +241,7 @@ async def unreachable(client: ChatPort, message: str, me: str, channel_id: str) 
         else:
             why = {"absent": "not in this channel, no agent of this bus by that name that I can see",
                    "lease": "its lease ran out", "idle": "idle, until its human resumes",
+                   "silent": "silent, its session shows no sign of life",
                    "offline": "offline"}[why_not[n]]
         out.append(f"{n} ({why})")
     return out

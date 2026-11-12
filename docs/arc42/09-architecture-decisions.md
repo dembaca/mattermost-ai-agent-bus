@@ -15,7 +15,7 @@ code does today and point here where a decision will change them.
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-ask-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phases 1 (0.71.0: the pinned post) and 2 (0.71.18: the registrar's signed `/agent-mandate` record) built, RT-6.26 | #141 |
-| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); phase 1 built (0.75.0: the crown beat and the slot); amendment phases B (0.71.9: the crown only for peers) and C (0.71.11: stale copies stay off the bus) built, the rest not built | – |
+| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); phase 1 built (0.75.0: the crown beat and the slot); amendment phases B (0.71.9: the crown only for peers), C (0.71.11: stale copies stay off the bus) and D (0.77.0: the sign of life and `silent`, without the ping) built, the rest not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 open | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
@@ -805,7 +805,9 @@ the slot, with the proposed numbers; the servers compare the status's
 `expires_at` themselves, so Mattermost's handling of a short expiry decides
 nothing, and with no holder seen only the oldest that stands looks, see RT-6.6
 step 2); phases B (the crown only
-for peers, 0.71.9) and C (stale copies stay off the bus, 0.71.11) of the amendment. Decided by a trusted human in
+for peers, 0.71.9), C (stale copies stay off the bus, 0.71.11) and D (the
+sign of life and `silent`, 0.77.0, without the ping: decided by dembaca on
+2026-11-10, bus ask `pgfgcaxwpbr8mmjj34xpbnpswc`) of the amendment. Decided by a trusted human in
 the thread of 2026-11-04 (their steps 1 and 2, the crown stays with the new
 holder) and on 2026-11-04 (step 4: the `crown_taken` post); the numbers below
 are proposals. Builds on ADR-002 (a crown per
@@ -1205,6 +1207,27 @@ and 5, RT-6.18 step 1, `bus_info`. (D) The sign of life and `silent` (step
 count); after phase 1 above (the beat and the slot). (E) The 👀 at the
 take-up and the ⏳ (step 2), built as phase 2 above in place of the 👀 on
 arrival.
+
+**Phase D as built (0.77.0, `life.py`, RT-6.6 steps 1 and 6, RT-6.12 step
+4, RT-6.17 step 4):** without the ping, as decided on 2026-11-10 (bus ask
+`pgfgcaxwpbr8mmjj34xpbnpswc`), since the open questions about it are not
+measured. So a running turn counts as alive until it ends, and the rule for a
+relayed permission prompt open past the window is not built either: the
+server cannot tell an open prompt from one answered in the terminal (RT-6.13),
+and a turn's later tool calls are mostly not the bus's. A push during a turn
+is that turn's (taken up at its end): the amendment's case 1 is a session with
+no turn, and a push Claude Code adds to a running turn instead of queuing it
+would otherwise read as silence. Measured on 2026-11-10: the prompt hook runs
+for a turn a push starts (the status showed 🛠 for such turns), so the take-up
+rests on it. Silent shows the 💤 with the text `silent · no sign since
+HH:MMZ`, not a new emoji: every plugin, older ones too, reads the 💤 as not
+reachable, so a silent agent is no candidate anywhere. A silent holder yields
+one crown lease, not a release's two `MM_LEASE_SEC` (decision step 1 said "as a
+`release` does"): a silence may be wrong for seconds (a prompt hook past its
+deadline, a push held while the human types), and the slots of step 2 come
+first anyway. The successor's
+`crown_taken` naming the silence comes with phase E, which builds that post.
+The ping, the prompt rule and E stay open.
 
 **Tests (amendment, when built):** in `mcp/tests/` unless noted. RT-6.25
 (`test_ask_route.py`): a question while the home's 👑 is foreign goes to the

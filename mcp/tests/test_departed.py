@@ -393,6 +393,15 @@ async def test_an_outgoing_task_names_who_is_not_reachable(bus):
 
 
 @pytest.mark.asyncio
+async def test_an_outgoing_task_names_a_silent_agent(bus):
+    """RT-6.14 step 10, RT-6.6 step 1: a 💤 whose text says `silent` has a
+    session that shows no sign of life (ADR-007 amendment step 1)."""
+    bus.users[IDLE]["props"] = _status("zzz", 10, "silent · no sign since 14:05Z · ~proj")
+    got = await departed.unreachable(bus.client, "TASK for @agent-idle", "agent-me", PROJ)
+    assert got == ["agent-idle (silent, its session shows no sign of life)"]
+
+
+@pytest.mark.asyncio
 async def test_an_offline_agent_and_one_with_no_mention_or_only_reachable_ones(bus, monkeypatch):
     async def offline(ids):
         return {i: ("offline" if i == WORKER else "online") for i in ids}

@@ -47,7 +47,7 @@ from mcp.shared.exceptions import MCPError
 from mcp.shared.jsonrpc_dispatcher import JSONRPCDispatcher
 from mcp_types import INVALID_REQUEST
 
-from . import a2a, files, permission, session_file, slim, tasks
+from . import a2a, files, life, permission, session_file, slim, tasks
 
 log = logging.getLogger(__name__)
 
@@ -328,9 +328,11 @@ class Pusher:
         self.confirmed.set()
         return True
 
-    async def send(self, params: dict[str, Any]) -> bool:
+    async def send(self, params: dict[str, Any], *, wakes: bool = True) -> bool:
         """Push `params` on the live connection; True once the connection took
-        it, False when there is none or it failed: then nothing went out."""
+        it, False when there is none or it failed: then nothing went out. A
+        push that `wakes` (not the channel check) waits to be taken up
+        (ADR-007 amendment step 1, life.pushed)."""
         conn = self.connection
         if conn is None:
             return False
@@ -341,6 +343,8 @@ class Pusher:
         except Exception as exc:  # noqa: BLE001 — a dropped connection
             log.info("push not sent: %s", exc)
             return False
+        if wakes:
+            life.pushed()
         return True
 
     async def verdict(self, request_id: str, behavior: str) -> None:
@@ -438,7 +442,7 @@ class Pusher:
                 await asyncio.wait_for(self.confirmed.wait(), next(gaps, check_every))
                 break
             except asyncio.TimeoutError:
-                await self.send(check(self.code))
+                await self.send(check(self.code), wakes=False)
         while True:
             batch: list[dict[str, Any]] = []
             try:

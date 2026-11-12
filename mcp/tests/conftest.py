@@ -46,10 +46,11 @@ def _isolate_bus_env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(session_file, "_hosted_dir", None)
     # What the attestation code remembers per process (RT-6.24).
-    from mattermost_ai_agent_bus import attest, mandate, owners, usage
+    from mattermost_ai_agent_bus import attest, life, mandate, owners, usage
 
     attest._started.clear()
     usage.reset()  # the last usage report of the session (ADR-008)
+    life.reset()  # the agent's last sign (ADR-007 amendment step 1)
     owners._noted.clear()
     # What the mandate reader keeps per process (RT-6.26).
     for kept in (mandate._reads, mandate._fetched, mandate._judged, mandate._noted):

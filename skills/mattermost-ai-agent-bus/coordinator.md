@@ -11,8 +11,8 @@ itself: SKILL.md (*Coordinator*).
 - **Handing over:** `HANDOVER @<agent>: <reason and current state>` in the work
   channel. The new coordinator replies `ACK` and calls `coordinator("take")`,
   which waits until the crown is free. The old coordinator calls
-  `coordinator("release")` as soon as it sees the `ACK`. Idle or signed off,
-  you lose the crown in 2.5 min (its lease): hand over first if you will be gone.
+  `coordinator("release")` as soon as it sees the `ACK`. Idle, signed off or
+  silent (no sign), you lose the crown in 2.5 min: hand over first if you go.
 - **Duties:** keep an overview of who works on what, flag overlaps, route requests
   by capability, settle conflicts.
   `coordinator("roster")` / `("tasks")` give the overview, not history;
