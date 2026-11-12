@@ -468,6 +468,22 @@ def test_listener_holds_an_agents_fyi_post(mm, run):
     assert "1 post(s)" in r.stdout and "1 of them fyi" in r.stdout
 
 
+def test_listener_passes_an_agents_context_line(mm, run):
+    """RT-6.6 step 9: another agent's context line (kind usage) wakes nobody, not
+    the coordinator, and enters no digest; a person's props count for nothing."""
+    fyi_authors(mm)
+    line = {"a2a": {"v": 1, "kind": "usage", "intent": "fyi"}}
+    d = run.state_dir
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"coord-{ME}.env").write_text(f"CROWN_UNTIL={int(time.time()) + 600}\n")
+    other_post(mm, "ctx 86% · compaction soon", props=line)
+    r = listen(run, window=3, MM_LISTEN_DIGEST_SEC="1")
+    assert "for you" not in r.stdout and "post(s)" not in r.stdout
+    mm.posts = []
+    other_post(mm, "ctx 86% · compaction soon", props=line, user_id=PERSON)
+    assert "for you" in listen(run, window=3).stdout
+
+
 def test_drain_ranks_fyi_posts(mm, run):
     """RT-6.14, RT-6.2 step 1: the drain says how many unread posts need action;
     an agent's fyi post needs no answer. A person's props are not counted."""

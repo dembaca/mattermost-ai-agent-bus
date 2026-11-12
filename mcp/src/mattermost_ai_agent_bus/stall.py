@@ -104,7 +104,7 @@ def quiet_since(posts: Sequence[Post], classes: list[str], uid: str = "") -> tup
     system posts do not count. 0 without one."""
     counted = [p for p, c in zip(posts, classes, strict=True)
                if c != gate.OTHER and not p.type and not p.delete_at
-               and p.kind != a2a.REMINDER]
+               and p.kind not in a2a.SERVER_OWN]
     return (max((_at(p) for p in counted if p.user_id != uid), default=0),
             max((_at(p) for p in counted if uid and p.user_id == uid), default=0))
 
@@ -208,7 +208,7 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
         pid = p.id
         kind = p.kind
         if (cls.get(pid, gate.OTHER) == gate.OTHER or now_ms - _at(p) > ADDRESSED_KEEP_SEC * 1000
-                or kind in (a2a.ASK, a2a.PERMISSION, a2a.REMINDER)
+                or kind in (a2a.ASK, a2a.PERMISSION, *a2a.SERVER_OWN)
                 or (kind in ("TASK", "DELEGATE") and not p.root_id)
                 or (cls[pid] in gate.AGENTS and p.intent == a2a.FYI)):
             continue

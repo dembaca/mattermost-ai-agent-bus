@@ -420,3 +420,28 @@ async def test_a_failing_hand_over_is_logged_never_raised_and_loses_nothing(monk
     await inbox.ack(taken)  # does not raise
     assert inbox._out == [] and "hand-over of 1 event(s) failed" in caplog.text
     inbox.stop_typing()
+
+
+@pytest.mark.anyio
+async def test_an_agents_context_line_is_dropped_not_held():
+    """RT-6.6 step 9: an item marked quiet (another agent's context line) is neither
+    pushed nor held for the digest: no turn for it. It counts as delivered."""
+    conn = _Conn()
+    pusher = channel.Pusher()
+    pusher.connection = conn
+    done, back, delivered, give_back = _recorder()
+    quiet = {**_item(1), "quiet": True, "intent": "fyi"}
+    batches = [[quiet]]
+
+    async def wait(timeout):
+        if batches:
+            return batches.pop(0)
+        await asyncio.sleep(3600)
+
+    async def addressed(item):
+        return False
+
+    with anyio.move_on_after(0.3):
+        await _answered(pusher, conn, wait, addressed=addressed, delivered=delivered, give_back=give_back)
+    assert done == ["p1"] and pusher.held == []
+    assert [p["meta"].get("kind") for p in conn.sent] == ["channel_check"]

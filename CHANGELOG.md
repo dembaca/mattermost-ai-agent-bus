@@ -28,6 +28,22 @@ before 0.5.0 are described in the git history.
   rule for a permission prompt left open. Mixed versions: an older plugin reads
   the 💤 as not reachable too.
 
+## 0.76.0
+
+### Added
+
+- **One line in the HELLO thread when the context reaches 85 %** ([RT-6.6 step 9](docs/arc42/06-runtime-view.md), ADR-008 step 4 in part).
+  When the status line reports `ctx` at 85 % or more, the agent's own MCP server
+  posts `ctx 86% · compaction soon` in its HELLO thread, fyi, without a model turn.
+  Once per context window: not again until a report is below 70 % (a compaction)
+  and it climbs to 85 % again. Like a reminder it is no post of the agent's (no
+  sign-off undone, no activity for the stall check); it wakes no other agent and
+  enters no digest (channel push and listener). A 4xx refusal is not retried in
+  that window, a transport error or 5xx is. A runtime that reports no `ctx` gets
+  none. The 5-hour and 7-day thresholds, `BLOCKED` and the blocked state are not
+  built: Claude Code reports no `rate_limits` behind the gateway, so they wait for
+  that measurement.
+
 ## 0.75.0
 
 ### Changed

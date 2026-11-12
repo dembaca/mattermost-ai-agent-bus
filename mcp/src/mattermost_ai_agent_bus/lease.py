@@ -34,8 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import a2a, channel, life, owners, session_file, usage
-from .model import ChannelUser, Mark, RosterEntry, StatusMark
+from . import a2a, channel, life, owners, ownpost, session_file, stats, usage
+from .model import ChannelUser, Mark, Refused, RosterEntry, StatusMark
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -911,6 +911,39 @@ def _silent(uid: str, state: str = "") -> float:
     ADR-007 amendment step 1); 0 when it does, or is not reachable anyway."""
     counts, listening = _judged(uid, state)
     return life.silent_since(listening=listening) if counts else 0.0
+
+
+async def ctx_line(client: ChatPort) -> None:
+    """The context reached usage.CTX_LINE_AT (ADR-008 step 4, RT-6.6 step 9): one
+    fyi line in the agent's HELLO thread, once per context window, no model turn.
+    Not before the agent announced itself (no HELLO thread: the line waits).
+    Never raises. A transport error or a 5xx is tried again with the next report;
+    a 4xx (the HELLO deleted, the channel archived) comes back the same: no line
+    in this context window, logged once."""
+    try:
+        if not client.token:
+            return
+        uid = await _user_id(client)
+        rec = ownpost.read(uid)
+        hello, channel_id = rec.get("HELLO"), rec.get("CHANNEL")
+        if not (hello and channel_id):
+            return
+        ctx = usage.take_ctx_line()
+        if ctx is None:
+            return
+        message = with_crown(f"ctx {round(ctx)}% · compaction soon", uid)
+        stats.record("post", chars=len(message))
+        await client.post(message, channel_id=channel_id, root_id=hello,
+                          props=a2a.props(kind=a2a.USAGE))
+    except asyncio.CancelledError:
+        raise
+    except Refused as exc:
+        if not 400 <= exc.status < 500:
+            usage.ctx_line_failed()
+        log.info("ctx line not posted: %s", exc)
+    except Exception as exc:  # noqa: BLE001
+        usage.ctx_line_failed()
+        log.info("ctx line not posted: %s", exc)
 
 
 async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],

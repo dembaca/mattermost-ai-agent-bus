@@ -209,7 +209,7 @@ async def test_posts_say_what_the_listener_needs(api):
     # RT-6.6 step 5, RT-6.21: for the agent it names; one this server answers as absent.
     assert [(p["names_agent"], p["absent"]) for p in got][3:] == [(False, False), (True, True)]
     assert got[2] == {"id": "p3", "user_id": OTHER, "root_id": "r", "create_at": 1000, "type": "",
-                      "message": "main is red", "to": "all", "intent": "", "fyi": False, "gated": True,
+                      "message": "main is red", "to": "all", "intent": "", "fyi": False, "quiet": False, "gated": True,
                       "names_agent": False, "absent": False}
     assert got[3]["type"] == "system_join_channel" and "props" not in got[0]
     await h.get("/v1/posts?since=1234")
@@ -679,3 +679,15 @@ async def test_no_file_keyed_on_home_or_above(api, monkeypatch, tmp_path):
     assert hookapi.file_path().exists() and not a.warning()
     monkeypatch.setenv("MM_WORKSPACE", str(home))
     assert session_file.unkeyed() == ""  # a variable that names it is taken
+
+
+async def test_the_last_post_fallback_skips_the_context_line(api):
+    """RT-6.6 step 9: /v1/last-post read from the channel (no last-<uid>.env) passes the
+    server's context line: the agent's IDLE before it still signs it off."""
+    line = {"a2a": {"v": 1, "kind": "usage", "intent": "fyi"}}
+    client = FakeClient(posts=[post("l", "ctx 86% · compaction soon", user=UID, at=3000, root="b",
+                                    props=line),
+                               post("b", "IDLE · done", user=UID, at=2000)])
+    _, h = await api(client)
+    assert (await h.get("/v1/last-post")).json() == {"at": 2000, "message": "IDLE · done",
+                                                     "signed_off": True}
