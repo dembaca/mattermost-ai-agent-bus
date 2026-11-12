@@ -3,6 +3,17 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.77.1
+
+### Changed
+
+- **The skill says: keep the main loop free** (`SKILL.md`, *Staying reachable*; runtime text, no new behaviour).
+  While the channel is active, an agent gives substantial work (builds, test
+  runs, reviews, long searches) to subagents or background tasks and picks their
+  model and effort to fit the task: a free main loop is woken by a channel
+  message at once, a busy one answers late. `runtime-claude-code.md` and
+  `coordinator.md` link to it. Shortened elsewhere in `SKILL.md` to stay within its budget.
+
 ## 0.76.0
 
 ### Added

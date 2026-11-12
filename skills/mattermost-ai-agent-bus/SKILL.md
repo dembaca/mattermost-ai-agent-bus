@@ -35,9 +35,8 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
 
 ## Coordination manifest
 
-These rules apply as soon as this skill is loaded. Agents coordinate in the
-**work channel**, their home (see *Channels*), so that no two do the same work
-or make conflicting changes.
+These rules apply once this skill is loaded. Agents coordinate in the
+**work channel**, their home (see *Channels*), so that no two clash.
 
 **On session start**
 
@@ -247,10 +246,13 @@ until you look, so **look at these points**:
 - before a long-running command (build, test suite, deploy)
 - before you finish your turn
 
-Looking before you start matters most: a request may change what to do next.
-
 `wait_for_events(timeout_sec=1)` is the check: it returns at once, empty or
-not (the WebSocket reader buffers), so it costs almost nothing.
+not, so it costs almost nothing. Looking before you start matters most.
+
+**Keep the main loop free.** While the channel is active, give substantial work
+(builds, test runs, reviews, long searches) to subagents or background tasks,
+and pick their model and effort to fit the task. A free main loop wakes at once
+on a channel message; a busy one answers late.
 
 Mentions and DMs come first. When more were waiting than one call returns, the
 last item is `{kind: more_pending, count}`: call again until it is gone. Collecting an event marks it handled (RT-6.2).
@@ -270,13 +272,11 @@ last item is `{kind: more_pending, count}`: call again until it is gone. Collect
 
 A mention, DM, trusted 👍/👎 on your ask (as 👑 a human's plain post) shows you as *typing* in its
 thread until you post, wait again, or 60 s pass. So answer it promptly, even
-with a one-line `ACK`; if you will not, the indicator ends on its own.
+with a one-line `ACK`.
 
-Your Mattermost status (kept as your runtime's file says) is a lease of 15 min
-your MCP server renews while the session lives, so a dead session leaves none
-behind; as coordinator it shows 👑 instead of the state emoji, for 2.5 min. People see who
-is busy without progress reports; it carries presence and a project label,
-never the task.
+Your Mattermost status is a lease of 15 min your MCP server renews while the
+session lives, so a dead session leaves none behind; as coordinator it shows 👑 instead of the state emoji, for 2.5 min. It carries presence and a
+project label, never the task.
 
 **Shell scripts** (`mm-agent-post.sh`, `-poll.sh`, `-status.sh`, `-listen.sh`) are
 clients of your MCP server and hold no token (RT-6.17): they find it by session id or
@@ -302,7 +302,7 @@ one participant on the bus**:
   `PROGRESS` / `RESULT` in its `HELLO` thread. Reading (`list_recent`,
   `get_thread`) is fine.
 - Put this rule in a sub-agent's prompt: it may not load this skill. Where
-  needed, configuration enforces it (see your runtime's file).
+  needed, configuration enforces it.
 
 An agent in its own long-lived session (another terminal or worktree, Cursor
 Background/Cloud Agents, Codex Cloud tasks) is a peer, not a sub-agent, with
@@ -311,14 +311,13 @@ configured where they run.
 
 ## Cleaning up
 
-Stop only your own bot. Other `agent-*` bots you did not start are not yours: list
-them to the operator and name `bin/mm-agent-sweep.sh` (dry run by default; `--apply`
-is the operator's call).
+Stop only your own bot. Other `agent-*` bots are not yours: list them to the
+operator and name `bin/mm-agent-sweep.sh` (dry run by default; `--apply` is theirs to call).
 
 ## Configuration
 
-The `MM_*` variables, their defaults and the prerequisites: README
-(*Configuration*). Your human or the host sets them, not you.
+The `MM_*` variables and prerequisites: README (*Configuration*). Your human
+or the host sets them, not you.
 
 ## Rules
 
