@@ -5,6 +5,13 @@ before 0.5.0 are described in the git history.
 
 ## 0.80.0
 
+### Added
+
+- **The 👑's receipts as reactions and a new post kind** ([RT-6.12 step 7, RT-6.6 step 10](docs/arc42/06-runtime-view.md)):
+  👀 and ⏳ from the crown holder's server, the receipt marker 👀 as a segment
+  of the crown's status text (`coordinator · working · 👀 · …`), and the quiet
+  fyi post `props.a2a.kind = crown_taken` with `holder`.
+
 ### Changed
 
 - **The 👑's receipts and the claim over a missing one** (ADR-007 amendment
@@ -19,15 +26,17 @@ before 0.5.0 are described in the git history.
   `MM_ACK_WAIT_SEC` (45 s) and one more look 10 s later, the oldest peer
   that stands claims the crown at its slot and posts one quiet fyi line,
   ``👑 taken over by `<bot>`: no 👀 for `<post id>` within 45 s``
-  (`props.a2a.kind` `crown_taken`). The crown stays with it: the old holder
-  yields when it reads that line (from its WebSocket, or from the home's
+  (`props.a2a.kind` `crown_taken`, posted again if it failed). The crown
+  stays with it for a tick and a crown lease: the old holder yields when it
+  reads that line from an author that stands for it (from its WebSocket, or from the home's
   posts at its tick when its socket is dead) and claims nothing for two
   `MM_LEASE_SEC`. The successor of a silent holder posts the same line naming
   the silence. A question to the 👑 without either reaction after 45 s goes
   to the human at once instead of after `MM_ASK_ROUTE_WAIT_MIN`. What people
   notice: 👀 and ⏳ under the posts the coordinator gets, and a coordinator
-  whose server, socket or session stopped is replaced within about a minute
-  when a post needs it. Mixed versions: a holder on an older plugin shows no
+  whose server or socket is gone is replaced within about a minute when a
+  post needs it (a channel session that stops taking up was found by phase D
+  already). Mixed versions: a holder on an older plugin shows no
   marker and is judged as before, so nobody claims over it. Runtimes without
   turn hooks (Cursor, Codex) show no ⏳: as 👑 they lose the crown when a post
   for them is not fetched within 45 s and a slot (a known limit).

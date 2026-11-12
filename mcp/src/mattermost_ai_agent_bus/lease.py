@@ -23,6 +23,7 @@ session.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -35,7 +36,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import a2a, channel, life, owners, ownpost, session_file, stats, usage
-from .model import ChannelUser, Mark, Refused, RosterEntry, StatusMark
+from .model import ChannelUser, Mark, Post, Refused, RosterEntry, StatusMark
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -689,9 +690,11 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
     global _took_from, _crown_since, _ousted
     if crown <= now:
         _took_from, _crown_since, _ousted = "", 0.0, None
-    elif _took_from:
+    elif _took_from and now < _crown_since + heartbeat_sec() + crown_lease_sec():
         # ADR-007 step 4: the holder this agent took the crown over from does
         # not get it back by being older; it yields when it sees crown_taken.
+        # Bounded (RT-6.6 step 10): a holder that did not yield within its
+        # next tick and a crown lease is judged by the two-crown rule again.
         others = [r for r in others if r["id"] != _took_from]
 
     async def take_now() -> None:
@@ -721,14 +724,24 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
         return "released"
 
     holding = crown > now
-    if holding and (by := await _taken_from_me(client, cid, uid, rows)):
+    by, posts = await _taken_from_me(client, cid, uid, rows) if holding else ("", None)
+    if by:
         # ADR-007 step 4: an agent took the crown over from this one (no 👀 in
         # time): it yields, and does not claim for two leases, as after a release.
         _save_coord(uid, 0, 0, now + 2 * lease)
         _took_from, _crown_since, _ousted = "", 0.0, None
         await _render(client)
         log.info("crown yielded: %s took it over (crown_taken, ADR-007 step 4)", by)
-    elif holding and others:
+        _plan(uid, rows)
+        return ""
+    if (holding and _took_from and posts is not None
+            and any(r["id"] == _took_from and r["crown"] for r in rows)
+            and not any(p.kind == a2a.CROWN_TAKEN and p.user_id == uid and a2a_holder(p.props) == _took_from
+                        for p in posts)):
+        # RT-6.6 step 10: the old holder still wears its crown and the home holds
+        # no crown_taken of this agent naming it (the post failed): post it again.
+        await _crown_taken(client, cid, uid, _took_from, _took_why)
+    if holding and others:
         # Two crowns in one home (a race): the older agent keeps it, among
         # peers; a holder that does not stand yields to one that does (an
         # unbound one to a bound one, ADR-007 amendment step 4).
@@ -773,8 +786,18 @@ _holder_marked = False
 # since when this agent holds its crown (epoch s; 0 unknown), and the agent a
 # crown_taken naming this one came from, with when (until the next tick judges it).
 _took_from = ""
+_took_why = ""  # the reason its crown_taken gave, for a post again
 _crown_since = 0.0
 _ousted: tuple[str, float] | None = None
+# Wakes the heartbeat when a crown_taken naming this agent is heard (one per loop).
+_NUDGES: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Event] = weakref.WeakKeyDictionary()
+
+
+def _nudge() -> asyncio.Event:
+    loop = asyncio.get_running_loop()
+    if loop not in _NUDGES:
+        _NUDGES[loop] = asyncio.Event()
+    return _NUDGES[loop]
 
 
 def holder() -> tuple[str, str, bool]:
@@ -785,37 +808,43 @@ def holder() -> tuple[str, str, bool]:
 
 def ousted(by: str, at: float) -> None:
     """A crown_taken post naming this agent came from `by` (ADR-007 step 4): the
-    next tick yields if `by` wears a live crown in the home."""
+    next tick yields if `by` wears a live crown in the home and stands. The
+    heartbeat is woken for that tick at once."""
     global _ousted
     _ousted = (by, at)
+    with contextlib.suppress(RuntimeError):  # no loop: the next beat ticks
+        _nudge().set()
 
 
 def ousted_pending() -> bool:
     return _ousted is not None
 
 
-async def _taken_from_me(client: ChatPort, cid: str, uid: str, rows: list[dict[str, Any]]) -> str:
+async def _taken_from_me(client: ChatPort, cid: str, uid: str,
+                         rows: list[dict[str, Any]]) -> tuple[str, list[Post] | None]:
     """The agent that took this holder's crown over (ADR-007 step 4): one with a
-    live crown in the home whose crown_taken names this agent; '' for none.
-    Heard on the WebSocket (ousted), or, while a second crown shows, read from
-    the home's posts since this agent holds the crown: a holder whose WebSocket
-    is dead hears nothing. Only a crowned agent's post counts; a heard one is
-    judged once (its author wears no crown: nothing, and no tick at once again)."""
+    live crown in the home that stands for this server (ADR-001: a foreign or
+    unbound crown ousts no one) and whose crown_taken names this agent; '' for
+    none. Heard on the WebSocket (ousted), or, while a second crown shows, read
+    from the home's posts since this agent holds the crown: a holder whose
+    WebSocket is dead hears nothing. A heard one is judged once. Also the posts
+    read ([] none, None not read), which a claimer checks for its own line."""
     global _ousted
     heard, _ousted = (_ousted[0] if _ousted else ""), None
     crowned = {str(r["id"]) for r in rows if r["crown"] and r["id"] != uid}
     if not crowned:
-        return ""
-    if heard in crowned:
-        return heard
+        return "", None
+    standing = crowned & set((await _election(client, rows)).ids)
+    if heard in standing:
+        return heard, None
     since = _crown_since or time.time() - lease_sec()
     try:
         posts = await client.channel_posts(cid, since_ms=int(since * 1000))
     except Exception as exc:  # noqa: BLE001 — unread: the rules of two crowns, as before
         log.info("crown_taken not read: %s", exc)
-        return ""
-    return next((p.user_id for p in posts if p.kind == a2a.CROWN_TAKEN and p.user_id in crowned
-                 and a2a_holder(p.props) == uid), "")
+        return "", None
+    return next((p.user_id for p in posts if p.kind == a2a.CROWN_TAKEN and p.user_id in standing
+                 and a2a_holder(p.props) == uid), ""), posts
 
 
 def a2a_holder(props: Mapping[str, Any]) -> str:
@@ -940,7 +969,8 @@ async def take_over(client: ChatPort, holder_id: str, post_id: str) -> bool:
     yielding, and stands. Then the crown is this agent's, it does not yield to
     that holder (_took_from) and posts crown_taken. A race of two such claims
     ends at the next tick: the younger yields. Never raises."""
-    global _took_from, _crown_since
+    global _took_from, _took_why, _crown_since
+    why = f"no {a2a.symbol(Mark.SEEN)} for `{post_id}` within {life.ack_wait_sec()} s"
     try:
         async with _lock():
             uid = await _user_id(client)
@@ -961,7 +991,7 @@ async def take_over(client: ChatPort, holder_id: str, post_id: str) -> bool:
             await _render(client)
             if _coord(uid).get("CROWN_UNTIL", 0) <= now:
                 return False
-            _took_from, _crown_since = holder_id, now
+            _took_from, _took_why, _crown_since = holder_id, why, now
             log.info("crown taken over from %s: no receipt for %s (ADR-007 step 3)", held["username"], post_id)
             await _header(client, cid)
     except asyncio.CancelledError:
@@ -969,9 +999,7 @@ async def take_over(client: ChatPort, holder_id: str, post_id: str) -> bool:
     except Exception as exc:  # noqa: BLE001 — fail open, like the tick
         log.info("crown not taken over: %s", exc)
         return False
-    seen = a2a.symbol(Mark.SEEN)
-    await _crown_taken(client, cid, uid, holder_id,
-                       f"no {seen} for `{post_id}` within {life.ack_wait_sec()} s")
+    await _crown_taken(client, cid, uid, holder_id, why)
     await _crown_came()
     return True
 
@@ -1204,4 +1232,12 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
             raise
         except Exception as exc:  # noqa: BLE001
             log.debug("lease heartbeat skipped: %s", exc)
-        await asyncio.sleep(max(0.0, min(delay, crown_beat_sec())))
+        await _pause(max(0.0, min(delay, crown_beat_sec())))
+
+
+async def _pause(sec: float) -> None:
+    """The heartbeat's wait; a crown_taken heard (ousted) ends it at once."""
+    nudge = _nudge()
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(nudge.wait(), sec)
+    nudge.clear()

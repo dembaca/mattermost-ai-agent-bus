@@ -304,6 +304,74 @@ async def test_a_holder_with_a_dead_socket_reads_crown_taken_from_the_home(chat)
     assert not lease.crown_held(ME)
 
 
+def _own_line(holder=HOLDER):
+    return {"id": "r" * 26, "user_id": ME, "channel_id": WORK, "create_at": int(time.time() * 1000) + 1000,
+            "message": "taken over", "props": {"a2a": {"kind": a2a.CROWN_TAKEN, "holder": holder}}}
+
+
+async def test_a_crown_taken_by_an_agent_that_does_not_stand_ousts_nobody(chat):
+    """ADR-001, RT-6.6 step 10: an unbound bot wearing a crown cannot make a
+    bound holder yield with a crown_taken; two crowns are judged as before."""
+    chat.trusted = {HUMAN: "dembaca"}
+    chat.descriptions = {ME: "for @dembaca · trusts @dembaca · via agent-registrar",
+                         HOLDER: "via agent-registrar"}
+    chat.native_owners = {ME: "dembaca", HOLDER: ""}
+    chat.agent(HOLDER, "agent-new", 3000, "crown", MARKED)
+    chat.agent(ME, "agent-me", 1000, "crown", MARKED)
+    _hold()
+    rows = lease._at_home(await lease._rows(chat, WORK), "agents")
+    assert (await lease._election(chat, rows)).ids == [ME]  # the unbound crown does not stand
+    line = {"id": "q" * 26, "user_id": HOLDER, "channel_id": WORK, "create_at": int(time.time() * 1000),
+            "message": "taken over", "props": {"a2a": {"kind": a2a.CROWN_TAKEN, "holder": ME}}}
+    chat.posts = [line]
+    await receipt.arrived(chat, post_of(line), ME, False)
+    await lease.command(chat, "tick")
+    assert lease.crown_held(ME)
+
+
+async def test_a_failed_crown_taken_is_posted_again_while_the_old_crown_shows(chat, monkeypatch):
+    """RT-6.6 step 10: the claimer's tick finds no line of its own naming the
+    old holder, whose crown still shows: it posts the line again, once."""
+    _home(chat)
+    real, fails = chat.post, [OSError("down")]
+
+    async def flaky(message, **kw):
+        if fails:
+            raise fails.pop()
+        return await real(message, **kw)
+    monkeypatch.setattr(chat, "post", flaky)
+    assert await lease.take_over(chat, HOLDER, PID)
+    assert chat.posted == []
+    await lease.command(chat, "tick")
+    assert lease.crown_held(ME) and len(chat.posted) == 1
+    assert chat.posted[0]["props"]["a2a"]["holder"] == HOLDER and PID in chat.posted[0]["message"]
+    chat.posts = [_own_line()]
+    await lease.command(chat, "tick")
+    assert len(chat.posted) == 1
+
+
+async def test_the_exemption_from_the_two_crown_rule_is_bounded(chat):
+    """RT-6.6 step 10: an old holder that did not yield within a tick and a
+    crown lease is judged by the two-crown rule again: the older keeps it."""
+    _home(chat)
+    assert await lease.take_over(chat, HOLDER, PID)
+    chat.posts = [_own_line()]
+    await lease.command(chat, "tick")
+    assert lease.crown_held(ME)
+    lease._crown_since = time.time() - lease.heartbeat_sec() - lease.crown_lease_sec() - 1
+    await lease.command(chat, "tick")
+    assert not lease.crown_held(ME)
+
+
+async def test_a_crown_taken_heard_wakes_the_heartbeat_at_once():
+    """RT-6.6 step 10: ousted() ends the heartbeat's wait, so the tick that
+    yields comes at once, not after a beat."""
+    pause = asyncio.create_task(lease._pause(60))
+    await asyncio.sleep(0)
+    lease.ousted(HOLDER, time.time())
+    await asyncio.wait_for(pause, 1)
+
+
 async def test_the_successor_of_a_silent_holder_names_the_silence(chat):
     """ADR-007 amendment step 1: the claim at the slot after a silent holder
     dropped its crown posts crown_taken naming the silence."""

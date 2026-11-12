@@ -144,7 +144,8 @@ async def arrived(client: ChatPort, post: Post, uid: str, gated: bool) -> None:
 def _taken(boundary: bool) -> None:
     """life's take-up (ADR-007 amendment step 2): with pushes, the 👀 for what was
     pushed; a tool call takes up what came while no turn ran, a turn's begin or
-    end also what came during the turn before."""
+    end also what came during the turn before. A 👀 at a turn's end means the
+    agent has the post, or has it queued for its next turn (RT-6.12 step 4)."""
     if not pushes():
         return
     _give([p for p, (busy, _) in _owed.items() if boundary or not busy])

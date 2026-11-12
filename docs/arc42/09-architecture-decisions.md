@@ -1245,10 +1245,14 @@ knows a turn runs (the prompt hook's `working` to the Stop hook's end), not
 only on a channel push: so a holder without a channel keeps its crown through
 a long turn. Runtimes without turn hooks (Cursor, Codex) show no ⏳ and get
 the 👀 only when `wait_for_events` returns the post: a known limit, written in
-RT-6.6 and RT-6.12. And the old holder whose WebSocket is dead, the case step
-3 is for, cannot hear `crown_taken`: its tick reads the home's posts since it
-holds the crown when it sees a second crown, and the claimer does not yield to
-the holder it took the crown from.
+RT-6.6 and RT-6.12. (3) **The old holder with a dead WebSocket.** It cannot
+hear `crown_taken`, the case step 3 is for: its tick reads the home's posts
+since it holds the crown when it sees a second crown, and the claimer does not
+yield to the holder it took the crown from. After review that exemption is
+bounded (the claimer's next tick and a crown lease, then the two-crown rule of
+RT-6.6 step 2 again), the claimer posts its line again while the old crown
+shows and its line is missing, and only an author that stands for the old
+holder's server can oust it (ADR-001).
 
 **Phase E as built (0.80.0, `receipt.py`, with phase 2; RT-6.6 step 10,
 RT-6.12 step 7, RT-6.25 step 6):** as decision steps 3 to 5 and amendment step
@@ -1262,7 +1266,9 @@ later, then claims at its slot among the agents that stand, the holder left
 out (`lease.take_over`), and posts `crown_taken` (kind `crown_taken`, intent
 fyi, quiet like the context line, `holder` the old holder's id). The old
 holder yields only to a `crown_taken` whose author wears a live crown in the
-home, and then does not claim for two `MM_LEASE_SEC`. A question to the 👑
+home and stands for its server, and then does not claim for two
+`MM_LEASE_SEC` (whether one crown lease would do, as for the silent drop, is
+asked of dembaca). A question to the 👑
 (step 5) goes to the human after `MM_ACK_WAIT_SEC` when a marked 👑 set
 neither receipt or a silent one no 👀. No new scenario: the 👀 is RT-6.12 step
 7 (the open question's recommendation), the claim RT-6.6 step 10.

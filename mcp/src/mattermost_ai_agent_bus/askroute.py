@@ -539,7 +539,10 @@ async def tick(client: ChatPort, uid: str, now: float | None = None) -> float | 
     now = now or time.time()
     await _heartbeat(client, uid, now)
     wait, nxt = wait_sec(), None
-    for pid, at, coord, human in asks.questions_open(uid):
+    questions = asks.questions_open(uid)
+    for pid in set(_receipt_looked) - {q[0] for q in questions}:
+        del _receipt_looked[pid]  # settled or passed on: no longer looked at
+    for pid, at, coord, human in questions:
         due = at + wait
         if due > now and not await _no_receipt(client, pid, at, coord, now):
             soon = at + life.ack_wait_sec()

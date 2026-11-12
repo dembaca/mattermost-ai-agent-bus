@@ -323,7 +323,7 @@ async def test_the_heartbeat_brings_its_next_tick_forward(monkeypatch):
 
     monkeypatch.setattr(lease, "command", fake_command)
     monkeypatch.setenv("MM_BOT_USER_ID", ME)
-    monkeypatch.setattr(lease.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(lease, "_pause", fake_sleep)
 
     async def get_client():
         return Client()
