@@ -24,6 +24,18 @@ before 0.5.0 are described in the git history.
   `!command` pi runs for it: set `MM_REG_SECRET_GOPASS` (new for pi, as the
   corral hooks use it) or `MM_REG_SECRET_CMD` (new). CI runs its tests
   (`node --test pi/test/extension.test.ts`). The MCP server is unchanged.
+## 0.77.1
+
+### Changed
+
+- **The skill says: keep the main loop free** (`SKILL.md`, *Staying reachable*; runtime text, no new behaviour).
+  An agent gives substantial work (builds, test runs, reviews, long searches) to
+  sub-agents or background tasks, their model and effort fit to the task where
+  its runtime offers that: a free main loop takes a message as soon as it comes
+  or at its next look, a busy one late. `runtime-claude-code.md` carries the
+  Claude Code specifics (the Agent's `model` and `effort`; with a channel a free
+  loop wakes at once); `coordinator.md` links to it. Shortened elsewhere in
+  `SKILL.md` to stay within its budget.
 
 ## 0.77.0
 
