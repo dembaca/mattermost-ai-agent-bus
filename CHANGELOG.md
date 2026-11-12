@@ -3,6 +3,39 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.82.0
+
+### Added
+
+- **`mm-agent-host-install.sh --release v<x.y.z>`: the host copy from a signed
+  release** (ADR-011 phase 1b, [RT-6.29](docs/arc42/06-runtime-view.md#629-host-copy-from-a-signed-release),
+  [§7.1](docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
+  Fetches the tag from `MM_RELEASE_URL` (default the GitHub repository) into a
+  bare `src.git` beside `releases/`, without `+`, so a tag fetched before never
+  moves; verifies it with `git verify-tag` (`gpg.format=ssh`) against an
+  allowed-signers file the installer writes from `MM_RELEASE_SIGNERS` (the
+  pinned Ed25519 public keys: the owner's release key and an offline backup);
+  checks that the tag is annotated, that its tag object carries the asked name
+  and that `plugin.json`, `mcp/pyproject.toml` and `__init__.py` in its tree
+  say its version. Then `git archive` into `releases/<x.y.z>/` with
+  `SOURCE=signed`, the tag, its object, the commit and the signer's
+  fingerprint, and the switch, the downgrade rule, the lock and the garbage
+  collection of 0.81.0. Refused, with `current` unchanged: no
+  `MM_RELEASE_SIGNERS`, an unsigned or lightweight tag, a signature by a key
+  not pinned, a tag object named otherwise, a moved tag, another version in the
+  tree, a failed fetch. Needs git 2.34 or newer and `ssh-keygen`.
+- **Releasing** (CLAUDE.md): after the merge the owner creates the signed tag
+  `v<version>` on the merge commit and pushes it; agents never sign. A CI job
+  on a pushed `v*` tag checks that its name matches `plugin.json`
+  (informational).
+
+### Changed
+
+- **Which kind of host copy runs is shown:** the installer's output, `--check`
+  and the start hook (its notice of a newer plugin, and its "ready" line) say
+  `signed release v<x.y.z>` or `unsigned`. `--from` and an install from the
+  clone stay as they were, still `SOURCE=unsigned`.
+
 ## 0.81.0
 
 ### Added

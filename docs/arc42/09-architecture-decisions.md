@@ -19,7 +19,7 @@ code does today and point here where a decision will change them.
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 built (0.79.0: the pi extension, RT-6.27) | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
-| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b (the signed tag, `--release`) and phases 2–3 open | – |
+| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs only an annotated tag SSH-signed by a key pinned in `MM_RELEASE_SIGNERS` (the owner's key and an offline backup), with its name and tree version checked (RT-6.29); phases 2–3 open | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2024,7 +2024,7 @@ on: the end, and `status` and `bus_info` show it.
 
 ## ADR-011: Updates from a signed release only
 
-**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy, without a signature yet. Proposed 2026-11-09. Asked for by a trusted human on
+**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy; phase 1b built (0.82.0, RT-6.29): `--release v<x.y.z>`, the signed tag verified against pinned keys. Proposed 2026-11-09. Asked for by a trusted human on
 2026-11-09 ("probably not quite simple with plugin incl. MCP server and
 sandbox hooks"). Options, a recommendation and open questions; command words,
 file names and variables below are proposals. Builds on Section 7.1 (the
@@ -2033,6 +2033,21 @@ host copy and its installer), Section 7.2 (parity without corral), Section 7.3
 RT-6.2 step 8 (the update notice), RT-6.6 (the crown), RT-6.11 and RT-6.19
 (open asks), RT-6.24 (the registrar's signatures), ADR-007 amendment C (stale
 copies stay off the bus) and RISK-04 (mixed versions).
+
+*The owner's decisions for phase 1b (dembaca, 2026-11-12).* A release
+signature is a git SSH signature on the annotated version tag `v<x.y.z>`
+(`git tag -s` with `gpg.format=ssh`). Only the owner signs, after the merge,
+on the merge commit (CLAUDE.md, "Releasing"); agents never sign. The keys are
+the owner's SSH Ed25519 key and an offline backup key; each host pins both
+public keys in `MM_RELEASE_SIGNERS`. As built (RT-6.29): the installer writes
+them into an allowed-signers file of its own under one fixed principal,
+`mm-release`, with `namespaces="git"`; the tag is fetched into `src.git`
+without `+`, so git refuses a tag that moved; git runs with `LC_ALL=C`, no
+system or global config, no hook or credential helper, only the `https` and
+`file` protocols (a local path serves as a mirror and for the tests) and with
+`transfer.fsckObjects`. A CI job on a pushed `v*` tag checks only that its
+name matches `plugin.json` (informational; it holds no secret and verifies no
+signature, which is the host's job).
 
 **Context:** One release has several parts, installed in different places
 and restarted by different things:
@@ -2079,10 +2094,13 @@ mode, `mm-agent-host-install.sh --release <version>`:
 - It resolves the tag to one object id once and goes on with that id only:
   verified with `git verify-tag` under its own config (no system or global
   config, as today; `-c gpg.format=ssh -c gpg.ssh.allowedSignersFile=<a
-  host-only file written from MM_RELEASE_SIGNERS>`), good only with status
-  `G`; the tag object's own name must be the one asked for, and the version
-  in the archived tree (`.claude-plugin/plugin.json`, `mcp/pyproject.toml`)
-  must equal it, so a ref pointed at an older signed tag installs nothing.
+  host-only file written from MM_RELEASE_SIGNERS>`). An SSH signature has
+  no GPG status line: it counts only when `verify-tag` exits 0 and reports
+  the one principal the installer wrote (as built). The tag object's own
+  name must be the one asked for, and the version in the archived tree
+  (`.claude-plugin/plugin.json`, `mcp/pyproject.toml`, the package's
+  `__init__.py`) must equal it, so a ref pointed at an older signed tag
+  installs nothing.
 - It installs `git archive <id>`.
 
 A tag that is not signed, signed by another key, named otherwise or moved
@@ -2232,12 +2250,14 @@ the registrar's approved-release record. Phase 1 is split: **1a** (built,
 0.81.0, RT-6.28) is the layout, the switch and the rollback without a
 signature: an install from a clone lands in `releases/<version>-dev.<12 hex of
 the commit>/` with `SOURCE=unsigned`, and a host copy from before the layout
-becomes `releases/<version>-legacy/`; **1b** adds the signed tag and
-`--release`, which installs into `releases/<version>/`, and needs the release
-key first. Each phase is versioned by CLAUDE.md's SemVer rule (a new command
+becomes `releases/<version>-legacy/`; **1b** (built, 0.82.0, RT-6.29) adds
+the signed tag and `--release`, which installs into `releases/<version>/` with
+`SOURCE=signed`; a host installs it once the owner's first signed tag exists
+and its keys are pinned. The non-corral configs pointed at the host copy
+(point 7) are still open. Each phase is versioned by CLAUDE.md's SemVer rule (a new command
 is a minor), which supersedes "patch-sized" in this ADR's first draft.
 
-**Tests (when built):** `tests/hooks/`: `--release` installs a tag signed by a
+**Tests (phases 1a and 1b built: `tests/hooks/test_host_install.py`, `test_host_install_release.py`; the rest when built):** `tests/hooks/`: `--release` installs a tag signed by a
 pinned key; refuses an unsigned one, one signed by another key, one whose
 name differs from its tag object's or whose tree has another version, one that
 moved, and a malformed version; refuses an older version without

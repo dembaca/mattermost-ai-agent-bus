@@ -23,8 +23,37 @@ bus only through the MCP tools, and cannot register or delete agents itself.
 
 ## Config
 
-**First install the hooks on the host**, in a normal terminal outside corral, from a
-git clone no session works in, after reviewing it:
+**Install the hooks on the host from a signed release** (from 0.82.0), in a normal
+terminal outside corral. Pin the release keys once — the owner's Ed25519 key and the
+offline backup key, both public, compared with the owner out of band — in the
+environment of the shell you run the installer from (not in a session, a workdir or
+the plugin):
+
+```bash
+# ~/.profile or similar, on the host; one public key per line
+export MM_RELEASE_SIGNERS='ssh-ed25519 AAAA…owner release key
+ssh-ed25519 AAAA…backup release key'
+# optional: MM_RELEASE_URL (default https://github.com/dembaca/mattermost-ai-agent-bus.git)
+
+~/.local/share/mm-agent-bus/current/bin/mm-agent-host-install.sh --release v0.82.0
+```
+
+The installer itself runs on the host, so run the one of the host copy, or for the
+very first install the one of a clone you reviewed (below); what it installs comes
+from the tag only.
+
+The installer fetches the tag into `~/.local/share/mm-agent-bus/src.git`, installs it
+only when its signature comes from a pinned key, the tag object carries that name and
+the tree says that version, and prints the signer's fingerprint; a tag that moved
+since this host fetched it is refused. It needs git 2.34 or newer and `ssh-keygen`.
+Every refusal leaves `current` as it was. For a new release, run it again with the new
+tag; to rotate a key, pin old and new together
+([arc42 RT-6.29](../docs/arc42/06-runtime-view.md#629-host-copy-from-a-signed-release)).
+The output, `--check` and the start hook say `signed release v<x.y.z>`, or `unsigned`
+for an install from a clone (below).
+
+**Or from a clone** (development, `SOURCE=unsigned`), in a normal terminal outside
+corral, from a git clone no session works in, after reviewing it:
 
 ```bash
 git clone https://github.com/dembaca/mattermost-ai-agent-bus ~/src/mattermost-ai-agent-bus

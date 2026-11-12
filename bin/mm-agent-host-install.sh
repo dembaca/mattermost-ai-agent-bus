@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Install the corral host hooks where no sandbox can change them.
 #
+#   mm-agent-host-install.sh --release vX.Y.Z  # a release tag signed by a pinned key
 #   bin/mm-agent-host-install.sh             # from the checkout this script is in
 #   mm-agent-host-install.sh --from DIR      # from another checkout you reviewed
 #   mm-agent-host-install.sh --downgrade ... # allow an older version than current
@@ -23,8 +24,13 @@
 # printed to compare with the one you reviewed. This
 # copies adapters/corral/ and bin/ into a directory per release beside
 # MM_BUS_HOST_DIR (default ~/.local/share/mm-agent-bus/current):
-# releases/<version>-dev.<commit>/, marked SOURCE=unsigned until releases are
-# signed (ADR-011). `current` is a symlink to one of them, switched in one
+# releases/<version>-dev.<commit>/, marked SOURCE=unsigned. `--release vX.Y.Z`
+# instead fetches that annotated tag from MM_RELEASE_URL (default: the GitHub
+# repository) into src.git beside releases/, never moving a tag it fetched
+# before, verifies its SSH signature against the public keys in
+# MM_RELEASE_SIGNERS (one per line) and the version in its tree, and installs
+# git archive of it into releases/X.Y.Z/, marked SOURCE=signed (ADR-011
+# phase 1b, RT-6.29). `current` is a symlink to one of them, switched in one
 # rename once the release is complete; the one before stays as `previous`, and
 # --rollback swaps the two. The sandbox neither sees nor writes any of it.
 # Point corral's `exec` once at current.hooks/, a dispatcher that stays the
@@ -38,7 +44,7 @@
 # bot token never enters the sandbox (RT-6.18). A release goes when neither
 # link nor a running session (recorded by preStart) uses it.
 #
-# Spec: arc42 §7.1 (docs/arc42/07-deployment-view.md), RT-6.28.
+# Spec: arc42 §7.1 (docs/arc42/07-deployment-view.md), RT-6.28, RT-6.29.
 set -euo pipefail
 
 here="${0%/*}"
@@ -51,17 +57,25 @@ mm_safe_path
 
 die() { echo "mm-agent-host-install: $*" >&2; exit 1; }
 
-FROM="" CHECK=0 ROLLBACK=0 DOWNGRADE=0
+FROM="" RELEASE="" CHECK=0 ROLLBACK=0 DOWNGRADE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="${2:-}"; shift 2 ;;
+    --release) RELEASE="${2:-}"; [[ -n "$RELEASE" ]] || die "--release takes a version tag v<major>.<minor>.<patch>"; shift 2 ;;
     --check) CHECK=1; shift ;;
     --rollback) ROLLBACK=1; shift ;;
     --downgrade) DOWNGRADE=1; shift ;;
-    -h|--help) sed -n '2,41p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
+# The version is checked before it reaches a git argument or any output.
+if [[ -n "$RELEASE" ]]; then
+  [[ "$RELEASE" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)$ ]] ||
+    die "--release takes a version tag v<major>.<minor>.<patch>; refused"
+  VER="${BASH_REMATCH[1]}" TAG="v${BASH_REMATCH[1]}"
+  [[ -z "$FROM" && "$ROLLBACK" -eq 0 && "$CHECK" -eq 0 ]] || die "--release takes no --from, --rollback or --check"
+fi
 
 DEST="${MM_BUS_HOST_DIR:-$HOME/.local/share/mm-agent-bus/current}"
 # Relative paths are the operator's; then work from /, never from a checkout.
@@ -76,7 +90,7 @@ command -v jq >/dev/null 2>&1 || die "jq is required"
 if [[ "$CHECK" -eq 1 ]]; then
   # The installed plugins include the corral homes: a version to compare, no path.
   have="$(version_of "$DEST")" want="$(mm_newest_plugin_version || true)"
-  printf 'host hooks: %s (%s)\nplugin:     %s\n' "$have" "$DEST" "${want:-not found}"
+  printf 'host hooks: %s, %s (%s)\nplugin:     %s\n' "$have" "$(mm_release_kind "$DEST")" "$DEST" "${want:-not found}"
   [[ -n "$want" && "$have" == "$want" ]]
   exit $?
 fi
@@ -110,6 +124,8 @@ layout() {
   RELEASES="$parent/releases" PREV="$parent/previous" HOOKS="$DEST.hooks"
   [[ ! -L "$RELEASES" ]] || die "$RELEASES is a symlink; refused"
   [[ ! -L "$HOOKS" ]] || die "$HOOKS is a symlink; refused"
+  SRC_GIT="$parent/src.git"
+  [[ ! -L "$SRC_GIT" ]] || die "$SRC_GIT is a symlink; refused"
   [[ ! -e "$PREV" || -L "$PREV" ]] || die "$PREV is not a symlink; move it away, then rerun"
   [[ ! -e "$DEST" || -L "$DEST" || -d "$DEST" ]] || die "$DEST is neither a directory nor a symlink; move it away, then rerun"
   mkdir -p "$RELEASES"
@@ -121,7 +137,7 @@ layout() {
 new="" LOCK=""
 cleanup() {
   [[ -z "$new" ]] || rm -rf "$new"
-  [[ -z "$LOCK" ]] || rmdir "$LOCK" 2>/dev/null || true
+  [[ -z "$LOCK" ]] || { rm -f "$LOCK/allowed_signers"; rmdir "$LOCK" 2>/dev/null || true; }
 }
 trap cleanup EXIT
 
@@ -301,6 +317,115 @@ if [[ "$ROLLBACK" -eq 1 ]]; then
   collect_garbage
   exit 0
 fi
+unset "${!GIT_@}"
+# What every release tree has; a source without it is no mattermost-ai-agent-bus.
+REQUIRED=(adapters/corral/10-mm-session-start.sh adapters/corral/90-mm-session-stop.sh
+          bin/mm-agent-lib.sh bin/mm-agent-symbols.sh .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock
+          mcp/src/mattermost_ai_agent_bus/hosted.py)
+# What is installed; mcp/README.md and the skill when the source has them.
+paths=(bin adapters/corral .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock mcp/src)
+OPTIONAL=(mcp/README.md skills/mattermost-ai-agent-bus)
+
+# --- a signed release (RT-6.29) -------------------------------------------------
+# The pinned keys come from the host's environment only, never from the plugin,
+# a workdir or a session; git runs without system or global config, hook or
+# attributes file, fetches over https (or from a local path for a mirror) with
+# no credential, and checks every object it receives.
+if [[ -n "$RELEASE" ]]; then
+  [[ -n "${MM_RELEASE_SIGNERS:-}" ]] ||
+    die "MM_RELEASE_SIGNERS is not set: pin the release keys (ssh-ed25519 public key lines) before installing a release; nothing changed"
+  SIGNERS=""
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -n "$line" && "$line" != \#* ]] || continue
+    [[ "$line" =~ ^(ssh-ed25519|sk-ssh-ed25519@openssh\.com)[[:space:]]+([A-Za-z0-9+/]+={0,2})([[:space:]].*)?$ ]] ||
+      die "MM_RELEASE_SIGNERS has a line that is no Ed25519 public key (ssh-ed25519 AAAA…); refused"
+    SIGNERS+="mm-release namespaces=\"git\" ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"$'\n'
+  done <<<"${MM_RELEASE_SIGNERS//;/$'\n'}"
+  [[ -n "$SIGNERS" ]] || die "MM_RELEASE_SIGNERS holds no public key; nothing changed"
+  URL="${MM_RELEASE_URL:-https://github.com/dembaca/mattermost-ai-agent-bus.git}"
+  case "$URL" in
+    https://*)
+      [[ "$URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~%+-]+)+/?$ ]] ||
+        die "MM_RELEASE_URL is no plain https URL (no user, query or space); refused" ;;
+    /* | file:///*)
+      u="$(cd -P "${URL#file://}" 2>/dev/null && pwd -P)" || die "MM_RELEASE_URL: no such directory: ${URL#file://}"
+      ! sandbox_writable "$u" || die "MM_RELEASE_URL $u can be changed from inside a corral sandbox; refused"
+      URL="$u" ;;
+    *) die "MM_RELEASE_URL must be an https:// URL or an absolute path; refused" ;;
+  esac
+  command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen is required to verify the release's signature"
+  gv="$(git --version | sed -n 's/^git version \([0-9]*\.[0-9]*\).*/\1/p')"
+  if [[ -z "$gv" ]] || mm_version_newer "$gv.0" "2.34.0"; then
+    die "git 2.34 or newer is required to verify SSH signatures"
+  fi
+  rgit() {
+    # LC_ALL=C: its messages are matched below. TMPDIR: verify-tag's temporary
+    # files go into the installer's own lock directory, which only the host sees.
+    LC_ALL=C TMPDIR="$LOCK" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+      git --no-optional-locks -c core.attributesFile=/dev/null -c core.fsmonitor=false \
+      -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false \
+      -c protocol.allow=never -c protocol.https.allow=always -c protocol.file.allow=always \
+      -c credential.helper= -c transfer.fsckObjects=true --git-dir="$SRC_GIT" "$@"
+  }
+  # Name, signature, then tree; any refusal before the switch leaves current as it was.
+  stage_release() {
+    local out old_id tag_id hdr tname ttype obj vout vrc=0 f v_py v_init
+    [[ -d "$SRC_GIT" ]] ||
+      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git init -q --bare --template= "$SRC_GIT" ||
+      die "could not create $SRC_GIT"
+    old_id="$(rgit rev-parse -q --verify "refs/tags/$TAG" || true)"
+    # No + in the refspec: a tag fetched before is never moved (git refuses to clobber it).
+    if ! out="$(rgit fetch --no-tags --no-recurse-submodules --no-write-fetch-head \
+          "$URL" "refs/tags/$TAG:refs/tags/$TAG" 2>&1)"; then
+      if [[ -n "$old_id" && "$out" == *"would clobber existing tag"* ]]; then
+        die "the tag $TAG at $URL moved since this host fetched it (it was ${old_id:0:12}): a signed release never moves; refused, $DEST is unchanged"
+      fi
+      die "could not fetch $TAG from $URL; $DEST is unchanged:"$'\n'"$(tail -n 5 <<<"$out" | tr -cd '[:print:]\n')"
+    fi
+    tag_id="$(rgit rev-parse -q --verify "refs/tags/$TAG")" || die "$TAG is not in $SRC_GIT after the fetch"
+    [[ "$(rgit cat-file -t "$tag_id")" == tag ]] ||
+      die "$TAG is a lightweight tag (no tag object, so no signature): not a release; refused, $DEST is unchanged"
+    printf '%s' "$SIGNERS" >"$LOCK/allowed_signers"
+    vout="$(rgit -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$LOCK/allowed_signers" \
+              -c gpg.ssh.program=ssh-keygen verify-tag "$tag_id" 2>&1)" || vrc=$?
+    if [[ "$vout" == *"no signature found"* ]]; then
+      die "$TAG carries no signature: not a signed release; refused, $DEST is unchanged"
+    fi
+    # SSH signatures: verify-tag's exit code with allowedSignersFile set, and
+    # the one principal the installer wrote, nothing else.
+    SIGNER="$(sed -n 's/^Good "git" signature for mm-release with [A-Z0-9-]* key \(SHA256:[A-Za-z0-9+/]*\)$/\1/p' <<<"$vout" | head -n1)"
+    if [[ "$vrc" -ne 0 || -z "$SIGNER" ]]; then
+      if [[ "$vout" == *"No principal matched"* ]]; then
+        die "$TAG is signed by a key not pinned in MM_RELEASE_SIGNERS ($(grep -o 'SHA256:[A-Za-z0-9+/]*' <<<"$vout" | head -n1)); refused, $DEST is unchanged"
+      fi
+      die "$TAG does not verify against MM_RELEASE_SIGNERS; refused, $DEST is unchanged:"$'\n'"$(tail -n 3 <<<"$vout" | tr -cd '[:print:]\n')"
+    fi
+    hdr="$(rgit cat-file tag "$tag_id")"
+    hdr="$(sed '/^$/q' <<<"$hdr")"
+    tname="$(sed -n 's/^tag //p' <<<"$hdr" | head -n1)"
+    ttype="$(sed -n 's/^type //p' <<<"$hdr" | head -n1)"
+    obj="$(sed -n 's/^object //p' <<<"$hdr" | head -n1)"
+    [[ "$tname" == "$TAG" ]] ||
+      die "the tag $TAG is a signed tag object named $(tr -cd '[:alnum:]._-' <<<"$tname" | cut -c1-40): a ref pointed at another release; refused, $DEST is unchanged"
+    [[ "$ttype" == commit && "$obj" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]] ||
+      die "$TAG does not tag a commit; refused"
+    head_sha="$obj" TAG_ID="$tag_id"
+    for f in "${OPTIONAL[@]}"; do
+      if rgit cat-file -e "$head_sha:$f" 2>/dev/null; then paths+=("$f"); fi
+    done
+    rgit archive --format=tar "$head_sha" -- "${paths[@]}" | tar -x -C "$new" ||
+      die "could not unpack $TAG"
+    for f in "${REQUIRED[@]}"; do
+      [[ -f "$new/$f" ]] || die "$TAG is no mattermost-ai-agent-bus release (missing $f); refused"
+    done
+    v_py="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$new/mcp/pyproject.toml" | head -n1)"
+    v_init="$(sed -n 's/^__version__ = "\([^"]*\)"$/\1/p' "$new/mcp/src/mattermost_ai_agent_bus/__init__.py" 2>/dev/null | head -n1)"
+    version="$(version_of "$new")"
+    [[ "$version" == "$VER" && "$v_py" == "$VER" && "$v_init" == "$VER" ]] ||
+      die "the tree of $TAG has version $(tr -cd '[:alnum:]._-' <<<"$version/$v_py/$v_init" | cut -c1-60) (plugin.json/pyproject/__init__), not $VER; refused, $DEST is unchanged"
+  }
+else
 [[ -n "$FROM" ]] || FROM="$SELF"
 src="$(cd -P "$FROM" 2>/dev/null && pwd -P)" || die "no such directory: $FROM"
 FROM="$src"
@@ -314,9 +439,7 @@ fi
 if sandbox_writable "$FROM"; then
   die "$FROM can be changed from inside a corral sandbox; run the installer from a checkout you reviewed, outside corral and outside every session's workdir (or pass --from <checkout>)"
 fi
-for f in adapters/corral/10-mm-session-start.sh adapters/corral/90-mm-session-stop.sh \
-         bin/mm-agent-lib.sh bin/mm-agent-symbols.sh .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock \
-         mcp/src/mattermost_ai_agent_bus/hosted.py; do
+for f in "${REQUIRED[@]}"; do
   [[ -f "$FROM/$f" ]] || die "$FROM is not a mattermost-ai-agent-bus tree (missing $f)"
 done
 [[ "$FROM" != "$(cd -P "$DEST" 2>/dev/null && pwd -P)" ]] ||
@@ -330,7 +453,6 @@ done
 # written it, so git reads no system or global config, no attributes file of
 # the operator's, runs no fsmonitor and no hook, and a clone whose config or
 # info/attributes could make it run anything is refused (arc42 §7.1).
-unset "${!GIT_@}"
 git_() {
   GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
     git --no-optional-locks -c core.attributesFile=/dev/null -c core.fsmonitor=false \
@@ -353,14 +475,14 @@ risky="$(git_ config --get-regexp '^(filter|diff|merge|include|includeif|tar)\.'
 for a in "${repo_dirs[0]}/info/attributes" "${repo_dirs[1]}/info/attributes"; do
   [[ ! -e "$a" ]] || die "$FROM has $a, which can make git run commands; refused — install from a clone that was never a session's workdir"
 done
-paths=(bin adapters/corral .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock mcp/src)
-for f in mcp/README.md skills/mattermost-ai-agent-bus; do
+for f in "${OPTIONAL[@]}"; do
   if git_ cat-file -e "HEAD:$f" 2>/dev/null; then paths+=("$f"); fi
 done
 dirty="$(git_ status --porcelain --untracked-files=all -- "${paths[@]}")" ||
   die "git status failed in $FROM"
 [[ -z "$dirty" ]] ||
   die "$FROM has uncommitted changes or untracked files in what would be installed — commit or remove them, review, then rerun:"$'\n'"$dirty"
+fi
 
 command -v uv >/dev/null 2>&1 ||
   die "uv is required: it prepares the MCP server's environment, without which sessions get no bus; nothing changed"
@@ -381,26 +503,35 @@ fi
 new="$(mktemp -d "$RELEASES/.install.XXXXXX")"
 # The MCP server, for the host process (RT-6.18); the skill, whose size its
 # overhead stats count (RT-6.9).
-head_sha="$(git_ rev-parse --verify 'HEAD^{commit}')" || die "$FROM has no commit to install"
-head_line="$(git_ log -1 --no-show-signature --format='%H %s' "$head_sha")"
-git_ archive --format=tar "$head_sha" -- "${paths[@]}" | tar -x -C "$new" ||
-  die "could not copy HEAD of $FROM"
+if [[ -n "$RELEASE" ]]; then
+  stage_release
+  ORIGIN="$URL, tag $TAG"
+  name="$VER"
+  source_text="SOURCE=signed"$'\n'"TAG=$TAG"$'\n'"TAG_OBJECT=$TAG_ID"$'\n'"COMMIT=$head_sha"$'\n'"SIGNER=$SIGNER"$'\n'
+else
+  ORIGIN="$FROM"
+  head_sha="$(git_ rev-parse --verify 'HEAD^{commit}')" || die "$FROM has no commit to install"
+  head_line="$(git_ log -1 --no-show-signature --format='%H %s' "$head_sha")"
+  git_ archive --format=tar "$head_sha" -- "${paths[@]}" | tar -x -C "$new" ||
+    die "could not copy HEAD of $FROM"
+  version="$(version_of "$new")"
+  name="${version}-dev.${head_sha:0:12}"
+  source_text="SOURCE=unsigned"$'\n'"COMMIT=$head_sha"$'\n'
+fi
 links="$(find "$new" -type l -print)"
-[[ -z "$links" ]] || die "$FROM has symlinks in what would be installed; refused:"$'\n'"${links//$new\//}"
+[[ -z "$links" ]] || die "$ORIGIN has symlinks in what would be installed; refused:"$'\n'"${links//$new\//}"
 chmod -R go-w "$new"
 chmod +x "$new"/adapters/corral/*.sh "$new"/bin/*.sh
 
-version="$(version_of "$new")"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-  die "$FROM has no version of the form <major>.<minor>.<patch> in .claude-plugin/plugin.json"
-name="${version}-dev.${head_sha:0:12}"
+  die "$ORIGIN has no version of the form <major>.<minor>.<patch> in .claude-plugin/plugin.json"
 [[ "$name" =~ $RELEASE_RE ]] || die "cannot name a release for commit $head_sha"
 # An older version only on purpose: nobody is led back to a release with a
 # known bug by accident.
 if [[ -e "$DEST" ]]; then
   have="$(version_of "$DEST")"
   if [[ "$DOWNGRADE" -eq 0 ]] && mm_version_newer "$version" "$have"; then
-    die "$DEST runs $have, newer than $version from $FROM; pass --downgrade to install the older one (or --rollback to go back to previous)"
+    die "$DEST runs $have, newer than $version from $ORIGIN; pass --downgrade to install the older one (or --rollback to go back to previous)"
   fi
 fi
 
@@ -417,7 +548,9 @@ if [[ "$cur" == "$name" ]]; then
   collect_garbage
   exit 0
 fi
-if [[ -d "$rel" && ! -L "$rel" && -f "$rel/SOURCE" && -e "$rel/mcp/.venv/bin/python" ]]; then
+# A signed release is reused only for the same tag object.
+if [[ -d "$rel" && ! -L "$rel" && -f "$rel/SOURCE" && -e "$rel/mcp/.venv/bin/python" ]] &&
+   { [[ -z "$RELEASE" ]] || grep -qx "TAG_OBJECT=$TAG_ID" "$rel/SOURCE"; }; then
   # Installed before and complete (SOURCE comes last): switch back to it.
   rm -rf "$new"
   new=""
@@ -429,8 +562,8 @@ else
   if ! sync_release "$rel"; then
     die "could not prepare the MCP server's environment in $rel (uv sync --locked); $DEST is unchanged"
   fi
-  # Until releases are signed (ADR-011 phase 1b), every install is from a clone.
-  printf 'SOURCE=unsigned\nCOMMIT=%s\n' "$head_sha" >"$rel/SOURCE"
+  # SOURCE=signed for --release (RT-6.29), SOURCE=unsigned from a clone.
+  printf '%s' "$source_text" >"$rel/SOURCE"
   chmod go-w "$rel/SOURCE"
   new=""
   server="MCP server environment ready: the bot token stays on the host (RT-6.18)"
@@ -479,13 +612,21 @@ install_dispatcher "$name"
 # only way back.
 if [[ "$gc" -eq 1 ]]; then collect_garbage; else echo "no release removed: a step above failed" >&2; fi
 
+if [[ -n "$RELEASE" ]]; then
+  kind="signed release $TAG, signed by $SIGNER, a key pinned in MM_RELEASE_SIGNERS"
+  head_line="$head_sha (tag object $TAG_ID)"
+  check="Verified: the tag's signature, its name and the version in its tree."
+else
+  kind="unsigned: from a clone, not a signed release"
+  check="Compare the commit with the one you reviewed."
+fi
 cat <<EOF
-Installed mattermost-ai-agent-bus $version host hooks (unsigned: from a clone, not a signed release)
-  from: $FROM
+Installed mattermost-ai-agent-bus $version host hooks ($kind)
+  from: $ORIGIN
   commit: $head_line
   to:   $DEST -> releases/$name
   $prev_line
-  Compare the commit with the one you reviewed.
+  $check
 $server
 
 corral config (~/.config/corral/config.yml), set once:

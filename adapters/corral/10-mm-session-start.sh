@@ -138,7 +138,7 @@ unregister_again() {
 # writes, so the notice names no path and does not tell where to install from.
 if command -v jq >/dev/null 2>&1 && want="$(mm_newest_plugin_version)" &&
    mm_version_newer "$(mm_tree_version "$ROOT")" "$want"; then
-  log "host hooks are $(mm_tree_version "$ROOT"), plugin ${want} is installed — reinstall them from a clone you reviewed: mm-agent-host-install.sh --from <clone>"
+  log "host hooks are $(mm_tree_version "$ROOT"), plugin ${want} is installed (this host copy: $(mm_release_kind "$ROOT")) — install the signed release: mm-agent-host-install.sh --release v<version>, or --from <a clone you reviewed> (RT-6.29)"
 fi
 
 # --- wanted at all? ----------------------------------------------------------
@@ -626,4 +626,4 @@ jq -nc \
      status: [$status]
    }' 4< <(printf '%s' "$BUS_KEY")
 
-log "session bot ${MM_BOT_USERNAME} ready, its MCP server on the host (pid ${HOST_PID})"
+log "session bot ${MM_BOT_USERNAME} ready, its MCP server on the host (pid ${HOST_PID}); host copy $(mm_tree_version "$ROOT"), $(mm_release_kind "$ROOT")"

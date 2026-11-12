@@ -25,6 +25,16 @@ is not done until the docs say what the code now does:
   `### Breaking` in its CHANGELOG entry). Patch: fixes that change no
   behaviour, docs, tests.
 
+## Releasing
+
+A version reaches hosts only as a signed tag (ADR-011, RT-6.29). After the
+merge the owner, and only the owner, creates the annotated SSH-signed tag
+`v<version>` (the version in `.claude-plugin/plugin.json`) on the merge commit
+and pushes it: `git tag -s v<version> -m v<version> <merge commit>`
+(`gpg.format=ssh`, the owner's release key), then `git push origin v<version>`.
+A tag is never moved or re-signed. Agents never sign and never create or push
+version tags.
+
 ## Before you push
 
 ```bash
