@@ -256,6 +256,16 @@ class UnreadChannel:
     name: str = field(default="", compare=False)
 
 
+class Refused(Exception):
+    """Mattermost refused a request; the text says why, for the agent. `status`
+    is its HTTP status (0: unknown): a 4xx is the request's own fault and comes
+    back the same, a 5xx may pass."""
+
+    def __init__(self, message: str = "", status: int = 0) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 class NoAttestationEndpoint(ValueError):
     """A 404 on the registrar's attestation route that is not its own `no
     attestation` (RT-6.24 step 5): that registrar does not serve attestations

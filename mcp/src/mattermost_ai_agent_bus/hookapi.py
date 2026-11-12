@@ -10,7 +10,7 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             (?detail=1: up to 5 channels, with fyi counts)
     GET  /v1/last-post      {at, message, signed_off}: the own latest post in the work channel
     GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
-                            message, to, intent, fyi, gated, names_agent, absent[, files]}]},
+                            message, to, intent, fyi, quiet, gated, names_agent, absent[, files]}]},
                             work channel
                             (or ?channel=ID|NAME of the project or default
                             channel, else 403), newest first (?limit=N, at
@@ -586,7 +586,7 @@ async def _last(client: MattermostAdapter, query: Mapping[str, str],
     if rec.get("AT", "").isdigit() and rec.get("MSG"):
         return int(rec["AT"]), rec["MSG"], ownpost.signed_off(rec["MSG"], rec)
     for post in await client.channel_posts(await client.work_channel_id(), per_page=100):
-        if post.user_id == uid and post.kind != a2a.REMINDER:
+        if post.user_id == uid and post.kind not in a2a.SERVER_OWN:
             message = a2a.strip_crown(post.message).replace("\n", " ").strip()
             return post.create_at, message, ownpost.signed_off(message)
     return 0, "", False
@@ -605,6 +605,8 @@ def _slim(post: Post, agents: set[str], gated: set[str], absent: set[str]) -> di
         "intent": intent,
         # Only an agent's intent counts: anyone can write props (RT-6.14).
         "fyi": intent == a2a.FYI and post.user_id in agents,
+        # RT-6.6 step 9: another agent's context line wakes nobody, enters no digest.
+        "quiet": post.kind in a2a.QUIET and post.user_id in agents,
         "gated": post.id in gated,
         "names_agent": bool(tasks._mentions(post.message)),
         "absent": post.id in absent,
@@ -770,10 +772,13 @@ async def usage_route(client: MattermostAdapter, query: Mapping[str, str],
     """The status line's numbers (ADR-008, RT-6.10 step 3): the valid fields
     are kept as this session's last report, anything else ignored, never a
     400: the status line's call must not fail on a number. A band crossed
-    (usage.band_due) writes the status and the props once, lease.py."""
+    (usage.band_due) writes the status once, lease.py; the context at
+    usage.CTX_LINE_AT posts one line in the HELLO thread (RT-6.6 step 9)."""
     usage.record(body)
     if usage.band_due():
         await lease.usage_crossed(client)
+    if usage.ctx_line_due():
+        await lease.ctx_line(client)
     return 200, {"ok": True}
 
 

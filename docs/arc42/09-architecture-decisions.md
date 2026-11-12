@@ -16,7 +16,7 @@ code does today and point here where a decision will change them.
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-ask-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phases 1 (0.71.0: the pinned post) and 2 (0.71.18: the registrar's signed `/agent-mandate` record) built, RT-6.26 | #141 |
 | ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); phase 1 built (0.75.0: the crown beat and the slot); amendment phases B (0.71.9: the crown only for peers) and C (0.71.11: stale copies stay off the bus) built, the rest not built | – |
-| ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; D, B and the other runtimes open | – |
+| ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 open | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Proposed (2026-11-09), not built | – |
@@ -1319,7 +1319,10 @@ handover by step 4; record it as a RISK when built if it shows up in use.
 ## ADR-008: Context and limits of the agents in the chat
 
 **Status:** Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C;
-D, B and the other runtimes open. Stage 1 decided by a trusted
+phase 3 partly built (0.76.0): the context threshold (RT-6.6 step 9); the
+window thresholds and the blocked state open, since Claude Code reports no
+`rate_limits` behind the gateway (open questions) and they wait for that
+measurement; B and the other runtimes open. Stage 1 decided by a trusted
 human on 2026-11-04: the tap (step 1), A (step 2), C (step 3) and D (step 4).
 B is stage 2 and only an outlook here; E and F are alternatives. The numbers
 below are proposals; step 4's "a blocked agent is not reachable" (proposed by
@@ -1453,7 +1456,7 @@ or not at all is for the human to decide.
 **Phases:** (1) the tap and the status (steps 1 and 2): `POST /v1/usage`, the
 helper, the throttle, the text and its truncation. (2) the roster and the
 coordinator.md line (step 3). (3) the thresholds, `BLOCKED`, the blocked state
-and its answer (step 4), after the measurement below. Each is patch-sized. Built in 0.71.6: (1) and (2) together.
+and its answer (step 4), after the measurement below. Each is patch-sized. Built in 0.71.6: (1) and (2) together. Built in 0.76.0 of (3): the context line only (once per context window, armed again when a report is below 70 %; its own fyi kind `usage`, which, like a reminder, is no post of the agent's, and which wakes no other agent and enters no digest: the roster carries the number); the window lines, `BLOCKED`, the blocked state and its answer wait for the measurement.
 
 **Tests (when built, `mcp/tests/`, `tests/hooks/`):** the helper sends on a
 change of one point and every 60 s, not more, and never waits longer than 1 s
