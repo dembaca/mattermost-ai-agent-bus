@@ -702,6 +702,26 @@ mm_tree_version() {
   printf '%s\n' "${v:-?}"
 }
 
+# What kind of host copy a release tree is (ADR-011, RT-6.29): "signed release
+# v<x.y.z>" when the installer marked it SOURCE=signed after verifying its tag,
+# "release v<x.y.z> (signature not checked)" for SOURCE=release (installed
+# without MM_RELEASE_SIGNERS), else "unsigned" (from a clone, or from before
+# 0.81.0). For notices only.
+mm_release_kind() {
+  local s tag
+  s="$(mm_read_file "$1/SOURCE" 4096)" || s=""
+  tag="$(sed -n 's/^TAG=//p' <<<"$s" | head -n1)"
+  if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'unsigned\n'
+  elif [[ $'\n'"$s"$'\n' == *$'\n'SOURCE=signed$'\n'* ]]; then
+    printf 'signed release %s\n' "$tag"
+  elif [[ $'\n'"$s"$'\n' == *$'\n'SOURCE=release$'\n'* ]]; then
+    printf 'release %s (signature not checked)\n' "$tag"
+  else
+    printf 'unsigned\n'
+  fi
+}
+
 # Epoch seconds → RFC 3339 UTC / local HH:MM, on GNU and BSD date alike.
 mm_epoch_rfc3339() {
   date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ

@@ -1,0 +1,28 @@
+name: release tag
+
+# Informational only (ADR-011, RT-6.29): a pushed version tag names the version
+# in .claude-plugin/plugin.json. No secret, no signature check: hosts verify the
+# signature themselves against their pinned keys.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  tag-matches-version:
+    name: tag name matches plugin.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+      - name: compare
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          want="v$(jq -r .version .claude-plugin/plugin.json)"
+          if [ "$TAG" != "$want" ]; then
+            echo "::error::tag $TAG does not match plugin.json ($want)"
+            exit 1
+          fi
+          echo "tag $TAG matches plugin.json"
