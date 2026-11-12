@@ -25,7 +25,7 @@ from pydantic import ValidationError
 from . import (
     __version__, a2a, askroute, asks, attest, channel, departed, files, gate, hookapi, lease, life, mandate, overhead, owners, ownpost,
     permission,
-    profile, remind, session_file, slim, stall, stats, tasks, unread, usage,
+    profile, receipt, remind, session_file, slim, stall, stats, tasks, unread, usage,
 )
 from .client import InvalidId, MattermostAdapter, attachment_props, guest_ids, mm_id, mm_name
 from .model import Answer, Mark, Post, Refused
@@ -2017,6 +2017,7 @@ async def wait_for_events(
         )
     finally:
         _tool_idle.set()
+    receipt.delivered(e.post.id for e in events)  # RT-6.12 step 7: the 👑's 👀 with the return
     payload = await _event_items(events, raw)
     await _typing_for_task(events, payload)
     await _note_delivered(events, payload)
@@ -2238,6 +2239,8 @@ _tool_idle.set()
 
 
 _pusher = channel.Pusher(digest_sec=channel.digest_sec())
+# RT-6.12 step 7: with a confirmed channel a take-up delivers what was pushed.
+receipt.pushes = _pusher.confirmed.is_set
 # Threads this bot posted in: a reply there is for it (RT-6.2, as the listener).
 _my_threads: set[str] = set()
 # Of those, the ones it started: even an fyi reply there is for it (RT-6.14).

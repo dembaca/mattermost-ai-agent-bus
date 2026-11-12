@@ -73,13 +73,17 @@ MANDATE = "mandate"
 # The server's one line in the agent's HELLO thread when its context reaches
 # usage.CTX_LINE_AT (ADR-008 step 4, RT-6.6 step 9): fyi, not the agent's post.
 USAGE = "usage"
-_OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE, USAGE)
+# The server's line in the home when it took the crown over (ADR-007 step 4, RT-6.6
+# step 10): fyi, for people; props.a2a.holder names the holder it took it from.
+CROWN_TAKEN = "crown_taken"
+_OWN = (ASK, PERMISSION, REMINDER, ASK_LINK, ASK_MODE, MANDATE, USAGE, CROWN_TAKEN)
 # Posts the server sends on its own: no post of the agent's, so they neither undo
 # a sign-off (ownpost.py) nor count as its activity (stall.py).
-SERVER_OWN = (REMINDER, USAGE)
+SERVER_OWN = (REMINDER, USAGE, CROWN_TAKEN)
 # An agent's posts no other agent needs a turn for: they wake nobody and enter no
-# digest (the roster carries the number, RT-6.6 step 9). Only an agent's props count.
-QUIET = (USAGE,)
+# digest (the roster carries the number, RT-6.6 steps 9 and 10). Only an agent's
+# props count.
+QUIET = (USAGE, CROWN_TAKEN)
 # The wire door of the core (arc42 §5.1): the meanings the core speaks in
 # (model.Mark, Answer, StatusMark) and what they look like in Mattermost
 # (symbols.py, the one place that knows the characters and shortcodes).
@@ -96,6 +100,8 @@ status_emoji = _symbols.status_emoji
 status_of = _symbols.status_of
 done_reaction = _symbols.done_reaction
 is_done = _symbols.is_done
+receipt_reaction = _symbols.receipt_reaction
+receipt_of = _symbols.receipt_of
 mandate_crown = _symbols.mandate_crown
 
 
@@ -176,7 +182,7 @@ def state(kind: str | None) -> str | None:
 def intent(kind: str | None) -> str | None:
     if kind in (ASK, PERMISSION):
         return REPLY
-    if kind in (REMINDER, ASK_MODE, MANDATE, USAGE):
+    if kind in (REMINDER, ASK_MODE, MANDATE, USAGE, CROWN_TAKEN):
         return FYI
     return WORDS.get((kind or "").upper(), _NONE)[2]
 

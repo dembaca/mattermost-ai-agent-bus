@@ -29,6 +29,8 @@ _MARKS: dict[Mark, str] = {
     Mark.DESKTOP: "\U0001F5A5" + _SELECTOR,  # desktop computer
     Mark.ALLOWED: "\u2705",           # white heavy check mark
     Mark.DENIED: "\u26d4",            # no entry
+    Mark.SEEN: "\U0001F440",          # eyes
+    Mark.WAITS: "\u23f3",             # hourglass with flowing sand
 }
 _ANSWERS: dict[Answer, str] = {
     Answer.YES: "\U0001F44D",           # thumbs up
@@ -44,6 +46,8 @@ _YES = frozenset({"+1", "thumbsup", "white_check_mark", "heavy_check_mark", "bal
 _NO = frozenset({"-1", "thumbsdown", "x", "no_entry", "no_entry_sign"})
 _CHOICE_NAMES = ("one", "two", "three", "four")
 _DONE = "white_check_mark"
+# The receipts of the 👑's server as reactions (ADR-007 step 3, amendment step 2).
+_RECEIPTS: dict[Mark, str] = {Mark.SEEN: "eyes", Mark.WAITS: "hourglass_flowing_sand"}
 
 # The custom status emoji (a shortcode) of each state.
 _STATUS: dict[StatusMark, str] = {
@@ -128,6 +132,16 @@ def done_reaction() -> str:
 
 def is_done(emoji: str) -> bool:
     return emoji == _DONE
+
+
+def receipt_reaction(mark: Mark) -> str:
+    """The reaction (a shortcode) of a receipt: Mark.SEEN or Mark.WAITS."""
+    return _RECEIPTS[mark]
+
+
+def receipt_of(emoji: str) -> Mark | None:
+    """Mark.SEEN or Mark.WAITS for a receipt's reaction, None for any other."""
+    return next((m for m, e in _RECEIPTS.items() if e == emoji), None)
 
 
 def answer_of(emoji: str) -> Answer | None:

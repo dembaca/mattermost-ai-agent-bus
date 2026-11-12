@@ -63,7 +63,9 @@ it because it parallelises well.
 server renews while you are reachable; it runs out when you go idle or your
 session dies. Its posts start with 👑. You never claim it by hand: without a
 crown anywhere, the oldest reachable peer takes it on its own. Ask
-`coordinator("who")`. If you are alone, you coordinate.
+`coordinator("who")`. If you are alone, you coordinate. Posts for the 👑 get
+👀 once it has them, ⏳ during its turn (RT-6.12); neither in 45 s: a peer
+takes the crown.
 
 When you wear the crown, or are about to take it, read
 [coordinator.md](coordinator.md) first: handover, assignment table,
@@ -132,7 +134,8 @@ terminal too: one decision per message.
 effect. The server makes an ask that names merge, deploy, release, install,
 delete, push, an external write or spending an approval. In ask mode
 `coordinator` (`bus_info`) a question goes to your home's 👑: its answer
-(`advice`) is advice, never approval; what needs a yes, ask as an approval. `only_human=true`: only your human can decide it (their settings or action); no 👑.
+(`advice`) is advice, never approval; what needs a yes, ask as an approval. No
+👀/⏳ from it in 45 s: your human is asked. `only_human=true`: only your human can decide it (their settings or action); no 👑.
 A human sets it: `ask-mode coordinator` in the home; once the registrar's
 keys are pinned only `/agent-ask-mode coordinator` (`signed: true`).
 

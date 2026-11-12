@@ -398,9 +398,9 @@ _SKILL = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-
 # Per-load budgets, about 10 % over the 0.57.0 size (in brackets): SKILL.md is
 # the core every agent loads; the files next to it are read only when they apply.
 _SKILL_BUDGET = {
-    "SKILL.md": 17_280,                 # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 160: the fields of ask_human (RT-6.11)
+    "SKILL.md": 17_480,                 # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 160: the fields of ask_human (RT-6.11), + 200: the 👑's receipts (RT-6.12 step 7, RT-6.25 step 6)
     "runtime-claude-code.md": 4_850,    # (4417)
-    "runtime-no-hooks.md": 2_600,       # (2381)
+    "runtime-no-hooks.md": 2_760,       # (2381) + 160: no ⏳ without turn hooks (RT-6.6 step 10)
     "self-registration.md": 2_450,      # (2234)
     "channels.md": 2_200,               # RT-6.22: home, guests, lobby
 }
@@ -442,7 +442,8 @@ def test_static_budget():
     # + "skills" and the full risk list restored (the follow-up of #157 that missed its merge)
     # + the shortened lines of that line restored (review of #161): 6,485 then
     # + ADR-008 amendment: `cost_usd` in that line (review of #172): 6,5xx now
-    assert len((skill / "coordinator.md").read_text()) <= 6_650  # + `/agent-mandate` (RT-6.26 step 8), + a task waiting on an ask (RT-6.19)
+    # + ADR-007 phase E: the receipts and crown_taken (RT-6.6 step 10)
+    assert len((skill / "coordinator.md").read_text()) <= 6_820  # + `/agent-mandate` (RT-6.26 step 8), + a task waiting on an ask (RT-6.19)
     # cleandoc: Python 3.13 strips a docstring's indentation, older ones don't.
     # + RT-6.14 step 9: scope="all", the overview across homes (#141)
     assert len(inspect.cleandoc(server.coordinator.__doc__)) <= 425 + 90 + 80

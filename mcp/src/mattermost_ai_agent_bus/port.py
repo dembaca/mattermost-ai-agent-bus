@@ -185,6 +185,10 @@ class ChatPort(Protocol):
 
     async def reactions(self, post_id: str) -> list[Reaction]: ...
 
+    async def add_reaction(self, post_id: str, emoji: str) -> None:
+        """Put the bot's reaction (a shortcode) on a post (RT-6.12 step 7)."""
+        ...
+
     async def pinned_posts(self, channel_id: str) -> list[Post]:
         """A channel's pinned posts, newest first (RT-6.26 step 1); raises
         when they cannot be read."""

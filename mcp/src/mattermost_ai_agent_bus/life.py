@@ -29,11 +29,15 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 
 _sign = time.time()  # the last sign of the agent
 _turn = False  # a turn runs (the prompt hook's working, until the Stop hook's end)
 _untaken = 0.0  # the first push or wake no turn or tool call took up yet; 0 none
 _shown = False  # the status last written shows the agent silent
+# Told of every take-up (ADR-007 amendment step 2, receipt.py): True at a turn's
+# begin or end, which takes up what came during the turn too; False for a tool call.
+_taken: list[Callable[[bool], None]] = []
 
 
 def ack_wait_sec() -> int:
@@ -60,16 +64,34 @@ def take_up() -> None:
     global _untaken
     sign()
     _untaken = 0.0
+    _tell(False)
 
 
 def turn(running: bool) -> None:
-    """A turn begins (it takes up what waits) or ends."""
-    global _turn
+    """A turn begins (it takes up what waits) or ends; either takes up what
+    came during the turn before (RT-6.12 step 4: Claude Code queues it)."""
+    global _turn, _untaken
+    sign()
     if running:
-        take_up()
-    else:
-        sign()
+        _untaken = 0.0
     _turn = running
+    _tell(True)
+
+
+def in_turn() -> bool:
+    """A turn runs: from the prompt hook's working to the Stop hook's end."""
+    return _turn
+
+
+def on_take_up(fn: Callable[[bool], None]) -> None:
+    """Call fn(boundary) at each take-up; boundary: a turn begins or ends."""
+    if fn not in _taken:
+        _taken.append(fn)
+
+
+def _tell(boundary: bool) -> None:
+    for fn in list(_taken):
+        fn(boundary)
 
 
 def pushed() -> None:

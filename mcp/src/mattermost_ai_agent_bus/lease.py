@@ -49,6 +49,11 @@ SLOT_SEC = 10.0
 STATES = ("working", "listening", "idle", "bus", "offline")
 # The status text's first word for an agent without a sign (ADR-007 amendment step 1).
 SILENT = "silent"
+_SILENT_SINCE = re.compile(rf"{SILENT} · no sign since (\d\d:\d\dZ)")
+# A segment of a holder's status text: its server sets the receipts (👀, ⏳) on the
+# posts that wake it (ADR-007 amendment, decided 2026-11-12; RT-6.6 step 10). A
+# holder without it (an older plugin) is judged as before: nobody claims over it.
+RECEIPT_MARK = a2a.symbol(Mark.SEEN)
 ACTIONS = ("who", "take", "release", "tick")
 _UID = re.compile(r"[a-z0-9]{26}")
 # One lock per event loop: a status, take, release or tick reads and writes
@@ -329,7 +334,10 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     if state != "offline" and crown > now:
         if reachable:
             crown = now + crown_lease_sec()  # ADR-007 step 1: the beat renews it
-        emoji, text, until = a2a.status_emoji(StatusMark.COORDINATOR), f"coordinator · {text}", crown
+        # The marker (ADR-007 amendment, decided 2026-11-12): this holder's server sets
+        # the receipts, so the others may claim over a post without one (receipt.py).
+        emoji, until = a2a.status_emoji(StatusMark.COORDINATOR), crown
+        text = f"coordinator · {text} · {RECEIPT_MARK}"
     else:
         crown = 0
     if text:
@@ -386,6 +394,11 @@ def status_text(head: str, label: str, segments: list[str], home: str) -> str:
         if len(text) + len(tail) <= STATUS_MAX:
             return text + tail
     return homed(head, home)
+
+
+def sets_receipts(text: str) -> bool:
+    """A holder's status text carries the receipt marker (RT-6.6 step 10)."""
+    return RECEIPT_MARK in (w.strip() for w in str(text).split(" · "))
 
 
 def home_of(text: str) -> str | None:
@@ -673,9 +686,18 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
     # A crown per home (ADR-002): only the agents whose home this is count.
     rows = _at_home(await _rows(client, cid), client.work_channel_name)
     others = [r for r in rows if r["crown"] and r["id"] != uid]  # oldest first
+    global _took_from, _crown_since, _ousted
+    if crown <= now:
+        _took_from, _crown_since, _ousted = "", 0.0, None
+    elif _took_from:
+        # ADR-007 step 4: the holder this agent took the crown over from does
+        # not get it back by being older; it yields when it sees crown_taken.
+        others = [r for r in others if r["id"] != _took_from]
 
     async def take_now() -> None:
+        global _crown_since
         _save_coord(uid, now + crown_lease_sec(), 0, 0)
+        _crown_since = now
         await _render(client)
         if crown <= now:
             # The crown passed to this agent: is the header's bus part there (step 7)?
@@ -699,7 +721,14 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
         return "released"
 
     holding = crown > now
-    if holding and others:
+    if holding and (by := await _taken_from_me(client, cid, uid, rows)):
+        # ADR-007 step 4: an agent took the crown over from this one (no 👀 in
+        # time): it yields, and does not claim for two leases, as after a release.
+        _save_coord(uid, 0, 0, now + 2 * lease)
+        _took_from, _crown_since, _ousted = "", 0.0, None
+        await _render(client)
+        log.info("crown yielded: %s took it over (crown_taken, ADR-007 step 4)", by)
+    elif holding and others:
         # Two crowns in one home (a race): the older agent keeps it, among
         # peers; a holder that does not stand yields to one that does (an
         # unbound one to a bound one, ADR-007 amendment step 4).
@@ -737,6 +766,62 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
 _look_at = 0.0
 _vacant_at = 0.0
 _holder_id = ""
+# The holder's name and whether its status shows the receipt marker (receipt.py).
+_holder_name = ""
+_holder_marked = False
+# ADR-007 step 4: the holder this agent took the crown over from (no yield to it),
+# since when this agent holds its crown (epoch s; 0 unknown), and the agent a
+# crown_taken naming this one came from, with when (until the next tick judges it).
+_took_from = ""
+_crown_since = 0.0
+_ousted: tuple[str, float] | None = None
+
+
+def holder() -> tuple[str, str, bool]:
+    """The home's crown holder this server last saw (id, username, whether it
+    sets receipts); ('', '', False) while it saw none or holds the crown itself."""
+    return (_holder_id, _holder_name, _holder_marked) if _holder_name else ("", "", False)
+
+
+def ousted(by: str, at: float) -> None:
+    """A crown_taken post naming this agent came from `by` (ADR-007 step 4): the
+    next tick yields if `by` wears a live crown in the home."""
+    global _ousted
+    _ousted = (by, at)
+
+
+def ousted_pending() -> bool:
+    return _ousted is not None
+
+
+async def _taken_from_me(client: ChatPort, cid: str, uid: str, rows: list[dict[str, Any]]) -> str:
+    """The agent that took this holder's crown over (ADR-007 step 4): one with a
+    live crown in the home whose crown_taken names this agent; '' for none.
+    Heard on the WebSocket (ousted), or, while a second crown shows, read from
+    the home's posts since this agent holds the crown: a holder whose WebSocket
+    is dead hears nothing. Only a crowned agent's post counts; a heard one is
+    judged once (its author wears no crown: nothing, and no tick at once again)."""
+    global _ousted
+    heard, _ousted = (_ousted[0] if _ousted else ""), None
+    crowned = {str(r["id"]) for r in rows if r["crown"] and r["id"] != uid}
+    if not crowned:
+        return ""
+    if heard in crowned:
+        return heard
+    since = _crown_since or time.time() - lease_sec()
+    try:
+        posts = await client.channel_posts(cid, since_ms=int(since * 1000))
+    except Exception as exc:  # noqa: BLE001 — unread: the rules of two crowns, as before
+        log.info("crown_taken not read: %s", exc)
+        return ""
+    return next((p.user_id for p in posts if p.kind == a2a.CROWN_TAKEN and p.user_id in crowned
+                 and a2a_holder(p.props) == uid), "")
+
+
+def a2a_holder(props: Mapping[str, Any]) -> str:
+    """props.a2a.holder of a crown_taken post: the holder it was taken from."""
+    note = props.get("a2a") if isinstance(props, Mapping) else None
+    return str(note.get("holder") or "") if isinstance(note, Mapping) else ""
 
 
 def look_due() -> float:
@@ -753,12 +838,15 @@ def _plan(uid: str, rows: list[dict[str, Any]]) -> None:
     holds the crown or is not reachable, nor for a crown without an end (its
     lease rules, as before). With no holder seen yet only the oldest plans, a
     slot from now; the others wait for a holder."""
-    global _look_at, _vacant_at, _holder_id
+    global _look_at, _vacant_at, _holder_id, _holder_name, _holder_marked
     now = time.time()
     state = _coord(uid)
     holder = next((r for r in rows if r["crown"] and r["id"] != uid), None)
     if holder is not None:
         _vacant_at, _holder_id = holder["until_ms"] / 1000, str(holder["id"])
+        _holder_name, _holder_marked = str(holder["username"]), sets_receipts(holder["text"])
+    elif not any(r["id"] == _holder_id and r["crown"] for r in rows):
+        _holder_name, _holder_marked = "", False  # no live crown: nothing to watch
     _look_at = 0.0
     ids = [str(r["id"]) for r in rows if r["reachable"] and (holder is None or r["id"] != holder["id"])]
     if (state.get("CROWN_UNTIL", 0) > now or uid not in ids
@@ -781,10 +869,11 @@ async def look(client: ChatPort) -> bool:
     could not claim plans none until the next tick. True when it claimed (the
     next tick re-checks for a second crown soon). Before its time it reads
     nothing. Never raises."""
-    global _look_at
+    global _look_at, _crown_since
     if not client.token or not 0 < _look_at <= time.time():
         return False
     claimed: list[bool] = []
+    silent = None
     try:
         async with _lock():
             uid = await _user_id(client)
@@ -803,6 +892,10 @@ async def look(client: ChatPort) -> bool:
                 await _render(client)
                 claimed.append(_coord(uid).get("CROWN_UNTIL", 0) > now)
                 log.info("crown claimed at this agent's slot (ADR-007 step 2)")
+                if any(claimed):
+                    _crown_since = now
+                    old = next((r for r in rows if r["id"] == _holder_id), None)
+                    silent = (old, m) if old and (m := _SILENT_SINCE.match(str(old["text"]))) else None
                 await _header(client, cid)
             _plan(uid, rows)
             if free and not any(claimed):
@@ -812,9 +905,110 @@ async def look(client: ChatPort) -> bool:
     except Exception as exc:  # noqa: BLE001 — fail open, like the tick
         log.debug("lease look: %s", exc)
         return False
+    if silent is not None:
+        # The amendment's step 1: the dropped crown was a silent holder's; the
+        # line names the silence (RT-6.6 step 10).
+        old, m = silent
+        await _crown_taken(client, cid, uid, str(old["id"]), f"`{old['username']}` silent since {m[1]}")
     if any(claimed):
         await _crown_came()
     return any(claimed)
+
+
+# --- the claim over a missing receipt (ADR-007 steps 3 and 4) ---------------------------
+
+async def slot_over(client: ChatPort, holder_id: str) -> int:
+    """ADR-007 step 3: this agent's place (1 the oldest) among the reachable
+    agents of the home that stand, the holder left out, for a claim over the
+    holder `holder_id`; 0 when it has none or the holder wears no crown that
+    sets receipts any more. Raises when the roster cannot be read."""
+    uid = await _user_id(client)
+    cid = await client.work_channel_id()
+    rows = _at_home(await _rows(client, cid), client.work_channel_name)
+    held = next((r for r in rows if r["id"] == holder_id), None)
+    if held is None or not held["crown"] or not sets_receipts(held["text"]) or _silent(uid):
+        return 0
+    ids = (await _election(client, [r for r in rows if r["id"] != holder_id])).ids
+    return ids.index(uid) + 1 if uid in ids else 0
+
+
+async def take_over(client: ChatPort, holder_id: str, post_id: str) -> bool:
+    """ADR-007 steps 3 and 4: no receipt of the holder for `post_id` in time, so
+    this agent claims as if the holder's status had ended: when the holder
+    still wears its crown with the marker, no other crown is live in the home
+    (an earlier slot took it), this agent is reachable, not silent, not
+    yielding, and stands. Then the crown is this agent's, it does not yield to
+    that holder (_took_from) and posts crown_taken. A race of two such claims
+    ends at the next tick: the younger yields. Never raises."""
+    global _took_from, _crown_since
+    try:
+        async with _lock():
+            uid = await _user_id(client)
+            if not _UID.fullmatch(uid):
+                return False
+            now = int(time.time())
+            state = _coord(uid)
+            cid = await client.work_channel_id()
+            rows = _at_home(await _rows(client, cid), client.work_channel_name)
+            held = next((r for r in rows if r["id"] == holder_id), None)
+            if (held is None or not held["crown"] or not sets_receipts(held["text"])
+                    or any(r["crown"] for r in rows if r["id"] != holder_id)
+                    or not any(r["id"] == uid and r["reachable"] for r in rows) or _silent(uid)
+                    or state.get("CROWN_UNTIL", 0) > now or state.get("YIELD_UNTIL", 0) > now
+                    or uid not in (await _election(client, [r for r in rows if r["id"] != holder_id])).ids):
+                return False
+            _save_coord(uid, now + crown_lease_sec(), 0, 0)
+            await _render(client)
+            if _coord(uid).get("CROWN_UNTIL", 0) <= now:
+                return False
+            _took_from, _crown_since = holder_id, now
+            log.info("crown taken over from %s: no receipt for %s (ADR-007 step 3)", held["username"], post_id)
+            await _header(client, cid)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — fail open, like the tick
+        log.info("crown not taken over: %s", exc)
+        return False
+    seen = a2a.symbol(Mark.SEEN)
+    await _crown_taken(client, cid, uid, holder_id,
+                       f"no {seen} for `{post_id}` within {life.ack_wait_sec()} s")
+    await _crown_came()
+    return True
+
+
+async def _crown_taken(client: ChatPort, cid: str, uid: str, holder_id: str, why: str) -> None:
+    """The one line in the home after a takeover (ADR-007 step 4, RT-6.6 step 10):
+    `👑 taken over by <bot>: <why>`, kind crown_taken, intent fyi (it wakes
+    nobody, no digest: a2a.QUIET), props.a2a.holder the holder it came from,
+    which yields when it reads it. Never raises."""
+    try:
+        me = (await client.get_me()).username
+        message = with_crown(f"taken over by `{me}`: {why}", uid)
+        props = a2a.props(kind=a2a.CROWN_TAKEN) or {}
+        props["a2a"] = {**props.get("a2a", {}), "holder": holder_id}
+        stats.record("post", chars=len(message))
+        await client.post(message, channel_id=cid, props=props)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — the crown is taken all the same
+        log.info("crown_taken not posted: %s", exc)
+
+
+async def receipt_holder(client: ChatPort, username: str) -> tuple[str, str]:
+    """RT-6.25 step 6 (ADR-007 step 5): the home's agent `username` as a question's
+    👑: (its id, 'marked') when it wears a crown that sets receipts, (its id,
+    'silent') when it turned silent, ('', '') else (an older plugin, gone: judged
+    as before). Raises when the roster cannot be read."""
+    cid = await client.work_channel_id()
+    rows = _at_home(await _rows(client, cid), client.work_channel_name)
+    row = next((r for r in rows if str(r["username"]).lower() == username.lower()), None)
+    if row is None:
+        return "", ""
+    if row["crown"] and sets_receipts(row["text"]):
+        return str(row["id"]), "marked"
+    if _SILENT_SINCE.match(str(row["text"])):
+        return str(row["id"]), "silent"
+    return "", ""
 
 
 # --- the work channel's header (RT-6.6 step 7) ---------------------------------------
@@ -960,7 +1154,12 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
     wake with nothing due reads one file. A crown that lapsed gets its plain
     status at once, and so does an agent that turns silent or shows a sign
     again (ADR-007 amendment step 1): a silent holder drops its crown with
-    that write. It wakes when the agent would turn silent."""
+    that write. It wakes when the agent would turn silent. A member that
+    watches a post for the holder's receipt (receipt.py, ADR-007 step 3) looks
+    when its wait is over, and a holder that heard a crown_taken naming it
+    ticks at once (step 4)."""
+    from . import receipt  # receipt.py claims through this module
+
     next_tick, held, seeded = 0.0, False, False
     while True:
         delay = heartbeat_sec()
@@ -974,7 +1173,7 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
                         # A server that restarts during a turn (a reconnect,
                         # /reload-plugins) keeps it: the Stop hook ends it.
                         life.turn(True)
-                if time.time() >= next_tick:
+                if time.time() >= next_tick or (_ousted is not None and crown_held(uid)):
                     await command(client, "tick")
                     if take_pending(uid):
                         delay = PENDING_POLL_SEC
@@ -989,13 +1188,15 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
                     await set_status(client, "renew")  # the crown lapsed: the plain lease now
                 elif bool(_silent(uid)) != life.is_shown():
                     await set_status(client, "renew")  # silent, or a sign again
-                elif await look(client):
+                elif await receipt.check(client) or await look(client):
                     next_tick = min(next_tick, time.time() + PENDING_POLL_SEC)
                 held = crown_held(uid)
                 now = time.time()
                 delay = next_tick - now
                 if _look_at and not held:
                     delay = min(delay, max(1.0, _look_at - now))
+                if (watched := receipt.due()) and not held:
+                    delay = min(delay, max(1.0, watched - now))
                 counts, listening = _judged(uid)
                 if counts and (silent_at := life.due(listening=listening)):
                     delay = min(delay, max(1.0, silent_at - now))

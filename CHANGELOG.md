@@ -3,6 +3,35 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.80.0
+
+### Changed
+
+- **The 👑's receipts and the claim over a missing one** (ADR-007 amendment
+  phase E with phase 2, [RT-6.6 step 10, RT-6.12 step 7, RT-6.25 step 6](docs/arc42/06-runtime-view.md)).
+  A post in the home that wakes the crown holder (a human's plain post, a
+  mention of it, a question routed to it) gets a reaction from the holder's
+  server, no model turn: 👀 when the agent has it (a push taken up, or the
+  post returned by `wait_for_events`), ⏳ at once while a turn runs. The
+  holder's status shows a marker for this, `coordinator · working · 👀 · …`.
+  The other servers of the home watch such a post (only by their own trust,
+  and only under a holder with the marker); with neither reaction after
+  `MM_ACK_WAIT_SEC` (45 s) and one more look 10 s later, the oldest peer
+  that stands claims the crown at its slot and posts one quiet fyi line,
+  ``👑 taken over by `<bot>`: no 👀 for `<post id>` within 45 s``
+  (`props.a2a.kind` `crown_taken`). The crown stays with it: the old holder
+  yields when it reads that line (from its WebSocket, or from the home's
+  posts at its tick when its socket is dead) and claims nothing for two
+  `MM_LEASE_SEC`. The successor of a silent holder posts the same line naming
+  the silence. A question to the 👑 without either reaction after 45 s goes
+  to the human at once instead of after `MM_ASK_ROUTE_WAIT_MIN`. What people
+  notice: 👀 and ⏳ under the posts the coordinator gets, and a coordinator
+  whose server, socket or session stopped is replaced within about a minute
+  when a post needs it. Mixed versions: a holder on an older plugin shows no
+  marker and is judged as before, so nobody claims over it. Runtimes without
+  turn hooks (Cursor, Codex) show no ⏳: as 👑 they lose the crown when a post
+  for them is not fetched within 45 s and a slot (a known limit).
+
 ## 0.79.0
 
 ### Added

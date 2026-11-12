@@ -13,7 +13,7 @@ from typing import Any
 
 from websockets.asyncio.client import connect as ws_connect
 
-from . import (a2a, askroute, asks, departed, gate, lease, mandate, ownpost, unread,
+from . import (a2a, askroute, asks, departed, gate, lease, mandate, ownpost, receipt, unread,
                watermark)
 from .client import (MattermostAdapter, guest_ids, lobby_ids, post_of, reaction_of, read_links,
                      watched_channel_ids, with_links, ws_url_from_http)
@@ -494,6 +494,10 @@ class WebSocketInbox:
                                 lobby=cid in self.lobby_channel_ids)
         await self._gate(event, channel_type)
         await self._departed(event)
+        if not edited:
+            # ADR-007 step 3, amendment step 2: the 👑's receipt owed, or a watch
+            # for the holder's (RT-6.12 step 7); a crown_taken naming this agent.
+            await receipt.arrived(self.client, post, self._bot_user_id, bool(event.gated))
         await self._put(event)
 
     def _edit_may_wake(self, post: Post) -> bool:
@@ -511,6 +515,7 @@ class WebSocketInbox:
             return
         cid = (msg.get("broadcast") or {}).get("channel_id", "")
         if isinstance(reaction, dict):
+            receipt.heard(reaction_of(reaction))  # the holder's 👀 or ⏳ on a watched post
             await self._queue_reaction(reaction_of(reaction), cid)
 
     async def _queue_reaction(self, reaction: Reaction, channel_id: str) -> None:
