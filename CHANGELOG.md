@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.82.1
+
+### Fixed
+
+- **A question about version tags is no longer lifted to an approval** ([RT-6.25](docs/arc42/06-runtime-view.md) step 1, RT-6.11).
+  The floor's words `tag` and `push` matched the plural nouns ("which key
+  signs the version tags?", "channel pushes"), so a `kind=question` with three
+  answers was refused. The plural nouns `tags` and `pushes` no longer lift; every
+  other form (`tag`, `tagged`, `tagging`, `push`, `pushed`, `pushing`) does. The
+  floor still scans only `need`, `decision` and `answers`, never `context`, and
+  "Merge PR #5?", "Install 0.81 on hogan?" or "Let's tag v1" stay approvals.
+
 ## 0.82.0
 
 ### Added
