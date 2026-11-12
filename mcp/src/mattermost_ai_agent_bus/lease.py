@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import a2a, channel, life, owners, ownpost, session_file, stats, usage
+from . import a2a, channel, life, owners, ownpost, release, session_file, stats, usage
 from .model import ChannelUser, Mark, Post, Refused, RosterEntry, StatusMark
 
 if TYPE_CHECKING:
@@ -342,7 +342,10 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     else:
         crown = 0
     if text:
-        text = status_text(text, named, usage.segments(), client.work_channel_name)
+        # The version last: the first segment cut (RT-6.30; the roster then
+        # reads it from the HELLO card).
+        text = status_text(text, named, [*usage.segments(), *release.segment()],
+                           client.work_channel_name)
         usage.shown()
     if coord is not None and coord.is_file():
         lines = _read_lines(coord)
@@ -564,7 +567,8 @@ def entry(row: Mapping[str, Any], crown_of: str = "") -> RosterEntry:
     return RosterEntry(username=str(row.get("username") or ""), status=status,
                        coordinator=bool(row.get("coordinator")), crown=bool(row.get("crown")),
                        crown_of=crown_of, user_id=str(row.get("id") or ""),
-                       usage=usage.from_status(str(row.get("text", ""))))
+                       usage=usage.from_status(str(row.get("text", ""))),
+                       release=release.from_status(str(row.get("text", ""))))
 
 
 # --- the crown --------------------------------------------------------------------------

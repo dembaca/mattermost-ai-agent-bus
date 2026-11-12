@@ -19,7 +19,7 @@ code does today and point here where a decision will change them.
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 built (0.79.0: the pi extension, RT-6.27) | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
-| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phases 2–3 open | – |
+| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, every server once a day as a bounded child), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); phase 3 open | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2024,7 +2024,7 @@ on: the end, and `status` and `bus_info` show it.
 
 ## ADR-011: Updates from a signed release only
 
-**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy; phase 1b built (0.82.0, RT-6.29): `--release v<x.y.z>`, the tag verified against pinned keys when the host sets them (opt-in, decision (3) below). Proposed 2026-11-09. Asked for by a trusted human on
+**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy; phase 1b built (0.82.0, RT-6.29): `--release v<x.y.z>`, the tag verified against pinned keys when the host sets them (opt-in, decision (3) below); phase 2 built (0.83.0, RT-6.30): the release check and the notice, as point 3 and the open questions' recommendations (*Phase 2 as built* below). Proposed 2026-11-09. Asked for by a trusted human on
 2026-11-09 ("probably not quite simple with plugin incl. MCP server and
 sandbox hooks"). Options, a recommendation and open questions; command words,
 file names and variables below are proposals. Builds on Section 7.1 (the
@@ -2267,10 +2267,26 @@ becomes `releases/<version>-legacy/`; **1b** (built, 0.82.0, RT-6.29) adds
 the signed tag and `--release`, which installs into `releases/<version>/` with
 `SOURCE=signed`, or `SOURCE=release` `VERIFIED=no` on a host without pinned keys; a host installs it once the owner's first signed tag exists
 and its keys are pinned. The non-corral configs pointed at the host copy
-(point 7) are still open. Each phase is versioned by CLAUDE.md's SemVer rule (a new command
+(point 7) are still open. **2** (built, 0.83.0, RT-6.30) follows the recommendations
+of two open questions below: the MCP server runs the check as a bounded child (and
+the installer's `--check`), and a `Withdrawn:` line is read; the notice honours it,
+`--release` does not yet. Each phase is versioned by CLAUDE.md's SemVer rule (a new command
 is a minor), which supersedes "patch-sized" in this ADR's first draft.
 
-**Tests (phases 1a and 1b built: `tests/hooks/test_host_install.py`, `test_host_install_release.py`; the rest when built):** `tests/hooks/`: `--release` installs a tag signed by a
+*Phase 2 as built (0.83.0, RT-6.30).* `bin/mm-agent-release-check.sh` shares the
+installer's helpers (`mm-agent-lib.sh`: the keys, the URL, git's clean environment,
+the tag's checks); it tries the three newest tags, fetched with `--depth=1` into
+`src.git`, and writes `release.env` in the host state directory (the host process of
+a keyless session: the one preStart chose). The server's child gets `PATH`, `HOME`,
+`LC_ALL=C` and `MM_RELEASE_URL`, `MM_RELEASE_SIGNERS`, `MM_BUS_HOST_DIR` only, runs
+from `/` in its own process group and is stopped after 30 s. What is needed is read
+from every entry after the running version up to the newest, not the newest entry
+alone. The `Needs:` grammar: `MM_*` names, versions `x.y.z` and a fixed word list
+(`scripts/doc-check.py`, `NEEDS_WORDS`), at most 120 characters. The roster's version
+is the last segment of the status text (cut first; the HELLO card's `version` stands
+in), with `unchecked` or `unsigned` when the release is not a signed one.
+
+**Tests (phases 1a, 1b and 2 built: `tests/hooks/test_host_install.py`, `test_host_install_release.py`, `test_release_check.py`, `mcp/tests/test_release.py`; the rest when built):** `tests/hooks/`: `--release` installs a tag signed by a
 pinned key; refuses an unsigned one, one signed by another key, one whose
 name differs from its tag object's or whose tree has another version, one that
 moved, and a malformed version; refuses an older version without
@@ -2290,7 +2306,8 @@ withdrawal is an open question. A new row in Section 11 when accepted.
 
 **Open questions:**
 
-- **Withdrawing a release:** a signature never expires. Recommendation: a
+- **Withdrawing a release:** (phase 2 reads the line and the notice honours it;
+  `--release` refusing a withdrawn version is still open) a signature never expires. Recommendation: a
   `Withdrawn: v<version>` line in a newer release's CHANGELOG entry, read from
   its verified tree, which `--release` and the notice honour.
 - **The plugin side:** whether Claude Code's marketplace can follow release
@@ -2305,7 +2322,7 @@ withdrawal is an open question. A new row in Section 11 when accepted.
   to run, signed with its key, which the notice shows next to the newest
   verified tag, never below a host's version. Recommendation: phase 3, only if
   teams want to hold back.
-- **Who runs the release check:** the installer only (no network from a
+- **Who runs the release check:** (built in phase 2 as recommended: both) the installer only (no network from a
   session), or also the MCP server as a bounded child once a day (it runs in
   every harness, but spawns `git` against the network from the process that
   holds the token). Recommendation: the child, with a clean environment and a

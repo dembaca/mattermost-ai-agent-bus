@@ -722,6 +722,221 @@ mm_release_kind() {
   fi
 }
 
+# --- release tags (ADR-011, RT-6.29, RT-6.30) -----------------------------------
+# Shared by the installer (--release) and the release check: the pinned keys,
+# the repository, the tools, git's clean environment and the checks of a tag.
+# On a failure each sets MM_REL_ERR (a message that echoes no argument) and
+# returns 1.
+
+# MM_RELEASE_SIGNERS → MM_REL_ENFORCE (1 when it is set: the check is opt-in,
+# decision (3) of 2026-11-12) and MM_REL_ALLOWED, an allowed-signers file's
+# text: Ed25519 keys under one fixed principal, mm-release, namespaces="git".
+# Set but holding no key is a mistake, not opt-out.
+mm_release_signers() {
+  local line
+  MM_REL_ENFORCE=0 MM_REL_ALLOWED="" MM_REL_ERR=""
+  [[ -z "${MM_RELEASE_SIGNERS+set}" ]] || MM_REL_ENFORCE=1
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    [[ -n "$line" && "$line" != \#* ]] || continue
+    if [[ ! "$line" =~ ^(ssh-ed25519|sk-ssh-ed25519@openssh\.com)[[:space:]]+([A-Za-z0-9+/]+={0,2})([[:space:]].*)?$ ]]; then
+      MM_REL_ERR="MM_RELEASE_SIGNERS has a line that is no Ed25519 public key (ssh-ed25519 AAAA…); refused"
+      return 1
+    fi
+    MM_REL_ALLOWED+="mm-release namespaces=\"git\" ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"$'\n'
+  done <<<"${MM_RELEASE_SIGNERS:+${MM_RELEASE_SIGNERS//;/$'\n'}}"
+  if [[ "$MM_REL_ENFORCE" -eq 1 && -z "$MM_REL_ALLOWED" ]]; then
+    MM_REL_ERR="MM_RELEASE_SIGNERS is set but holds no public key (unset it to install without a signature check); nothing changed"
+    return 1
+  fi
+}
+
+# MM_RELEASE_URL (default the GitHub repository) → MM_REL_URL: a plain https
+# URL (no user, query or space), or an absolute local path (a mirror, the
+# tests) out of every sandbox's reach.
+mm_release_url() {
+  local u
+  MM_REL_URL="${MM_RELEASE_URL:-https://github.com/dembaca/mattermost-ai-agent-bus.git}" MM_REL_ERR=""
+  case "$MM_REL_URL" in
+    https://*)
+      [[ "$MM_REL_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~%+-]+)+/?$ ]] && return 0
+      MM_REL_ERR="MM_RELEASE_URL is no plain https URL (no user, query or space); refused" ;;
+    /* | file:///*)
+      if ! u="$(cd -P "${MM_REL_URL#file://}" 2>/dev/null && pwd -P)"; then
+        MM_REL_ERR="MM_RELEASE_URL: no such directory: ${MM_REL_URL#file://}"
+      elif mm_sandbox_can_write "$u"; then
+        MM_REL_ERR="MM_RELEASE_URL $u can be changed from inside a corral sandbox; refused"
+      else
+        MM_REL_URL="$u"
+        return 0
+      fi ;;
+    *) MM_REL_ERR="MM_RELEASE_URL must be an https:// URL or an absolute path; refused" ;;
+  esac
+  return 1
+}
+
+# With keys (MM_REL_ENFORCE=1): git 2.34 or newer and an ssh-keygen with
+# -Y find-principals (OpenSSH 8.2 or newer) verify an SSH signature.
+mm_release_tools() {
+  local gv
+  MM_REL_ERR=""
+  [[ "${MM_REL_ENFORCE:-0}" -eq 1 ]] || return 0
+  if ! command -v ssh-keygen >/dev/null 2>&1; then
+    MM_REL_ERR="ssh-keygen is required to verify the release's signature"
+    return 1
+  fi
+  case "$(LC_ALL=C ssh-keygen -Y find-principals -f /dev/null -s /dev/null 2>&1 || true)" in
+    *[Uu]nsupported* | *"illegal option"* | *"unknown option"* | *"invalid option"*)
+      MM_REL_ERR="this ssh-keygen cannot verify SSH signatures (-Y find-principals, OpenSSH 8.2 or newer); nothing changed"
+      return 1 ;;
+  esac
+  gv="$(git --version | sed -n 's/^git version \([0-9]*\.[0-9]*\).*/\1/p')"
+  if [[ -z "$gv" ]] || mm_version_newer "$gv.0" "2.34.0"; then
+    MM_REL_ERR="git 2.34 or newer is required to verify SSH signatures"
+    return 1
+  fi
+}
+
+# git on the bare repository MM_REL_GIT_DIR (src.git beside releases/), its
+# temporary files in MM_REL_TMP, a directory only the host sees: no system or
+# global config, attributes file, fsmonitor, hook, credential helper or
+# replace refs, LC_ALL=C (its messages are matched), only the https and file
+# protocols, no HTTP redirect, every received object checked (RT-6.29 step 2).
+mm_rgit() {
+  LC_ALL=C TMPDIR="$MM_REL_TMP" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    GIT_NO_REPLACE_OBJECTS=1 \
+    git --no-optional-locks -c core.attributesFile=/dev/null -c core.fsmonitor=false \
+    -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false \
+    -c protocol.allow=never -c protocol.https.allow=always -c protocol.file.allow=always \
+    -c http.followRedirects=false \
+    -c credential.helper= -c transfer.fsckObjects=true --git-dir="$MM_REL_GIT_DIR" "$@"
+}
+
+# mm_release_tag <tag> <tag object id>: RT-6.29 steps 4–5 on a fetched tag. An
+# annotated tag in both modes; with keys (MM_REL_ENFORCE=1, MM_REL_ALLOWED) an
+# SSH signature, no PGP or X.509 one, that `git verify-tag` accepts for the one
+# principal mm-release; its own name the one asked for; it tags a commit. Sets
+# MM_REL_SIGNER (the key's SHA256 fingerprint, with keys) and MM_REL_COMMIT.
+# shellcheck disable=SC2034 # MM_REL_* are read by the caller
+mm_release_tag() {
+  local tag="$1" id="$2" tobj vout vrc=0 hdr tname ttype obj
+  MM_REL_SIGNER="" MM_REL_COMMIT="" MM_REL_ERR=""
+  if [[ "$(mm_rgit cat-file -t "$id" 2>/dev/null)" != tag ]]; then
+    MM_REL_ERR="$tag is a lightweight tag (no tag object, so no signature): not a release"
+    return 1
+  fi
+  tobj="$(mm_rgit cat-file tag "$id")" || { MM_REL_ERR="$tag cannot be read"; return 1; }
+  if [[ "$MM_REL_ENFORCE" -eq 1 ]]; then
+    case "$tobj" in
+      *"-----BEGIN PGP SIGNATURE-----"* | *"-----BEGIN SIGNED MESSAGE-----"*)
+        MM_REL_ERR="$tag carries a signature that is not an SSH signature (PGP or X.509)"
+        return 1 ;;
+      *"-----BEGIN SSH SIGNATURE-----"*) ;;
+      *) MM_REL_ERR="$tag carries no signature: not a signed release"; return 1 ;;
+    esac
+    printf '%s' "$MM_REL_ALLOWED" >"$MM_REL_TMP/allowed_signers"
+    vout="$(mm_rgit -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$MM_REL_TMP/allowed_signers" \
+              -c gpg.ssh.program=ssh-keygen verify-tag "$id" 2>&1)" || vrc=$?
+    if [[ "$vout" == *"no signature found"* ]]; then
+      MM_REL_ERR="$tag carries no signature: not a signed release"
+      return 1
+    fi
+    # SSH signatures: verify-tag's exit code with allowedSignersFile set, and
+    # the one principal written above, nothing else.
+    MM_REL_SIGNER="$(sed -n 's/^Good "git" signature for mm-release with [A-Z0-9-]* key \(SHA256:[A-Za-z0-9+/]*\)$/\1/p' <<<"$vout" | head -n1)"
+    if [[ "$vrc" -ne 0 || -z "$MM_REL_SIGNER" ]]; then
+      MM_REL_SIGNER=""
+      if [[ "$vout" == *"No principal matched"* ]]; then
+        MM_REL_ERR="$tag is signed by a key not pinned in MM_RELEASE_SIGNERS ($(grep -o 'SHA256:[A-Za-z0-9+/]*' <<<"$vout" | head -n1 || true))"
+        return 1
+      fi
+      MM_REL_ERR="$tag does not verify against MM_RELEASE_SIGNERS:"$'\n'"$(tail -n 3 <<<"$vout" | tr -cd '[:print:]\n')"
+      return 1
+    fi
+  fi
+  hdr="$(sed '/^$/q' <<<"$tobj")"
+  tname="$(sed -n 's/^tag //p' <<<"$hdr" | head -n1)"
+  ttype="$(sed -n 's/^type //p' <<<"$hdr" | head -n1)"
+  obj="$(sed -n 's/^object //p' <<<"$hdr" | head -n1)"
+  if [[ "$tname" != "$tag" ]]; then
+    MM_REL_ERR="the tag $tag is a tag object named $(tr -cd '[:alnum:]._-' <<<"$tname" | cut -c1-40): a ref pointed at another release"
+    return 1
+  fi
+  if [[ "$ttype" != commit || ! "$obj" =~ ^[0-9a-f]{40}([0-9a-f]{24})?$ ]]; then
+    MM_REL_ERR="$tag does not tag a commit"
+    return 1
+  fi
+  MM_REL_COMMIT="$obj"
+}
+
+# The Needs: line of a CHANGELOG entry (ADR-011 point 3, RT-6.30) says what a
+# release needs first, and it reaches every agent's context: only variable
+# names (MM_*), versions (x.y.z) and these words, a comma after a word, at most
+# 120 characters. Kept alike in mcp/src/…/release.py (NEEDS_WORDS) and
+# scripts/doc-check.py; a test compares the three.
+MM_NEEDS_WORDS=" alike all and before corral deployed dispatcher every first host hosts new on or registrar removed renamed restart server servers session sessions set same the to unset update "
+mm_release_needs_ok() {
+  local t="$1" w
+  [[ -n "$t" && ${#t} -le 120 && "$t" =~ ^[A-Za-z0-9_.,\ ]+$ ]] || return 1
+  for w in $t; do
+    w="${w%,}"
+    [[ "$w" =~ ^MM_[A-Z0-9_]+$ || "$w" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$MM_NEEDS_WORDS" == *" $w "* ]] || return 1
+  done
+}
+
+# mm_release_notice <version> [state dir]: one line about the newest release
+# the host's release check verified (RT-6.30), for a host copy or server of
+# <version>, from release.env in the state directory (default mm_state_dir),
+# which only that check writes; fails when there is nothing to say (no check
+# yet, nothing newer, nothing withdrawn). Every field is checked again here.
+# The same text as release.py's line(), which bus_info and the turn-end banner use.
+mm_release_notice() {
+  local have="$1" dir="${2:-$(mm_state_dir)}" text k v ver rest newest="" verified="" step
+  local breaking=0 needs="" withdrawn=0 out=""
+  [[ "$have" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ -f "$dir/release.env" && ! -L "$dir/release.env" ]] || return 1
+  text="$(mm_read_file "$dir/release.env" 65536)" || return 1
+  while IFS='=' read -r k v; do
+    case "$k" in
+      NEWEST) [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && newest="$v" ;;
+      VERIFIED) [[ "$v" == yes || "$v" == no ]] && verified="$v" ;;
+    esac
+  done <<<"$text"
+  [[ -n "$newest" && -n "$verified" ]] || return 1
+  while IFS='=' read -r k v; do
+    ver="${v%% *}" rest="${v#* }"
+    [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    case "$k" in
+      ENTRY)
+        if mm_version_newer "$have" "$ver" && ! mm_version_newer "$newest" "$ver" && [[ "$rest" == breaking ]]; then
+          breaking=1
+        fi ;;
+      NEEDS)
+        if mm_version_newer "$have" "$ver" && ! mm_version_newer "$newest" "$ver" && [[ "$v" == *" "* ]] &&
+           mm_release_needs_ok "$rest" && [[ "; $needs; " != *"; $rest; "* ]]; then
+          needs="${needs:+$needs; }$rest"
+        fi ;;
+      WITHDRAWN) [[ "$v" == "$have" ]] && withdrawn=1 ;;
+    esac
+  done <<<"$text"
+  if [[ "$withdrawn" -eq 1 ]]; then
+    out="this host's ${have} is withdrawn (CHANGELOG of v${newest})"
+  fi
+  if mm_version_newer "$have" "$newest"; then
+    if [[ "${newest%%.*}" != "${have%%.*}" ]]; then step="major"
+    elif [[ "$(cut -d. -f2 <<<"$newest")" != "$(cut -d. -f2 <<<"$have")" ]]; then step="minor"
+    else step="patch"; fi
+    [[ "$breaking" -eq 0 ]] || step+=", Breaking"
+    [[ -z "$needs" ]] || step+="; needs: $needs"
+    if [[ "$verified" == yes ]]; then step+="; signature checked"; else step+="; signature not checked"; fi
+    out="${out:+$out; }release v${newest} is out (${step})"
+  elif mm_version_newer "$newest" "$have"; then
+    out="${out:+$out; }the newest release that passes the check is v${newest}, older than ${have}: the repository may be frozen or rewound"
+  fi
+  [[ -n "$out" ]] || return 1
+  printf '%s\n' "$out"
+}
+
 # Epoch seconds → RFC 3339 UTC / local HH:MM, on GNU and BSD date alike.
 mm_epoch_rfc3339() {
   date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ

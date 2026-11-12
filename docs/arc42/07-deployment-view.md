@@ -130,6 +130,21 @@ mistake, and running the right installer is the control. The installer's output,
 `--check` and the start hook say which kind runs: `signed release v<x.y.z>`,
 `release v<x.y.z> (signature not checked)` or `unsigned`.
 
+**Which release is out** (ADR-011 phase 2, RT-6.30). `bin/mm-agent-release-check.sh`,
+run by the installer's `--check` and by every MCP server at most once a day as a
+child (clean environment: `PATH`, `HOME`, `LC_ALL=C`, `MM_RELEASE_URL`,
+`MM_RELEASE_SIGNERS`, `MM_BUS_HOST_DIR`; 30 s, then its process group is stopped),
+lists the newest `v<x.y.z>` tags at `MM_RELEASE_URL`, fetches them into the same
+`src.git` (`--depth=1`, without `+`), checks them as `--release` does, and writes what
+the CHANGELOG of the newest one that passes says into `release.env` in the host state
+directory (`$XDG_STATE_HOME/mm-agent-bus`; the host process of a keyless session uses
+the one preStart chose). It installs nothing, runs nothing from the tag, and refuses
+to run inside corral or from a tree, state directory or `src.git` a sandbox can write.
+Under corral the host process gets `MM_RELEASE_*` and `MM_BUS_HOST_DIR` from preStart's
+environment like every `MM_*` setting: set them where corral's hooks see them, or its
+check runs with the defaults (no keys: `signature not checked`). The start hook, the
+turn-end banner, `--check` and `bus_info` show the notice; a human installs the release.
+
 **From a clone** (`--from`, or the checkout the installer is in) every install is
 marked `SOURCE=unsigned`, for development. It copies only what is
 committed (`git archive HEAD`, so no untracked file and no cache), and refuses a clone

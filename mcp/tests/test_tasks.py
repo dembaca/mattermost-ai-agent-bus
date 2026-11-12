@@ -170,7 +170,8 @@ def test_roster_merges_lease_and_card():
         {"agent": "agent-b", "status": "working", "coordinator": True, "model": "Cursor · GPT",
          "role": "member", "task": "review", "branch": "#9"},
         {"agent": "agent-a", "status": "listening", "model": "Claude Code · Sonnet 5.5",
-         "role": "member", "task": "docs", "branch": "feat/docs", "skills": ["gh push"]},
+         "role": "member", "task": "docs", "branch": "feat/docs", "skills": ["gh push"],
+         "version": "0.31.0"},  # RT-6.30: the card's, the status names none
     ]
 
 

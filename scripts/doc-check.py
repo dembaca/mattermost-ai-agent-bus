@@ -12,7 +12,8 @@ docs against each other. This checks what it cannot see:
   blocks     Section 6 participants are building blocks from Section 5
   rt-ids     every RT-6.x referenced anywhere exists as a Section 6 scenario,
              and every scenario is referenced by at least one test in tests/ or mcp/tests/
-  changelog  the plugin version has an entry in CHANGELOG.md
+  changelog  the plugin version has an entry in CHANGELOG.md, and its
+             `Needs:` and `Withdrawn:` lines keep their grammar (RT-6.30)
   versions   the MCP package (pyproject.toml, __version__) has the plugin version
 
 Exit 0 when clean, 1 on any error. Stdlib only.
@@ -156,6 +157,54 @@ def check_changelog() -> None:
         error(CHANGELOG, None, f"no entry for plugin version {version}")
 
 
+# The release rules (ADR-011 point 3, RT-6.30; CLAUDE.md, "Releasing"): a
+# `Needs:` line at the start of a line in a version's entry says what that
+# release needs first, in variable names, versions and these words only, at
+# most NEEDS_MAX characters, since it reaches every agent's context; a
+# `Withdrawn:` line names older releases. Kept alike in bin/mm-agent-lib.sh
+# (MM_NEEDS_WORDS) and mcp/src/mattermost_ai_agent_bus/release.py.
+NEEDS_WORDS = frozenset(
+    "alike all and before corral deployed dispatcher every first host hosts new on or "
+    "registrar removed renamed restart server servers session sessions set same the to "
+    "unset update".split())
+NEEDS_MAX = 120
+VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+WITHDRAWN_RE = re.compile(r"^Withdrawn: (v\d+\.\d+\.\d+(?:, v\d+\.\d+\.\d+){0,9})$")
+
+
+def needs_ok(text: str) -> bool:
+    if not text or len(text) > NEEDS_MAX or not re.fullmatch(r"[A-Za-z0-9_., ]+", text):
+        return False
+    return all(re.fullmatch(r"MM_[A-Z0-9_]+", w) or VERSION_RE.match(w) or w in NEEDS_WORDS
+               for w in (w.removesuffix(",") for w in text.split()))
+
+
+def _vkey(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in v.split("."))
+
+
+def check_release_lines(text: str | None = None) -> None:
+    entry = ""
+    for n, line in enumerate((CHANGELOG.read_text() if text is None else text).splitlines(), 1):
+        if line.startswith("## "):
+            m = re.match(r"^## \[?(\d+\.\d+\.\d+)\]?\s*$", line)
+            entry = m.group(1) if m else ""
+        elif line.startswith("Needs:"):
+            if not entry:
+                error(CHANGELOG, n, "a Needs: line outside a version's entry")
+            elif not line.startswith("Needs: ") or not needs_ok(line[7:]):
+                error(CHANGELOG, n, "Needs: takes MM_* variables, versions and the fixed words of "
+                      f"scripts/doc-check.py (NEEDS_WORDS), at most {NEEDS_MAX} characters")
+        elif line.startswith("Withdrawn:"):
+            m = WITHDRAWN_RE.match(line)
+            if not entry:
+                error(CHANGELOG, n, "a Withdrawn: line outside a version's entry")
+            elif not m:
+                error(CHANGELOG, n, "Withdrawn: takes v<x.y.z>[, v<x.y.z>…] (at most ten)")
+            elif any(_vkey(v[1:]) >= _vkey(entry) for v in m.group(1).split(", ")):
+                error(CHANGELOG, n, f"Withdrawn: in {entry} names a release not older than {entry}")
+
+
 # --- versions -------------------------------------------------------------------
 
 def check_versions() -> None:
@@ -180,6 +229,7 @@ def main() -> int:
     check_blocks()
     check_rt_ids()
     check_changelog()
+    check_release_lines()
     check_versions()
 
     gh = os.environ.get("GITHUB_ACTIONS") == "true"

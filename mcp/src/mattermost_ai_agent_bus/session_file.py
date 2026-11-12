@@ -149,6 +149,16 @@ def read_transcript(path: str | os.PathLike[str]) -> str | None:
 def state_dir() -> Path:
     if _hosted_dir is not None:
         return _hosted_dir
+    return host_state_dir()
+
+
+def host_state_dir() -> Path:
+    """The host's state directory, shared by every server of this user: the
+    session files, and the release check's release.env (RT-6.30). For the host
+    process of a keyless session the one preStart chose, its own state
+    directory being `<it>/hosted/<key>` (RT-6.18)."""
+    if _hosted_dir is not None:
+        return _hosted_dir.parent.parent
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
     return Path(base) / "mm-agent-bus"
 

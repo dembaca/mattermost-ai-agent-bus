@@ -37,13 +37,16 @@ if os.path.realpath(tempfile.gettempdir()).lower().startswith("/private/tmp/corr
     (ROOT / ".pytest-tmp").mkdir(exist_ok=True)
 sys.path.insert(0, str(ROOT / "mcp" / "src"))
 
-from mattermost_ai_agent_bus import hookapi, server  # noqa: E402,F401
+from mattermost_ai_agent_bus import hookapi, release, server  # noqa: E402,F401
 from mattermost_ai_agent_bus.client import MattermostAdapter  # noqa: E402
 
 # Scripts that ask the hook API instead of Mattermost: no token in their environment.
 API_USERS = ("hooks/", "bin/mm-agent-listen.sh", "bin/mm-agent-post.sh", "bin/mm-agent-poll.sh",
              "bin/mm-agent-status.sh")
 ME = "a" * 26
+# The version segment every server puts last in its status text (RT-6.30):
+# this checkout runs unsigned.
+VSEG = "".join(f" · {s}" for s in release.segment())
 TEAM = "t" * 26
 CHANNEL = "c" * 26
 PROJECT = "p" * 26

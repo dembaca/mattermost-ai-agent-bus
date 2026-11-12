@@ -44,6 +44,8 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             took over (ADR-009 phase 1, RT-6.17 step 7)
     GET  /v1/handoff        {context}: the own latest posts after a compaction
                             (RT-6.7, RT-6.20)
+    GET  /v1/release        {newest, line} or {}: the release notice for the
+                            turn-end banner, from the host's release check (RT-6.30)
 
 HTTP/1.1 on 127.0.0.1 only, an ephemeral port, one random key per server: every
 request carries ``Authorization: Bearer <key>``, compared in constant time, or
@@ -84,7 +86,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import (
-    a2a, asks, channel, files, gate, lease, life, ownpost, session_file, stall, stats, tasks, turnend, unread, usage,
+    a2a, asks, channel, files, gate, lease, life, ownpost, release, session_file, stall, stats, tasks, turnend,
+    unread, usage,
 )
 from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
 from .model import Post
@@ -1007,8 +1010,19 @@ async def handoff(client: MattermostAdapter, query: Mapping[str, str],
     return 200, {"context": turnend.handoff(got["posts"], uid)}
 
 
+async def release_route(client: MattermostAdapter, query: Mapping[str, str],
+                        body: Mapping[str, Any]) -> Reply:
+    """The release notice for the turn-end banner (RT-6.30, RT-6.2 step 8):
+    {newest, line} when there is something to say, else {}. Read from the
+    host's release check, which only this server can see in a keyless session."""
+    text = release.line()
+    state = release.read_state() if text else None
+    return 200, ({"newest": state.newest, "line": text} if state else {})
+
+
 _ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/me"): me,
+    ("GET", "/v1/release"): release_route,
     ("GET", "/v1/pending"): pending,
     ("GET", "/v1/last-post"): last_post,
     ("GET", "/v1/posts"): posts,

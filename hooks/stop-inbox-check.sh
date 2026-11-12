@@ -123,17 +123,32 @@ block() {
   exit 0
 }
 
-# A newer plugin is installed than this session runs (RT-6.2): say so once per
-# version, in the banner the human sees when the turn ends. Prints the note.
+# A newer plugin is installed than this session runs (RT-6.2 step 8), or a
+# newer release passed the host's release check (RT-6.30, from the MCP server,
+# which alone sees that check in a keyless session): say each once per
+# version, in the banner the human sees when the turn ends. Prints the notes.
 update_note() {
-  local newer uf
-  newer="$(mm_newer_plugin 2>/dev/null)" || return 1
+  local newer uf notified rel_notified notes="" newest rline
   uf="$(mm_bot_state_file update 2>/dev/null)" || return 1
-  [[ "$(sed -n 's/^NOTIFIED=//p' "$uf" 2>/dev/null)" != "$newer" ]] || return 1
-  printf 'NOTIFIED=%s\n' "$newer" >"$uf" 2>/dev/null || return 1
-  # mm_read_hook_input took the id from the hook's JSON; without it, the picker.
-  printf '%s plugin %s is installed, this session runs %s — to switch: quit, then claude --resume %s (not --continue: several sessions share the directory)' \
-    "$MM_UPDATE" "$newer" "$(mm_tree_version "$BIN/..")" "${CLAUDE_CODE_SESSION_ID:-<session-id>}"
+  notified="$(sed -n 's/^NOTIFIED=//p' "$uf" 2>/dev/null)" || notified=""
+  rel_notified="$(sed -n 's/^RELEASE_NOTIFIED=//p' "$uf" 2>/dev/null)" || rel_notified=""
+  if newer="$(mm_newer_plugin 2>/dev/null)" && [[ "$notified" != "$newer" ]]; then
+    notified="$newer"
+    # mm_read_hook_input took the id from the hook's JSON; without it, the picker.
+    notes="$(printf '%s plugin %s is installed, this session runs %s — to switch: quit, then claude --resume %s (not --continue: several sessions share the directory)' \
+      "$MM_UPDATE" "$newer" "$(mm_tree_version "$BIN/..")" "${CLAUDE_CODE_SESSION_ID:-<session-id>}")"
+  fi
+  if mm_bus GET /v1/release; then
+    newest="$(jq -r '.newest // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || newest=""
+    rline="$(jq -r '.line // ""' <<<"$MM_BUS_BODY" 2>/dev/null | head -n1 | cut -c1-400)" || rline=""
+    if [[ "$newest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -n "$rline" && "$rel_notified" != "$newest" ]]; then
+      rel_notified="$newest"
+      notes="${notes:+$notes$'\n'}$MM_UPDATE $rline — a human installs it on the host: mm-agent-host-install.sh --release v$newest"
+    fi
+  fi
+  [[ -n "$notes" ]] || return 1
+  printf 'NOTIFIED=%s\nRELEASE_NOTIFIED=%s\n' "$notified" "$rel_notified" >"$uf" 2>/dev/null || return 1
+  printf '%s' "$notes"
 }
 
 # The turn really is ending: flip the status back to idle and forget the turn.

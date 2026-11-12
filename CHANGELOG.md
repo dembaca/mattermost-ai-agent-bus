@@ -3,6 +3,40 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.83.0
+
+### Added
+
+- **The release check** (ADR-011 phase 2, [RT-6.30](docs/arc42/06-runtime-view.md#630-which-release-is-out-and-what-it-needs)):
+  `bin/mm-agent-release-check.sh` lists the newest `v<x.y.z>` tags at
+  `MM_RELEASE_URL`, fetches them into `src.git` (`--depth=1`, without `+`) and
+  checks them as `--release` does, with the keys in `MM_RELEASE_SIGNERS` when
+  the host sets them. From the CHANGELOG of the newest that passes it writes
+  `release.env` in the host state directory: the version, `### Breaking`, the
+  `Needs:` and `Withdrawn:` lines. It installs nothing; a tag that does not
+  pass is logged once and never shown; a failed check changes nothing. Run by
+  the installer's `--check` and by every MCP server at most once a day as a
+  child with a clean environment, stopped after 30 s.
+- **The notice:** `bus_info` has `release` (this server's version and source —
+  `signed release`, `release … (signature not checked)` or `unsigned` —, the
+  newest release that passed, `step`, `breaking`, `needs`, whether its
+  signature was checked, `withdrawn`, `older`); the turn-end banner names a
+  newer release once per version (`GET /v1/release`); corral's start hook and
+  `--check` print it too. A human installs a release; the agent never does.
+- **The roster shows versions:** each server puts `v<x.y.z>` (with `unchecked`
+  or `unsigned` when it is no signed release) as the last segment of its status
+  text, cut first; `coordinator(action="roster")` rows have `version` and
+  `source`, else the HELLO card's `version`. Older readers skip the segment.
+- **Release rules** (CLAUDE.md, "Releasing"): `Needs:` lines take only `MM_*`
+  names, versions and a fixed word list, at most 120 characters; `Withdrawn:`
+  lines name older releases. `scripts/doc-check.py` enforces both.
+
+### Changed
+
+- The installer's tag checks moved into `mm-agent-lib.sh` (`mm_release_signers`,
+  `mm_release_url`, `mm_release_tools`, `mm_rgit`, `mm_release_tag`), shared
+  with the release check; `--release` behaves as in 0.82.0.
+
 ## 0.82.0
 
 ### Added
