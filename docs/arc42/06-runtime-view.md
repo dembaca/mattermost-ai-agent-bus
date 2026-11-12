@@ -2,14 +2,14 @@
 
 ## Overview
 
-Twenty-eight scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Twenty-nine scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 4), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, how the turn hooks reach the bus through the MCP server without the token, how a corral session keeps the bot token on the host altogether, with its MCP server there, how the coordinator's server notices a stalled bus and open asks remind their human, how the OpenCode plugin and the pi extension run the same turn cycle through the hook API, who answers a mention of an agent that has left, how an agent talks in channels besides its home (guest channels), how it sees the files a post carries, how the registrar's signature vouches for whom an agent answers to, how a home's ask mode sends a worker's question to its coordinator first, how a trusted human's pinned mandate lets one coordinator give tasks in another home, and how the host copy is installed into a release of its own, switched and rolled back. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, how the turn hooks reach the bus through the MCP server without the token, how a corral session keeps the bot token on the host altogether, with its MCP server there, how the coordinator's server notices a stalled bus and open asks remind their human, how the OpenCode plugin and the pi extension run the same turn cycle through the hook API, who answers a mention of an agent that has left, how an agent talks in channels besides its home (guest channels), how it sees the files a post carries, how the registrar's signature vouches for whom an agent answers to, how a home's ask mode sends a worker's question to its coordinator first, how a trusted human's pinned mandate lets one coordinator give tasks in another home, and how the host copy is installed into a release of its own, switched and rolled back, and how it comes from a release tag, its signature checked when the host pins the release keys. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -1156,7 +1156,7 @@ Everything the server writes in its state directory goes through one helper: a n
 
 ## 6.28 Host copy install, switch and rollback
 
-**Purpose:** The host copy under corral (the host hooks, `bin/`, the MCP server and its `uv` environment, Section 7.1) changes in one step and goes back the same way: each install lands in a directory of its own, `current` is switched to it only when it is complete, the one before stays as `previous`, and a running session ends with the code it started with. corral runs a dispatcher that stays the same across releases, so a switch does not make corral skip a running session's `postEnd` (ADR-011 phase 1a; the signature check of phase 1b is not built, so every install is from a clone and marked `unsigned`).
+**Purpose:** The host copy under corral (the host hooks, `bin/`, the MCP server and its `uv` environment, Section 7.1) changes in one step and goes back the same way: each install lands in a directory of its own, `current` is switched to it only when it is complete, the one before stays as `previous`, and a running session ends with the code it started with. corral runs a dispatcher that stays the same across releases, so a switch does not make corral skip a running session's `postEnd` (ADR-011 phase 1a). An install from a clone is marked `unsigned`; one from a signed release tag (`--release`, phase 1b) is RT-6.29.
 
 **Trigger:** The developer runs `bin/mm-agent-host-install.sh` (or `--from <clone>`, `--downgrade`, `--rollback`) on the host; corral starts a session's `preStart` or `postEnd`.
 
@@ -1199,3 +1199,46 @@ Everything the server writes in its state directory goes through one helper: a n
 | 8 | `current` points at no release of this layout | preStart: no bus for the session, and why |
 | 8 | The record cannot be written | A warning; `postEnd` ends the session with the current release |
 | 9 | The recorded release was removed or its record is not one (step 9's rules) | The current release ends the session |
+
+---
+
+## 6.29 Host copy from a signed release
+
+**Purpose:** The host copy under corral comes from a release tag the owner signed, not from whatever a clone holds: `mm-agent-host-install.sh --release v<x.y.z>` installs a version only when its annotated tag carries the asked name, has not moved and its tree says that version, and, when the host pins release keys in `MM_RELEASE_SIGNERS` (opt-in, decided 2026-11-12), only when its signature verifies against them (ADR-011 phase 1b). Without the keys the trust rests on the repository over https and the tag object pinned in `releases/`. Install, switch, rollback and the session records are RT-6.28's; this scenario is the source.
+
+**Trigger:** The developer runs `mm-agent-host-install.sh --release v<x.y.z>` on the host, after the owner pushed that signed tag (CLAUDE.md, "Releasing").
+
+**Participants:** Shell CLI, Host session hooks; Developer / operator
+
+**Quality goal illustrated:** `#secure` Secret confinement — with pinned keys only code the release key signed runs on the host with the registration secret and the bot token, without them it says so on every run; `#reliable` Never wedges — every refusal leaves `current` as it was
+
+### Sequence
+
+1. The installer takes the version only as `v<major>.<minor>.<patch>` (the `v` optional), checked before it reaches a git argument or any output, and only alone (no `--from`, `--rollback`, `--check`). It reads the pinned keys from `MM_RELEASE_SIGNERS` in its own environment, never from the plugin, a workdir or a session: Ed25519 public key lines (`ssh-ed25519 AAAA… [comment]`, one per line or separated by `;`), the owner's release key and the offline backup key. The check is opt-in: with the variable set the signature is enforced (set but holding no key is refused); unset, the installer prints a one-line WARNING on stderr (signature not checked, set the variable to enforce) and skips step 4's signature part, every other step stays. The repository is `MM_RELEASE_URL`, default `https://github.com/dembaca/mattermost-ai-agent-bus.git`: a plain `https://` URL (no user, query or space) or an absolute local path (a mirror) out of every sandbox's reach. With keys it needs git 2.34 or newer and an `ssh-keygen` with `-Y find-principals` (OpenSSH 8.2 or newer). In every mode the installer refuses to run from a tree a sandbox can write (the plugin cache, a corral home, a session's workdir) and names the host copy's installer instead. That check runs after it sourced `mm-agent-lib.sh` from its own tree, so it catches a mistake: the control is running the host copy's installer (`<MM_BUS_HOST_DIR>/bin/mm-agent-host-install.sh`) or the one of a clone the developer reviewed.
+2. Layout and lock as RT-6.28 step 1. git runs with no system or global config, no attributes file, fsmonitor, hook, credential helper or replace refs (`GIT_NO_REPLACE_OBJECTS`), `LC_ALL=C`, only the `https` and `file` protocols, no HTTP redirect, and checks every object it receives (`transfer.fsckObjects`).
+3. It fetches `refs/tags/v<x.y.z>` (that tag only, `--no-tags`) into the bare repository `src.git` beside `releases/`, created on first use. The refspec has no `+`: git refuses to change a tag it holds already, so a tag that moved since this host fetched it is refused.
+4. The tag must be an annotated tag (a tag object, not a commit), with or without keys, so the same tags serve both kinds of host. With keys it must carry an SSH signature block (`-----BEGIN SSH SIGNATURE-----`) and no PGP or X.509 one, which another program would check against another trust store. The installer writes an allowed-signers file into its lock directory from `MM_RELEASE_SIGNERS`, one fixed principal (`mm-release`) with `namespaces="git"`, and runs `git verify-tag` on the tag's object id with `gpg.format=ssh` and that file. An SSH signature has no GPG status line to read: it counts only when `verify-tag` exits 0 and reports `Good "git" signature for mm-release with … key SHA256:…`; that fingerprint is the signer.
+5. The tag object's own `tag` name must be the one asked for (a ref pointed at another release installs nothing), and it must tag a commit. `git archive` of that commit, the same paths as RT-6.28 step 2, goes into `releases/.install.<random>`; the version in `.claude-plugin/plugin.json`, `mcp/pyproject.toml` and `mcp/src/mattermost_ai_agent_bus/__init__.py` must each equal the tag's.
+6. From here as RT-6.28 steps 2–7: the downgrade rule, `uv sync --locked` before the switch, the release named `<x.y.z>` (no `-dev`), the switch, `previous`, the dispatcher, the garbage collection. `SOURCE` says `SOURCE=signed`, `TAG=v<x.y.z>`, `TAG_OBJECT`, `COMMIT` and `SIGNER=<SHA256 fingerprint>`; without keys `SOURCE=release`, `VERIFIED=no`, `TAG`, `TAG_OBJECT` and `COMMIT`, no `SIGNER`. A release of that name kept in `releases/` (current, previous or only kept) whose `SOURCE` names another tag object is refused, before the downgrade rule: a release never moves, even when `src.git` was removed and the tag signed again; the operator removes `releases/<x.y.z>` on purpose to accept it. With the same tag object it is reported as current, or switched back to as it is; its `SOURCE` is never marked down (one verified before stays `signed` in a run without keys), and a run with keys marks one installed without them as `signed`. A release the garbage collection removed is not remembered. The installer prints the tag, the commit and the signer, or that the signature was not checked.
+7. Which kind runs is shown: the installer's output, `--check` and the start hook say `signed release v<x.y.z>`, `release v<x.y.z> (signature not checked)` or `unsigned` (`--from`, an install from the clone, a host copy from before 0.81.0) — in the notice of a newer plugin and in the line that announces the session's bot.
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | No `MM_RELEASE_SIGNERS` | A WARNING on stderr; the release installs with every check but the signature, marked `SOURCE=release`, `VERIFIED=no` |
+| 1 | `MM_RELEASE_SIGNERS` set but without a key, or a line in it that is no Ed25519 public key | Refused before anything is fetched |
+| 1 | A version not of the form `v<x.y.z>` | Refused; the argument is not echoed |
+| 1 | `MM_RELEASE_URL` not `https://` or an absolute path, or a path a sandbox can write | Refused |
+| 1 | With keys: git older than 2.34, no `ssh-keygen`, or one without `-Y find-principals` | Refused |
+| 1 | The installer runs from a tree a sandbox can write, or from a session's workdir | Refused, naming the host copy's installer |
+| 3 | The fetch fails (no network, no such repository or tag) | Refused, with git's last lines; `current` unchanged |
+| 3 | The tag moved since this host fetched it | Refused at the fetch, with or without keys: a release tag never moves |
+| 4 | A lightweight tag, with or without keys | Refused: no tag object, no signature |
+| 4 | With keys: an annotated tag without signature | Refused |
+| 4 | With keys: a PGP or X.509 signature | Refused: not an SSH signature |
+| 4 | With keys: a signature by a key not pinned | Refused, naming its fingerprint |
+| 5 | The tag object carries another name, with or without keys | Refused |
+| 5 | A version in the tree other than the tag's, with or without keys | Refused, naming the three versions |
+| 6 | The same version kept in `releases/` from another tag object, with or without keys | Refused, naming both object ids; `current` unchanged |
+| 6 | `uv sync` fails, an older version without `--downgrade` | As RT-6.28: `current` unchanged |
