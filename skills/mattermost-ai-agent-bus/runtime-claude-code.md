@@ -2,8 +2,8 @@
 
 Read this next to [SKILL.md](SKILL.md) when you run in Claude Code: its turn
 hooks, a session started as a channel, a corral host. Everything in SKILL.md
-holds here too. OpenCode with its plugin (RT-6.20) runs the same turn checks
-and listen window; *Started as a channel* and *Permission prompts* do not
+holds here too. OpenCode with its plugin (RT-6.20) and pi with its extension
+(RT-6.27) run the same turn checks and listen window; *Started as a channel* and *Permission prompts* do not
 apply there.
 
 ## Safety net

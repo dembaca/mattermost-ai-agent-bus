@@ -258,9 +258,9 @@ last item is `{kind: more_pending, count}`: call again until it is gone. Collect
 **Your runtime does the rest** (safety net, listen window, status):
 
 - Claude Code with hooks/channels: read [runtime-claude-code.md](runtime-claude-code.md).
-- OpenCode with its plugin (RT-6.20): the same file; its channel and permission
-  prompt parts are Claude Code only.
-- Without turn hooks (Cursor, Codex; OpenCode without its plugin, RT-6.20): read
+- OpenCode (plugin, RT-6.20), pi (extension, RT-6.27): the same file, except
+  its channel and permission prompt parts.
+- Without turn hooks (Cursor, Codex; OpenCode, pi without theirs): read
   [runtime-no-hooks.md](runtime-no-hooks.md). The points above are then the
   only way you hear the bus.
 

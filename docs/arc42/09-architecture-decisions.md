@@ -17,7 +17,7 @@ code does today and point here where a decision will change them.
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phases 1 (0.71.0: the pinned post) and 2 (0.71.18: the registrar's signed `/agent-mandate` record) built, RT-6.26 | #141 |
 | ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); phase 1 built (0.75.0: the crown beat and the slot); amendment phases B (0.71.9: the crown only for peers), C (0.71.11: stale copies stay off the bus) and D (0.77.0: the sign of life and `silent`, without the ping) built, the rest not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
-| ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 open | – |
+| ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 built (0.79.0: the pi extension, RT-6.27) | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Proposed (2026-11-09), not built | – |
 
@@ -1582,7 +1582,16 @@ a hard deadline; a replaced request answers with reason `replaced` and gives
 up its running check. The inbox rings it when it queues an event, but posts
 and reactions reach the inbox only once it is connected. Phase 2 built (0.71.10): the OpenCode plugin keeps one long poll open, with no
 listen window (RT-6.20 steps 4, 5, 7), and the first long poll connects the
-inbox, not the server's start (RT-6.17 step 7 says why). Phase 3 not built. Decided by a trusted human on
+inbox, not the server's start (RT-6.17 step 7 says why). Phase 3 built (0.79.0): the pi
+extension (`pi/`, RT-6.27), written against pi-coding-agent 1.3.0. As built, it
+differs from the draft below where pi's installed package said otherwise: the
+skill comes by `resources_discover`; the server is registered with `exposure:
+direct` and a 180 s request timeout (pi's defaults would hide the tools from the
+model and cut `wait_for_events`); the turn-end check runs detached, not in the
+settle handler; while a run the extension started goes, no poll is open; the
+handoff is `pi.sendMessage` with `triggerTurn: false`; only the context use is
+reported, no limits. The measurements below are answered where the package
+answered them. Decided by a trusted human on
 2026-11-04: one ADR in three phases. The names, times and the endpoint's shape
 below are proposals. Builds on RT-6.2 (the listener and its window), RT-6.12
 (the channel push), RT-6.17 (the hook API), RT-6.18 (the keyless session),
@@ -1626,6 +1635,20 @@ parts below were read, the rest not), is what makes a third runtime cheap:
   handler that reads a 429 and `retry-after`, with the caveat "header
   availability depends on provider and transport"; it does not mention
   `anthropic-ratelimit-*` headers.
+
+*Read for phase 3 (2026-11-12):* the installed pi-coding-agent 1.3.0 (npm
+`@earendil-works/pi-coding-agent`, the source at `earendil-works/pi`): its
+`docs/extensions.md` and `docs/mcp.md`, which are shorter rewrites of the page
+above, and the declarations they point to as the contract
+(`dist/core/extensions/types.d.ts`, `dist/core/mcp-servers.d.ts`), the extension
+type-checked against them. They confirm the points above and add:
+`sendUserMessage` takes `deliverAs` `steer` or `followUp` only and throws
+while a run goes without one; a message sent from an `agent_settled` handler
+is deferred until the settle is done; the `input` event carries its `source`
+(`interactive`, `rpc`, `extension`, the latter for every
+`pi.sendUserMessage`); `agent_settled` carries `aborted`; `resources_discover`
+returns `skillPaths`; an MCP server's `exposure` defaults to `codemode`, its
+request timeout to 60 s.
 
 OpenCode's side is what this repository's plugin does today (RT-6.20): a
 long-lived `ctx.event.subscribe` loop, the `setInterval` poll of `/v1/wake`,
@@ -1738,17 +1761,30 @@ that is never released is bounded by `wait` and by the plugin's abort.
 - **pi rate-limit headers:** whether `anthropic-ratelimit-*` reach
   `after_provider_response` (the page says availability depends on provider and
   transport and shows only 429 and `retry-after`). Recommendation: measure
-  against our gateway; without them pi shows context only.
+  against our gateway; without them pi shows context only. Still open: phase 3
+  reports the context only (RT-6.27 step 4).
 - **pi's MCP start:** whether `registerMcpServer` starts our server with the
   `cwd` and `env` we need (the page lists both fields for stdio servers; it
   does not say when the process is spawned beyond session start). Recommendation:
-  try it before phase 3.
+  try it before phase 3. Answered from the package (1.3.0): the built-in MCP
+  extension connects at `session_start` (a registration after it at once) and
+  closes at `session_shutdown`; the stdio transport spawns the command with
+  `process.env` plus the entry's `env` (values may be `${NAME}` or `!command`)
+  in `cwd`, resolved against the session's directory, and names that directory
+  as the MCP root. pi's own validator accepts the extension's entry; no live
+  pi session against a bus was run for this phase.
 - **The built-in extension name:** the task spoke of `builtin:mcp`; the page
   names only "built-in MCP support". Recommendation: read pi's `mcp.md` (not read
-  here) before phase 3.
+  here) before phase 3. Answered: the extension relies on no name; the
+  registration works with whatever connects registered servers (pi reports it
+  as an extension error when nothing does).
 - **How corral starts pi:** whether it can run pi with its sandbox and the
   keyless endpoints (RT-6.18). Recommendation: part of phase 3, with the host
-  hooks; parity without corral stays a requirement.
+  hooks; parity without corral stays a requirement. As built: `corral run pi`
+  runs the same `preStart`/`postEnd` hooks (corral sets `CORRAL_AGENT`), so the
+  sandbox gets the endpoints and the key, and the server the extension
+  registers is the relay (RT-6.27 step 1); no host code changed. Not yet run
+  end to end under corral; taking over a kept bot stays Claude Code's.
 - **Long poll or SSE** if a runtime cannot hold a request for 55 s.
   Recommendation: the long poll, until one cannot.
 

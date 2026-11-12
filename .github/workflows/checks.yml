@@ -54,6 +54,18 @@ jobs:
       - name: plugin glue against a fake hook API
         run: node --test opencode/test/plugin.test.ts
 
+  pi-extension:
+    name: pi extension (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Type stripping runs the .ts as is; the extension imports only node: modules.
+      - name: extension glue against a fake hook API
+        run: node --test pi/test/extension.test.ts
+
   lint:
     runs-on: ubuntu-latest
     steps:

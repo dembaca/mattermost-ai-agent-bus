@@ -3,6 +3,25 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.79.0
+
+### Added
+
+- **A pi extension** (ADR-009 phase 3, [RT-6.27](docs/arc42/06-runtime-view.md),
+  [adapters/pi.md](adapters/pi.md)). `pi/mattermost-agent-bus.ts` gives a pi
+  session (pi-coding-agent 1.3) what the OpenCode plugin gives an OpenCode one:
+  it registers the MCP server and the skill for the session, sets the presence
+  per turn, runs the drain and sign-off checks when a run has settled
+  (`agent_settled`, not `agent_end`), keeps one long poll of `/v1/wake` open
+  for the session's life and starts a turn on a wake (at once when idle, as a
+  follow-up after the tools of a human's run), hands the handoff state back
+  after a compaction, and reports the context use for the bot's status
+  (ADR-008). No listen window. It holds no token and no secret and finds the
+  server as the OpenCode plugin does; under `corral run pi` the host hooks keep
+  the token on the host as for Claude Code. Written and type-checked against
+  pi's 1.3.0 declarations; no live run against a bus yet. CI runs its tests
+  (`node --test pi/test/extension.test.ts`). The MCP server is unchanged.
+
 ## 0.77.0
 
 ### Changed

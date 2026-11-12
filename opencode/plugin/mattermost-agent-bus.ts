@@ -103,7 +103,9 @@ function real(dir: string): string | null {
 // on MM_WORKSPACE = the location's real directory (RT-6.20 step 2; the name
 // as mm_bus_file in bin/mm-agent-lib.sh writes it). No session id, no other
 // variable, no walk-up: inherited from a Claude Code shell, or a parent
-// directory's file, they may name another session's server.
+// directory's file, they may name another session's server. The pi extension
+// keeps a copy of this and hookApi (pi/mattermost-agent-bus.ts, RT-6.27): keep
+// them in step.
 export function busFile(env: Env, directory: string, prefix = "endpoint"): string | null {
   const state = join(env.XDG_STATE_HOME || join(env.HOME || homedir(), ".local", "state"), "mm-agent-bus")
   const dir = real(directory)

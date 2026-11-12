@@ -246,6 +246,35 @@ def test_empty_session_variables_count_as_unset(monkeypatch, tmp_path):
     assert session_file.keyed_path("endpoint") == session_file.state_dir() / f"endpoint-{key}.env"
 
 
+def test_pi_keys_on_the_workspace_the_extension_looks_at(monkeypatch, tmp_path):
+    """RT-6.27 step 1: the server the pi extension registers names MM_WORKSPACE
+    (the session's real directory); one in pi's mcp.json without it keys on the
+    root pi names, the same directory (a symlink resolved), where the extension
+    looks. pi's MCP client names itself "pi" (RT-6.9)."""
+    from pathlib import Path
+    from mattermost_ai_agent_bus import stats
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(ws)
+    key = hashlib.sha1(os.path.realpath(ws).encode()).hexdigest()[:16]
+    expected = session_file.state_dir() / f"endpoint-{key}.env"
+    monkeypatch.setattr(session_file, "_roots_dir", None)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", "")
+    monkeypatch.setenv("MM_WORKSPACE", str(link))
+    assert session_file.keyed_path("endpoint") == expected
+    monkeypatch.delenv("MM_WORKSPACE")
+    monkeypatch.chdir(tmp_path)
+    root = session_file.root_path(Path(link).as_uri())
+    assert root == os.path.realpath(ws)
+    assert session_file.set_roots_dir(root)
+    assert session_file.workspace() == (os.path.realpath(ws), "roots")
+    assert session_file.keyed_path("endpoint") == expected
+    assert stats.harness("pi") == "pi"
+
+
 def test_wake_rules_match_the_listener():
     """RT-6.20: the listener's jq rules — @channel/@all/@here and to=all name
     everyone; an agent's fyi post in someone else's thread waits for the digest."""

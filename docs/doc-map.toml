@@ -43,6 +43,11 @@ paths = ["opencode/*"]
 docs = ["docs/arc42/06-runtime-view.md", "adapters/opencode.md"]
 
 [[rule]]
+name = "pi extension: turn cycle in pi sessions"
+paths = ["pi/*"]
+docs = ["docs/arc42/06-runtime-view.md", "adapters/pi.md"]
+
+[[rule]]
 name = "version bump"
 paths = [".claude-plugin/plugin.json"]
 docs = ["CHANGELOG.md"]
