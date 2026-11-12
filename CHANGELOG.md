@@ -9,17 +9,20 @@ before 0.5.0 are described in the git history.
 
 - **Release keys pinned once per host** (ADR-011 decision (4), [RT-6.29](docs/arc42/06-runtime-view.md#629-host-copy-from-a-signed-release)):
   a `--release` run with `MM_RELEASE_SIGNERS` keeps the keys that verified the
-  tag in `release-signers` in the host state directory (0600, type and base64
-  only). Later runs without the variable and the release check (RT-6.30), so
-  also the MCP server's daily check under corral, verify against it; the
-  variable, when set, wins, and other keys in it replace the file. The file must
-  be a regular file of the user's own, writable by no one else and by no
-  sandbox; anything else refuses the run instead of going unchecked. Both name
-  where the keys came from. `--forget-signers` removes the file.
-- **A withdrawn version is refused** (ADR-011 decision (5)): `--release v<x.y.z>`
-  and `--rollback` refuse a version the host's `release.env` lists as withdrawn,
+  tag in `release-signers` beside `releases/` and `src.git` (0600, type and
+  base64 only), where `XDG_STATE_HOME` cannot move it. Later runs without the
+  variable and the release check (RT-6.30), so also the MCP server's daily
+  check under corral, verify against it. Other keys in the variable, a rotation
+  included, are refused unless `--replace-signers`; the same keys change
+  nothing. The file and its directory must be the user's own, writable by no
+  one else and by no sandbox; anything else refuses the run instead of going
+  unchecked. Both name where the keys came from. `--forget-signers` removes the
+  file.
+- **A withdrawn version is refused** (ADR-011 decision (5)): the release check
+  also writes `release-withdrawn.env` beside `releases/`; `--release v<x.y.z>`
+  and `--rollback` (a `-dev` or `-legacy` build too) refuse a version it lists,
   naming the release whose CHANGELOG withdrew it; `--withdrawn-ok` goes on
-  purposely. Without `release.env` nothing is refused.
+  purposely. Without the file nothing is refused, and a line says so.
 
 ## 0.83.0
 

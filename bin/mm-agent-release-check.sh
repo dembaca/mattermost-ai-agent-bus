@@ -13,12 +13,14 @@
 # fetched before never moves, and checks each as the installer does (RT-6.29):
 # an annotated tag, its own name, a commit, the version in its plugin.json, and
 # with keys its SSH signature by a pinned key: MM_RELEASE_SIGNERS when set,
-# else the release-signers file the installer pinned in the state directory
+# else the release-signers file the installer pinned beside releases/
 # (mm_release_signers; the output says which). From the
 # CHANGELOG.md of the first that passes it reads the entries up to its version:
 # `### Breaking`, `Needs:` lines in their grammar (mm_release_needs_ok; any
 # other is dropped and logged) and `Withdrawn: v<x.y.z>` lines. It writes them
-# to release.env in the host state directory (0600, in one rename). A tag that
+# to release.env in the host state directory (0600, in one rename), and NEWEST
+# with the withdrawn versions to release-withdrawn.env beside releases/, for
+# the installer (RT-6.29 step 2). A tag that
 # does not pass is logged once (release-rejected.env) and never shown. A check
 # that fails leaves release.env as it was; release-check.at records the last
 # check that succeeded (the MCP server counts the failed tries itself).
@@ -68,9 +70,10 @@ parent="$(cd -P "$parent" && pwd -P)"
 SRC_GIT="$parent/src.git"
 [[ ! -L "$SRC_GIT" ]] || die "$SRC_GIT is a symlink; refused"
 
-# The keys: MM_RELEASE_SIGNERS, else release-signers in this state directory
-# (RT-6.30 step 1); a bad file fails the check, never skips the signature.
-mm_release_signers "$STATE" || die "$MM_REL_ERR; release.env unchanged"
+# The keys: MM_RELEASE_SIGNERS, else release-signers beside releases/, where
+# the installer pinned them (RT-6.30 step 1); a bad file fails the check,
+# never skips the signature.
+mm_release_signers "$parent" || die "$MM_REL_ERR; release.env unchanged"
 mm_release_url || die "$MM_REL_ERR"
 mm_release_tools || die "$MM_REL_ERR"
 
@@ -214,10 +217,19 @@ tmp="$STATE/.release.env.$$"
   printf '%s%s%s' "$entries" "$needs" "$withdrawn"
 } >"$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$STATE/release.env" ||
   { rm -f "$tmp"; die "could not write $STATE/release.env"; }
+# The withdrawn versions for the installer, beside releases/ (decision (5)):
+# where XDG_STATE_HOME cannot move them.
+wtmp="$parent/.$MM_WITHDRAWN_FILE.$$"
+if [[ -L "$parent/$MM_WITHDRAWN_FILE" ]] ||
+   ! { printf 'NEWEST=%s\n%s' "$newest" "$withdrawn" >"$wtmp" && chmod 600 "$wtmp" &&
+       mv -f "$wtmp" "$parent/$MM_WITHDRAWN_FILE"; }; then
+  rm -f "$wtmp"
+  say "could not write $parent/$MM_WITHDRAWN_FILE; the installer does not know the withdrawn versions"
+fi
 # The last check that succeeded: --if-due counts from it.
 printf '%s\n' "$now" >"$STATE/release-check.at"
 if [[ "$verified" == yes ]]; then
   echo "newest release v$newest, its signature checked (signed by $MM_REL_SIGNER; keys from $MM_REL_FROM_TEXT)"
 else
-  echo "newest release v$newest, its signature not checked (MM_RELEASE_SIGNERS is not set and no keys are pinned in $STATE/$MM_SIGNERS_FILE)"
+  echo "newest release v$newest, its signature not checked (MM_RELEASE_SIGNERS is not set and no keys are pinned in $parent/$MM_SIGNERS_FILE)"
 fi
