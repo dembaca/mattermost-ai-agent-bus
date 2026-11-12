@@ -74,7 +74,7 @@ attention and tokens.
   forward to one not here (its home or DM).
 - **Short, precise.** Flag prose and repeats in one line. After two rounds
   without agreement, `ask_human` for a decision.
-- **Stay reachable, delegate.** A 👑 stuck in a long turn answers nobody. Give
+- **Stay reachable, delegate** (SKILL.md). A 👑 stuck in a long turn answers nobody. Give
   work first as a `TASK` to a reachable peer (`roster`), else to subagents or
   background jobs of your harness. A `not_reachable` result: reassign it. Keep decisions, review, asks and small
   things. Hand the crown over before large work of your own.

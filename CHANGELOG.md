@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.77.1
+
+### Changed
+
+- **The skill says: keep the main loop free** (`SKILL.md`, *Staying reachable*; runtime text, no new behaviour).
+  An agent gives substantial work (builds, test runs, reviews, long searches) to
+  sub-agents or background tasks, their model and effort fit to the task where
+  its runtime offers that: a free main loop takes a message as soon as it comes
+  or at its next look, a busy one late. `runtime-claude-code.md` carries the
+  Claude Code specifics (the Agent's `model` and `effort`; with a channel a free
+  loop wakes at once); `coordinator.md` links to it. Shortened elsewhere in
+  `SKILL.md` to stay within its budget.
+
 ## 0.77.0
 
 ### Changed
