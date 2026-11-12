@@ -64,7 +64,7 @@ Without the setting nothing is verified and the bus behaves as before 0.66.0.
 
 | Building Block (Section 5) | Deployed On | Instances | Notes |
 |--------------------|-------------|-----------|-------|
-| Host session hooks | Developer host (corral `preStart` / `postEnd`), only from the host copy `~/.local/share/mm-agent-bus/current/` | 1 run each per session | Only block that sees `MM_REG_SECRET`; puts no credential into any process's environment or argv (Section 7.3) |
+| Host session hooks | Developer host (corral `preStart` / `postEnd`), only from the host copy: corral runs the dispatcher in `~/.local/share/mm-agent-bus/current.hooks/`, which starts the release `current` points at (RT-6.28) | 1 run each per session | Only block that sees `MM_REG_SECRET`; puts no credential into any process's environment or argv (Section 7.3) |
 | Shell CLI | Developer host (host copy) and corral sandbox (plugin) | Per call | Same scripts on both sides; session files under `~/.local/state/mm-agent-bus/`. In the sandbox, as in any agent's shell, it has no token: the listener, `mm-agent-post.sh`, `-poll.sh`, `-status.sh` and the status line ask the MCP server (RT-6.17) |
 | MCP server | Developer host (host copy, `--host`), started by `preStart`, stopped by `postEnd`; in the corral sandbox only its relay (the plugin's entry point, child of the agent runtime) | 1 host process per session | Long-lived; holds the WebSocket and the bot token; serves the relay and the hook API on `127.0.0.1`, two ephemeral ports, one per-session key; state in `~/.local/state/mm-agent-bus/hosted/<session>/` (RT-6.17, RT-6.18) |
 | Turn hooks | corral sandbox, run by Claude Code | Per turn | Must finish within the hook timeout; ask the MCP server, hold no token |
@@ -78,11 +78,28 @@ home, the host's marketplace clone and plugin cache in `~/.claude`, and a checko
 be a session's workdir; all are writable from inside a sandbox. Host hooks that ran
 from there would run agent-changeable code on the host with the registration secret.
 `bin/mm-agent-host-install.sh`, run on the host, copies `adapters/corral/` and `bin/`
-from a git clone the developer reviewed (the one it runs from, or `--from`) to
-`~/.local/share/mm-agent-bus/current/` (`MM_BUS_HOST_DIR`), which no sandbox sees. It
+from a git clone the developer reviewed (the one it runs from, or `--from`) into a
+release directory of its own, `releases/<version>-dev.<commit>/` beside
+`~/.local/share/mm-agent-bus/current` (`MM_BUS_HOST_DIR`), which no sandbox sees. It
 copies the MCP server (`mcp/`) and the skill as well and prepares the server's
-environment there with `uv sync --locked` (RT-6.18): without it corral sessions get
-no bus, and the host process runs that code with the bot token. It copies only what is
+environment in that release with `uv sync --locked` (RT-6.18): without it corral
+sessions get no bus, and the host process runs that code with the bot token. Only a
+complete release is switched to: `current` is a symlink, replaced in one rename, and
+the release before stays as `previous`; `--rollback` swaps the two, an older version
+installs only with `--downgrade`, a failed sync leaves `current` as it was, and a
+release goes once neither link nor a running session uses it. `preStart` records the
+release a session runs from, and `postEnd` ends the session with that release's stop
+hook (RT-6.28). corral's `exec` points at `current.hooks/mm-session-start.sh` and
+`mm-session-stop.sh`, a dispatcher (`adapters/corral/mm-hook-dispatch.sh`) that stays
+byte for byte the same across releases and starts the release's hook. corral approves
+a hook by the content of its configured path (not what it sources or starts), asks
+again only when that content changed, and skips a `postEnd` whose content changed
+during the session: a switch of `current` therefore asks nothing of corral, and the
+developer running the installer from a reviewed clone is the check of a switch. When
+the dispatcher itself changes, corral asks once; declined, it refuses the session and
+runs no hook. A host copy from before this layout (a directory `current`) moves to
+`releases/<version>-legacy` and becomes `previous`. Until releases are signed
+(ADR-011 phase 1b) every install is marked `SOURCE=unsigned`. It copies only what is
 committed (`git archive HEAD`, so no untracked file and no cache), and refuses a clone
 with uncommitted changes or untracked files in the copied paths and a symlink among
 them. git runs with no system or global config, no attributes file, fsmonitor or
@@ -100,7 +117,7 @@ regard to case (macOS volumes ignore it); a path with a `..` component counts as
 sandbox-writable. It cannot know which clones were a session's workdir before: use
 one that never was and is not a worktree of one, and check the printed sha. corral's `exec`
 points there once; after a plugin update the developer updates the clone, reviews it
-and reruns the installer, and corral asks to approve the changed hook. The start hook
+and reruns the installer; corral asks again only if the dispatcher changed. The start hook
 says when a newer plugin is installed than the host copy; it names that plugin by
 version only, with no path, as does `--check`.
 

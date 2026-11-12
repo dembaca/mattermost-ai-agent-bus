@@ -298,6 +298,93 @@ def test_postend_stops_the_host_process(mm, run):
     assert not (run.state_dir / "hosted" / "sess-key2").exists()
 
 
+def test_prestart_records_its_release_and_postend_removes_it(mm, run):
+    """RT-6.28 step 8: the release the session runs, for postEnd and the installer."""
+    _start(run, "sess-rel")
+    assert (run.state_dir / "sess-rel.release").read_text() == f"{ROOT}\n"
+    assert run(STOP, CORRAL_SESSION_ID="sess-rel", **END).code == 0
+    assert not (run.state_dir / "sess-rel.release").exists()
+
+
+OLD = "0.80.0-dev.0123456789ab"
+DISPATCH = "adapters/corral/mm-hook-dispatch.sh"
+
+
+def _releases(run, tmp_path):
+    """A host copy in the RT-6.28 layout: current the real hooks, an older
+    release whose hooks only leave a marker, and corral's dispatcher in
+    current.hooks/."""
+    host = tmp_path / "host"
+    cur = host / "releases" / "0.81.0-dev.aaaaaaaaaaaa"
+    for d in ("adapters/corral", "bin", ".claude-plugin"):
+        shutil.copytree(ROOT / d, cur / d)
+    (host / "current").symlink_to("releases/0.81.0-dev.aaaaaaaaaaaa")
+    (host / "current.hooks").mkdir()
+    for name in ("mm-session-start.sh", "mm-session-stop.sh"):
+        shutil.copy2(ROOT / DISPATCH, host / "current.hooks" / name)
+    marker = tmp_path / "old-hook.ran"
+    stub = f'#!/bin/sh\necho "$0 $MM_BUS_HOOK_DISPATCH" >>"{marker}"\n'
+    old = host / "releases" / OLD
+    for t in (old, tmp_path / "elsewhere" / OLD, host / "releases" / "evil"):
+        (t / "adapters" / "corral").mkdir(parents=True)
+        for hook in ("10-mm-session-start.sh", "90-mm-session-stop.sh"):
+            (t / "adapters" / "corral" / hook).write_text(stub)
+            (t / "adapters" / "corral" / hook).chmod(0o755)
+    (host / "releases" / "0.79.0-dev.bbbbbbbbbbbb").symlink_to(OLD)
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    return host.resolve(), marker
+
+
+def test_postend_runs_the_release_the_session_started_with(mm, run, tmp_path):
+    """RT-6.28 step 9: current moved on; corral's postEnd, the dispatcher,
+    runs the stop hook of the release preStart recorded."""
+    host, marker = _releases(run, tmp_path)
+    rec = run.state_dir / "sess-old.release"
+    rec.write_text(f"{host / 'releases' / OLD}\n")
+    r = run(str(host / "current.hooks" / "mm-session-stop.sh"), CORRAL_SESSION_ID="sess-old", **END)
+    assert r.code == 0, r.stderr
+    assert f"with release {OLD}" in r.stderr
+    assert marker.read_text() == f"{host / 'releases' / OLD}/adapters/corral/90-mm-session-stop.sh 1\n"
+
+
+@pytest.mark.parametrize("recorded", ["outside", "name", "symlink", "relative", "garbage"])
+def test_postend_falls_back_to_current_for_a_bad_record(mm, run, tmp_path, recorded):
+    """RT-6.28 step 9: only a release directory of this layout, by its own
+    name, no symlink; anything else and the current release ends it, which
+    removes the record."""
+    host, marker = _releases(run, tmp_path)
+    path = {"outside": str(tmp_path.resolve() / "elsewhere" / OLD),
+            "name": str(host / "releases" / "evil"),
+            "symlink": str(host / "releases" / "0.79.0-dev.bbbbbbbbbbbb"),
+            "relative": f"releases/{OLD}",
+            "garbage": f"{host}/releases/{OLD}/../{OLD}"}[recorded]
+    rec = run.state_dir / "sess-bad.release"
+    rec.write_text(f"{path}\n")
+    r = run(str(host / "current.hooks" / "mm-session-stop.sh"), CORRAL_SESSION_ID="sess-bad", **END)
+    assert r.code == 0, r.stderr
+    assert "ending it with the current one" in r.stderr and not marker.exists()
+    assert not rec.exists()
+
+
+def test_prestart_dispatches_to_current_and_fails_closed_without_a_release(mm, run, tmp_path):
+    """RT-6.28 step 8: corral's preStart, the dispatcher, starts current's
+    release; current pointing at no release of the layout is no bus."""
+    host, marker = _releases(run, tmp_path)
+    (host / "current").unlink()
+    (host / "current").symlink_to(f"releases/{OLD}")
+    start = str(host / "current.hooks" / "mm-session-start.sh")
+    r = run(start, CORRAL_SESSION_ID="sess-d", **HOST)
+    assert r.code == 0 and r.stdout == "", r.stderr
+    assert marker.read_text() == f"{host / 'releases' / OLD}/adapters/corral/10-mm-session-start.sh 1\n"
+    for bad in ("releases/evil", "releases/0.79.0-dev.bbbbbbbbbbbb", f"../elsewhere/{OLD}"):
+        (host / "current").unlink()
+        (host / "current").symlink_to(bad)
+        r = run(start, CORRAL_SESSION_ID="sess-d", **HOST)
+        assert r.code == 0, r.stderr
+        assert set(json.loads(r.stdout)["env"]) == {"MM_BUS_UNAVAILABLE"}, bad
+    assert marker.read_text().count("\n") == 1
+
+
 def _readline(stream, timeout: float = 30) -> dict:
     deadline = time.monotonic() + timeout
     buf = b""

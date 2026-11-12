@@ -14,7 +14,7 @@ import time
 
 import pytest
 from conftest import ROOT
-from test_host_install import INSTALL, START, STOP, UV, VERSION, _refused, clone, git, registry
+from test_host_install import INSTALL, START, STOP, VERSION, _refused, clone, git, registry, uv
 from test_keyless_session import HOST, PY, TOKEN, _shims
 
 SWEEP = "bin/mm-agent-sweep.sh"
@@ -46,14 +46,14 @@ def test_installer_refuses_a_clone_whose_git_config_can_run_commands(run, tmp_pa
         (c / ".git" / "info" / "attributes").write_text("* filter=x\n")
     (c / "bin" / "mm-agent-lib.sh").touch()  # stat-dirty: git status would clean it
     dest = tmp_path / "current"
-    r = run(INSTALL, "--from", str(c), **UV, MM_BUS_HOST_DIR=str(dest))
+    r = run(INSTALL, "--from", str(c), **uv(tmp_path), MM_BUS_HOST_DIR=str(dest))
     assert r.code != 0 and "refused" in r.stderr, r.stderr
     assert not marker.exists() and not dest.exists()
 
 
 def test_installer_names_the_commit_it_installs(run, tmp_path):
     c = clone(tmp_path)
-    r = run(INSTALL, "--from", str(c), **UV, MM_BUS_HOST_DIR=str(tmp_path / "current"))
+    r = run(INSTALL, "--from", str(c), **uv(tmp_path), MM_BUS_HOST_DIR=str(tmp_path / "current"))
     assert r.code == 0, r.stderr
     assert f"commit: {git(c, 'rev-parse', 'HEAD').strip()} reviewed" in r.stdout
 
@@ -62,7 +62,7 @@ def test_installer_refuses_a_source_by_case_or_under_corral_tmp(run, tmp_path):
     """macOS volumes ignore case: ~/.CLAUDE is ~/.claude (arc42 §7.1)."""
     src = tmp_path / ".CLAUDE" / "clone"
     shutil.copytree(clone(tmp_path), src, symlinks=True)
-    r = run(INSTALL, "--from", str(src), **UV, MM_BUS_HOST_DIR=str(tmp_path / "current"))
+    r = run(INSTALL, "--from", str(src), **uv(tmp_path), MM_BUS_HOST_DIR=str(tmp_path / "current"))
     assert r.code != 0 and "can be changed from inside a corral sandbox" in r.stderr
 
 
@@ -126,7 +126,8 @@ def test_sweep_and_installer_run_no_command_from_the_workdir(mm, run, tmp_path):
     p = _direct(SWEEP, ["--apply"], cwd=wd, env=env)
     assert p.returncode == 0 and "unregistered gone" in p.stderr, p.stderr
     p = _direct(INSTALL, ["--from", str(clone(tmp_path))], cwd=wd,
-                env={**env, **UV, "MM_BUS_HOST_DIR": str(tmp_path / "current")})
+                env={**env, "PATH": uv(tmp_path)["PATH"].replace(os.environ["PATH"], path),
+                     "MM_BUS_HOST_DIR": str(tmp_path / "current")})
     assert p.returncode == 0, p.stderr
     assert not marker.exists(), marker.read_text()
 

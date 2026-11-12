@@ -19,7 +19,7 @@ code does today and point here where a decision will change them.
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 built (0.79.0: the pi extension, RT-6.27) | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
-| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Proposed (2026-11-09), not built | – |
+| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b (the signed tag, `--release`) and phases 2–3 open | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2024,7 +2024,7 @@ on: the end, and `status` and `bus_info` show it.
 
 ## ADR-011: Updates from a signed release only
 
-**Status:** Proposed (2026-11-09), not built. Asked for by a trusted human on
+**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy, without a signature yet. Proposed 2026-11-09. Asked for by a trusted human on
 2026-11-09 ("probably not quite simple with plugin incl. MCP server and
 sandbox hooks"). Options, a recommendation and open questions; command words,
 file names and variables below are proposals. Builds on Section 7.1 (the
@@ -2100,9 +2100,23 @@ led back to an old signed release with a known bug. A host process keeps the
 tree it started from; `preStart` records that release in the session's state
 directory, and `postEnd` runs that release's hooks while it is there, so a
 session ends with the code it started with. A release directory goes only when
-it is neither `current` nor `previous` and no host process runs from it. corral
-sees a hook whose content changed and asks to approve it: that prompt is the
-human's last look, and stays.
+it is neither `current` nor `previous` and no host process runs from it.
+
+*corral's approval, as built (answered 2026-11-12, dembaca, from corral's
+code).* corral approves a hook by the content of the path it is configured
+with (the file behind the symlinks, hashed; not what it sources or starts),
+asks again at `corral run` when that content changed (declined, without a
+terminal, or with `--yes`: the session is refused and no hook runs), and skips
+a `postEnd` hook whose content changed during the session. With `exec` at
+`current/adapters/corral/…`, a switch during a session would make corral skip
+that session's `postEnd`. So corral runs a dispatcher instead,
+`current.hooks/mm-session-start.sh` and `mm-session-stop.sh`
+(`adapters/corral/mm-hook-dispatch.sh`, byte for byte the same across
+releases), which starts the release's hook and, at the end, the recorded
+release's. A switch therefore does not make corral ask: the guard of a switch
+is the human running the installer from what they reviewed (in phase 1b: a
+signed tag), not corral's prompt. corral asks once when the dispatcher itself
+changes, which the installer does not do while a session runs (RT-6.28).
 
 *3 · Notice: only what a signature covers.* A small helper of the host copy
 (`mm-agent-release-check.sh`), run by the installer's `--check`, and at most
@@ -2214,8 +2228,14 @@ every harness, corral or not.
 the non-corral configs pointed at the host copy. 2, the release check and the
 notice (`bus_info`, the banner, the roster's version column), and the
 `Needs:` line as a release rule in CLAUDE.md with a doc-check. 3, if wanted,
-the registrar's approved-release record. Each patch-sized on the bus side; 1
-needs the release key first.
+the registrar's approved-release record. Phase 1 is split: **1a** (built,
+0.81.0, RT-6.28) is the layout, the switch and the rollback without a
+signature: an install from a clone lands in `releases/<version>-dev.<12 hex of
+the commit>/` with `SOURCE=unsigned`, and a host copy from before the layout
+becomes `releases/<version>-legacy/`; **1b** adds the signed tag and
+`--release`, which installs into `releases/<version>/`, and needs the release
+key first. Each phase is versioned by CLAUDE.md's SemVer rule (a new command
+is a minor), which supersedes "patch-sized" in this ADR's first draft.
 
 **Tests (when built):** `tests/hooks/`: `--release` installs a tag signed by a
 pinned key; refuses an unsigned one, one signed by another key, one whose

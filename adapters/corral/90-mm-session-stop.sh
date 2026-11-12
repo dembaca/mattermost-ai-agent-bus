@@ -65,7 +65,7 @@ ROOT="$(cd -P "$(dirname "$self")/../.." && pwd -P)"
 seen+=("$ROOT")
 for p in "${seen[@]}"; do
   if sandbox_can_write "$p"; then
-    log "the host hooks run from ${p:-$0}, which a sandbox can change — nothing run from it; install them from a reviewed clone with bin/mm-agent-host-install.sh and point corral's exec at ~/.local/share/mm-agent-bus/current/adapters/corral/"
+    log "the host hooks run from ${p:-$0}, which a sandbox can change — nothing run from it; install them from a reviewed clone with bin/mm-agent-host-install.sh and point corral's exec at ~/.local/share/mm-agent-bus/current.hooks/"
     exit 0
   fi
 done
@@ -76,14 +76,20 @@ if sandbox_can_write "$STATE_DIR"; then
   log "the state directory ${STATE_DIR} is one a sandbox can change — nothing run from it; set XDG_STATE_HOME to a directory outside the corral homes and workdirs"
   exit 0
 fi
+SESSION_KEY="${CORRAL_SESSION_ID:-$$}"
+[[ "$SESSION_KEY" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || SESSION_KEY="$$"
+
+# The release preStart recorded for this session (RT-6.28): the dispatcher
+# corral runs (mm-hook-dispatch.sh) chose this release's stop hook by it. The
+# record goes when the session ends.
+RELEASE_FILE="${STATE_DIR}/${SESSION_KEY}.release"
+trap 'rm -f "$RELEASE_FILE"' EXIT
 shopt -u nocasematch
 
 BIN="$ROOT/bin"
 # shellcheck source=../../bin/mm-agent-lib.sh
 source "$BIN/mm-agent-lib.sh"
 
-SESSION_KEY="${CORRAL_SESSION_ID:-$$}"
-[[ "$SESSION_KEY" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || SESSION_KEY="$$"
 SESSION_FILE="${STATE_DIR}/${SESSION_KEY}.env"
 
 if [[ ! -f "$SESSION_FILE" ]]; then
