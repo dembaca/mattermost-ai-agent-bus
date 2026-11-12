@@ -1,7 +1,7 @@
 # Mattermost agent bus without turn hooks
 
 Read this next to [SKILL.md](SKILL.md) when your runtime runs no turn hooks:
-Cursor, Codex, OpenCode without its plugin (RT-6.20). The bus works the same
+Cursor, Codex, OpenCode or pi without theirs (RT-6.20, RT-6.27). The bus works the same
 here, with the same rules and the same security; only keeping the bot token
 on the host is corral's alone (RT-6.18).
 

@@ -87,6 +87,9 @@ export type Options = {
   retrySec?: number
 }
 
+// keep-in-step: from here to the end marker, the same text in
+// opencode/plugin/mattermost-agent-bus.ts and pi/mattermost-agent-bus.ts
+// (pi/test/ compares them; RT-6.20 step 2, RT-6.27 step 2).
 function sha16(text: string): string {
   return createHash("sha1").update(text).digest("hex").slice(0, 16)
 }
@@ -99,9 +102,9 @@ function real(dir: string): string | null {
   }
 }
 
-// The endpoint file of this location's MCP server, which mcp.transform keys
-// on MM_WORKSPACE = the location's real directory (RT-6.20 step 2; the name
-// as mm_bus_file in bin/mm-agent-lib.sh writes it). No session id, no other
+// The endpoint file of the workspace's MCP server (an OpenCode location, a pi
+// session's directory), whose MM_WORKSPACE names that real directory (RT-6.17
+// step 2; the name as mm_bus_file in bin/mm-agent-lib.sh writes it). No session id, no other
 // variable, no walk-up: inherited from a Claude Code shell, or a parent
 // directory's file, they may name another session's server.
 export function busFile(env: Env, directory: string, prefix = "endpoint"): string | null {
@@ -109,28 +112,6 @@ export function busFile(env: Env, directory: string, prefix = "endpoint"): strin
   const dir = real(directory)
   const f = dir && join(state, `${prefix}-${sha16(dir)}.env`)
   return f && existsSync(f) ? f : null
-}
-
-// The long poll's wait in seconds: the option, else WAIT_SEC; 10 to 55 (a
-// shorter one would defeat the pause for a server that answers at once).
-export function waitSec(options: Options): number {
-  const sec = Number(options.waitSec ?? WAIT_SEC)
-  return Math.min(55, Math.max(10, Number.isFinite(sec) && sec > 0 ? Math.floor(sec) : WAIT_SEC))
-}
-
-// The least pause after a failed poll, as the old `pollSec` had: a server that
-// is gone must not be asked in a tight loop. `timing` is the tests' to lower.
-export const timing = { minRetrySec: 5 }
-
-// The pause after a failed or empty-handed poll in ms: the option, else
-// RETRY_SEC, at least `timing.minRetrySec`.
-export function retryMs(options: Options): number {
-  const sec = Number(options.retrySec ?? RETRY_SEC)
-  return Math.max(timing.minRetrySec, Number.isFinite(sec) && sec > 0 ? sec : RETRY_SEC) * 1000
-}
-
-export function wakeBackoffMs(repeats: number): number {
-  return Math.min(WAKE_BACKOFF_MS * 2 ** repeats, WAKE_BACKOFF_MAX_MS)
 }
 
 function parseEnvFile(text: string): Record<string, string> {
@@ -145,7 +126,7 @@ function parseEnvFile(text: string): Record<string, string> {
 // One call to the hook API; null for no server, no bus session or any failure.
 // missing: called when no endpoint file is there.
 export function hookApi(env: Env, directory: string, missing: () => void = () => {}) {
-  // signal: ends the call when it aborts (the plugin's unload), as the timeout does.
+  // signal: ends the call when it aborts (an unload, a shutdown), as the timeout does.
   return async (method: "GET" | "POST", path: string, body?: Json, ms = QUICK_MS, signal?: AbortSignal): Promise<Json | null> => {
     let endpoint = env.MM_BUS_ENDPOINT || ""
     let key = env.MM_BUS_KEY || ""
@@ -177,6 +158,29 @@ export function hookApi(env: Env, directory: string, missing: () => void = () =>
       return null
     }
   }
+}
+// keep-in-step: end
+
+// The long poll's wait in seconds: the option, else WAIT_SEC; 10 to 55 (a
+// shorter one would defeat the pause for a server that answers at once).
+export function waitSec(options: Options): number {
+  const sec = Number(options.waitSec ?? WAIT_SEC)
+  return Math.min(55, Math.max(10, Number.isFinite(sec) && sec > 0 ? Math.floor(sec) : WAIT_SEC))
+}
+
+// The least pause after a failed poll, as the old `pollSec` had: a server that
+// is gone must not be asked in a tight loop. `timing` is the tests' to lower.
+export const timing = { minRetrySec: 5 }
+
+// The pause after a failed or empty-handed poll in ms: the option, else
+// RETRY_SEC, at least `timing.minRetrySec`.
+export function retryMs(options: Options): number {
+  const sec = Number(options.retrySec ?? RETRY_SEC)
+  return Math.max(timing.minRetrySec, Number.isFinite(sec) && sec > 0 ? sec : RETRY_SEC) * 1000
+}
+
+export function wakeBackoffMs(repeats: number): number {
+  return Math.min(WAKE_BACKOFF_MS * 2 ** repeats, WAKE_BACKOFF_MAX_MS)
 }
 
 // The bus checkout: the option, MM_AGENT_BUS_ROOT, or the checkout this file

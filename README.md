@@ -1,7 +1,7 @@
 # mattermost-ai-agent-bus
 
 Generic **Mattermost agent bus**: skill + bot MCP server (required) + shell clients
-of it for multi-runtime coordination (Cursor / Claude Code / OpenCode and friends).
+of it for multi-runtime coordination (Cursor / Claude Code / OpenCode / pi and friends).
 
 Ephemeral bots via a shared registration secret → work in a team channel
 (threads) → unregister when done. Agents can **post** and be **addressed**
@@ -62,7 +62,7 @@ No absolute paths and no symlinks — the bundled MCP server locates itself via
 | [`docs/smoke-test.md`](docs/smoke-test.md) | End-to-end check against a live site |
 | [`bin/`](bin/) | Shell CLI: host session lifecycle (`register`, `channels`, `unread`, `unregister`), operator tools (`sweep`, `stats`, `statusline`, `host-install`), and clients of the session's MCP server (`post`, `poll`, `status`, `listen`) |
 | [`mcp/`](mcp/) | Python MCP server (WebSocket inbox) |
-| [`adapters/`](adapters/) | Runtime-specific setup (corral, Claude, Cursor, OpenCode, Codex) |
+| [`adapters/`](adapters/) | Runtime-specific setup (corral, Claude, Cursor, OpenCode, pi, Codex) |
 | [`tests/hooks/`](tests/hooks/) | Hook tests against a fake Mattermost, one or more per runtime scenario |
 | [`scripts/`](scripts/) | Doc checks: vendored arc42 linter, `doc-check.py` (doc map, scenario ids, changelog) |
 
@@ -71,7 +71,7 @@ No absolute paths and no symlinks — the bundled MCP server locates itself via
 | | |
 |---|---|
 | **Host-managed** (recommended) | A [corral](adapters/corral.md) `preStart` hook registers the bot and starts the session's MCP server on the host; the sandbox gets only its endpoints and a key ([arc42 §6.18](docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)); `postEnd` removes both. Neither `MM_REG_SECRET` nor the bot token enters the sandbox, and teardown survives a crash. |
-| **Agent-managed** | The agent calls the MCP tools `session_start` / `session_end`; the registration secret is in the MCP server's environment only. Claude Code without corral, Cursor, OpenCode, Codex. |
+| **Agent-managed** | The agent calls the MCP tools `session_start` / `session_end`; the registration secret is in the MCP server's environment only. Claude Code without corral, Cursor, OpenCode, pi, Codex. |
 
 The MCP server is required in every runtime: the shell scripts an agent runs
 (`mm-agent-post.sh`, `-poll.sh`, `-status.sh`, `-listen.sh`) are its clients and hold
@@ -157,6 +157,7 @@ static binaries in `~/.local/bin` do.
 | `MM_CHAT_URL` / `MATTERMOST_URL` | Mattermost base URL |
 | `MM_REGISTER_URL` | [Registrar](#registrar) `…/register/v1/agents` |
 | `MM_REG_SECRET` | Registration credential: an enrollment token (bound bot) or the shared secret (unbound), see [Registrar](#registrar) — in the MCP server's environment only (a reference in its config, never a literal in a committed file); absent under host-managed sessions, by design |
+| `MM_REG_SECRET_GOPASS`, `MM_REG_SECRET_CMD` | Where the registration secret comes from instead of `MM_REG_SECRET`: a gopass path (the corral host hooks; the pi extension) or, for the pi extension, any command that prints it; the pi extension hands the server only the command, which pi runs for that server alone ([adapters/pi.md](adapters/pi.md)) |
 | `MM_WORKSPACE` | The workspace an MCP server outside Claude Code is keyed on (Cursor: `${workspaceFolder}`); default: the client's MCP roots, else the server's working directory ([arc42 §6.17](docs/arc42/06-runtime-view.md#617-turn-hooks-ask-the-mcp-server)) |
 | `MM_BOT_TOKEN` / `MATTERMOST_TOKEN` | Bot token; **set ⇒ session already managed** (not in a corral session: there it stays on the host) |
 | `MM_BUS_MCP_ENDPOINT`, `MM_BUS_ENDPOINT`, `MM_BUS_KEY` | Set by corral's `preStart`: the session's MCP server on the host and its key; **set ⇒ session already managed** ([arc42 §6.18](docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)) |
@@ -181,7 +182,7 @@ static binaries in `~/.local/bin` do.
 | `MM_LISTEN_DIGEST_SEC` | Unaddressed posts wake a listening member (or come as one channel push) once the oldest is this old, seconds (default 1800, `0` = at once) |
 | `MM_ASK_ROUTE` | Ask mode of the agent's home until a trusted human switches it there: `direct` (default, every ask to the human) or `coordinator` (questions to the home's 👑 first; [arc42 §6.25](docs/arc42/06-runtime-view.md#625-ask-routing-modes)) |
 | `MM_ASK_ROUTE_WAIT_MIN` | How long a question waits for the 👑 before the asking agent's server asks the human, minutes (default 15) |
-| `MM_LISTEN_POLL_SEC` | How often the background listener (`bin/`) checks the bus, seconds (default 15); the OpenCode plugin holds a long poll instead (ADR-009) |
+| `MM_LISTEN_POLL_SEC` | How often the background listener (`bin/`) checks the bus, seconds (default 15); the OpenCode plugin and the pi extension hold a long poll instead (ADR-009) |
 | `MM_CHANNEL_PUSH` | Override for channel mode ([RT-6.12](docs/arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)): `1` on, `0` off, for Claude Code only (another MCP client never gets channel mode). Unset, the MCP server looks at Claude Code's command line for the channel flag, see below |
 
 ### Channel mode (research preview)
@@ -220,6 +221,7 @@ See [docs/protocol.md](docs/protocol.md) and [adapters/](adapters).
 - [adapters/claude.md](adapters/claude.md) — plugin install + MCP
 - [adapters/cursor.md](adapters/cursor.md) — skill + MCP config
 - [adapters/opencode.md](adapters/opencode.md) — OpenCode 2.x plugin (MCP server, turn cycle, skill) or MCP config
+- [adapters/pi.md](adapters/pi.md) — pi extension (MCP server, turn cycle, skill), under corral or not
 - [adapters/codex.md](adapters/codex.md) — MCP config (tested with `codex exec`)
 
 Start a harness other than Claude Code from a clean shell, not from inside a Claude Code session ([§7.2](docs/arc42/07-deployment-view.md#72-environment-differences)).
