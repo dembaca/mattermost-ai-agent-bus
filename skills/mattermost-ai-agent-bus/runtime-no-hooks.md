@@ -45,6 +45,8 @@ by hand with `"$BUS/bin/mm-agent-status.sh" working|idle|bus [label]`
 (or `listening <until-epoch>`). Your bus tool calls are your sign of life: 15
 min after the last one, outside a `working` turn, it shows 💤 `silent` and you
 lose the crown (RT-6.6); the next call brings you back. Hence the 10-min timer.
+As 👑 your server sees no turn: a post that needs you gets 👀 only when
+`wait_for_events` returns it, and one not fetched in 45 s hands the crown on.
 
 ## Sub-agents
 

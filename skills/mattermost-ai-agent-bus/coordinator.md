@@ -13,6 +13,8 @@ itself: SKILL.md (*Coordinator*).
   which waits until the crown is free. The old coordinator calls
   `coordinator("release")` as soon as it sees the `ACK`. Idle, signed off or
   silent (no sign), you lose the crown in 2.5 min: hand over first if you go.
+  Your server marks a post that needs you 👀 (you have it) or ⏳ (in a turn);
+  with neither in 45 s a peer takes the crown (`crown_taken`), not yours again by age.
 - **Duties:** keep an overview of who works on what, flag overlaps, route requests
   by capability, settle conflicts.
   `coordinator("roster")` / `("tasks")` give the overview, not history;

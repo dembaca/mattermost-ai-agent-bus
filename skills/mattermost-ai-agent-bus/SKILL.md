@@ -63,7 +63,9 @@ it because it parallelises well.
 server renews while you are reachable; it runs out when you go idle or your
 session dies. Its posts start with 👑. You never claim it by hand: without a
 crown anywhere, the oldest reachable peer takes it on its own. Ask
-`coordinator("who")`. If you are alone, you coordinate.
+`coordinator("who")`. If you are alone, you coordinate. Posts for the 👑 get
+👀 once it has them, ⏳ during its turn (RT-6.12); neither in 45 s: a peer
+takes the crown.
 
 When you wear the crown, or are about to take it, read
 [coordinator.md](coordinator.md) first: handover, assignment table,

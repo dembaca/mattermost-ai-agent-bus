@@ -34,6 +34,10 @@ class Mark(Enum):
     DESKTOP = "desktop"
     ALLOWED = "allowed"
     DENIED = "denied"
+    # ADR-007 step 3, amendment step 2: the 👑's server gave the post to its agent
+    # (seen), or has it while a turn runs: the agent gets it with the next (waits).
+    SEEN = "seen"
+    WAITS = "waits"
 
 
 # The most alternatives an ask offers (RT-6.11 step 1): Answer.ONE to FOUR.

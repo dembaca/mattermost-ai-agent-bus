@@ -41,6 +41,9 @@ A question to the 👑 that neither it nor a trusted human answered within
 MM_ASK_ROUTE_WAIT_MIN minutes (default 15) is asked of the human by the asking
 agent's server, once (tick, from the reminders' heartbeat and under their lock,
 remind.tick). The post itself is the server's (fallback): it builds an ask card.
+Sooner, MM_ACK_WAIT_SEC after it, when the 👑 set no receipt (ADR-007 step 5,
+receipt.missing): neither 👀 nor ⏳ from a holder with the marker, or no 👀 from
+one that turned silent.
 """
 
 from __future__ import annotations
@@ -53,7 +56,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import a2a, asks, attest, lease, owners, session_file
+from . import a2a, asks, attest, lease, life, owners, receipt, session_file
 from .model import Mark, Post
 
 if TYPE_CHECKING:
@@ -504,6 +507,29 @@ async def _answered(client: ChatPort, uid: str, pid: str, coord: str) -> bool:
                for p in posts)
 
 
+# Questions whose 👑 receipt was looked at (ADR-007 step 5): whether it was missing.
+_receipt_looked: dict[str, bool] = {}
+
+
+async def _no_receipt(client: ChatPort, pid: str, at: float, coord: str, now: float) -> bool:
+    """ADR-007 step 5 (RT-6.25 step 6): MM_ACK_WAIT_SEC after the question, once,
+    the 👑's receipts on it: neither 👀 nor ⏳ from a holder that sets them, or
+    no 👀 from one that turned silent, and the human is asked now instead of
+    after MM_ASK_ROUTE_WAIT_MIN (receipt.missing). A holder without the marker
+    (an older plugin) and a read that fails: the long wait, as before."""
+    if not coord or at + life.ack_wait_sec() > now:
+        return False
+    if pid not in _receipt_looked:
+        try:
+            _receipt_looked[pid] = await receipt.missing(client, pid, coord)
+        except Exception as exc:  # noqa: BLE001 — unsure: the long wait
+            log.info("question %s: the receipt not read: %s", pid, exc)
+            _receipt_looked[pid] = False
+        if _receipt_looked[pid]:
+            log.info("question %s: no receipt from %s: the human now (ADR-007 step 5)", pid, coord)
+    return _receipt_looked[pid]
+
+
 async def tick(client: ChatPort, uid: str, now: float | None = None) -> float | None:
     """The questions to the 👑 whose wait is over: settled ones are marked,
     the others asked of the human (fallback). Seconds until the next is due,
@@ -513,9 +539,15 @@ async def tick(client: ChatPort, uid: str, now: float | None = None) -> float | 
     now = now or time.time()
     await _heartbeat(client, uid, now)
     wait, nxt = wait_sec(), None
-    for pid, at, coord, human in asks.questions_open(uid):
+    questions = asks.questions_open(uid)
+    for pid in set(_receipt_looked) - {q[0] for q in questions}:
+        del _receipt_looked[pid]  # settled or passed on: no longer looked at
+    for pid, at, coord, human in questions:
         due = at + wait
-        if due > now:
+        if due > now and not await _no_receipt(client, pid, at, coord, now):
+            soon = at + life.ack_wait_sec()
+            if coord and pid not in _receipt_looked and soon > now:
+                due = soon  # the look for the 👑's receipt comes first
             nxt = due - now if nxt is None else min(nxt, due - now)
             continue
         try:

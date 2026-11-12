@@ -64,7 +64,8 @@ async def test_the_status_names_the_home(home):
     assert home.status and home.status["text"] == "working · proj · ~agents"
     _crown(home)
     await lease.set_status(home, "working")
-    assert home.status["text"] == "coordinator · working · proj · ~agents"
+    # RT-6.6 step 10: a holder's text carries the receipt marker after its state.
+    assert home.status["text"] == f"coordinator · working · {lease.RECEIPT_MARK} · proj · ~agents"
 
 
 async def test_a_long_label_is_cut_never_the_home(home):

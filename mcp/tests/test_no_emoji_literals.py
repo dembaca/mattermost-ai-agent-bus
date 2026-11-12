@@ -20,8 +20,8 @@ EMOJI = re.compile("[\\U0001F000-\\U0001FAFF\\u2194-\\u2199\\u21a9\\u21aa\\u2300
                    "\\u2600-\\u27BF\\u2B00-\\u2BFF\\ufe0f\\u20e3]")
 # The shortcodes symbols.py knows, as a string literal. "x", "crown" and the
 # numbers are left out: ordinary words and roster keys the bus uses as well.
-SHORTCODES = ({*symbols._YES, *symbols._NO, *symbols._STATUS.values(), symbols._DONE}
-              - {"x", "crown"}) | {":crown:"}
+SHORTCODES = ({*symbols._YES, *symbols._NO, *symbols._STATUS.values(), symbols._DONE,
+               *symbols._RECEIPTS.values()} - {"x", "crown"}) | {":crown:"}
 # The hooks.json description is read by humans in the plugin list, not code.
 SHELL = [ROOT / f for f in subprocess.run(
     ["git", "ls-files", "*.sh", "*.sh.example"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split()]

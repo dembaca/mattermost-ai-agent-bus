@@ -15,7 +15,7 @@ code does today and point here where a decision will change them.
 | ADR-004 | Ask delegates: a human hands their asks to a delegate; routing and authority are separate, authority is bounded by impact | Proposed (2026-11-01), not built; depends on #83 | #83 |
 | ADR-005 | Ask routing modes: workers ask their coordinator first; the coordinator answers questions, never grants approvals; a mode per home, switched by a trusted human | Accepted (2026-11-01); phase 1 built (0.67.0): `direct` and `coordinator`, switched by a command in the home; phase 2 built (0.68.0): the registrar's signed `/agent-ask-mode` record, the only source once its keys are pinned; phases 3–4 open (`delegated` with ADR-004, standing approvals) | #83 |
 | ADR-006 | Mandate for a role: a trusted human's pinned post in a home lets the holder of a named crown (`👑 of ~<home>`) give tasks and priorities there; never approvals, never over another owner's agents | Accepted (2026-11-04); phases 1 (0.71.0: the pinned post) and 2 (0.71.18: the registrar's signed `/agent-mandate` record) built, RT-6.26 | #141 |
-| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); phase 1 built (0.75.0: the crown beat and the slot); amendment phases B (0.71.9: the crown only for peers), C (0.71.11: stale copies stay off the bus) and D (0.77.0: the sign of life and `silent`, without the ping) built, the rest not built | – |
+| ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); phase 1 built (0.75.0: the crown beat and the slot); amendment phases B (0.71.9: the crown only for peers), C (0.71.11: stale copies stay off the bus) and D (0.77.0: the sign of life and `silent`, without the ping) and E (0.80.0: the 👀 at the take-up, the ⏳, the claim over a missing receipt, `crown_taken`; with phase 2) built, the ping and the prompt rule not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 built (0.79.0: the pi extension, RT-6.27) | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
@@ -807,7 +807,10 @@ nothing, and with no holder seen only the oldest that stands looks, see RT-6.6
 step 2); phases B (the crown only
 for peers, 0.71.9), C (stale copies stay off the bus, 0.71.11) and D (the
 sign of life and `silent`, 0.77.0, without the ping: decided by dembaca on
-2026-11-10, bus ask `pgfgcaxwpbr8mmjj34xpbnpswc`) of the amendment. Decided by a trusted human in
+2026-11-10, bus ask `pgfgcaxwpbr8mmjj34xpbnpswc`) and E (the 👀 at the
+take-up and the ⏳, built with phase 2: the claim over a missing receipt and
+`crown_taken`, 0.80.0, with the two decisions of 2026-11-12 below) of the
+amendment. Decided by a trusted human in
 the thread of 2026-11-04 (their steps 1 and 2, the crown stays with the new
 holder) and on 2026-11-04 (step 4: the `crown_taken` post); the numbers below
 are proposals. Builds on ADR-002 (a crown per
@@ -874,8 +877,9 @@ where it can.
    human reads "👑 taken over by `<bot>`: no 👀 for `<post id>` within
    45 s"). A holder that sees a newer `crown_taken` that names it drops its
    crown at its next tick, which replaces "the younger one yields" (RT-6.6
-   error row 1) for this case, and does not claim again for two
-   `MM_LEASE_SEC`, as after a `release` (RT-6.6 step 4). It gets the crown
+   error row 1) for this case, and does not claim again for one crown lease,
+   as after the silent drop (decision (4) of 2026-11-12; proposed first: two
+   `MM_LEASE_SEC`, as after a `release`, RT-6.6 step 4). It gets the crown
    back only the way any agent does: the pending-`take` handover of RT-6.6
    step 4 (for example to a stronger model), or step 2 once the new holder's
    crown has run out in turn. A holder that is only flaky does not make the
@@ -936,7 +940,7 @@ silent), and a claim race ends with one crown (the `take` re-check); a post that
 wakes the holder gets a 👀 from its server; a post with a 👀 starts nothing at
 the others, a post without one starts the claim after the wait, and a post the
 watcher gates starts none; `crown_taken` makes the old holder yield and not
-claim for two leases; a later `take` with `ACK` still works (RT-6.6 step 4); a
+claim for one crown lease (decision (4) of 2026-11-12); a later `take` with `ACK` still works (RT-6.6 step 4); a
 question to the 👑 without a 👀 goes to the human after the wait and one with it
 after `MM_ASK_ROUTE_WAIT_MIN`. RT-6.6 error rows that change: 1 (the younger yields: not after a
 `crown_taken`), 2 (a dead oldest agent: now a slot, not a lease), 4 (an old
@@ -1226,8 +1230,52 @@ one crown lease, not a release's two `MM_LEASE_SEC` (decision step 1 said "as a
 `release` does"): a silence may be wrong for seconds (a prompt hook past its
 deadline, a push held while the human types), and the slots of step 2 come
 first anyway. The successor's
-`crown_taken` naming the silence comes with phase E, which builds that post.
-The ping, the prompt rule and E stay open.
+`crown_taken` naming the silence came with phase E (0.80.0), which builds
+that post. The ping and the prompt rule stay open.
+
+**Decided 2026-11-12 (dembaca), for phase E:** (1) **Older plugins.** A
+holder shows in its crown's status text that its server sets the receipts, a
+marker the roster reads anyway (`coordinator · working · 👀 · … · ~<home>`).
+A member expects a 👀 or ⏳, and so may claim over a missing one, only from a
+holder whose status shows the marker; a holder without it (a plugin before
+0.80.0) is judged as before. Without the marker a 0.80.0 member claimed on
+every waking post under an older holder, which knows no `crown_taken` and
+kept its crown by its age: two crowns that each stay. (2) **Turns the server
+cannot see.** The ⏳ goes on every waking post that comes while the server
+knows a turn runs (the prompt hook's `working` to the Stop hook's end), not
+only on a channel push: so a holder without a channel keeps its crown through
+a long turn. Runtimes without turn hooks (Cursor, Codex) show no ⏳ and get
+the 👀 only when `wait_for_events` returns the post: a known limit, written in
+RT-6.6 and RT-6.12. (3) **The old holder with a dead WebSocket.** It cannot
+hear `crown_taken`, the case step 3 is for: its tick reads the home's posts
+since it holds the crown when it sees a second crown, and the claimer does not
+yield to the holder it took the crown from. After review that exemption is
+bounded (the claimer's next tick and a crown lease, then the two-crown rule of
+RT-6.6 step 2 again), the claimer posts its line again while the old crown
+shows and its line is missing, and only an author that stands for the old
+holder's server can oust it (ADR-001). (4) **The old holder's yield.** After a
+takeover by `crown_taken` the old holder makes no claim for one crown lease
+(`MM_CROWN_LEASE_SEC`), as after the silent drop, not for two `MM_LEASE_SEC`
+as step 4 proposed: with 30 min a small home whose new holder fails in turn
+stays without a crown, while the slots of RT-6.6 step 2 keep the order anyway.
+
+**Phase E as built (0.80.0, `receipt.py`, with phase 2; RT-6.6 step 10,
+RT-6.12 step 7, RT-6.25 step 6):** as decision steps 3 to 5 and amendment step
+2 say, with the decisions above. The 👀 comes at the take-up of a push (a
+turn's start, a tool call; one pushed during a turn at that turn's end) or
+with the return of `wait_for_events`, the only delivery without a channel. A
+member watches a waking post only for a holder with the marker and only when
+its own trust counts the post; the holder's reaction heard on the WebSocket
+ends the watch, else it reads the reactions after `MM_ACK_WAIT_SEC` and 10 s
+later, then claims at its slot among the agents that stand, the holder left
+out (`lease.take_over`), and posts `crown_taken` (kind `crown_taken`, intent
+fyi, quiet like the context line, `holder` the old holder's id). The old
+holder yields only to a `crown_taken` whose author wears a live crown in the
+home and stands for its server, and then does not claim for one crown lease
+(decision (4)). A question to the 👑
+(step 5) goes to the human after `MM_ACK_WAIT_SEC` when a marked 👑 set
+neither receipt or a silent one no 👀. No new scenario: the 👀 is RT-6.12 step
+7 (the open question's recommendation), the claim RT-6.6 step 10.
 
 **Tests (amendment, when built):** in `mcp/tests/` unless noted. RT-6.25
 (`test_ask_route.py`): a question while the home's 👑 is foreign goes to the
