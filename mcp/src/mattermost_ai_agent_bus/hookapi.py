@@ -83,7 +83,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import a2a, asks, channel, files, gate, lease, ownpost, session_file, stall, stats, tasks, turnend, unread, usage
+from . import (
+    a2a, asks, channel, files, gate, lease, life, ownpost, session_file, stall, stats, tasks, turnend, unread, usage,
+)
 from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
 from .model import Post
 
@@ -405,10 +407,24 @@ class HookAPI:
 
     async def _run(self, route: Route, client: MattermostAdapter,
                    query: Mapping[str, str], payload: Mapping[str, Any]) -> Reply:
+        state = payload.get("state") if route is presence else None
+        if route in _SIGN_ROUTES or state == "bus":
+            life.sign()
+        elif route in _TAKE_UP_ROUTES:
+            life.take_up()
+        elif state in PRESENCE:
+            life.turn(state == "working")  # before the slot: a turn begins or ends
         if route not in _HEAVY_ROUTES:
-            return await route(client, query, payload)
-        async with self._heavy:  # each makes several Mattermost calls: a few at a time
-            return await route(client, query, payload)
+            reply = await route(client, query, payload)
+        else:
+            async with self._heavy:  # each makes several Mattermost calls: a few at a time
+                reply = await route(client, query, payload)
+        status, answer = reply
+        if status == 200 and (answer.get("wake") if route is wake else
+                              answer.get("count", 0) > 0 if route is pending else
+                              route is ask_reactions and answer.get("fresh", 0) > 0):
+            life.pushed()  # the listener or the plugin wakes the agent with it
+        return reply
 
     async def _wake_check(self, client: MattermostAdapter, query: Mapping[str, str],
                           payload: Mapping[str, Any]) -> Reply:
@@ -1008,3 +1024,10 @@ _ROUTES: dict[tuple[str, str], Route] = {
 }
 # Routes that make several Mattermost calls: at most MAX_HEAVY_RUNS at once.
 _HEAVY_ROUTES = frozenset({pending, presence, post_route, reply_route, turn_end, wake, handoff})
+# ADR-007 amendment step 1: the hooks' and the listener's reads are a sign of
+# the agent, its posts through the shell take up what was pushed; presence
+# begins or ends a turn (HookAPI._run). Not /v1/me, /v1/usage or
+# /v1/stat: the status line asks those, which shows a drawn screen, not a
+# working agent.
+_SIGN_ROUTES = frozenset({pending, last_post, posts, ask_reactions, turn_end, wake, handoff})
+_TAKE_UP_ROUTES = frozenset({post_route, reply_route})

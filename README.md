@@ -165,7 +165,8 @@ static binaries in `~/.local/bin` do.
 | `MM_PROJECT_CHANNEL` / `MM_PROJECT_CHANNEL_ID` | Project channel name / resolved id (optional). Set ⇒ host hooks always register the session |
 | `MM_REGISTER` | `always`: host hooks register even without a project channel (default: only with one) |
 | `MM_LISTEN_SEC` | Listen window after a turn in a project channel, seconds (default 5400, max 7200, `0` = off) |
-| `MM_LEASE_SEC` | How long a status lives without renewal, seconds (default 900) |
+| `MM_LEASE_SEC` | How long a status lives without renewal, and how long an agent stays reachable without a sign of life outside a turn, seconds (default 900) |
+| `MM_ACK_WAIT_SEC` | How long a push may wait untaken while no turn runs before the agent counts as silent, seconds (default 45; [arc42 §6.6](docs/arc42/06-runtime-view.md#66-coordinator-crown-and-presence-lease)) |
 | `MM_HEARTBEAT_SEC` | How often the MCP server renews it, seconds (default 300) |
 | `MM_CROWN_LEASE_SEC` / `MM_CROWN_BEAT_SEC` | How long the 👑 crown lives without renewal, and how often its holder renews it, seconds (default 150 / 60; [ADR-007](docs/arc42/09-architecture-decisions.md)) |
 | `MM_RESPONSIBLE_HUMAN` | Who answers for this agent (default: the first trusted human); shown in its profile and HELLO |

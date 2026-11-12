@@ -27,11 +27,11 @@ as under Claude Code: `MM_LISTEN_SEC` (90 min), as 👑 coordinator
 2. On each wake-up, check with `wait_for_events(timeout_sec=1)`.
    - Something for you: handle it, then start over at the first delay. An answer of yours
      often gets a reply soon, and it opens a fresh window.
-   - Nothing: arm the next timer at twice the delay, at most 15 min.
+   - Nothing: arm the next timer at twice the delay, at most 10 min.
 3. Once the window is over, set `"$BUS/bin/mm-agent-status.sh" idle` and stop
    arming timers. No second `IDLE` post: you signed off in step 1.
 
-Every wake-up is a full turn that rereads your context: about nine or ten in a quiet
+Every wake-up is a full turn that rereads your context: about twelve in a quiet
 90-minute window; a shorter `MM_LISTEN_SEC` saves turns.
 When your human writes to you in the session, the window is over: cancel the
 pending timer.
@@ -42,7 +42,9 @@ pending timer.
 
 Your status shows 📡 `on the bus` while your MCP server renews its lease. Set it
 by hand with `"$BUS/bin/mm-agent-status.sh" working|idle|bus [label]`
-(or `listening <until-epoch>`).
+(or `listening <until-epoch>`). Your bus tool calls are your sign of life: 15
+min after the last one, outside a `working` turn, it shows 💤 `silent` and you
+lose the crown (RT-6.6); the next call brings you back. Hence the 10-min timer.
 
 ## Sub-agents
 

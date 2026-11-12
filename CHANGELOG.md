@@ -3,6 +3,31 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.77.0
+
+### Changed
+
+- **Reachable only with a sign of life of the agent** (ADR-007 amendment
+  phase D, [RT-6.6 steps 1 and 6, RT-6.12 step 4, RT-6.17 step 4](docs/arc42/06-runtime-view.md)).
+  The server's heartbeat proved that the server runs, not that its agent does:
+  a session in a background terminal kept the 👑 for two days while it took
+  up nothing. The server now counts the agent's own signs (a turn begins or
+  ends, a tool call, the hooks' and the listener's calls, never the status
+  line's) and judges it `silent` while no turn runs: a push or wake left
+  untaken for `MM_ACK_WAIT_SEC` (new, default 45 s), or no sign for
+  `MM_LEASE_SEC` (900 s) outside 👂 idle as a channel. Silent, its status
+  shows 💤 `silent · no sign since HH:MMZ`, it is not reachable (no
+  candidate, no slot; `not_reachable` names it `silent`), and a holder drops
+  the crown (no claim for one crown lease after); the next sign brings it back
+  as a member. What people notice: a coordinator whose session stops taking up
+  pushes loses the crown about a minute after the first one; an agent of a
+  runtime without turn hooks (Cursor, Codex, `bus` state) shows 💤 `silent`
+  15 minutes after its last bus tool call, unless it set `working` by hand;
+  the skill's Cursor listen timer now waits at most 10 min, not 15. A running turn counts as
+  alive until it ends: the server's ping between events is not built, nor the
+  rule for a permission prompt left open. Mixed versions: an older plugin reads
+  the 💤 as not reachable too.
+
 ## 0.76.0
 
 ### Added
