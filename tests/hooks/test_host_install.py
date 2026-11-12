@@ -485,6 +485,7 @@ def test_start_hook_names_a_newer_plugin_in_a_corral_home_by_version_only(mm, ru
     assert f"host hooks are {VERSION}, plugin 99.0.0 is installed" in r.stderr
     # RT-6.29: and which kind of host copy runs; a checkout has no SOURCE=signed.
     assert "(this host copy: unsigned)" in r.stderr and "--release v<version>" in r.stderr
+    assert "the host copy's installer: " in r.stderr and "/bin/mm-agent-host-install.sh --release" in r.stderr
     assert str(plant) not in r.stderr and ".cache/corral" not in r.stderr
     assert "x.sh" not in r.stderr
 

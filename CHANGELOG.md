@@ -21,9 +21,16 @@ before 0.5.0 are described in the git history.
   `SOURCE=signed`, the tag, its object, the commit and the signer's
   fingerprint, and the switch, the downgrade rule, the lock and the garbage
   collection of 0.81.0. Refused, with `current` unchanged: no
-  `MM_RELEASE_SIGNERS`, an unsigned or lightweight tag, a signature by a key
-  not pinned, a tag object named otherwise, a moved tag, another version in the
-  tree, a failed fetch. Needs git 2.34 or newer and `ssh-keygen`.
+  `MM_RELEASE_SIGNERS`, an unsigned or lightweight tag, a PGP or X.509
+  signature, a signature by a key not pinned, a tag object named otherwise, a
+  moved tag, the same version from another tag object than `releases/` holds,
+  another version in the tree, a failed fetch. Needs git 2.34 or newer and an
+  `ssh-keygen` with `-Y find-principals`.
+- **The installer refuses to run from a tree a sandbox can write in every
+  mode**, `--release` included, and names the host copy's installer
+  (`<MM_BUS_HOST_DIR>/bin/mm-agent-host-install.sh`); the start hook's notice
+  names that path too. git runs without replace refs, the fetch follows no
+  HTTP redirect, and an installer killed by INT, TERM or HUP removes its lock.
 - **Releasing** (CLAUDE.md): after the merge the owner creates the signed tag
   `v<version>` on the merge commit and pushes it; agents never sign. A CI job
   on a pushed `v*` tag checks that its name matches `plugin.json`

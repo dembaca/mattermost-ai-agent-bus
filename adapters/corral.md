@@ -38,9 +38,13 @@ ssh-ed25519 AAAA…backup release key'
 ~/.local/share/mm-agent-bus/current/bin/mm-agent-host-install.sh --release v0.82.0
 ```
 
-The installer itself runs on the host, so run the one of the host copy, or for the
-very first install the one of a clone you reviewed (below); what it installs comes
-from the tag only.
+The installer itself runs on the host and the signature does not cover it: run the
+host copy's installer, or for the very first install the one of a clone you reviewed
+(below) — not the plugin cache's or a workdir's. It refuses to run from a tree a
+sandbox can write, but only after it has sourced its library from there, so that
+check catches a mistake; running the right installer is the control. What it
+installs comes from the tag only. `MM_RELEASE_URL` may also be an absolute local path:
+that is for a mirror and for the tests.
 
 The installer fetches the tag into `~/.local/share/mm-agent-bus/src.git`, installs it
 only when its signature comes from a pinned key, the tag object carries that name and

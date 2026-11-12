@@ -31,9 +31,11 @@ A version reaches hosts only as a signed tag (ADR-011, RT-6.29). After the
 merge the owner, and only the owner, creates the annotated SSH-signed tag
 `v<version>` (the version in `.claude-plugin/plugin.json`) on the merge commit
 and pushes it: `git tag -s v<version> -m v<version> <merge commit>`
-(`gpg.format=ssh`, the owner's release key), then `git push origin v<version>`.
-A tag is never moved or re-signed. Agents never sign and never create or push
-version tags.
+(`gpg.format=ssh`, the owner's release key), checks it with
+`git verify-tag v<version>` (`gpg.ssh.allowedSignersFile` with the pinned keys),
+then `git push origin v<version>`. Never `-f`: a tag is never moved or re-signed
+(hosts refuse a moved tag). Agents never sign and never create or push version
+tags. `MM_RELEASE_URL` as a local path is for a mirror and the tests.
 
 ## Before you push
 

@@ -114,7 +114,13 @@ the merge (CLAUDE.md, "Releasing"); agents never sign. The pinned keys come, lik
 `MM_REGISTRAR_KEYS`, from the host's own environment and are compared out of band; to
 rotate, pin old and new together. An unsigned or lightweight tag, a signature by
 another key, a tag named otherwise, a moved tag, another version in the tree or a
-failed fetch install nothing and leave `current` as it was. The installer's output,
+failed fetch install nothing and leave `current` as it was, and so does the same
+version from another tag object than the one `releases/` holds. The signature covers
+what is installed, not the installer: it runs on the host, so it must be the host
+copy's (`<MM_BUS_HOST_DIR>/bin/mm-agent-host-install.sh`) or a reviewed clone's, not
+the plugin cache's or a workdir's. In every mode it refuses to run from a tree a
+sandbox can write, but only after it sourced `mm-agent-lib.sh` from there: that
+catches a mistake, and running the right installer is the control. The installer's output,
 `--check` and the start hook say which kind runs: `signed release v<x.y.z>` or
 `unsigned`.
 

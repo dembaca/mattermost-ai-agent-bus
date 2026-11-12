@@ -256,3 +256,58 @@ def test_release_kind_tells_signed_from_unsigned(tmp_path):
     assert kind(signed) == "signed release v1.2.3"
     assert kind(unsigned) == "unsigned" and kind(odd) == "unsigned"
     assert kind(tmp_path / "none") == "unsigned"
+
+
+def test_release_refuses_an_installer_a_sandbox_can_change(run, tmp_path, keys):
+    """RT-6.29: --release, too, runs only an installer out of every sandbox's
+    reach; the refusal names the host copy's installer."""
+    from test_host_install import planted
+    plant = planted(tmp_path)
+    dest = tmp_path / "current"
+    r = run(str(plant / INSTALL), "--release", "v90.0.0", MM_BUS_HOST_DIR=str(dest),
+            MM_RELEASE_SIGNERS=pub(keys["owner"]))
+    assert r.code != 0 and "can be changed from inside a corral sandbox" in r.stderr
+    assert f"{dest}/bin/mm-agent-host-install.sh" in r.stderr and not dest.exists()
+    r = run(INSTALL, "--release", "v90.0.0", MM_BUS_HOST_DIR=str(dest),
+            MM_RELEASE_SIGNERS=pub(keys["owner"]), CORRAL_WORKDIR=str(ROOT))
+    assert r.code != 0 and "workdir" in r.stderr and not dest.exists()
+
+
+def test_release_refuses_the_same_version_from_another_tag_object(run, tmp_path, keys):
+    """RT-6.29 step 6: src.git gone and the tag signed again: the same version
+    from another tag object is refused, while it is current and while previous."""
+    origin = clone(tmp_path)
+    pinned = pub(keys["owner"])
+    sign(origin, f"v{VERSION}", keys["owner"])
+    dest = tmp_path / "host" / "current"
+    assert install(run, tmp_path, dest, f"v{VERSION}", pinned).code == 0
+    shutil.rmtree(dest.parent / "src.git")
+    g(origin, "tag", "-d", f"v{VERSION}")
+    g(origin, "-c", f"user.signingKey={keys['owner']}", "tag", "-s", "-m", "signed again",
+      f"v{VERSION}")
+    before, names = os.readlink(dest), releases(dest)
+    r = install(run, tmp_path, dest, f"v{VERSION}", pinned)
+    unchanged(r, dest, before, names, "was installed on this host from tag object")
+    assert "already the current release" not in r.stdout
+    nxt = bump(VERSION)
+    set_version(origin, nxt)
+    sign(origin, f"v{nxt}", keys["owner"])
+    assert install(run, tmp_path, dest, f"v{nxt}", pinned).code == 0
+    assert os.readlink(dest.parent / "previous") == f"releases/{VERSION}"
+    before, names = os.readlink(dest), releases(dest)
+    r = install(run, tmp_path, dest, f"v{VERSION}", pinned, "--downgrade")
+    unchanged(r, dest, before, names, "a signed release never moves")
+
+
+def test_release_refuses_a_signature_that_is_not_ssh(run, tmp_path, keys, host):
+    """RT-6.29 step 4: a tag object with a PGP block is no SSH signature."""
+    origin = clone(tmp_path)
+    head = g(origin, "rev-parse", "HEAD").strip()
+    body = (f"object {head}\ntype commit\ntag v90.3.0\ntagger t <t@example.invalid> 1700000000 +0000\n\n"
+            "v90.3.0\n-----BEGIN PGP SIGNATURE-----\n\niQEzBAABCAAdFiEE\n-----END PGP SIGNATURE-----\n")
+    obj = subprocess.run([*GIT, "-C", str(origin), "mktag"], input=body, check=True,
+                         capture_output=True, text=True, env=CLEAN).stdout.strip()
+    g(origin, "update-ref", "refs/tags/v90.3.0", obj)
+    before, names = os.readlink(host), releases(host)
+    unchanged(install(run, tmp_path, host, "v90.3.0", pub(keys["owner"])), host, before, names,
+              "not an SSH signature")

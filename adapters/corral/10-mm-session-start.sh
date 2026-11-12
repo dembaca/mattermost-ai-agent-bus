@@ -135,10 +135,11 @@ unregister_again() {
 }
 
 # Version only: the installed plugins include the corral homes, which a sandbox
-# writes, so the notice names no path and does not tell where to install from.
+# writes, so the notice names no plugin path; the only path it names is this
+# host copy's own installer ($ROOT, checked above), never the plugin's.
 if command -v jq >/dev/null 2>&1 && want="$(mm_newest_plugin_version)" &&
    mm_version_newer "$(mm_tree_version "$ROOT")" "$want"; then
-  log "host hooks are $(mm_tree_version "$ROOT"), plugin ${want} is installed (this host copy: $(mm_release_kind "$ROOT")) — install the signed release: mm-agent-host-install.sh --release v<version>, or --from <a clone you reviewed> (RT-6.29)"
+  log "host hooks are $(mm_tree_version "$ROOT"), plugin ${want} is installed (this host copy: $(mm_release_kind "$ROOT")) — install the signed release with the host copy's installer: $ROOT/bin/mm-agent-host-install.sh --release v<version> (RT-6.29)"
 fi
 
 # --- wanted at all? ----------------------------------------------------------

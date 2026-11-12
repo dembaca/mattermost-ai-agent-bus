@@ -103,6 +103,23 @@ fi
 # without regard to case. $1 is a resolved path (pwd -P).
 sandbox_writable() { mm_sandbox_can_write "$1"; }
 
+# The installer itself runs on the host, in every mode: never from a tree a
+# sandbox can write (the plugin cache, a corral home, a session's workdir),
+# --release included, whose code otherwise comes from the signed tag. This
+# check runs after mm-agent-lib.sh was sourced from that tree, so it catches a
+# mistake, not a tampered tree: running the host copy's installer is the
+# control (RT-6.29).
+not_from_here="run the host copy's installer ($DEST/bin/mm-agent-host-install.sh) or the one of a clone you reviewed"
+if [[ -n "${CORRAL_WORKDIR:-}" ]]; then
+  wd="$(cd -P "$CORRAL_WORKDIR" 2>/dev/null && pwd -P)" || wd="$CORRAL_WORKDIR"
+  shopt -s nocasematch
+  [[ "$SELF/" != "$wd/"* && "$SELF/" != "${CORRAL_WORKDIR%/}/"* ]] ||
+    die "this installer lies in $SELF, a corral session's workdir, which its agent can change; $not_from_here"
+  shopt -u nocasematch
+fi
+! sandbox_writable "$SELF" ||
+  die "this installer lies in $SELF, which can be changed from inside a corral sandbox; $not_from_here"
+
 # --- the layout (RT-6.28) ------------------------------------------------------
 # Beside the target: releases/<name>/ per release, and the target's own name
 # (`current`) and `previous` as symlinks to releases/<name>. A name is a
@@ -137,9 +154,12 @@ layout() {
 new="" LOCK=""
 cleanup() {
   [[ -z "$new" ]] || rm -rf "$new"
-  [[ -z "$LOCK" ]] || { rm -f "$LOCK/allowed_signers"; rmdir "$LOCK" 2>/dev/null || true; }
+  # The lock is this process's own (mkdir succeeded), with what it put there.
+  [[ -z "$LOCK" ]] || rm -rf "$LOCK"
 }
 trap cleanup EXIT
+# Killed by INT, TERM or HUP: exit, so the EXIT trap removes the lock as well.
+trap 'exit 1' INT TERM HUP
 
 # The release a link points at, by name: only releases/<name> of this layout.
 release_of() {
@@ -355,6 +375,11 @@ if [[ -n "$RELEASE" ]]; then
     *) die "MM_RELEASE_URL must be an https:// URL or an absolute path; refused" ;;
   esac
   command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen is required to verify the release's signature"
+  # git verifies an SSH signature with ssh-keygen -Y find-principals (OpenSSH 8.2+).
+  case "$(LC_ALL=C ssh-keygen -Y find-principals -f /dev/null -s /dev/null 2>&1 || true)" in
+    *[Uu]nsupported* | *"illegal option"* | *"unknown option"* | *"invalid option"*)
+      die "this ssh-keygen cannot verify SSH signatures (-Y find-principals, OpenSSH 8.2 or newer); nothing changed" ;;
+  esac
   gv="$(git --version | sed -n 's/^git version \([0-9]*\.[0-9]*\).*/\1/p')"
   if [[ -z "$gv" ]] || mm_version_newer "$gv.0" "2.34.0"; then
     die "git 2.34 or newer is required to verify SSH signatures"
@@ -363,14 +388,16 @@ if [[ -n "$RELEASE" ]]; then
     # LC_ALL=C: its messages are matched below. TMPDIR: verify-tag's temporary
     # files go into the installer's own lock directory, which only the host sees.
     LC_ALL=C TMPDIR="$LOCK" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+      GIT_NO_REPLACE_OBJECTS=1 \
       git --no-optional-locks -c core.attributesFile=/dev/null -c core.fsmonitor=false \
       -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false \
       -c protocol.allow=never -c protocol.https.allow=always -c protocol.file.allow=always \
+      -c http.followRedirects=false \
       -c credential.helper= -c transfer.fsckObjects=true --git-dir="$SRC_GIT" "$@"
   }
   # Name, signature, then tree; any refusal before the switch leaves current as it was.
   stage_release() {
-    local out old_id tag_id hdr tname ttype obj vout vrc=0 f v_py v_init
+    local out old_id tag_id tobj hdr tname ttype obj vout vrc=0 f v_py v_init
     [[ -d "$SRC_GIT" ]] ||
       GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git init -q --bare --template= "$SRC_GIT" ||
       die "could not create $SRC_GIT"
@@ -386,6 +413,15 @@ if [[ -n "$RELEASE" ]]; then
     tag_id="$(rgit rev-parse -q --verify "refs/tags/$TAG")" || die "$TAG is not in $SRC_GIT after the fetch"
     [[ "$(rgit cat-file -t "$tag_id")" == tag ]] ||
       die "$TAG is a lightweight tag (no tag object, so no signature): not a release; refused, $DEST is unchanged"
+    # An SSH signature only: a PGP or X.509 one would be checked by another
+    # program, against another trust store.
+    tobj="$(rgit cat-file tag "$tag_id")"
+    case "$tobj" in
+      *"-----BEGIN PGP SIGNATURE-----"* | *"-----BEGIN SIGNED MESSAGE-----"*)
+        die "$TAG carries a signature that is not an SSH signature (PGP or X.509); refused, $DEST is unchanged" ;;
+      *"-----BEGIN SSH SIGNATURE-----"*) ;;
+      *) die "$TAG carries no signature: not a signed release; refused, $DEST is unchanged" ;;
+    esac
     printf '%s' "$SIGNERS" >"$LOCK/allowed_signers"
     vout="$(rgit -c gpg.format=ssh -c gpg.ssh.allowedSignersFile="$LOCK/allowed_signers" \
               -c gpg.ssh.program=ssh-keygen verify-tag "$tag_id" 2>&1)" || vrc=$?
@@ -401,8 +437,7 @@ if [[ -n "$RELEASE" ]]; then
       fi
       die "$TAG does not verify against MM_RELEASE_SIGNERS; refused, $DEST is unchanged:"$'\n'"$(tail -n 3 <<<"$vout" | tr -cd '[:print:]\n')"
     fi
-    hdr="$(rgit cat-file tag "$tag_id")"
-    hdr="$(sed '/^$/q' <<<"$hdr")"
+    hdr="$(sed '/^$/q' <<<"$tobj")"
     tname="$(sed -n 's/^tag //p' <<<"$hdr" | head -n1)"
     ttype="$(sed -n 's/^type //p' <<<"$hdr" | head -n1)"
     obj="$(sed -n 's/^object //p' <<<"$hdr" | head -n1)"
@@ -454,7 +489,7 @@ done
 # the operator's, runs no fsmonitor and no hook, and a clone whose config or
 # info/attributes could make it run anything is refused (arc42 §7.1).
 git_() {
-  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_NO_REPLACE_OBJECTS=1 \
     git --no-optional-locks -c core.attributesFile=/dev/null -c core.fsmonitor=false \
     -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false -C "$FROM" "$@"
 }
@@ -505,6 +540,15 @@ new="$(mktemp -d "$RELEASES/.install.XXXXXX")"
 # overhead stats count (RT-6.9).
 if [[ -n "$RELEASE" ]]; then
   stage_release
+  # The same version from another tag object (src.git deleted, the tag signed
+  # again): a signed release never moves, whether it is current, previous or
+  # only kept; neither "already current" nor a replacement.
+  was=""
+  if [[ -f "$RELEASES/$VER/SOURCE" && ! -L "$RELEASES/$VER/SOURCE" ]]; then
+    was="$(sed -n 's/^TAG_OBJECT=//p' "$RELEASES/$VER/SOURCE" | head -n1 | tr -cd '0-9a-f')"
+  fi
+  [[ -z "$was" || "$was" == "$TAG_ID" ]] ||
+    die "$TAG was installed on this host from tag object ${was:0:12}, upstream it is now ${TAG_ID:0:12}: a signed release never moves; refused (remove $RELEASES/$VER on purpose to accept it)"
   ORIGIN="$URL, tag $TAG"
   name="$VER"
   source_text="SOURCE=signed"$'\n'"TAG=$TAG"$'\n'"TAG_OBJECT=$TAG_ID"$'\n'"COMMIT=$head_sha"$'\n'"SIGNER=$SIGNER"$'\n'
