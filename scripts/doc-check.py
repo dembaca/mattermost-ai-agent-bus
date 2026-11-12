@@ -159,24 +159,19 @@ def check_changelog() -> None:
 
 # The release rules (ADR-011 point 3, RT-6.30; CLAUDE.md, "Releasing"): a
 # `Needs:` line at the start of a line in a version's entry says what that
-# release needs first, in variable names, versions and these words only, at
-# most NEEDS_MAX characters, since it reaches every agent's context; a
-# `Withdrawn:` line names older releases. Kept alike in bin/mm-agent-lib.sh
-# (MM_NEEDS_WORDS) and mcp/src/mattermost_ai_agent_bus/release.py.
-NEEDS_WORDS = frozenset(
-    "alike all and before corral deployed dispatcher every first host hosts new on or "
-    "registrar removed renamed restart server servers session sessions set same the to "
-    "unset update".split())
-NEEDS_MAX = 120
-VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+# release needs first, since it reaches every agent's context, in the grammar
+# the server checks it with: NEEDS_PATTERN and NEEDS_MAX of release.py, read
+# from its source (this script imports nothing of the package). A
+# `Withdrawn:` line names older releases.
+RELEASE_PY = ROOT / "mcp" / "src" / "mattermost_ai_agent_bus" / "release.py"
+_release_src = RELEASE_PY.read_text()
+NEEDS_RE = re.compile(re.search(r'^NEEDS_PATTERN = r"(.*)"$', _release_src, re.MULTILINE)[1])
+NEEDS_MAX = int(re.search(r"^NEEDS_MAX = (\d+)$", _release_src, re.MULTILINE)[1])
 WITHDRAWN_RE = re.compile(r"^Withdrawn: (v\d+\.\d+\.\d+(?:, v\d+\.\d+\.\d+){0,9})$")
 
 
 def needs_ok(text: str) -> bool:
-    if not text or len(text) > NEEDS_MAX or not re.fullmatch(r"[A-Za-z0-9_., ]+", text):
-        return False
-    return all(re.fullmatch(r"MM_[A-Z0-9_]+", w) or VERSION_RE.match(w) or w in NEEDS_WORDS
-               for w in (w.removesuffix(",") for w in text.split()))
+    return 0 < len(text) <= NEEDS_MAX and NEEDS_RE.fullmatch(text) is not None
 
 
 def _vkey(v: str) -> tuple[int, ...]:
@@ -193,8 +188,8 @@ def check_release_lines(text: str | None = None) -> None:
             if not entry:
                 error(CHANGELOG, n, "a Needs: line outside a version's entry")
             elif not line.startswith("Needs: ") or not needs_ok(line[7:]):
-                error(CHANGELOG, n, "Needs: takes MM_* variables, versions and the fixed words of "
-                      f"scripts/doc-check.py (NEEDS_WORDS), at most {NEEDS_MAX} characters")
+                error(CHANGELOG, n, "Needs: takes MM_* variables, versions x.y.z and lowercase "
+                      f"words of at most 15 letters (each with , or .), at most {NEEDS_MAX} characters")
         elif line.startswith("Withdrawn:"):
             m = WITHDRAWN_RE.match(line)
             if not entry:

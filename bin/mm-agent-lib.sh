@@ -871,17 +871,13 @@ mm_release_tag() {
 
 # The Needs: line of a CHANGELOG entry (ADR-011 point 3, RT-6.30) says what a
 # release needs first, and it reaches every agent's context: only variable
-# names (MM_*), versions (x.y.z) and these words, a comma after a word, at most
-# 120 characters. Kept alike in mcp/src/…/release.py (NEEDS_WORDS) and
-# scripts/doc-check.py; a test compares the three.
-MM_NEEDS_WORDS=" alike all and before corral deployed dispatcher every first host hosts new on or registrar removed renamed restart server servers session sessions set same the to unset update "
+# names (MM_*), versions (x.y.z) and lowercase words of at most 15 letters,
+# each with an optional `,` or `.`, one space between, at most 120 characters.
+# The same text as NEEDS_PATTERN in mcp/src/…/release.py, which
+# scripts/doc-check.py reads; a test compares the two.
+MM_NEEDS_RE='^(MM_[A-Z0-9_]+|[0-9]+\.[0-9]+\.[0-9]+|[a-z]{1,15})[,.]?( (MM_[A-Z0-9_]+|[0-9]+\.[0-9]+\.[0-9]+|[a-z]{1,15})[,.]?)*$'
 mm_release_needs_ok() {
-  local t="$1" w
-  [[ -n "$t" && ${#t} -le 120 && "$t" =~ ^[A-Za-z0-9_.,\ ]+$ ]] || return 1
-  for w in $t; do
-    w="${w%,}"
-    [[ "$w" =~ ^MM_[A-Z0-9_]+$ || "$w" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$MM_NEEDS_WORDS" == *" $w "* ]] || return 1
-  done
+  [[ -n "$1" && ${#1} -le 120 && "$1" =~ $MM_NEEDS_RE ]]
 }
 
 # mm_release_notice <version> [state dir]: one line about the newest release

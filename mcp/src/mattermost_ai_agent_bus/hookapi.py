@@ -8,7 +8,9 @@ instead, served next to the WebSocket inbox in the server's event loop:
     GET  /v1/me             {user_id, username, project, crown_until, channel}
     GET  /v1/pending        {count[, stall: 1][, channels: [{id, type, pending, fyi}]]}
                             (?detail=1: up to 5 channels, with fyi counts)
-    GET  /v1/last-post      {at, message, signed_off}: the own latest post in the work channel
+    GET  /v1/last-post      {at, message, signed_off[, release]}: the own latest post in the
+                            work channel; release {newest, line}: the notice of a release
+                            the host's check passed, for the turn-end banner (RT-6.30)
     GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
                             message, to, intent, fyi, quiet, gated, names_agent, absent[, files]}]},
                             work channel
@@ -44,8 +46,6 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             took over (ADR-009 phase 1, RT-6.17 step 7)
     GET  /v1/handoff        {context}: the own latest posts after a compaction
                             (RT-6.7, RT-6.20)
-    GET  /v1/release        {newest, line} or {}: the release notice for the
-                            turn-end banner, from the host's release check (RT-6.30)
 
 HTTP/1.1 on 127.0.0.1 only, an ephemeral port, one random key per server: every
 request carries ``Authorization: Bearer <key>``, compared in constant time, or
@@ -592,7 +592,16 @@ async def last_post(client: MattermostAdapter, query: Mapping[str, str], body: M
     last-<uid>.env (ownpost.py) without a request, else from the channel's last
     100 posts; at 0 when there is none."""
     at, message, signed_off = await _last(client, query, body)
-    return 200, {"at": at, "message": message, "signed_off": signed_off}
+    return 200, {"at": at, "message": message, "signed_off": signed_off, **_release()}
+
+
+def _release() -> dict[str, Any]:
+    """The release notice for the turn-end banner (RT-6.30, RT-6.2 step 8),
+    riding on the read the Stop hook makes every turn end: the host's check
+    is the server's to read, in a keyless session too."""
+    state = release.read_state()
+    text = release.line(state=state) if state else ""
+    return {"release": {"newest": state.newest, "line": text}} if state and text else {}
 
 
 async def _last(client: MattermostAdapter, query: Mapping[str, str],
@@ -1010,19 +1019,8 @@ async def handoff(client: MattermostAdapter, query: Mapping[str, str],
     return 200, {"context": turnend.handoff(got["posts"], uid)}
 
 
-async def release_route(client: MattermostAdapter, query: Mapping[str, str],
-                        body: Mapping[str, Any]) -> Reply:
-    """The release notice for the turn-end banner (RT-6.30, RT-6.2 step 8):
-    {newest, line} when there is something to say, else {}. Read from the
-    host's release check, which only this server can see in a keyless session."""
-    text = release.line()
-    state = release.read_state() if text else None
-    return 200, ({"newest": state.newest, "line": text} if state else {})
-
-
 _ROUTES: dict[tuple[str, str], Route] = {
     ("GET", "/v1/me"): me,
-    ("GET", "/v1/release"): release_route,
     ("GET", "/v1/pending"): pending,
     ("GET", "/v1/last-post"): last_post,
     ("GET", "/v1/posts"): posts,

@@ -18,7 +18,8 @@
 # other is dropped and logged) and `Withdrawn: v<x.y.z>` lines. It writes them
 # to release.env in the host state directory (0600, in one rename). A tag that
 # does not pass is logged once (release-rejected.env) and never shown. A check
-# that fails leaves release.env as it was; release-check.at records the try.
+# that fails leaves release.env as it was; release-check.at records the last
+# check that succeeded (the MCP server counts the failed tries itself).
 #
 # Spec: ADR-011 point 3, RT-6.30 (docs/arc42/06-runtime-view.md).
 set -euo pipefail
@@ -72,8 +73,16 @@ mm_release_tools || die "$MM_REL_ERR"
 # One check at a time; a lock a killed check left goes after ten minutes.
 LOCK="$STATE/release-check.lock"
 if ! mkdir -m 700 "$LOCK" 2>/dev/null; then
-  if [[ -n "$(find "$LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]]; then
-    rm -rf "$LOCK"
+  # Taken over by one rename, so two checks never both remove it; a lock that
+  # turns out fresh after the rename (another check just made it) goes back.
+  stale="$LOCK.stale.$$"
+  if [[ -n "$(find "$LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]] && mv "$LOCK" "$stale" 2>/dev/null; then
+    if [[ -z "$(find "$stale" -maxdepth 0 -mmin +10 2>/dev/null)" ]]; then
+      mv "$stale" "$LOCK" 2>/dev/null || rm -rf "$stale"
+      say "another check runs"
+      exit 0
+    fi
+    rm -rf "$stale"
     mkdir -m 700 "$LOCK" 2>/dev/null || exit 0
   else
     say "another check runs"
@@ -93,8 +102,6 @@ if [[ -e "$parent/.install.lock" ]]; then
   say "the installer runs; not checked"
   exit 0
 fi
-printf '%s\n' "$now" >"$STATE/release-check.at"
-
 export MM_REL_GIT_DIR="$SRC_GIT" MM_REL_TMP="$LOCK"
 [[ -d "$SRC_GIT" ]] ||
   GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null git init -q --bare --template= "$SRC_GIT" ||
@@ -117,7 +124,7 @@ rejected() {
   fi
 }
 
-newest="" tag_id="" commit=""
+newest="" tag_id="" commit="" fetch_err=""
 while IFS= read -r ver; do
   tag="v$ver"
   # --depth=1: the tag, its commit and tree, no history. No +: a tag this host
@@ -128,7 +135,10 @@ while IFS= read -r ver; do
       rejected "$ver" "$(mm_rgit rev-parse -q --verify "refs/tags/$tag" || true)" "the tag moved since this host fetched it"
       continue
     fi
-    die "could not fetch $tag; release.env unchanged:"$'\n'"$(tail -n 3 <<<"$out" | tr -cd '[:print:]\n')"
+    # Not fetched (gone upstream, a network error): the next older one.
+    fetch_err="could not fetch $tag:"$'\n'"$(tail -n 3 <<<"$out" | tr -cd '[:print:]\n')"
+    say "$fetch_err"
+    continue
   fi
   id="$(mm_rgit rev-parse -q --verify "refs/tags/$tag")" || { rejected "$ver" "" "not fetched"; continue; }
   if ! mm_release_tag "$tag" "$id"; then
@@ -144,7 +154,7 @@ while IFS= read -r ver; do
   newest="$ver" tag_id="$id" commit="$MM_REL_COMMIT"
   break
 done <<<"$candidates"
-[[ -n "$newest" ]] || die "none of the newest tags passes this host's check; release.env unchanged"
+[[ -n "$newest" ]] || die "none of the newest tags passes this host's check; release.env unchanged${fetch_err:+ (last: ${fetch_err%%$'\n'*})}"
 
 size="$(mm_rgit cat-file -s "$commit:CHANGELOG.md" 2>/dev/null || echo 0)"
 [[ "$size" =~ ^[0-9]+$ && "$size" -le "$CHANGELOG_MAX" ]] || die "v$newest has no readable CHANGELOG.md; release.env unchanged"
@@ -182,7 +192,7 @@ while IFS= read -r line; do
   esac
 done < <(mm_rgit cat-file -p "$commit:CHANGELOG.md" | head -c "$CHANGELOG_MAX" | tr -d '\r' |
          awk -v max="$MAX_ENTRIES" '
-           /^## / { if ($0 ~ /^## [0-9]+\.[0-9]+\.[0-9]+[ \t]*$/) { if (++n > max) exit; print "E " $2; on = 1 } else on = 0; next }
+           /^## / { if ($0 ~ /^## \[?[0-9]+\.[0-9]+\.[0-9]+\]?[ \t]*$/) { v = $2; gsub(/\[|\]/, "", v); if (++n > max) exit; print "E " v; on = 1 } else on = 0; next }
            !on { next }
            /^### Breaking[ \t]*$/ { print "B x"; next }
            /^Needs: / { print "N " substr($0, 8); next }
@@ -200,6 +210,8 @@ tmp="$STATE/.release.env.$$"
   printf '%s%s%s' "$entries" "$needs" "$withdrawn"
 } >"$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$STATE/release.env" ||
   { rm -f "$tmp"; die "could not write $STATE/release.env"; }
+# The last check that succeeded: --if-due counts from it.
+printf '%s\n' "$now" >"$STATE/release-check.at"
 if [[ "$verified" == yes ]]; then
   echo "newest release v$newest, its signature checked (signed by $MM_REL_SIGNER)"
 else

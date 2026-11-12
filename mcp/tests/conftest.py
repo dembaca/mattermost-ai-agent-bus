@@ -67,7 +67,7 @@ def _isolate_bus_env(monkeypatch, tmp_path, request):
     from mattermost_ai_agent_bus import release
 
     if "release_segment" not in request.keywords:
-        monkeypatch.setattr(release, "segment", lambda: [])
+        monkeypatch.setattr(release, "segment", lambda: "")
     yield
     # monkeypatch restores the real environment itself; session_start also writes
     # into os.environ, so make sure nothing leaks into the next test.

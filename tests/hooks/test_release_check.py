@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
 from conftest import ROOT
 from mattermost_ai_agent_bus import release
-from test_host_install import INSTALL, clone
+from test_host_install import INSTALL, clone, uv
 import test_host_install_release as signed
 from test_host_install_release import g, pub, set_version, sign
 from test_turn_end import STOP
@@ -48,9 +49,9 @@ Withdrawn: v90.0.1
 
 Needs: MM_FOO set
 
-## 0.1.0
+## [0.1.0]
 
-- old
+- old (a heading in brackets counts as well)
 """
 
 
@@ -139,6 +140,8 @@ def test_a_failed_check_changes_nothing(run, tmp_path, keys, origin):
     """RT-6.30: no network, a malformed URL or a lightweight tag: release.env
     stays as it was; the try is recorded."""
     sign(origin, "v90.1.0", keys["owner"])
+    nowhere = check(run, tmp_path, origin, pub(keys["owner"]), MM_RELEASE_URL=str(tmp_path / "none"))
+    assert nowhere.code != 0 and not (run.state_dir / "release-check.at").exists()  # stamps a success only
     assert check(run, tmp_path, origin, pub(keys["owner"])).code == 0
     before = (run.state_dir / "release.env").read_bytes()
     empty = tmp_path / "empty.git"
@@ -217,3 +220,30 @@ def test_the_turn_end_banner_names_a_newer_release_once(mm, run):
     assert r.passed and "release v99.1.0 is out (major, Breaking; needs: MM_X set; signature checked)" in r.banner
     assert "a human installs it on the host: mm-agent-host-install.sh --release v99.1.0" in r.banner
     assert run(STOP).banner == ""
+
+
+def test_the_installer_waits_for_a_running_check(run, tmp_path, host):
+    """RT-6.30: both fetch into src.git; a fresh check lock refuses the
+    installer, one a killed check left ten minutes ago does not."""
+    lock = run.state_dir / "release-check.lock"
+    lock.mkdir(parents=True)
+    r = run(INSTALL, "--from", str(clone(tmp_path)), MM_BUS_HOST_DIR=str(host), **uv(tmp_path))
+    assert r.code != 0 and "a release check runs on this host" in r.stderr
+    assert not (host.parent / ".install.lock").exists()
+    old = time.time() - 900
+    os.utime(lock, (old, old))
+    r = run(INSTALL, "--from", str(clone(tmp_path)), MM_BUS_HOST_DIR=str(host), **uv(tmp_path))
+    assert "a release check runs" not in r.stderr, r.stderr
+
+
+def test_a_stale_check_lock_is_taken_over(run, tmp_path, keys, origin):
+    """RT-6.30: a lock older than ten minutes goes by one rename."""
+    sign(origin, "v90.1.0", keys["owner"])
+    lock = run.state_dir / "release-check.lock"
+    lock.mkdir(parents=True)
+    assert check(run, tmp_path, origin, pub(keys["owner"])).stderr.strip().endswith("another check runs")
+    old = time.time() - 900
+    os.utime(lock, (old, old))
+    r = check(run, tmp_path, origin, pub(keys["owner"]))
+    assert r.code == 0, r.stderr
+    assert not lock.exists() and not list(run.state_dir.glob("release-check.lock.stale.*"))

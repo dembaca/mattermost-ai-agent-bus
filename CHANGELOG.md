@@ -15,20 +15,27 @@ before 0.5.0 are described in the git history.
   `release.env` in the host state directory: the version, `### Breaking`, the
   `Needs:` and `Withdrawn:` lines. It installs nothing; a tag that does not
   pass is logged once and never shown; a failed check changes nothing. Run by
-  the installer's `--check` and by every MCP server at most once a day as a
-  child with a clean environment, stopped after 30 s.
+  the installer's `--check` and by the MCP server about once a day as a child
+  with a clean environment, stopped after 120 s; a failed try is repeated at the
+  next hourly look, at most three a day. A server whose tree a sandbox can
+  write (the plugin cache) runs only the host copy's script, or none. The
+  installer and the check never fetch into `src.git` at the same time.
 - **The notice:** `bus_info` has `release` (this server's version and source —
-  `signed release`, `release … (signature not checked)` or `unsigned` —, the
+  `signed release`, `release … (signature not checked)`, `unsigned` after
+  `--from`, `plugin` for the plugin —, the
   newest release that passed, `step`, `breaking`, `needs`, whether its
   signature was checked, `withdrawn`, `older`); the turn-end banner names a
-  newer release once per version (`GET /v1/release`); corral's start hook and
+  newer release once per version (`release` in the answer to `GET /v1/last-post`,
+  which the Stop hook reads anyway); corral's start hook and
   `--check` print it too. A human installs a release; the agent never does.
-- **The roster shows versions:** each server puts `v<x.y.z>` (with `unchecked`
-  or `unsigned` when it is no signed release) as the last segment of its status
-  text, cut first; `coordinator(action="roster")` rows have `version` and
+- **The roster shows versions:** each server puts `v<x.y.z>` (with `unchecked`,
+  `unsigned` or `plugin` when it is no signed release) as the last segment of
+  its status text, cut before the label when the text is too long;
+  `coordinator(action="roster")` rows have `version` and
   `source`, else the HELLO card's `version`. Older readers skip the segment.
 - **Release rules** (CLAUDE.md, "Releasing"): `Needs:` lines take only `MM_*`
-  names, versions and a fixed word list, at most 120 characters; `Withdrawn:`
+  names, versions and lowercase words of at most 15 letters, at most 120
+  characters; `Withdrawn:`
   lines name older releases. `scripts/doc-check.py` enforces both.
 
 ### Changed

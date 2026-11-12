@@ -39,9 +39,9 @@ then `git push origin v<version>`. Never `-f`: a tag is never moved or re-signed
 tags. `MM_RELEASE_URL` as a local path is for a mirror and the tests.
 
 What a release needs first goes into its CHANGELOG entry as a line of its own,
-`Needs: MM_PROPS_PREFIX alike on every server`: only `MM_*` names, versions and the
-words of `NEEDS_WORDS` in `scripts/doc-check.py`, at most 120 characters, since every
-agent's notice shows it (RT-6.30). A release with a known bad predecessor says
+`Needs: MM_PROPS_PREFIX alike on every server`: only `MM_*` names, versions `x.y.z`
+and lowercase words of at most 15 letters, each with an optional `,` or `.`, at most
+120 characters, since every agent's notice shows it (RT-6.30). A release with a known bad predecessor says
 `Withdrawn: v<x.y.z>[, v<x.y.z>]`. doc-check enforces both forms.
 
 ## Before you push

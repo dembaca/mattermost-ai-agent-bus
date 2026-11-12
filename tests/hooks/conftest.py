@@ -45,8 +45,8 @@ API_USERS = ("hooks/", "bin/mm-agent-listen.sh", "bin/mm-agent-post.sh", "bin/mm
              "bin/mm-agent-status.sh")
 ME = "a" * 26
 # The version segment every server puts last in its status text (RT-6.30):
-# this checkout runs unsigned.
-VSEG = "".join(f" · {s}" for s in release.segment())
+# this checkout has no SOURCE: `plugin`.
+VSEG = f" · {release.segment()}" if release.segment() else ""
 TEAM = "t" * 26
 CHANNEL = "c" * 26
 PROJECT = "p" * 26

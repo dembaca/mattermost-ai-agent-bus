@@ -342,10 +342,10 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     else:
         crown = 0
     if text:
-        # The version last: the first segment cut (RT-6.30; the roster then
-        # reads it from the HELLO card).
-        text = status_text(text, named, [*usage.segments(), *release.segment()],
-                           client.work_channel_name)
+        # The version (RT-6.30): last, and cut first, before the label; the
+        # roster then reads it from the HELLO card.
+        text = status_text(text, named, usage.segments(), client.work_channel_name,
+                           version=release.segment())
         usage.shown()
     if coord is not None and coord.is_file():
         lines = _read_lines(coord)
@@ -382,13 +382,19 @@ def homed(text: str, home: str) -> str:
     return text[:max(0, STATUS_MAX - len(tail))] + tail
 
 
-def status_text(head: str, label: str, segments: list[str], home: str) -> str:
-    """The custom status text (RT-6.6 step 1, ADR-008): `<head> · <label> ·
-    <segments> · ~<home>`, e.g. `working · bus · ctx 62% · 5h 40% · ~home`.
-    The home stays last and STATUS_MAX holds: when it does not fit, the label
-    goes first, then the last segments (`7d`, `5h`, `ctx` in that order, each
-    shown only when it exists), never the home. Without segments it is
-    homed() of head and label, the label cut as before."""
+def status_text(head: str, label: str, segments: list[str], home: str, version: str = "") -> str:
+    """The custom status text (RT-6.6 step 1, ADR-008, RT-6.30): `<head> ·
+    <label> · <segments> · <version> · ~<home>`, e.g. `working · bus · ctx 62%
+    · 5h 40% · v0.83.0 · ~home`. The home stays last and STATUS_MAX holds: when
+    it does not fit, the version goes first, then the label, then the last
+    segments (`7d`, `5h`, `ctx` in that order, each shown only when it exists),
+    never the home. Without segments it is homed() of head and label, the
+    label cut as before."""
+    if version:
+        tail = f"{_HOME}{home}" if home else ""
+        text = " · ".join([head, *([label] if label else []), *segments, version])
+        if len(text) + len(tail) <= STATUS_MAX:
+            return text + tail
     if not segments:
         return homed(f"{head} · {label}" if label else head, home)
     tail = f"{_HOME}{home}" if home else ""

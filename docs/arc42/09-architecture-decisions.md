@@ -19,7 +19,7 @@ code does today and point here where a decision will change them.
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 built (0.79.0: the pi extension, RT-6.27) | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
-| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, every server once a day as a bounded child), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); phase 3 open | – |
+| ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); phase 3 open | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2157,7 +2157,7 @@ else) into the bare repository, verifies them as in point 1, and reads the
 release's CHANGELOG entry from the verified tree. It writes the parsed fields
 to the state directory; the server only reads that file. A tag that does not
 verify is logged once and never shown. `bus_info`, the start banner and the
-roster then show this host's version (and `unsigned` after `--from`), the
+roster then show this host's version (and `unsigned` after `--from`, `plugin` for the plugin), the
 newest verified release, whether it is a patch or a minor, `Breaking` when its
 entry has that section, and what it needs first. That last part comes from a
 fixed line in the release's CHANGELOG entry, `Needs: MM_PROPS_PREFIX on every
@@ -2278,13 +2278,20 @@ installer's helpers (`mm-agent-lib.sh`: the keys, the URL, git's clean environme
 the tag's checks); it tries the three newest tags, fetched with `--depth=1` into
 `src.git`, and writes `release.env` in the host state directory (the host process of
 a keyless session: the one preStart chose). The server's child gets `PATH`, `HOME`,
-`LC_ALL=C` and `MM_RELEASE_URL`, `MM_RELEASE_SIGNERS`, `MM_BUS_HOST_DIR` only, runs
-from `/` in its own process group and is stopped after 30 s. What is needed is read
-from every entry after the running version up to the newest, not the newest entry
-alone. The `Needs:` grammar: `MM_*` names, versions `x.y.z` and a fixed word list
-(`scripts/doc-check.py`, `NEEDS_WORDS`), at most 120 characters. The roster's version
-is the last segment of the status text (cut first; the HELLO card's `version` stands
-in), with `unchecked` or `unsigned` when the release is not a signed one.
+`LC_ALL=C` and `MM_RELEASE_URL`, `MM_RELEASE_SIGNERS`, `MM_BUS_HOST_DIR`,
+`CORRAL_WORKDIR` only, runs from `/` in its own process group and is stopped after
+120 s; a failed try is repeated at the next hourly look, at most three a day. A
+server whose tree a sandbox can write (the plugin cache) never runs the script from
+it: only the host copy's, when that is out of every sandbox's reach, else none. What
+is needed is read from every entry after the running version up to the newest, not
+the newest entry alone. The `Needs:` grammar (decided 2026-11-12 by the coordinator,
+no word list): `MM_*` names, versions `x.y.z` and lowercase words of at most 15
+letters, each with an optional `,` or `.`, at most 120 characters (`NEEDS_PATTERN` in
+`release.py`, the same regex in `mm-agent-lib.sh`, read by `scripts/doc-check.py`).
+The roster's version is the last segment of the status text, cut before the label
+when the text is too long (the HELLO card's `version` stands in), with `unchecked`
+for a release without a checked signature, `unsigned` for a host copy from a clone,
+and `plugin` for a tree without a `SOURCE` (the plugin, a checkout).
 
 **Tests (phases 1a, 1b and 2 built: `tests/hooks/test_host_install.py`, `test_host_install_release.py`, `test_release_check.py`, `mcp/tests/test_release.py`; the rest when built):** `tests/hooks/`: `--release` installs a tag signed by a
 pinned key; refuses an unsigned one, one signed by another key, one whose

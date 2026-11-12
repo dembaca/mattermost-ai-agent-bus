@@ -157,6 +157,12 @@ layout() {
   mkdir -p "$RELEASES"
   chmod go-w "$RELEASES"
   state_dir
+  # The release check fetches into src.git too (RT-6.30): not at the same
+  # time. Its lock, younger than ten minutes, is a check that runs.
+  if [[ -n "$STATE" && -d "$STATE/release-check.lock" &&
+        -z "$(find "$STATE/release-check.lock" -maxdepth 0 -mmin +10 2>/dev/null)" ]]; then
+    die "a release check runs on this host ($STATE/release-check.lock); rerun in a minute"
+  fi
 }
 
 # On every exit: the half-made release ($new, when set) and the lock.

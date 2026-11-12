@@ -38,45 +38,41 @@ log = logging.getLogger(__name__)
 # of the host copy (RT-6.28).
 ROOT = Path(__file__).resolve().parents[3]
 STATE_FILE = "release.env"
-STAMP_FILE = "release-check.at"
-CHECK_SCRIPT = ROOT / "bin" / "mm-agent-release-check.sh"
+STAMP_FILE = "release-check.at"          # the last check that succeeded (the script writes it)
+FAILED_FILE = "release-check.failed"     # the failed tries, one epoch a line (this module)
+SCRIPT = Path("bin") / "mm-agent-release-check.sh"
+HOST_DIR = Path.home() / ".local" / "share" / "mm-agent-bus" / "current"
 CHECK_EVERY = 86400       # at most once a day (ADR-011 point 3)
-CHECK_TIMEOUT = 30.0      # the child's bound; then TERM, and KILL after KILL_GRACE
+TRIES = 3                 # failed tries a day, one per POLL
+CHECK_TIMEOUT = 120.0     # the child's bound; then TERM, and KILL after KILL_GRACE
 KILL_GRACE = 2.0
 FIRST_DELAY = 60.0        # not while the session starts
 POLL = 3600.0
 STATE_MAX = 65536
 # What the child gets of this server's environment besides PATH and HOME:
-# where the releases come from, the pinned keys, where src.git lies. Never a
-# token, the registration secret or anything of the session.
-CHILD_ENV = ("MM_RELEASE_URL", "MM_RELEASE_SIGNERS", "MM_BUS_HOST_DIR")
+# where the releases come from, the pinned keys, where src.git lies, the
+# session's workdir (which the script's own sandbox check counts). Never a
+# token, the registration secret or anything else of the session.
+CHILD_ENV = ("MM_RELEASE_URL", "MM_RELEASE_SIGNERS", "MM_BUS_HOST_DIR", "CORRAL_WORKDIR")
 
 _VER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _TAG = re.compile(r"^v\d+\.\d+\.\d+$")
 
-# The Needs: grammar (ADR-011 point 3): variable names, versions and these
-# words, a comma after a word, at most NEEDS_MAX characters. Kept alike in
-# bin/mm-agent-lib.sh (MM_NEEDS_WORDS) and scripts/doc-check.py.
-NEEDS_WORDS = frozenset(
-    "alike all and before corral deployed dispatcher every first host hosts new on or "
-    "registrar removed renamed restart server servers session sessions set same the to "
-    "unset update".split())
+# The Needs: grammar (ADR-011 point 3, CLAUDE.md "Releasing"): `MM_*` names,
+# versions x.y.z and lowercase words of at most 15 letters, each with an
+# optional `,` or `.`, one space between, at most NEEDS_MAX characters. The
+# same text as MM_NEEDS_RE in bin/mm-agent-lib.sh; scripts/doc-check.py reads
+# both from here.
+NEEDS_PATTERN = r"^(MM_[A-Z0-9_]+|[0-9]+\.[0-9]+\.[0-9]+|[a-z]{1,15})[,.]?( (MM_[A-Z0-9_]+|[0-9]+\.[0-9]+\.[0-9]+|[a-z]{1,15})[,.]?)*$"
 NEEDS_MAX = 120
-_NEEDS_CHARS = re.compile(r"^[A-Za-z0-9_., ]+$")
-_NEEDS_VAR = re.compile(r"^MM_[A-Z0-9_]+$")
+_NEEDS = re.compile(NEEDS_PATTERN)
 NOTE = ("a human installs a release on the host (mm-agent-host-install.sh --release); "
         "you never run the installer, and an update never runs by itself")
 
 
 def needs_ok(text: str) -> bool:
     """A `Needs:` line's text in its grammar (RT-6.30)."""
-    if not text or len(text) > NEEDS_MAX or not _NEEDS_CHARS.match(text):
-        return False
-    for word in text.split():
-        word = word.removesuffix(",")
-        if not (_NEEDS_VAR.match(word) or _VER.match(word) or word in NEEDS_WORDS):
-            return False
-    return True
+    return 0 < len(text) <= NEEDS_MAX and _NEEDS.fullmatch(text) is not None
 
 
 def _key(v: str) -> tuple[int, int, int]:
@@ -112,11 +108,16 @@ def _read(path: Path, limit: int) -> str | None:
 
 
 def running(root: Path | None = None) -> tuple[str, str]:
-    """What kind of tree this server runs (RT-6.29 step 7): ("signed", tag) for
-    a release whose signature the installer verified, ("release", tag) for one
-    installed without the keys, else ("unsigned", ""): `--from`, a clone, the
-    plugin, a host copy from before 0.81.0. Like mm_release_kind."""
-    text = _read((root or ROOT) / "SOURCE", 4096) or ""
+    """What kind of tree this server runs (RT-6.29 step 7, RT-6.30): ("signed",
+    tag) for a release whose signature the installer verified, ("release", tag)
+    for one installed without the keys, ("plugin", "") for a tree without a
+    SOURCE file that is no host copy's release (the plugin, a checkout), else
+    ("unsigned", ""): `--from`, a clone, a host copy from before 0.81.0. Like
+    mm_release_kind, which tells host copies only."""
+    root = root or ROOT
+    text = _read(root / "SOURCE", 4096)
+    if text is None:
+        return ("unsigned", "") if root.parent.name == "releases" else ("plugin", "")
     lines = text.splitlines()
     tag = next((ln[4:] for ln in lines if ln.startswith("TAG=")), "")
     if _TAG.match(tag):
@@ -129,28 +130,30 @@ def running(root: Path | None = None) -> tuple[str, str]:
 
 def source_label(root: Path | None = None) -> str:
     kind, tag = running(root)
-    return {"signed": f"signed release {tag}",
-            "release": f"release {tag} (signature not checked)"}.get(kind, "unsigned")
+    return {"signed": f"signed release {tag}", "release": f"release {tag} (signature not checked)",
+            "plugin": "plugin"}.get(kind, "unsigned")
 
 
 # The roster's version (ADR-011 point 6): one segment of the status text,
-# `v0.83.0`, `v0.83.0 unchecked` or `v0.83.0 unsigned`; older readers skip a
-# segment they do not know (usage.from_status, home_of, the status word).
-_SOURCE_WORD = {"signed": "", "release": "unchecked", "unsigned": "unsigned"}
-_SEGMENT = re.compile(r"^v(\d+\.\d+\.\d+)(?: (unchecked|unsigned))?$")
+# `v0.83.0`, `v0.83.0 unchecked`, `v0.83.0 unsigned` or `v0.83.0 plugin`; older
+# readers skip a segment they do not know (usage.from_status, home_of, the
+# status word). lease.status_text cuts it before the label.
+_SOURCE_WORD = {"signed": "", "release": "unchecked", "unsigned": "unsigned", "plugin": "plugin"}
+_SEGMENT = re.compile(r"^v(\d+\.\d+\.\d+)(?: (unchecked|unsigned|plugin))?$")
 
 
-def segment() -> list[str]:
-    """The status segment of this server's version; [] when it has none."""
+def segment() -> str:
+    """The status segment of this server's version; '' when it has none."""
     if not VERSION:
-        return []
+        return ""
     word = _SOURCE_WORD[running()[0]]
-    return [f"v{VERSION} {word}" if word else f"v{VERSION}"]
+    return f"v{VERSION} {word}" if word else f"v{VERSION}"
 
 
 def from_status(text: str) -> dict[str, str]:
     """The version an agent's status text names: {version[, source]}, source
-    "unchecked" or "unsigned" (none: a signed release); {} when it names none."""
+    "unchecked", "unsigned" or "plugin" (none: a signed release); {} when it
+    names none."""
     for piece in str(text).split(" · "):
         m = _SEGMENT.match(piece.strip())
         if m:
@@ -199,6 +202,8 @@ def read_state(directory: Path | None = None) -> State | None:
     newest, verified = fields.get("NEWEST", ""), fields.get("VERIFIED", "")
     if not _VER.match(newest) or verified not in ("yes", "no"):
         return None
+    # A release withdraws only older ones.
+    withdrawn = {v for v in withdrawn if _key(v) < _key(newest)}
     at = fields.get("CHECKED_AT", "")
     return State(newest=newest, verified=verified == "yes",
                  checked_at=int(at) if at.isdigit() else 0,
@@ -226,6 +231,8 @@ def notice(have: str | None = None, state: State | None = None,
     it, Breaking and the Needs: lines of the entries in between, whether its
     signature was checked, this version withdrawn, the newest older than this."""
     have = VERSION if have is None else have
+    if not _VER.match(have):
+        return {}  # this server's own version unknown: nothing to compare
     out: dict[str, Any] = {"this": {"version": have, "source": source_label()}}
     st = state if state is not None else read_state(directory)
     if st is None:
@@ -281,45 +288,130 @@ def line(have: str | None = None, state: State | None = None,
 
 # --- the check, as a bounded child --------------------------------------------------
 
-def child_env() -> dict[str, str]:
+# corral's temporary directories (mm_sandbox_can_write in bin/mm-agent-lib.sh).
+SANDBOX_TMP = ("/tmp/corral-", "/private/tmp/corral-")
+_noted: set[str] = set()
+
+
+def sandbox_can_write(path: str) -> bool:
+    """A path a corral sandbox can write: every corral home, ~/.claude (the
+    plugin cache among it), the session's workdir, corral's temporary
+    directories; one that is not absolute or has a . or .. component counts too.
+    Without regard to case. The twin of mm_sandbox_can_write."""
+    p = path + "/"
+    if not path.startswith("/") or "/../" in p or "/./" in p:
+        return True
+    low = p.lower()
+    if low.startswith(SANDBOX_TMP):
+        return True
+    home = Path.home()
+    roots = [str(home / ".cache" / "corral"), str(home / ".claude"), os.environ.get("CORRAL_WORKDIR", "")]
+    tmp = os.environ.get("TMPDIR", "")
+    if "corral" in tmp.lower():
+        roots.append(tmp)
+    for r in filter(None, roots):
+        for c in {r, os.path.realpath(r)}:
+            if low.startswith(c.rstrip("/").lower() + "/"):
+                return True
+    return False
+
+
+def _note_once(msg: str) -> None:
+    if msg not in _noted:
+        _noted.add(msg)
+        log.info("release check: %s (RT-6.30)", msg)
+
+
+def check_script() -> tuple[Path, str] | None:
+    """Which check script to run, and the MM_BUS_HOST_DIR to give it ('' keeps
+    the environment's). This tree's own when no sandbox can write it (a host
+    copy's release, a reviewed checkout); for a tree a sandbox can write (the
+    plugin cache under ~/.claude) never that one, but the host copy's
+    (MM_BUS_HOST_DIR, default ~/.local/share/mm-agent-bus/current) when it is
+    there and out of every sandbox's reach; else none, said once in the log."""
+    if not sandbox_can_write(str(ROOT)):
+        return ROOT / SCRIPT, ""
+    host = os.environ.get("MM_BUS_HOST_DIR") or str(HOST_DIR)
+    real = os.path.realpath(host)
+    if os.path.isabs(host) and not sandbox_can_write(real) and (Path(real) / SCRIPT).is_file():
+        return Path(real) / SCRIPT, host
+    _note_once(f"not run: this server's tree {ROOT} can be changed from inside a corral sandbox, "
+               f"and the host copy {host} has no check script out of every sandbox's reach")
+    return None
+
+
+def child_env(host_dir: str = "") -> dict[str, str]:
     """The child's whole environment: PATH (the script keeps only entries no
-    sandbox writes), HOME, LC_ALL=C and CHILD_ENV; for a host copy's release
-    without MM_BUS_HOST_DIR, the layout it lies in (RT-6.28)."""
+    sandbox writes), HOME, LC_ALL=C and CHILD_ENV; MM_BUS_HOST_DIR the host
+    copy whose script runs, or for a host copy's release without it the layout
+    it lies in (RT-6.28)."""
     env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin:/usr/sbin:/sbin",
            "HOME": str(Path.home()), "LC_ALL": "C"}
     env.update({k: os.environ[k] for k in CHILD_ENV if k in os.environ})
-    if "MM_BUS_HOST_DIR" not in env and ROOT.parent.name == "releases":
+    if host_dir:
+        env["MM_BUS_HOST_DIR"] = host_dir
+    elif "MM_BUS_HOST_DIR" not in env and ROOT.parent.name == "releases":
         env["MM_BUS_HOST_DIR"] = str(ROOT.parent.parent / "current")
     return env
 
 
+def _failures(directory: Path, now: float) -> list[int]:
+    text = _read(directory / FAILED_FILE, 4096) or ""
+    return [int(x) for x in text.split() if x.isdigit() and now - int(x) < CHECK_EVERY]
+
+
+def _record_failure(directory: Path, now: float) -> None:
+    """One failed try more in release-check.failed (the last TRIES kept)."""
+    kept = [*_failures(directory, now), int(now)][-TRIES:]
+    try:
+        session_file.write_private(directory / FAILED_FILE, "".join(f"{x}\n" for x in kept))
+    except OSError as exc:
+        log.debug("release check: %s", exc)
+
+
 def due(directory: Path | None = None, now: float | None = None) -> bool:
-    """The last try (release-check.at) is a day old, or there was none."""
-    text = _read((directory or state_dir()) / STAMP_FILE, 64) or ""
-    last = int(text.strip()) if text.strip().isdigit() else 0
-    return (time.time() if now is None else now) - last >= CHECK_EVERY
+    """The last check that succeeded (release-check.at) is a day old, or there
+    was none, and fewer than TRIES tries failed in the last day: a failure is
+    tried again at the next hourly look, at most TRIES times a day."""
+    d = directory or state_dir()
+    now = time.time() if now is None else now
+    text = (_read(d / STAMP_FILE, 64) or "").strip()
+    if now - (int(text) if text.isdigit() else 0) < CHECK_EVERY:
+        return False
+    return len(_failures(d, now)) < TRIES
 
 
 async def run_check(script: Path | None = None, *, directory: Path | None = None,
                     timeout: float = CHECK_TIMEOUT) -> int | None:
-    """Run the check once as a child (ADR-011 point 3): its own process group,
-    stdin closed, the environment of child_env() only, from /, `--if-due` a
-    day; after `timeout` seconds its group gets TERM (git removes its lock
-    files on it), KILL_GRACE later KILL. Its exit code; None when it did not
-    run or was stopped. Never inside a corral sandbox."""
-    script = script or CHECK_SCRIPT
-    if os.environ.get("CORRAL_SANDBOX") or not script.is_file():
+    """Run the check once as a child (ADR-011 point 3): the script of
+    check_script() unless one is given, its own process group, stdin closed,
+    the environment of child_env() only, from /, `--if-due` a day; after
+    `timeout` seconds its group gets TERM (git removes its lock files on it),
+    KILL_GRACE later KILL. A failure or a stop counts in release-check.failed;
+    the script stamps a success. Its exit code; None when it did not run or
+    was stopped. Never inside a corral sandbox."""
+    if os.environ.get("CORRAL_SANDBOX"):
         return None
+    host_dir = ""
+    if script is None:
+        found = check_script()
+        if found is None:
+            return None
+        script, host_dir = found
+    if not script.is_file():
+        return None
+    d = directory or state_dir()
     bash = "/bin/bash" if Path("/bin/bash").exists() else "bash"
     proc = await asyncio.create_subprocess_exec(
-        bash, str(script), "--state-dir", str(directory or state_dir()),
-        "--if-due", str(CHECK_EVERY), env=child_env(), cwd="/",
+        bash, str(script), "--state-dir", str(d),
+        "--if-due", str(CHECK_EVERY), env=child_env(host_dir), cwd="/",
         stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT, start_new_session=True)
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout)
     except TimeoutError:
         await _stop(proc)
+        _record_failure(d, time.time())
         log.info("release check: no result within %.0f s, stopped (RT-6.30)", timeout)
         return None
     except asyncio.CancelledError:
@@ -328,6 +420,8 @@ async def run_check(script: Path | None = None, *, directory: Path | None = None
     text = out.decode("utf-8", "replace").strip()
     if text:
         log.info("release check: %s", text[-500:].replace("\n", " | "))
+    if proc.returncode != 0:
+        _record_failure(d, time.time())
     return proc.returncode
 
 

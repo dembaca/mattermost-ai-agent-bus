@@ -124,8 +124,9 @@ block() {
 }
 
 # A newer plugin is installed than this session runs (RT-6.2 step 8), or a
-# newer release passed the host's release check (RT-6.30, from the MCP server,
-# which alone sees that check in a keyless session): say each once per
+# newer release passed the host's release check (RT-6.30, `release` in the
+# server's /v1/last-post answer: the server alone sees that check in a keyless
+# session; my_last_post runs before every go_idle): say each once per
 # version, in the banner the human sees when the turn ends. Prints the notes.
 update_note() {
   local newer uf notified rel_notified notes="" newest rline
@@ -138,13 +139,10 @@ update_note() {
     notes="$(printf '%s plugin %s is installed, this session runs %s — to switch: quit, then claude --resume %s (not --continue: several sessions share the directory)' \
       "$MM_UPDATE" "$newer" "$(mm_tree_version "$BIN/..")" "${CLAUDE_CODE_SESSION_ID:-<session-id>}")"
   fi
-  if mm_bus GET /v1/release; then
-    newest="$(jq -r '.newest // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || newest=""
-    rline="$(jq -r '.line // ""' <<<"$MM_BUS_BODY" 2>/dev/null | head -n1 | cut -c1-400)" || rline=""
-    if [[ "$newest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -n "$rline" && "$rel_notified" != "$newest" ]]; then
-      rel_notified="$newest"
-      notes="${notes:+$notes$'\n'}$MM_UPDATE $rline — a human installs it on the host: mm-agent-host-install.sh --release v$newest"
-    fi
+  newest="$RELEASE_NEWEST" rline="$RELEASE_LINE"
+  if [[ "$newest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -n "$rline" && "$rel_notified" != "$newest" ]]; then
+    rel_notified="$newest"
+    notes="${notes:+$notes$'\n'}$MM_UPDATE $rline — a human installs it on the host: mm-agent-host-install.sh --release v$newest"
   fi
   [[ -n "$notes" ]] || return 1
   printf 'NOTIFIED=%s\nRELEASE_NOTIFIED=%s\n' "$notified" "$rel_notified" >"$uf" 2>/dev/null || return 1
@@ -171,9 +169,11 @@ go_idle() {
 # server cannot tell; LAST_AT 0 when the agent never posted there.
 # LAST_HEAD: LAST_MSG without the 👑 and the backtick before its bus word
 # (`IDLE`, RT-6.14 step 2).
-LAST_MSG="" LAST_HEAD="" LAST_AT=0 SIGNED_OFF=0
+LAST_MSG="" LAST_HEAD="" LAST_AT=0 SIGNED_OFF=0 RELEASE_NEWEST="" RELEASE_LINE=""
 my_last_post() {
   mm_bus GET /v1/last-post || return 1
+  RELEASE_NEWEST="$(jq -r '.release.newest // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || RELEASE_NEWEST=""
+  RELEASE_LINE="$(jq -r '.release.line // ""' <<<"$MM_BUS_BODY" 2>/dev/null | head -n1 | cut -c1-400)" || RELEASE_LINE=""
   LAST_AT="$(jq -r '.at // 0' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
   LAST_MSG="$(jq -r '.message // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
   LAST_HEAD="${LAST_MSG#"$MM_CROWN"}"

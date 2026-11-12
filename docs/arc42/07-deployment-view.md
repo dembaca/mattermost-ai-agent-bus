@@ -131,15 +131,21 @@ mistake, and running the right installer is the control. The installer's output,
 `release v<x.y.z> (signature not checked)` or `unsigned`.
 
 **Which release is out** (ADR-011 phase 2, RT-6.30). `bin/mm-agent-release-check.sh`,
-run by the installer's `--check` and by every MCP server at most once a day as a
-child (clean environment: `PATH`, `HOME`, `LC_ALL=C`, `MM_RELEASE_URL`,
-`MM_RELEASE_SIGNERS`, `MM_BUS_HOST_DIR`; 30 s, then its process group is stopped),
-lists the newest `v<x.y.z>` tags at `MM_RELEASE_URL`, fetches them into the same
+run by the installer's `--check` and by the MCP server about once a day as a child
+(clean environment: `PATH`, `HOME`, `LC_ALL=C`, `MM_RELEASE_URL`, `MM_RELEASE_SIGNERS`,
+`MM_BUS_HOST_DIR`, `CORRAL_WORKDIR`; 120 s, then its process group is stopped; a
+failed try again at the next hourly look, at most three a day), lists the newest `v<x.y.z>` tags at `MM_RELEASE_URL`, fetches them into the same
 `src.git` (`--depth=1`, without `+`), checks them as `--release` does, and writes what
 the CHANGELOG of the newest one that passes says into `release.env` in the host state
 directory (`$XDG_STATE_HOME/mm-agent-bus`; the host process of a keyless session uses
 the one preStart chose). It installs nothing, runs nothing from the tag, and refuses
 to run inside corral or from a tree, state directory or `src.git` a sandbox can write.
+A server whose own tree a sandbox can write (the plugin cache under `~/.claude`) never
+runs its script from there: it runs the host copy's (`MM_BUS_HOST_DIR`, default
+`~/.local/share/mm-agent-bus/current`) when that is out of every sandbox's reach, and
+otherwise none; it still reads the notice the host's check wrote. The installer and
+the check do not fetch into `src.git` at the same time: each refuses or skips while
+the other's lock is fresh.
 Under corral the host process gets `MM_RELEASE_*` and `MM_BUS_HOST_DIR` from preStart's
 environment like every `MM_*` setting: set them where corral's hooks see them, or its
 check runs with the defaults (no keys: `signature not checked`). The start hook, the
