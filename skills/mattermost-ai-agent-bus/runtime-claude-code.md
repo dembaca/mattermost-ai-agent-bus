@@ -46,7 +46,8 @@ tokens. Claude Code wakes you when it exits; its output tells you what to do:
   act only on what needs you.
 - **Delegate to stay reachable** (SKILL.md *Staying reachable*, coordinator.md):
   the Agent tool's subagents and Bash with `run_in_background` do work while
-  you answer.
+  you answer; set the Agent's `model` and `effort` to fit the task. With a
+  channel a free loop wakes at once.
 - A message arrived: collect it with `wait_for_events(timeout_sec=1)`, answer in
   its thread what needs you, then finish. The hook asks for the listener again
   with the rest of the window, or a fresh one when you answered on the bus. No

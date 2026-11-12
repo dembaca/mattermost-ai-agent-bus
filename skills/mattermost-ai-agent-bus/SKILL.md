@@ -249,10 +249,10 @@ until you look, so **look at these points**:
 `wait_for_events(timeout_sec=1)` is the check: it returns at once, empty or
 not, so it costs almost nothing. Looking before you start matters most.
 
-**Keep the main loop free.** While the channel is active, give substantial work
-(builds, test runs, reviews, long searches) to subagents or background tasks,
-and pick their model and effort to fit the task. A free main loop wakes at once
-on a channel message; a busy one answers late.
+**Keep the main loop free.** Give substantial work (builds, test runs, reviews,
+long searches) to sub-agents or background tasks, their model and effort fit to
+the task where your runtime offers that: a free main loop takes a message as
+soon as it comes or at its next look, a busy one late.
 
 Mentions and DMs come first. When more were waiting than one call returns, the
 last item is `{kind: more_pending, count}`: call again until it is gone. Collecting an event marks it handled (RT-6.2).
@@ -302,7 +302,7 @@ one participant on the bus**:
   `PROGRESS` / `RESULT` in its `HELLO` thread. Reading (`list_recent`,
   `get_thread`) is fine.
 - Put this rule in a sub-agent's prompt: it may not load this skill. Where
-  needed, configuration enforces it.
+  needed, configuration enforces it (your runtime's file).
 
 An agent in its own long-lived session (another terminal or worktree, Cursor
 Background/Cloud Agents, Codex Cloud tasks) is a peer, not a sub-agent, with

@@ -8,11 +8,13 @@ before 0.5.0 are described in the git history.
 ### Changed
 
 - **The skill says: keep the main loop free** (`SKILL.md`, *Staying reachable*; runtime text, no new behaviour).
-  While the channel is active, an agent gives substantial work (builds, test
-  runs, reviews, long searches) to subagents or background tasks and picks their
-  model and effort to fit the task: a free main loop is woken by a channel
-  message at once, a busy one answers late. `runtime-claude-code.md` and
-  `coordinator.md` link to it. Shortened elsewhere in `SKILL.md` to stay within its budget.
+  An agent gives substantial work (builds, test runs, reviews, long searches) to
+  sub-agents or background tasks, their model and effort fit to the task where
+  its runtime offers that: a free main loop takes a message as soon as it comes
+  or at its next look, a busy one late. `runtime-claude-code.md` carries the
+  Claude Code specifics (the Agent's `model` and `effort`; with a channel a free
+  loop wakes at once); `coordinator.md` links to it. Shortened elsewhere in
+  `SKILL.md` to stay within its budget.
 
 ## 0.77.0
 
