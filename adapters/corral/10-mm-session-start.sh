@@ -121,7 +121,7 @@ for p in "${seen[@]}"; do
 done
 shopt -u nocasematch
 if [[ -n "$unsafe" ]]; then
-  no_bus "the host hooks run from ${unsafe}, which a sandbox can change — install them from a reviewed clone with bin/mm-agent-host-install.sh and point corral's exec at ~/.local/share/mm-agent-bus/current/adapters/corral/"
+  no_bus "the host hooks run from ${unsafe}, which a sandbox can change — install them from a reviewed clone with bin/mm-agent-host-install.sh and point corral's exec at ~/.local/share/mm-agent-bus/current.hooks/"
 fi
 
 # shellcheck source=../../bin/mm-agent-lib.sh
@@ -280,12 +280,34 @@ sweep_host_processes() {
     compgen -G "$STATE_DIR/.$(basename "$d").env.taken-*" >/dev/null && continue
     [[ -n "$(find "$d" -maxdepth 0 -mmin +60 2>/dev/null)" ]] && rm -rf "$d"
   done
+  # The release of a session that ended without postEnd (RT-6.28); a starting
+  # one's has no session file yet, hence the hour.
+  for f in "$STATE_DIR"/*.release; do
+    [[ -f "${f%.release}.env" ]] && continue
+    [[ -n "$(find "$f" -mmin +60 2>/dev/null)" ]] && rm -f "$f"
+  done
   shopt -u nullglob
 }
 
 sweep_host_processes
 # Kept bots past MM_SESSION_KEEP_SEC go, with their own token (RT-6.18 step 10).
 mm_reap_kept "$STATE_DIR"
+
+# --- the release this session runs (RT-6.28) ---------------------------------
+# ROOT is the release current pointed at when corral started this hook. The
+# host process runs from it until the session ends; corral's postEnd, the
+# dispatcher (mm-hook-dispatch.sh), runs this release's stop hook, and the
+# installer removes no release a session records. corral skips a postEnd hook
+# whose file changed during the session: exec at current/… changes with every
+# switch, the dispatcher does not.
+if [[ -z "${MM_BUS_HOOK_DISPATCH:-}" && "$(basename "$(dirname "$ROOT")")" == releases ]]; then
+  log "corral runs the host hooks from current/; point its exec at ~/.local/share/mm-agent-bus/current.hooks/mm-session-start.sh and mm-session-stop.sh, else a switch of current during a session makes corral skip its postEnd (RT-6.28)"
+fi
+unset MM_BUS_HOOK_DISPATCH
+if ! { rel_tmp="$(umask 077 && mktemp "${STATE_DIR}/.${SESSION_KEY}.release.XXXXXX")" &&
+       printf '%s\n' "$ROOT" >"$rel_tmp" && mv -f "$rel_tmp" "${STATE_DIR}/${SESSION_KEY}.release"; }; then
+  log "WARNING: could not record this session's release; postEnd ends it with the current one"
+fi
 
 # --- take over a kept bot (RT-6.18 step 10) -----------------------------------
 # A Claude Code start with --continue or --resume <id> takes over the bot

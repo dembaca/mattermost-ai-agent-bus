@@ -3,6 +3,44 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.81.0
+
+### Added
+
+- **`mm-agent-host-install.sh --rollback` and `--downgrade`** ([RT-6.28](docs/arc42/06-runtime-view.md#628-host-copy-install-switch-and-rollback), ADR-011 phase 1a).
+  `--rollback` swaps `current` and `previous`; `--downgrade` is needed to
+  install an older version than the one `current` runs, which is refused
+  otherwise.
+- **corral's hook files: a dispatcher** (`adapters/corral/mm-hook-dispatch.sh`,
+  [RT-6.28 steps 4, 8, 9](docs/arc42/06-runtime-view.md#628-host-copy-install-switch-and-rollback)),
+  installed as `current.hooks/mm-session-start.sh` and `mm-session-stop.sh`
+  beside `current`. corral approves a hook by its configured file's content and
+  skips a `postEnd` whose file changed during the session; the dispatcher stays
+  byte for byte the same across releases, so a switch makes corral neither
+  skip a running session's `postEnd` nor ask again. **Point corral's `exec`
+  at these two files once** (the installer prints the config); the old
+  `current/adapters/corral/…` paths still work, and the start hook says so.
+
+### Changed
+
+- **The host copy is a release directory, switched in one step** (ADR-011
+  phase 1a, [RT-6.28](docs/arc42/06-runtime-view.md#628-host-copy-install-switch-and-rollback), [§7.1](docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
+  The installer writes `releases/<version>-dev.<commit>/` beside
+  `MM_BUS_HOST_DIR` with a `SOURCE=unsigned` file (no signed releases yet,
+  phase 1b), runs `uv sync --locked` there before the switch, and only then
+  points the symlink `current` at it in one rename (`mv -T` with GNU, `mv -h`
+  with BSD and macOS); the one before stays as `previous`. A failed sync, or
+  no `uv`, leaves `current` as it was. Releases neither link nor a running
+  session uses are removed. `preStart` records the release a session runs
+  from in the state directory (`<session>.release`), and at `postEnd` the
+  dispatcher runs that release's stop hook when the record names a release
+  directory of the same host copy, out of every sandbox's reach; else the
+  current one.
+- **Migration:** a host copy from before (a directory `current`) moves to
+  `releases/<version>-legacy/` on the first install, gets its Python
+  environment again and becomes `previous`. Installing the commit `current`
+  already runs changes nothing.
+
 ## 0.80.0
 
 ### Added

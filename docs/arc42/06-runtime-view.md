@@ -2,14 +2,14 @@
 
 ## Overview
 
-Twenty-seven scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Twenty-eight scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 4), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, how the turn hooks reach the bus through the MCP server without the token, how a corral session keeps the bot token on the host altogether, with its MCP server there, how the coordinator's server notices a stalled bus and open asks remind their human, how the OpenCode plugin and the pi extension run the same turn cycle through the hook API, who answers a mention of an agent that has left, how an agent talks in channels besides its home (guest channels), how it sees the files a post carries, how the registrar's signature vouches for whom an agent answers to, how a home's ask mode sends a worker's question to its coordinator first, and how a trusted human's pinned mandate lets one coordinator give tasks in another home. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, how the turn hooks reach the bus through the MCP server without the token, how a corral session keeps the bot token on the host altogether, with its MCP server there, how the coordinator's server notices a stalled bus and open asks remind their human, how the OpenCode plugin and the pi extension run the same turn cycle through the hook API, who answers a mention of an agent that has left, how an agent talks in channels besides its home (guest channels), how it sees the files a post carries, how the registrar's signature vouches for whom an agent answers to, how a home's ask mode sends a worker's question to its coordinator first, how a trusted human's pinned mandate lets one coordinator give tasks in another home, and how the host copy is installed into a release of its own, switched and rolled back. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -1151,3 +1151,47 @@ Everything the server writes in its state directory goes through one helper: a n
 | 1 | `gopass` (or the `MM_REG_SECRET_CMD` command) fails | pi cannot start the server and says so (`/mcp`); the session runs as without the extension's server |
 | 5 | `pi -p` (print mode) ends after its prompt | The long poll ends with the process; the agent hears the bus only in its run |
 | 7 | Reload (`/reload`) or a session switch | The extension's runtime is replaced: the old one's poll is aborted, the new one registers the server again and polls; turn state starts afresh |
+
+---
+
+## 6.28 Host copy install, switch and rollback
+
+**Purpose:** The host copy under corral (the host hooks, `bin/`, the MCP server and its `uv` environment, Section 7.1) changes in one step and goes back the same way: each install lands in a directory of its own, `current` is switched to it only when it is complete, the one before stays as `previous`, and a running session ends with the code it started with. corral runs a dispatcher that stays the same across releases, so a switch does not make corral skip a running session's `postEnd` (ADR-011 phase 1a; the signature check of phase 1b is not built, so every install is from a clone and marked `unsigned`).
+
+**Trigger:** The developer runs `bin/mm-agent-host-install.sh` (or `--from <clone>`, `--downgrade`, `--rollback`) on the host; corral starts a session's `preStart` or `postEnd`.
+
+**Participants:** Shell CLI, Host session hooks, MCP server; corral, Developer / operator
+
+**Quality goal illustrated:** `#secure` Secret confinement — nothing a sandbox can write decides which code runs on the host; `#reliable` Never wedges — a failed install leaves the working host copy as it was
+
+### Sequence
+
+1. The installer checks its source as Section 7.1 says (a reviewed clone, only what is committed, nowhere a sandbox writes) and the layout beside `MM_BUS_HOST_DIR` (default `~/.local/share/mm-agent-bus/current`), in that directory's parent, which no sandbox may write: `releases/`, the target's own name (`current`), `previous`, and `current.hooks/` (the target's name with `.hooks`). `current` and `previous` are symlinks to `releases/<name>`; a name is `<major>.<minor>.<patch>-dev.<the commit's first 12 hex>` for an install from a clone, or `<version>-legacy` for a host copy from before this layout (step 5). Without `uv` it changes nothing.
+2. It copies `git archive` of the clone's `HEAD` into `releases/.install.<random>` and reads the version from the copied `.claude-plugin/plugin.json`; one not of the form `x.y.z` is refused. A version older than the one `current` runs is refused without `--downgrade`, so nobody is led back to an older release by accident.
+3. The same commit as `current` changes nothing ("already the current release"). A release of that name installed before and complete (it has its `SOURCE` file) is switched to as it is. Otherwise the copy is renamed to `releases/<name>` and `uv sync --locked --no-dev` prepares the MCP server's environment there, in place: a virtual environment does not survive a move. Only when that succeeded is `SOURCE` written (`SOURCE=unsigned`, `COMMIT=<sha>`), last, so a release without it is incomplete; a failed sync removes the release, and `current` stays as it was.
+4. The switch: a new symlink beside `current`, renamed over it in one `rename(2)`, so a session starting meanwhile sees the old or the new release, never none and never half of one. `mv` onto a symlink to a directory would move into that directory: GNU `mv` gets `-T`, BSD and macOS `mv` `-h` (no target directory follows the link); the installer checks the link afterwards. Then `previous` points at the release `current` had, the same way. corral's hook files are `current.hooks/mm-session-start.sh` and `current.hooks/mm-session-stop.sh`: both are the release's `adapters/corral/mm-hook-dispatch.sh`, byte for byte, and the installer writes them only when that text differs from what is there. corral approves a hook by the content of the path it is configured with (the file behind the symlinks, not what that file sources or starts), asks again at `corral run` when that content changed, and skips a `postEnd` hook whose content changed during the session. So a switch leaves corral's hook files as they were: corral asks nothing for it, and the developer running the installer from a clone they reviewed is the check. When the dispatcher's own text changes, corral asks once at the next launch; declined (or without a terminal, or with `--yes`), corral refuses the session and runs no hook. A changed dispatcher is not written while a session's release is recorded (step 8), or when the state directory cannot tell: corral would skip that session's `postEnd`; the installer says so and keeps the old one until it is run again.
+5. A host copy from before this layout is a directory, not a link: it moves to `releases/<its version>-legacy` (no `current` exists for that instant, once), `current` becomes the link, and the old copy gets its environment again with `uv sync`, since its virtual environment did not survive the move; it is `previous`. Without one it is no release to roll back to, and `previous` is not set. corral's `exec` moves once from `current/adapters/corral/…` to `current.hooks/…` (the installer prints the config); until then the start hook says so on stderr.
+6. `--rollback` swaps `current` and `previous` in two renames, when both point at releases of this layout and `previous` has its `SOURCE` and Python environment; again goes back. It installs nothing and leaves corral's hook files as they are.
+7. After an install or a rollback, every directory in `releases/` with a release's name goes that is neither `current` nor `previous` nor recorded by a session (step 8). A state directory a sandbox can write is not read, and then nothing goes.
+8. preStart: corral runs `current.hooks/mm-session-start.sh`, which `exec`s `10-mm-session-start.sh` of the release `current` points at, after the checks of step 9. That hook records the release it runs from (its resolved tree) in the host state directory as `<session key>.release`, before it registers the bot. The session's host process runs from that tree until the session ends, whatever `current` points at by then. Without such a release (`current` no link, or not to a release of this layout) preStart contributes only `MM_BUS_UNAVAILABLE` (fail closed, no bot).
+9. postEnd: corral runs `current.hooks/mm-session-stop.sh`, which reads the record and `exec`s the recorded release's `90-mm-session-stop.sh`, so the session ends with the code it started with: only when the recorded path is a directory in the `releases/` beside the dispatcher, named as a release (step 1), owned by the user, no symlink on the way (its resolved path is the one recorded), out of every sandbox's reach, with the hook as a regular file. Anything else, or no record, and the current release ends the session; the dispatcher says so on stderr. The dispatcher sources nothing and checks inline, as the hooks do, that neither itself nor its directory lies where a sandbox can write. The stop hook removes the record. preStart removes a record that has no session file and is older than an hour (a session that ended without `postEnd`).
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | No `uv` on the host | Refused before anything is copied: without the environment sessions get no bus |
+| 1 | A `releases` or `current.hooks` that is a symlink, a `previous` that is not one, a target that is a file | Refused; nothing changes |
+| 2 | An older version without `--downgrade` | Refused, naming both versions; `--rollback` goes back to `previous` instead |
+| 3 | `uv sync --locked` fails | The new release is removed; `current` and `previous` are as they were |
+| 3 | The installer is killed during the sync | The release stays without `SOURCE`; the next install of that commit replaces it |
+| 4 | The rename fails or the link is not what was asked for | Refused; a host copy just moved for the migration is moved back |
+| 4 | The dispatcher changed while a session runs | Kept as it was, with a warning; the next run of the installer without a running session writes it, and corral asks once |
+| 4 | The human declines corral's prompt for a changed dispatcher | corral refuses the session; no hook runs |
+| 5 | The old copy gets no environment again | No `previous`: there is nothing to roll back to |
+| 5 | corral still runs `current/adapters/corral/…` | Works; the start hook names the dispatcher's paths on stderr. A switch during such a session changes that file, and corral skips the session's `postEnd` (the bot goes with the host process's watchdog or the sweep, RT-6.18) |
+| 6 | No `previous`, or one without its environment | Refused; nothing changes |
+| 7 | The state directory is one a sandbox can write | No release is removed |
+| 8 | `current` points at no release of this layout | preStart: no bus for the session, and why |
+| 8 | The record cannot be written | A warning; `postEnd` ends the session with the current release |
+| 9 | The recorded release was removed or its record is not one (step 9's rules) | The current release ends the session |

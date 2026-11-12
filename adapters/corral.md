@@ -44,13 +44,26 @@ anything; it prints the commit it installs — check the sha against the one you
 reviewed ([arc42 §7.1](../docs/arc42/07-deployment-view.md#71-production-deployment-corral-host-managed)).
 The host copy is only as trustworthy as the clone you reviewed.
 
-It copies `adapters/corral/`, `bin/` and the MCP server (`mcp/`) to
-`~/.local/share/mm-agent-bus/current/`, where no sandbox can change them, prepares the
-server's Python environment there with `uv sync --locked` (needs `uv`; without it
-sessions get no bus), and prints the config below. The host process runs that code with
-the bot token. **Rerun it after every plugin update**, from the clone updated to that
-version; `mm-agent-host-install.sh --check` tells whether the host copy is current, and
-the start hook says so in the banner when it is not.
+It copies `adapters/corral/`, `bin/` and the MCP server (`mcp/`) into a release
+directory of its own under `~/.local/share/mm-agent-bus/releases/`, where no sandbox can
+change them, prepares the server's Python environment there with `uv sync --locked`
+(needs `uv`; without it nothing changes), points the symlink
+`~/.local/share/mm-agent-bus/current` at it in one step, and prints the config below.
+The host process runs that code with the bot token. **Rerun it after every plugin
+update**, from the clone updated to that version; `mm-agent-host-install.sh --check`
+tells whether the host copy is current, and the start hook says so in the banner when
+it is not.
+
+```bash
+mm-agent-host-install.sh --rollback     # back to the release before (previous); again goes forward
+mm-agent-host-install.sh --downgrade    # needed to install an older version than current
+```
+
+A failed install leaves `current` as it was; a running session keeps the release it
+started with and ends with it; a release goes once neither `current`, `previous` nor
+a running session uses it. A host copy from before 0.81.0 (a directory `current`)
+becomes `previous` on the first install
+([arc42 RT-6.28](../docs/arc42/06-runtime-view.md#628-host-copy-install-switch-and-rollback)).
 
 **The installed copy is the only mode.** Pointing `exec` at the marketplace clone
 (`~/.claude/plugins/marketplaces/…`), another plugin directory or a checkout a session
@@ -71,17 +84,27 @@ providers:
     enabled: true
     preStart:
       mm-bus:
-        exec: ~/.local/share/mm-agent-bus/current/adapters/corral/10-mm-session-start.sh
+        exec: ~/.local/share/mm-agent-bus/current.hooks/mm-session-start.sh
         optional: true
     postEnd:
       mm-bus:
-        exec: ~/.local/share/mm-agent-bus/current/adapters/corral/90-mm-session-stop.sh
+        exec: ~/.local/share/mm-agent-bus/current.hooks/mm-session-stop.sh
         optional: true
 ```
 
-`~` is expanded in `exec`, so the same entry works from any working directory. After
-each reinstall corral asks once to approve the changed hooks: that prompt is your
-check that new host code is about to run.
+`~` is expanded in `exec`, so the same entry works from any working directory. Both
+files are a dispatcher (`adapters/corral/mm-hook-dispatch.sh`) that starts the hook of
+the release `current` points at, and at the end of a session the hook of the release
+it started with. corral approves a hook by the content of the configured file only
+(not by what it starts), asks again when that content changes, and skips a `postEnd`
+whose file changed during the session; the dispatcher stays byte for byte the same
+across releases, so an install or `--rollback` does **not** make corral ask again:
+your check of new host code is reviewing the clone and running the installer. When
+the dispatcher itself changes in a release, corral asks once at the next launch;
+declining refuses that session, and no hook runs. The installer does not replace the
+dispatcher while a session runs, and says so. Before 0.81.0 `exec` pointed at
+`current/adapters/corral/…`: change it once; that path still works, but a switch
+during a session then makes corral skip its `postEnd`.
 
 **`optional: true` is deliberate**: a Mattermost outage then degrades to a warning
 instead of blocking every `corral run` on the machine. Set it to `false` if a session
@@ -245,9 +268,10 @@ Run it on the **host**: session files never enter a sandbox.
 
 ## Gotchas
 
-- **Editing a hook re-triggers corral's approve-once gate.** The next launch asks you to
-  approve the changed executable. That is the feature working, not an error — read the
-  diff, then approve.
+- **Editing a configured hook file re-triggers corral's approve-once gate.** The next
+  launch asks you to approve the changed executable. That is the feature working, not an
+  error — read the diff, then approve. It covers that one file: the dispatcher in
+  `current.hooks/`, not the release it starts (RT-6.28).
 - **`corral run --dry-run` never executes hooks**, so it cannot be used to verify this
   setup. Launch for real and read the banner's `preStart ran` row.
 - **`MM_TEAM` / `MM_CHANNEL` must match the registrar's `DEFAULT_TEAM_NAME` /
