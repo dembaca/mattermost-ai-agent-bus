@@ -21,7 +21,7 @@ import threading
 import time
 
 import pytest
-from conftest import ME, PROJECT, ROOT  # noqa: F401
+from conftest import ME, PROJECT, ROOT, VSEG  # noqa: F401
 
 START = "adapters/corral/10-mm-session-start.sh"
 STOP = "adapters/corral/90-mm-session-stop.sh"
@@ -466,7 +466,7 @@ def test_keyless_hooks_reach_the_host_process(mm, run, tmp_path):
     prompt = json.dumps({"session_id": "cc-hooks", "transcript_path": "/x/t.jsonl", "prompt": "go"})
     r = run("hooks/turn-status.sh", stdin=prompt, bus=None, **env)
     assert r.code == 0, r.stderr
-    assert mm.custom_status()["text"] == "working · myproj · ~proj-x"
+    assert mm.custom_status()["text"] == f"working · myproj{VSEG} · ~proj-x"
 
     mm.unread_dm(1)
     r = run("hooks/stop-inbox-check.sh", bus=None, **env)
@@ -488,7 +488,7 @@ def test_keyless_hooks_reach_the_host_process(mm, run, tmp_path):
     assert "1 unread mention(s) or DM(s)" in r.stdout
 
     assert run("bin/mm-agent-status.sh", "bus", "tool", bus=None, **env).code == 0
-    assert mm.custom_status()["text"] == "on the bus · tool · ~proj-x"
+    assert mm.custom_status()["text"] == f"on the bus · tool{VSEG} · ~proj-x"
 
     hosted = run.state_dir / "hosted" / "sess-hooks"
     (hosted / f"coord-{ME}.env").write_text(f"CROWN_UNTIL={int(time.time()) + 600}\n")

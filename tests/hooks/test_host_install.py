@@ -384,11 +384,11 @@ def tree(at, version=VERSION):
 def test_installs_from_its_own_checkout_and_checks_the_plugin_version(run, tmp_path):
     registry(tmp_path, ROOT)
     dest = tmp_path / "current"
-    assert run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest)).code != 0
+    assert run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest), MM_RELEASE_URL=str(tmp_path / "no-repo")).code != 0
     c = clone(tmp_path)
     r = run(str(c / INSTALL), **uv(tmp_path), MM_BUS_HOST_DIR=str(dest))
     assert r.code == 0 and f"from: {c.resolve()}" in r.stdout
-    c = run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest))
+    c = run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest), MM_RELEASE_URL=str(tmp_path / "no-repo"))
     assert c.code == 0 and f"plugin:     {VERSION}" in c.stdout
 
 
@@ -412,7 +412,7 @@ def test_a_newer_plugin_in_a_corral_home_is_never_the_source(run, tmp_path):
     assert f"from: {c.resolve()}" in r.stdout and str(plant) not in r.stdout
     assert not (dest / "bin" / "planted.sh").exists()
     assert json.loads((dest / ".claude-plugin" / "plugin.json").read_text())["version"] == VERSION
-    c = run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest))
+    c = run(INSTALL, "--check", MM_BUS_HOST_DIR=str(dest), MM_RELEASE_URL=str(tmp_path / "no-repo"))
     assert "99.0.0" in c.stdout and ".cache" not in c.stdout and c.code != 0
 
 

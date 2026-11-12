@@ -10,7 +10,7 @@ import os
 import time
 
 import pytest
-from conftest import CHANNEL, ME, TEAM, hook_api
+from conftest import CHANNEL, ME, TEAM, VSEG, hook_api
 from mattermost_ai_agent_bus import lease
 
 STATUS = "bin/mm-agent-status.sh"
@@ -95,7 +95,7 @@ def test_with_the_server_it_keeps_the_crown(mm, run):
         run(STATUS, "listening", until, bus=None, **bus)
     statuses = [b for m, p, b in mm.writes if p == "/api/v4/users/me/status/custom"]
     # RT-6.6 step 10: the server's crown text carries the receipt marker.
-    assert statuses[0]["emoji"] == "crown" and statuses[0]["text"] == "coordinator · working · \U0001F440 · proj · ~agents"
+    assert statuses[0]["emoji"] == "crown" and statuses[0]["text"] == f"coordinator · working · \U0001F440 · proj{VSEG} · ~agents"
     assert statuses[1]["text"].startswith("coordinator · listening · until")
 
 

@@ -8,7 +8,7 @@ import os
 import subprocess
 import time
 
-from conftest import CHANNEL, ME, PROJECT, ROOT, TEAM, hook_api
+from conftest import CHANNEL, ME, PROJECT, ROOT, TEAM, VSEG, hook_api
 
 STOP = "hooks/stop-inbox-check.sh"
 PROMPT = "hooks/turn-status.sh"
@@ -199,7 +199,7 @@ def test_channel_session_needs_no_listener(mm, run):
     r = run(STOP, **IN_PROJECT)
     assert r.passed
     assert window(run).get("UNTIL", "0") == "0"
-    assert mm.custom_status().get("text") == "listening · the bus wakes me · ~agents"
+    assert mm.custom_status().get("text") == f"listening · the bus wakes me{VSEG} · ~agents"
     # MM_CHANNEL_PUSH=0 overrides: back to the listener.
     assert run(STOP, MM_CHANNEL_PUSH="0", **IN_PROJECT).blocked
 

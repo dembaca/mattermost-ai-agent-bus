@@ -8,7 +8,9 @@ instead, served next to the WebSocket inbox in the server's event loop:
     GET  /v1/me             {user_id, username, project, crown_until, channel}
     GET  /v1/pending        {count[, stall: 1][, channels: [{id, type, pending, fyi}]]}
                             (?detail=1: up to 5 channels, with fyi counts)
-    GET  /v1/last-post      {at, message, signed_off}: the own latest post in the work channel
+    GET  /v1/last-post      {at, message, signed_off[, release]}: the own latest post in the
+                            work channel; release {newest, line}: the notice of a release
+                            the host's check passed, for the turn-end banner (RT-6.30)
     GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
                             message, to, intent, fyi, quiet, gated, names_agent, absent[, files]}]},
                             work channel
@@ -84,7 +86,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import (
-    a2a, asks, channel, files, gate, lease, life, ownpost, session_file, stall, stats, tasks, turnend, unread, usage,
+    a2a, asks, channel, files, gate, lease, life, ownpost, release, session_file, stall, stats, tasks, turnend,
+    unread, usage,
 )
 from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
 from .model import Post
@@ -589,7 +592,16 @@ async def last_post(client: MattermostAdapter, query: Mapping[str, str], body: M
     last-<uid>.env (ownpost.py) without a request, else from the channel's last
     100 posts; at 0 when there is none."""
     at, message, signed_off = await _last(client, query, body)
-    return 200, {"at": at, "message": message, "signed_off": signed_off}
+    return 200, {"at": at, "message": message, "signed_off": signed_off, **_release()}
+
+
+def _release() -> dict[str, Any]:
+    """The release notice for the turn-end banner (RT-6.30, RT-6.2 step 8),
+    riding on the read the Stop hook makes every turn end: the host's check
+    is the server's to read, in a keyless session too."""
+    state = release.read_state()
+    text = release.line(state=state) if state else ""
+    return {"release": {"newest": state.newest, "line": text}} if state and text else {}
 
 
 async def _last(client: MattermostAdapter, query: Mapping[str, str],

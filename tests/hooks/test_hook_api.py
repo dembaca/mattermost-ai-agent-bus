@@ -14,7 +14,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-from conftest import CHANNEL, ME, PROJECT, ROOT
+from conftest import CHANNEL, ME, PROJECT, ROOT, VSEG
 
 STOP = "hooks/stop-inbox-check.sh"
 PROMPT = "hooks/turn-status.sh"
@@ -63,7 +63,7 @@ def test_listener_and_prompt_hook_through_the_server(mm, run):
     """RT-6.17 step 3: presence and the listener's wake-ups go through the
     server, which holds the token."""
     assert run(PROMPT, CORRAL_WORKDIR="/x/myproj").code == 0
-    assert mm.custom_status()["text"] == "working · myproj · ~agents"
+    assert mm.custom_status()["text"] == f"working · myproj{VSEG} · ~agents"
     mm.unread_dm(1)
     r = run(LISTEN, "--until", str(int(time.time()) + 20), MM_LISTEN_POLL_SEC="1",
             MM_PROJECT_CHANNEL_ID=PROJECT)

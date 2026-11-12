@@ -25,7 +25,7 @@ from pydantic import ValidationError
 from . import (
     __version__, a2a, askroute, asks, attest, channel, departed, files, gate, hookapi, lease, life, mandate, overhead, owners, ownpost,
     permission,
-    profile, receipt, remind, session_file, slim, stall, stats, tasks, unread, usage,
+    profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unread, usage,
 )
 from .client import InvalidId, MattermostAdapter, attachment_props, guest_ids, mm_id, mm_name
 from .model import Answer, Mark, Post, Refused
@@ -216,12 +216,15 @@ async def _lifespan(_server: Any) -> AsyncIterator[dict[str, Any]]:
     task = asyncio.create_task(lease.heartbeat(_bus_client, stall.watch))
     # A bot handed in by the host: check and log its attestation (RT-6.24).
     attested = asyncio.create_task(_attest_start())
+    # The host's release check, once a day as a bounded child (RT-6.30).
+    checking = asyncio.create_task(release.check_loop())
     api = await _start_hook_api()
     try:
         yield {}
     finally:
         task.cancel()
         attested.cancel()
+        checking.cancel()
         if api is not None:
             await api.close()
 
@@ -841,8 +844,9 @@ async def session_end(name: str = "") -> str:
 @mcp.tool()
 async def bus_info() -> str:
     """This bus session at a glance: plugin/MCP version, bot, responsible and
-    trusted humans, channels (home, guests, lobby, with ids in `channels`; RT-6.22); update names a newer installed plugin, which
-    takes a restart (quit, then `claude --resume <id>`). ask_mode: RT-6.25. mandate: RT-6.26.
+    trusted humans, channels (home, guests, lobby, with ids in `channels`; RT-6.22); update: a newer
+    installed plugin, taking a restart (`claude --resume <id>`). ask_mode: RT-6.25. mandate: RT-6.26.
+    release: RT-6.30, a human installs it, never you.
 
     responsible names who answers for you and kind is "session" or
     "autonomous" — announce puts both into your HELLO (for / trusts). trusted_humans says
@@ -862,6 +866,7 @@ async def bus_info() -> str:
                 "session_start when MM_REG_SECRET (in this server's environment) and "
                 "MM_PROJECT_CHANNEL are set; otherwise the host must pass the bus "
                 "settings into the session"),
+            "release": release.notice(VERSION),
             **_hook_warning(),
         })
     trusted = await client.trusted_humans()
@@ -911,6 +916,8 @@ async def bus_info() -> str:
         "permission_relay": RELAY,
         **({"update": {"installed": newer, "how": _restart_how()}}
            if (newer := _newer_installed()) else {}),
+        # RT-6.30: this version and its source, the newest release the host's check passed.
+        "release": release.notice(VERSION),
         **({"warning": "; ".join(warnings)} if warnings else {}),
     })
 

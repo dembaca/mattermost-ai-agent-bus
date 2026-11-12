@@ -240,6 +240,8 @@ class RosterEntry:
     user_id: str = field(default="", compare=False)
     # The numbers its status text carries (usage.from_status, ADR-008 step 3).
     usage: dict[str, Any] = field(default_factory=dict, compare=False)
+    # The version its status text names: {version[, source]} (release.from_status, RT-6.30).
+    release: dict[str, str] = field(default_factory=dict, compare=False)
 
 
 @dataclass(frozen=True)

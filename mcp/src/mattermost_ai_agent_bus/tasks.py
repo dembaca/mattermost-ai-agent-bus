@@ -269,7 +269,8 @@ def roster(rows: list[RosterEntry], posts: Sequence[Post], names: Mapping[str, s
     `usage` (by name, usage.from_status): `ctx`, `limit_5h`, `limit_7d` of an
     agent that reports them (ADR-008); agents with one `limit_5h.resets_at`
     are on one subscription and get the same `limit_shared`
-    {group, agents} (group: 1, 2, … in row order; agents: how many)."""
+    {group, agents} (group: 1, 2, … in row order; agents: how many).
+    `version` and `source` (RT-6.30): see the row below."""
     cards: dict[str, dict[str, Any]] = {}
     for p in _live(posts):
         if p.root_id:
@@ -290,6 +291,10 @@ def roster(rows: list[RosterEntry], posts: Sequence[Post], names: Mapping[str, s
                "task": _first_line(str(card.get("description", "")), TITLE),
                "branch": meta.get("branch"),
                "skills": [s.get("name") for s in card.get("skills") or []] or None,
+               # RT-6.30: the version its status names, else its HELLO card's;
+               # source "unchecked" or "unsigned" (none: a signed release, or unknown).
+               "version": r.release.get("version") or card.get("version"),
+               "source": r.release.get("source"),
                **(owners or {}).get(r.username, {})}
         out.append({k: v for k, v in row.items() if v})
     _usage(out, usage or {}, owners or {})
