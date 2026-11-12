@@ -277,7 +277,8 @@ async def test_no_claim_over_an_unmarked_holder_or_beside_a_second_crown(chat):
 
 async def test_the_old_holder_yields_to_a_crown_taken_heard(chat):
     """ADR-007 step 4: a crown_taken naming this holder, from an agent that
-    wears a crown, makes it yield at its next tick and not claim for two leases."""
+    wears a crown, makes it yield at its next tick and not claim for one crown
+    lease, as after the silent drop (decided 2026-11-12), not a release's two."""
     chat.agent(HOLDER, "agent-new", 3000, "crown", MARKED)
     chat.agent(ME, "agent-me", 1000, "crown", MARKED)
     _hold()
@@ -286,7 +287,8 @@ async def test_the_old_holder_yields_to_a_crown_taken_heard(chat):
     assert lease.ousted_pending()
     await lease.command(chat, "tick")
     assert not lease.crown_held(ME)
-    assert lease._coord(ME)["YIELD_UNTIL"] >= time.time() + 2 * 900 - 5
+    until = lease._coord(ME)["YIELD_UNTIL"]
+    assert time.time() + lease.crown_lease_sec() - 5 <= until <= time.time() + lease.crown_lease_sec()
 
 
 async def test_a_holder_with_a_dead_socket_reads_crown_taken_from_the_home(chat):

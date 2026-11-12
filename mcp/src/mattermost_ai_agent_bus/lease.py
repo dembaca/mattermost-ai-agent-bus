@@ -727,8 +727,10 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
     by, posts = await _taken_from_me(client, cid, uid, rows) if holding else ("", None)
     if by:
         # ADR-007 step 4: an agent took the crown over from this one (no 👀 in
-        # time): it yields, and does not claim for two leases, as after a release.
-        _save_coord(uid, 0, 0, now + 2 * lease)
+        # time): it yields, and does not claim for one crown lease, as after the
+        # silent drop (decided 2026-11-12): a release's two leases would leave a
+        # small home without a crown if the new holder fails in turn.
+        _save_coord(uid, 0, 0, now + crown_lease_sec())
         _took_from, _crown_since, _ousted = "", 0.0, None
         await _render(client)
         log.info("crown yielded: %s took it over (crown_taken, ADR-007 step 4)", by)

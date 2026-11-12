@@ -877,8 +877,9 @@ where it can.
    human reads "👑 taken over by `<bot>`: no 👀 for `<post id>` within
    45 s"). A holder that sees a newer `crown_taken` that names it drops its
    crown at its next tick, which replaces "the younger one yields" (RT-6.6
-   error row 1) for this case, and does not claim again for two
-   `MM_LEASE_SEC`, as after a `release` (RT-6.6 step 4). It gets the crown
+   error row 1) for this case, and does not claim again for one crown lease,
+   as after the silent drop (decision (4) of 2026-11-12; proposed first: two
+   `MM_LEASE_SEC`, as after a `release`, RT-6.6 step 4). It gets the crown
    back only the way any agent does: the pending-`take` handover of RT-6.6
    step 4 (for example to a stronger model), or step 2 once the new holder's
    crown has run out in turn. A holder that is only flaky does not make the
@@ -939,7 +940,7 @@ silent), and a claim race ends with one crown (the `take` re-check); a post that
 wakes the holder gets a 👀 from its server; a post with a 👀 starts nothing at
 the others, a post without one starts the claim after the wait, and a post the
 watcher gates starts none; `crown_taken` makes the old holder yield and not
-claim for two leases; a later `take` with `ACK` still works (RT-6.6 step 4); a
+claim for one crown lease (decision (4) of 2026-11-12); a later `take` with `ACK` still works (RT-6.6 step 4); a
 question to the 👑 without a 👀 goes to the human after the wait and one with it
 after `MM_ASK_ROUTE_WAIT_MIN`. RT-6.6 error rows that change: 1 (the younger yields: not after a
 `crown_taken`), 2 (a dead oldest agent: now a slot, not a lease), 4 (an old
@@ -1252,7 +1253,11 @@ yield to the holder it took the crown from. After review that exemption is
 bounded (the claimer's next tick and a crown lease, then the two-crown rule of
 RT-6.6 step 2 again), the claimer posts its line again while the old crown
 shows and its line is missing, and only an author that stands for the old
-holder's server can oust it (ADR-001).
+holder's server can oust it (ADR-001). (4) **The old holder's yield.** After a
+takeover by `crown_taken` the old holder makes no claim for one crown lease
+(`MM_CROWN_LEASE_SEC`), as after the silent drop, not for two `MM_LEASE_SEC`
+as step 4 proposed: with 30 min a small home whose new holder fails in turn
+stays without a crown, while the slots of RT-6.6 step 2 keep the order anyway.
 
 **Phase E as built (0.80.0, `receipt.py`, with phase 2; RT-6.6 step 10,
 RT-6.12 step 7, RT-6.25 step 6):** as decision steps 3 to 5 and amendment step
@@ -1266,9 +1271,8 @@ later, then claims at its slot among the agents that stand, the holder left
 out (`lease.take_over`), and posts `crown_taken` (kind `crown_taken`, intent
 fyi, quiet like the context line, `holder` the old holder's id). The old
 holder yields only to a `crown_taken` whose author wears a live crown in the
-home and stands for its server, and then does not claim for two
-`MM_LEASE_SEC` (whether one crown lease would do, as for the silent drop, is
-asked of dembaca). A question to the 👑
+home and stands for its server, and then does not claim for one crown lease
+(decision (4)). A question to the 👑
 (step 5) goes to the human after `MM_ACK_WAIT_SEC` when a marked 👑 set
 neither receipt or a silent one no 👀. No new scenario: the 👀 is RT-6.12 step
 7 (the open question's recommendation), the claim RT-6.6 step 10.

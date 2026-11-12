@@ -29,8 +29,8 @@ before 0.5.0 are described in the git history.
   (`props.a2a.kind` `crown_taken`, posted again if it failed). The crown
   stays with it for a tick and a crown lease: the old holder yields when it
   reads that line from an author that stands for it (from its WebSocket, or from the home's
-  posts at its tick when its socket is dead) and claims nothing for two
-  `MM_LEASE_SEC`. The successor of a silent holder posts the same line naming
+  posts at its tick when its socket is dead) and claims nothing for one
+  crown lease (150 s), as after the silent drop. The successor of a silent holder posts the same line naming
   the silence. A question to the 👑 without either reaction after 45 s goes
   to the human at once instead of after `MM_ASK_ROUTE_WAIT_MIN`. What people
   notice: 👀 and ⏳ under the posts the coordinator gets, and a coordinator
