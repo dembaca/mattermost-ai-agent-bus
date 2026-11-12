@@ -59,6 +59,26 @@ verified once stays marked signed when you later run without the keys.
 Every refusal leaves `current` as it was. For a new release, run it again with the new
 tag; to rotate a key, pin old and new together
 ([arc42 RT-6.29](../docs/arc42/06-runtime-view.md#629-host-copy-from-a-signed-release)).
+
+**Pin the keys once per host** (from 0.84.0). The first `--release` run with
+`MM_RELEASE_SIGNERS` keeps the keys that verified the tag in
+`~/.local/share/mm-agent-bus/release-signers` (0600), beside `releases/` and `src.git`
+(`MM_BUS_HOST_DIR`'s parent), not in the state directory: `XDG_STATE_HOME` can be
+changed by a workdir's `.envrc`. Later runs without the variable, and the release check
+the MCP server runs once a day (which under corral does not see your shell's
+environment), verify against that file; the output says where the keys came from.
+Other keys in the variable, a rotation (old plus new) included, are refused: pass
+`--replace-signers` to pin them, or forget the pinned ones with
+`mm-agent-host-install.sh --forget-signers`. A file or directory that is a symlink,
+writable by others or by a sandbox, or a file holding anything but keys refuses the run
+rather than installing unchecked. Allow an `.envrc` that sets `MM_RELEASE_SIGNERS` or
+`MM_BUS_HOST_DIR` only after reading it.
+
+**A withdrawn version** (one a later release's CHANGELOG withdrew, as the host's release
+check recorded it in `release-withdrawn.env` beside `releases/`) is refused by
+`--release` and `--rollback`, naming the release that withdrew it; `--withdrawn-ok`
+installs or rolls back to it on purpose. Before the first check (`--check`) the
+installer says the withdrawn versions are unknown.
 The output, `--check` and the start hook say `signed release v<x.y.z>`,
 `release v<x.y.z> (signature not checked)`, or `unsigned` for an install from a clone
 (below).

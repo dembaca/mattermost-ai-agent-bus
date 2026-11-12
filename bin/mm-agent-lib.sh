@@ -728,27 +728,114 @@ mm_release_kind() {
 # On a failure each sets MM_REL_ERR (a message that echoes no argument) and
 # returns 1.
 
-# MM_RELEASE_SIGNERS → MM_REL_ENFORCE (1 when it is set: the check is opt-in,
-# decision (3) of 2026-11-12) and MM_REL_ALLOWED, an allowed-signers file's
-# text: Ed25519 keys under one fixed principal, mm-release, namespaces="git".
-# Set but holding no key is a mistake, not opt-out.
-mm_release_signers() {
+# The pinned keys (decisions (3) and (4) of 2026-11-12) → MM_REL_ENFORCE (1
+# with keys: the check is opt-in), MM_REL_ALLOWED, an allowed-signers file's
+# text (Ed25519 keys under one fixed principal, mm-release, namespaces="git"),
+# MM_REL_KEYS (one `<type> <base64>` per line, the keys in use), MM_REL_PINNED
+# (the same of release-signers, "" without it), MM_REL_FROM (env, file or
+# none) and MM_REL_FROM_TEXT (MM_RELEASE_SIGNERS or the file's path).
+# $1 is the host copy's layout directory (MM_BUS_HOST_DIR's parent, beside
+# releases/ and src.git), never the state directory: XDG_STATE_HOME comes from
+# the operator's environment, which a workdir's .envrc can redirect. The
+# source: MM_RELEASE_SIGNERS when it is set, else $1/release-signers, which
+# only a --release run with keys writes, else none. Set but holding no key is a
+# mistake, not opt-out. The file, when it exists, is checked in every mode: a
+# symlink, no regular file, in a directory a sandbox can write or that is not
+# the user's own or others can write, not the user's own or writable by
+# others, too large, without a key or with anything but keys is refused, never
+# skipped. MM_RELEASE_SIGNERS with keys other than the pinned ones (rotation
+# included) is refused unless MM_REL_REPLACE=1 (--replace-signers).
+# shellcheck disable=SC2034 # read by the installer and the release check
+MM_SIGNERS_FILE=release-signers MM_SIGNERS_MAX=16384 MM_WITHDRAWN_FILE=release-withdrawn.env
+# Key lines of $2 → MM_REL_PARSED (`<type> <base64>` per line); $1 names the source.
+mm_release_parse_keys() {
   local line
-  MM_REL_ENFORCE=0 MM_REL_ALLOWED="" MM_REL_ERR=""
-  [[ -z "${MM_RELEASE_SIGNERS+set}" ]] || MM_REL_ENFORCE=1
+  MM_REL_PARSED=""
   while IFS= read -r line; do
     line="${line#"${line%%[![:space:]]*}"}"
     [[ -n "$line" && "$line" != \#* ]] || continue
     if [[ ! "$line" =~ ^(ssh-ed25519|sk-ssh-ed25519@openssh\.com)[[:space:]]+([A-Za-z0-9+/]+={0,2})([[:space:]].*)?$ ]]; then
-      MM_REL_ERR="MM_RELEASE_SIGNERS has a line that is no Ed25519 public key (ssh-ed25519 AAAA…); refused"
+      MM_REL_ERR="$1 has a line that is no Ed25519 public key (ssh-ed25519 AAAA…); refused"
       return 1
     fi
-    MM_REL_ALLOWED+="mm-release namespaces=\"git\" ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"$'\n'
-  done <<<"${MM_RELEASE_SIGNERS:+${MM_RELEASE_SIGNERS//;/$'\n'}}"
-  if [[ "$MM_REL_ENFORCE" -eq 1 && -z "$MM_REL_ALLOWED" ]]; then
-    MM_REL_ERR="MM_RELEASE_SIGNERS is set but holds no public key (unset it to install without a signature check); nothing changed"
-    return 1
+    MM_REL_PARSED+="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"$'\n'
+  done <<<"$2"
+}
+# Whether $1 (a resolved path) is this user's own and writable by no one else.
+mm_own_path() {
+  [[ -O "$1" && -z "$(find "$1" -maxdepth 0 \( -perm -020 -o -perm -002 \) 2>/dev/null)" ]]
+}
+# shellcheck disable=SC2034 # MM_REL_* are read by the caller
+mm_release_signers() {
+  local dir="${1:-}" f real text="" k
+  MM_REL_ENFORCE=0 MM_REL_ALLOWED="" MM_REL_KEYS="" MM_REL_PINNED="" MM_REL_ERR="" MM_REL_FROM=none MM_REL_FROM_TEXT=""
+  f="${dir%/}/$MM_SIGNERS_FILE"
+  if [[ -n "$dir" && ( -e "$f" || -L "$f" ) ]]; then
+    real="$(cd -P "$dir" 2>/dev/null && pwd -P)" || real=""
+    if [[ -L "$f" ]]; then
+      MM_REL_ERR="$f is a symlink; refused (look at it, then remove it)"
+    elif [[ ! -f "$f" ]]; then
+      MM_REL_ERR="$f is no regular file; refused"
+    elif [[ -z "$real" ]] || mm_sandbox_can_write "$dir" || mm_sandbox_can_write "$real"; then
+      MM_REL_ERR="$f lies where a corral sandbox can write; refused"
+    elif ! mm_own_path "$real"; then
+      MM_REL_ERR="$real, the directory of $MM_SIGNERS_FILE, is not this user's own or others can write it; refused"
+    elif ! mm_own_path "$f"; then
+      MM_REL_ERR="$f is not this user's own or others can write it; refused"
+    elif (( $(wc -c <"$f") > MM_SIGNERS_MAX )) || ! text="$(mm_read_file "$f" "$MM_SIGNERS_MAX")"; then
+      MM_REL_ERR="$f is larger than $MM_SIGNERS_MAX bytes or cannot be read; refused"
+    fi
+    [[ -z "$MM_REL_ERR" ]] || return 1
+    mm_release_parse_keys "$f" "$text" || return 1
+    MM_REL_PINNED="$MM_REL_PARSED"
+    if [[ -z "$MM_REL_PINNED" ]]; then
+      MM_REL_ERR="$f holds no public key; refused (remove it with mm-agent-host-install.sh --forget-signers)"
+      return 1
+    fi
   fi
+  if [[ -n "${MM_RELEASE_SIGNERS+set}" ]]; then
+    MM_REL_FROM=env MM_REL_FROM_TEXT=MM_RELEASE_SIGNERS
+    mm_release_parse_keys MM_RELEASE_SIGNERS "${MM_RELEASE_SIGNERS//;/$'\n'}" || return 1
+    MM_REL_KEYS="$MM_REL_PARSED"
+    if [[ -z "$MM_REL_KEYS" ]]; then
+      MM_REL_ERR="MM_RELEASE_SIGNERS is set but holds no public key (unset it to install without a signature check); nothing changed"
+      return 1
+    fi
+    if [[ -n "$MM_REL_PINNED" && "${MM_REL_REPLACE:-0}" -ne 1 &&
+          "$(sort -u <<<"$MM_REL_KEYS")" != "$(sort -u <<<"$MM_REL_PINNED")" ]]; then
+      MM_REL_ERR="the keys pinned in $f differ from MM_RELEASE_SIGNERS: mm-agent-host-install.sh --forget-signers first, or --release with --replace-signers; nothing changed"
+      return 1
+    fi
+  elif [[ -n "$MM_REL_PINNED" ]]; then
+    MM_REL_FROM=file MM_REL_FROM_TEXT="$f" MM_REL_KEYS="$MM_REL_PINNED"
+  else
+    return 0
+  fi
+  MM_REL_ENFORCE=1
+  while IFS= read -r k; do
+    [[ -z "$k" ]] || MM_REL_ALLOWED+="mm-release namespaces=\"git\" $k"$'\n'
+  done <<<"$MM_REL_KEYS"
+}
+
+# mm_release_withdrawn <x.y.z> <file>: prints the version whose CHANGELOG
+# withdrew x.y.z (NEWEST) and succeeds when <file> lists it as WITHDRAWN. The
+# installer reads the copy the release check writes beside releases/
+# (release-withdrawn.env, RT-6.30 step 4), not release.env in the state
+# directory, which XDG_STATE_HOME could move. A missing, symlinked or
+# malformed file withdraws nothing. No network (decision (5) of 2026-11-12).
+mm_release_withdrawn() {
+  local want="$1" file="$2" text k v newest="" hit=0
+  [[ "$want" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  [[ -f "$file" && ! -L "$file" ]] || return 1
+  text="$(mm_read_file "$file" 65536)" || return 1
+  while IFS='=' read -r k v; do
+    case "$k" in
+      NEWEST) [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && newest="$v" ;;
+      WITHDRAWN) [[ "$v" == "$want" ]] && hit=1 ;;
+    esac
+  done <<<"$text"
+  if [[ "$hit" -eq 0 || -z "$newest" ]] || ! mm_version_newer "$want" "$newest"; then return 1; fi
+  printf '%s\n' "$newest"
 }
 
 # MM_RELEASE_URL (default the GitHub repository) → MM_REL_URL: a plain https
@@ -847,10 +934,10 @@ mm_release_tag() {
     if [[ "$vrc" -ne 0 || -z "$MM_REL_SIGNER" ]]; then
       MM_REL_SIGNER=""
       if [[ "$vout" == *"No principal matched"* ]]; then
-        MM_REL_ERR="$tag is signed by a key not pinned in MM_RELEASE_SIGNERS ($(grep -o 'SHA256:[A-Za-z0-9+/]*' <<<"$vout" | head -n1 || true))"
+        MM_REL_ERR="$tag is signed by a key not pinned in ${MM_REL_FROM_TEXT:-MM_RELEASE_SIGNERS} ($(grep -o 'SHA256:[A-Za-z0-9+/]*' <<<"$vout" | head -n1 || true))"
         return 1
       fi
-      MM_REL_ERR="$tag does not verify against MM_RELEASE_SIGNERS:"$'\n'"$(tail -n 3 <<<"$vout" | tr -cd '[:print:]\n')"
+      MM_REL_ERR="$tag does not verify against ${MM_REL_FROM_TEXT:-MM_RELEASE_SIGNERS}:"$'\n'"$(tail -n 3 <<<"$vout" | tr -cd '[:print:]\n')"
       return 1
     fi
   fi
