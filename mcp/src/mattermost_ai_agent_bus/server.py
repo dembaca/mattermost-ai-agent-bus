@@ -1026,10 +1026,40 @@ def _one_line(text: str) -> str:
     return " ".join(str(text).split())
 
 
+# A fence line of a code block: ``` or ~~~, three or more, at the start of a line.
+_FENCE = re.compile(r"[ \t]*(`{3,}|~{3,})")
+
+
+def _fenced(text: str) -> list[tuple[bool, str]]:
+    """Text as (in a code block, part) in order, the parts joined giving it back.
+    A fence closes at one of the same mark at least as long, else at the end."""
+    parts: list[tuple[bool, str]] = []
+    fence = ""
+    for line in text.splitlines(keepends=True):
+        m = _FENCE.match(line)
+        if not fence and m:
+            fence = m[1]
+            parts.append((True, line))
+            continue
+        if fence and m and m[1][0] == fence[0] and len(m[1]) >= len(fence):
+            # The closing line's break belongs to the text after it.
+            fence = ""
+            parts[-1] = (True, parts[-1][1] + line.rstrip("\n"))
+            parts.append((False, line[len(line.rstrip("\n")):]))
+            continue
+        if parts and parts[-1][0] == bool(fence):
+            parts[-1] = (parts[-1][0], parts[-1][1] + line)
+        else:
+            parts.append((bool(fence), line))
+    return parts
+
+
 def _paragraphs(text: str) -> str:
     """Line breaks, lists and markdown kept; the ends trimmed, a run of blank
-    lines made one (RT-6.11 step 1)."""
-    return re.sub(r"\n[ \t]*(?:\n[ \t]*)+", "\n\n", str(text).replace("\r\n", "\n")).strip()
+    lines made one, but not in a code block (RT-6.11 step 1)."""
+    text = str(text).replace("\r\n", "\n")
+    return "".join(part if code else re.sub(r"\n[ \t]*(?:\n[ \t]*)+", "\n\n", part)
+                   for code, part in _fenced(text)).strip()
 
 
 # One word, no link: a markdown link, a URL, text with spaces or a backtick
@@ -1051,11 +1081,24 @@ def _headline(need: str) -> tuple[str, str]:
 
     Only the first sentence is the title; an agent that writes the whole
     explanation into need gets the rest moved to context, so the post is not
-    bold from end to end. Its own ** would close the bold early: dropped.
+    bold from end to end. Its own ** would close the bold early: dropped. The
+    title is the first sentence of the first text outside a code block, so a
+    block is never cut or joined into one line: it goes to context whole, and
+    the rest keeps its line breaks.
     """
-    text = _one_line(need).replace("**", "")
-    head = _SENTENCE_END.split(text, maxsplit=1)[0]
-    return head, text[len(head):].strip()
+    parts = _fenced(str(need).replace("\r\n", "\n"))
+    for i, (code, part) in enumerate(parts):
+        if code or not part.strip():
+            continue
+        lead = part.lstrip()
+        end = _SENTENCE_END.search(lead)
+        head = _one_line(lead[:end.start()] if end else lead).replace("**", "")
+        before = "".join(p for _, p in parts[:i]).strip()
+        rest = (lead[end.end():] if end else "") + "".join(p for _, p in parts[i + 1:])
+        return head, "\n\n".join(x for x in (before, rest.strip()) if x)
+    # Nothing but code: its first line is the title, the block stays whole.
+    lines = [x for x in str(need).splitlines() if x.strip() and not _FENCE.match(x)]
+    return _one_line(lines[0] if lines else need), str(need).strip()
 
 
 def _title_and_context(need: str, context: str) -> tuple[str, str]:
@@ -1683,9 +1726,9 @@ async def ask_human(
     settled, call resolve_ask. Mention humans nowhere else; elsewhere write
     their name without @.
 
-    kind: question (approach, order, who does X) or approval (default); naming
-    a merge, deploy, release, install, delete, push, external write or spending
-    makes it an approval. In ask mode coordinator a question goes to your 👑,
+    kind: question (approach, order, who does X) or approval (default); a
+    decision, answers or a need without decision naming a merge, deploy,
+    release, install, delete, push, external write or spending make it one. In ask mode coordinator a question goes to your 👑,
     whose answer is advice (RT-6.25). only_human: only the human can answer
     (their own settings or action): it goes to them, never via the 👑.
     """
@@ -1716,7 +1759,7 @@ async def ask_human(
     if not who:
         return _refused("ask_human", "no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
     # RT-6.25: the server's floor decides the class, then the mode whom it goes to.
-    effective, floored = askroute.classify(kind, need, decision, " ".join(answer_list))
+    effective, floored = askroute.classify(kind, *askroute.decided(need, decision, answer_list))
     if effective == askroute.APPROVAL and len(answer_list) > 2:
         # RT-6.11 step 1: an approval is go / no-go, 👍 and 👎; three or four
         # alternatives with their keycaps are for a question.

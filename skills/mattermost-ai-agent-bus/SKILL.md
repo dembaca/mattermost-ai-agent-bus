@@ -131,8 +131,9 @@ terminal too: one decision per message.
 <!-- RT-6.25 -->
 **Questions and approvals: `kind`.** Pass `kind="question"` for content
 (approach, order, who does X); the default `approval` is for an action with
-effect. The server makes an ask that names merge, deploy, release, install,
-delete, push, an external write or spending an approval. In ask mode
+effect. The server makes an ask an approval when its `decision` or `answers`
+(no `decision`: its `need`) name merge, deploy, release, install, delete,
+push, an external write or spending. In ask mode
 `coordinator` (`bus_info`) a question goes to your home's 👑: its answer
 (`advice`) is advice, never approval; what needs a yes, ask as an approval. `only_human=true`: only your human can decide it (their settings or action); no 👑.
 A human sets it: `ask-mode coordinator` in the home; once the registrar's

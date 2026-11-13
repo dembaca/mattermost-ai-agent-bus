@@ -687,3 +687,58 @@ async def test_a_plural_push_noun_in_an_answer_stays_a_question(monkeypatch):
     out = json.loads(await server.ask_human(need="Which keys?", kind="question",
                                             answers=["only for channel pushes", "all", "none"]))
     assert out.get("posted") is not False and out["kind"] == "question" and "floor" not in out
+
+
+# The real asks refused as questions (0.86.1): the action word sat only in need,
+# which beside a decision is the situation; the decision and answers ask none.
+_RELEASE_PLAN = (
+    'ADR-011 phase 3 so far says only "a record per team naming the release to run, signed '
+    'by the registrar, shown next to the newest verified tag". My proposal:\n\n'
+    "**Registrar 0.9.0**\n- `/agent-release approve v<x.y.z>`\n\n"
+    "**Bus 0.86.0**\n- The installer is unchanged: a human installs it.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("need,decision,answers", [
+    ("PR #209 is merged (0.84.0) and the release keys are pinned per host.",
+     "Which work item next?", ["ADR-011 phase 3", "the pi live test", "nothing for now"]),
+    ("ADR-010 is built, registrar 0.8.0 and bus 0.85.0 (c51f805). Debug works once registrar "
+     "0.8.0 is deployed with the /agent-debug slash command and its token.",
+     "Which open item should I take next?",
+     ["ADR-011 P3: the registrar names the approved version", "pi live test under corral",
+      "nothing for now"]),
+    ('v0.86.0 is out; ADR-010 and ADR-011 are complete. Still open: ask_human treats a single '
+     'word like "release" or "tag" in a question as an action; an ask card loses its code blocks.',
+     "Which item comes next?",
+     ["ask_human: the single-word fix and code blocks in the card (one small PR)",
+      "pi live test under corral, I watch the bus side", "OpenCode under corral", "nothing for now"]),
+    (_RELEASE_PLAN, "Build ADR-011 phase 3 like this: registrar first, then the bus?",
+     ["yes", "bus first", "not yet"]),
+])
+async def test_beside_a_decision_the_need_is_context_for_the_floor(monkeypatch, need, decision, answers):
+    """RT-6.11, RT-6.25 step 1: the floor reads what an answer picks, the decision and the
+    answers; the need beside a decision is the situation and may name merged, deployed,
+    released things."""
+    c = _Client()
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need=need, decision=decision, answers=answers,
+                                            kind="question"))
+    assert out.get("posted") is not False and out["kind"] == "question" and "floor" not in out
+
+
+def test_the_floor_reads_the_need_when_it_is_the_question():
+    """RT-6.25 step 1, security: without a decision the need is what a pick answers, so an
+    action there lifts the ask, answers or not; one offered in the answers lifts it too,
+    as "the lines in its tag" (a channel tag, a noun) still does: the floor leans to approval."""
+    for need, decision, answers, named in [
+        ("Merge PR #5?", "", ["yes", "after CI", "never"], "merge"),
+        ("PR #5 is ready. Deploy it to hogan now?", "", [], "deploy"),
+        ("PR #5 is merged.", "Which next?", ["tag v1", "nothing"], "release"),
+        ("ADR-010 phase 2 has one open question: a DM between two agents.",
+         "Does a DM between two agents get the debug attachment?",
+         ["No: never in a DM", "Yes, while both homes have debug on",
+          "Yes, but only the agent gets the lines in its tag, no attachment on the DM post"],
+         "release"),
+    ]:
+        texts = askroute.decided(need, decision, answers)
+        assert askroute.classify("question", *texts) == ("approval", named), need

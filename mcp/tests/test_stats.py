@@ -74,8 +74,8 @@ def test_static_is_per_turn_text_and_the_skill_its_own_field():
     # + coordinator's scope (RT-6.14 step 9); + mandated on events, the instructions (RT-6.26)
     # + ask_human's alternatives and `choice` on reactions (RT-6.11)
     # + answers as a list of texts and `chosen` on reactions (RT-6.11, 0.71.15)
-    # + the hint on wait_for_events and the instructions' line on asks (RT-6.11, 0.71.30), only_human (RT-6.25, 0.71.32), props (RT-6.16, 0.71.34), no `question` argument (RT-6.11, 0.73.0), the prefix in the instructions (RT-6.16, 0.74.0)
-    assert s["skill"] == f.skill > 11_000 and s["static"] < 12_010
+    # + the hint on wait_for_events and the instructions' line on asks (RT-6.11, 0.71.30), only_human (RT-6.25, 0.71.32), props (RT-6.16, 0.71.34), no `question` argument (RT-6.11, 0.73.0), the prefix in the instructions (RT-6.16, 0.74.0), which fields the floor reads (RT-6.25 step 1, 0.86.1)
+    assert s["skill"] == f.skill > 11_000 and s["static"] < 12_050
 
 
 _REAL_CLIENT = httpx.Client
