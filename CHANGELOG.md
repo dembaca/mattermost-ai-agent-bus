@@ -11,9 +11,20 @@ before 0.5.0 are described in the git history.
   ([RT-6.11](docs/arc42/06-runtime-view.md) step 1): an @-mention of a person
   in `need`, `context`, `recommendation`, `decision`, `where` or an answer
   notified that person, since `ask_human` wrote only `@channel`, `@here` and
-  `@all` plain. Its fields now go through the same check as `post_message`:
-  a person's name turns plain and is listed in `unmentioned`, an agent keeps
-  its @, and the mention the server writes for the asked human stays.
+  `@all` plain. Its fields now go through the same check as `post_message`,
+  also those of a queued ask when it is posted: a person's name turns plain
+  and is listed in `unmentioned`, an agent keeps its @, and the mention the
+  server writes for the asked human stays. `human` must be one username:
+  `channel`, `here`, `all` (`human="channel"` posted `@channel`) or a name
+  with spaces is refused.
+- **Mentions are read as Mattermost reads them** (RT-6.11): `@dembaca.x`,
+  `@dembaca-x`, `@all_x` and a mention in italics (`_@dembaca_`) notify, and
+  now turn plain too. Whether a name is a person's is the user lookup's to
+  say: a person whose name starts with the agent prefix is no longer taken
+  for an agent.
+- **Code is left as written** (RT-6.11 step 1): a code block or code span
+  keeps its @ in `post_message`, `reply_in_thread` and `ask_human` alike;
+  Mattermost takes no mention from code, and a command keeps its exact text.
 
 ## 0.86.1
 

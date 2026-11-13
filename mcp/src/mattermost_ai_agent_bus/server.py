@@ -1146,46 +1146,83 @@ def _questions(text: str) -> int:
     return len(_QUESTION_END.findall(_NOT_ASKED.sub(" ", text)))
 
 
-_MENTION_RE = re.compile(r"(?<![\w@`])@([a-z0-9][a-z0-9._-]*[a-z0-9]|[a-z0-9])", re.I)
+# A mention as Mattermost reads it: after anything but a letter or digit,
+# so also in italics (_@name_); @@ and a backtick open none.
+_MENTION_RE = re.compile(r"(?<![A-Za-z0-9@`])@([a-z0-9][a-z0-9._-]*[a-z0-9]|[a-z0-9])", re.I)
 _EVERYONE = ("channel", "all", "here")
-_EVERYONE_RE = re.compile(rf"(?<![\w`])@+({'|'.join(_EVERYONE)})(?!\w)", re.I)
+# Mattermost strips a trailing . - : _ until a keyword matches: @all_x notifies all.
+_EVERYONE_RE = re.compile(rf"(?<![A-Za-z0-9`])@+({'|'.join(_EVERYONE)})(?![A-Za-z0-9])", re.I)
+# A code span, which Mattermost takes no mention from (RT-6.11).
+_CODE_SPAN = re.compile(r"```.*?```|``.+?``|`[^`]+`", re.S)
+
+
+def _prose_parts(text: str) -> list[tuple[bool, str]]:
+    """Text as (code, part) in order, the parts joined giving it back: code is
+    a fenced block or a code span, left as written (RT-6.11 step 1)."""
+    parts: list[tuple[bool, str]] = []
+    for code, part in _fenced(text):
+        if code:
+            parts.append((True, part))
+            continue
+        at = 0
+        for m in _CODE_SPAN.finditer(part):
+            parts += [(False, part[at:m.start()]), (True, m.group(0))]
+            at = m.end()
+        parts.append((False, part[at:]))
+    return parts
+
+
+def _in_prose(text: str, change: Callable[[str], str]) -> str:
+    return "".join(p if code else change(p) for code, p in _prose_parts(text))
+
+
+def _name_and_prefixes(name: str) -> list[str]:
+    """A mentioned name and what Mattermost may read in it (RT-6.11): it is
+    cut before a . - or _ until a user matches, so @dembaca.x notifies dembaca."""
+    return [name] + [name[:i] for i in range(len(name) - 1, 0, -1) if name[i] in "._-"]
 
 
 def _unbroadcast(text: str) -> tuple[str, list[str]]:
-    """@channel, @here and @all as plain words, and which were there (RT-6.11).
+    """@channel, @here and @all as plain words, and which were there (RT-6.11);
+    code is left as written.
 
     Mattermost would notify every human in the channel; agents wake each other
     with to="all", which needs no @ in the text.
     """
-    found = sorted({m.group(1).lower() for m in _EVERYONE_RE.finditer(text)})
-    return _EVERYONE_RE.sub(lambda m: m.group(1), text), found
+    found = sorted({m.group(1).lower() for code, p in _prose_parts(text) if not code
+                    for m in _EVERYONE_RE.finditer(p)})
+    return _in_prose(text, lambda p: _EVERYONE_RE.sub(lambda m: m.group(1), p)), found
 
 
 async def _unmention(client: MattermostAdapter, text: str) -> tuple[str, list[str]]:
     """Turn @-mentions of people into plain names, and @channel/@here/@all into
-    plain words (RT-6.11).
+    plain words (RT-6.11); code blocks and spans are left as written.
 
     A human's name turns up in many posts, so a mention must mean "I need you":
-    only ask_human may notify a person, and nothing notifies them all. Bots and
-    unknown names stay as written. Fails open: if the lookup fails, the names
-    are unchanged.
+    only ask_human may notify a person, and nothing notifies them all. A name
+    is a person's when it or a part of it Mattermost would match is (the
+    lookup reads is_bot; an agent prefix proves nothing). Bots and unknown
+    names stay as written. Fails open: if the lookup fails, the names are
+    unchanged.
     """
     text, everyone = _unbroadcast(text)
-    agent = session_file.agent_prefix().lower()
-    names = {m.group(1) for m in _MENTION_RE.finditer(text)}
-    names = {n for n in names if not n.lower().startswith(agent)}
+    names = {m.group(1) for code, p in _prose_parts(text) if not code
+             for m in _MENTION_RE.finditer(p)}
     if not names:
         return text, everyone
     try:
-        humans = await client.humans_among(names)
+        humans = await client.humans_among({c for n in names for c in _name_and_prefixes(n)})
     except Exception as exc:  # noqa: BLE001 — never block a post over this
         log.info("mention check skipped: %s", exc)
         return text, everyone
-    if not humans:
-        return text, everyone
     lowered = {h.lower() for h in humans}
-    out = _MENTION_RE.sub(lambda m: m.group(1) if m.group(1).lower() in lowered else m.group(0), text)
-    return out, sorted(humans) + everyone
+    person = {n: next((c for c in _name_and_prefixes(n) if c.lower() in lowered), "") for n in names}
+    person = {n: p for n, p in person.items() if p}
+    if not person:
+        return text, everyone
+    out = _in_prose(text, lambda p: _MENTION_RE.sub(
+        lambda m: m.group(1) if m.group(1) in person else m.group(0), p))
+    return out, sorted(set(person.values())) + everyone
 
 
 async def _unasked(client: MattermostAdapter, text: str, uid: str) -> list[str]:
@@ -1211,13 +1248,15 @@ async def _unasked(client: MattermostAdapter, text: str, uid: str) -> list[str]:
 
 
 def _with_unmentioned(result: dict[str, Any], removed: list[str],
-                      unasked: list[str] | None = None, word: str = "") -> dict[str, Any]:
+                      unasked: list[str] | None = None, word: str = "",
+                      ask: bool = False) -> dict[str, Any]:
     hints = []
     people = [n for n in removed if n not in _EVERYONE]
     if removed:
         result["unmentioned"] = removed
     if people:
-        hints.append("humans are @-mentioned only by ask_human; use it when you need them")
+        hints.append("an ask mentions the one human it asks; name others plain, or ask them separately"
+                     if ask else "humans are @-mentioned only by ask_human; use it when you need them")
     if len(people) < len(removed):
         hints.append("@channel/@here/@all would notify every human and are written plain; "
                      'to wake all agents post with to="all"')
@@ -1780,9 +1819,14 @@ async def ask_human(
             "hint": "answers: none, or two to four plain texts (a go / no-go is two); "
                     "a longer list is no choice for a reaction: ask one thing at a time"})
     responsible, _ = await _responsible_and_trusted(client)
-    who = human.strip().lstrip("@") or responsible
+    who = human.strip().removeprefix("@") or responsible
     if not who:
         return _refused("ask_human", "no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
+    if not _MENTION_RE.fullmatch(f"@{who}") or any(
+            c.lower() in _EVERYONE for c in _name_and_prefixes(who)):
+        # RT-6.11: the ask mentions one person; @channel/@here/@all notify everyone.
+        return _refused("ask_human", f"human: {who!r} is not one person's username; pass the "
+                                     "username of the one human to ask, without @ (never channel, here or all)")
     # RT-6.25: the server's floor decides the class, then the mode whom it goes to.
     effective, floored = askroute.classify(
         kind, *askroute.decided(need, decision, answer_list, asked=_asked(need)))
@@ -1833,7 +1877,7 @@ async def ask_human(
             out["kind_declared"] = kind
         if floored:
             out["floor"] = floored
-        return _out("ask_human", _with_unmentioned(out | route, everyone))
+        return _out("ask_human", _with_unmentioned(out | route, everyone, ask=True))
     head, context = _title_and_context(need, context)
     out = await _post_ask(client, me, to=target, head=head, need=need, context=context,
                           recommendation=recommendation, decision=decision, where=where,
@@ -1850,7 +1894,7 @@ async def ask_human(
     if coord:
         out["advice"] = (f"the {CROWN}'s answer is advice, never approval; none in "
                          f"{askroute.wait_sec() // 60} min: your server asks {who}")
-    return _out("ask_human", _with_unmentioned(out, everyone))
+    return _out("ask_human", _with_unmentioned(out, everyone, ask=True))
 
 
 async def _ask_route(client: MattermostAdapter, me: Any, kind: str,
@@ -1904,11 +1948,16 @@ async def _post_queued(client: MattermostAdapter, me: Any, key: str,
             if [p for p in asks.blocking(me.id, target) if p not in answered]:
                 asks.unclaim(me.id, e)
                 return None
-            head, context = _title_and_context(e["need"], e["context"])
+            # RT-6.11: cleaned again, for an ask queued by a version that did not.
+            need, ctx, rec, dec, where = [(await _unmention(client, e[k]))[0] for k in (
+                "need", "context", "recommendation", "decision", "where")]
+            answers = [(await _unmention(client, a))[0]
+                       for a in asks.normalize_answers(e["answers"])]
+            head, context = _title_and_context(need, ctx)
             out = await _post_ask(
-                client, me, to=target, head=head, need=e["need"], context=context,
-                recommendation=e["recommendation"], decision=e["decision"], where=e["where"],
-                blocking=e["blocking"], answers=asks.normalize_answers(e["answers"]),
+                client, me, to=target, head=head, need=need, context=context,
+                recommendation=rec, decision=dec, where=where,
+                blocking=e["blocking"], answers=answers,
                 root_id=e.get("link", ""),
                 human=e["who"] if coord else "")
         except Exception as exc:

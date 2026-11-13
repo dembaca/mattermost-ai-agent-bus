@@ -147,6 +147,21 @@ async def test_resolve_ask_posts_the_next_at_once_and_tells_the_agent(bus):
 
 
 @pytest.mark.asyncio
+async def test_an_ask_queued_by_an_older_version_is_cleaned_when_posted(bus, monkeypatch):
+    """RT-6.11 step 2: a queued ask's fields go through the mention check
+    again when it is posted, so one stored before 0.86.2 notifies no one else."""
+    async def humans_among(names):
+        return {n for n in names if n.lower() in {"dembaca", "kollegin"}}
+    monkeypatch.setattr(bus, "humans_among", humans_among, raising=False)
+    first = await _ask(need="Merge #61?")
+    asks.enqueue(BOT, "dembaca", _entry(need="Ask @kollegin?", context="@kollegin knows",
+                                        answers=["go", "ask @kollegin"]))
+    await server.resolve_ask(first["ask"])
+    assert len(bus.posted) == 2 and "@kollegin" not in json.dumps(bus.posted[1])
+    assert title_of(bus.posted[1]) == "Ask kollegin?"
+
+
+@pytest.mark.asyncio
 async def test_a_queued_ask_keeps_its_lines_like_a_direct_one(bus):
     """RT-6.11 step 1: the rest of need is the first paragraph, the lines stay."""
     first = await _ask(need="Merge #61?")
