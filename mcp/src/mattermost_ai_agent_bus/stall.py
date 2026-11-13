@@ -51,7 +51,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import a2a, asks, gate, lease, mandate, owners, remind, session_file, tasks
+from . import a2a, asks, debug, gate, lease, mandate, owners, remind, session_file, tasks
 from .model import Mark, Post
 
 if TYPE_CHECKING:
@@ -213,7 +213,7 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
                 or (cls[pid] in gate.AGENTS and p.intent == a2a.FYI)):
             continue
         thread = by_thread.get(p.root_id or pid, [])
-        for agent in dict.fromkeys(tasks._mentions(p.message)):
+        for agent in dict.fromkeys(tasks.mentions(p.message)):
             if agent == who(p) or agent not in reachable:
                 continue
             if any(who(q) == agent and _at(q) > _at(p) for q in thread):
@@ -444,8 +444,10 @@ async def watch(client: ChatPort) -> float | None:
         crowned(uid)
     _held = held
     waits: list[float] = []
-    # RT-6.26 step 1: the home's pinned posts read again for a mandate.
-    for name, step in (("reminders", remind.tick), ("mandate", mandate.tick), ("stall", check)):
+    # RT-6.26 step 1: the home's pinned posts read again for a mandate; RT-6.31
+    # step 2: the home's debug record read again.
+    for name, step in (("reminders", remind.tick), ("mandate", mandate.tick), ("debug", debug.tick),
+                       ("stall", check)):
         if step is check and not held:
             continue
         try:

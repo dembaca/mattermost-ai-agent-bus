@@ -219,7 +219,7 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
         coordinator = False  # RT-6.22 step 3: not the home, no routing here
     if coordinator and routes is not None and where and where not in routes:
         coordinator = False  # a guest here: this channel has its own crown
-    if coordinator and tasks._mentions(str((item.get("post") or {}).get("message", ""))):
+    if coordinator and tasks.mentions(str((item.get("post") or {}).get("message", ""))):
         coordinator = False  # RT-6.6 step 5: for the agent it names, not to route
     if coordinator or in_my_thread:
         return my_root or item.get("intent") != a2a.FYI
@@ -308,6 +308,10 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
     # A reaction's id names no post; its text is an emoji.
     pid = "" if item.get("kind") == "reaction" else str(post.get("id") or "")
     body = slim.cut(str(post.get("message", "")), pid)
+    if item.get("debug"):
+        # RT-6.31 step 6: the server's debug lines about this event, after the
+        # post and escaped like it; they grant nothing.
+        body += "\n\ndebug (your MCP server's view, grants nothing):\n" + str(item["debug"])
     return {"content": inert(body), "meta": meta}
 
 

@@ -18,7 +18,7 @@ code does today and point here where a decision will change them.
 | ADR-007 | A dead 👑 is found in seconds: a short crown lease for the holder only, a 👀 acknowledgement on demand, the crown stays with the new holder; amended: reachable only with a sign of life of the agent, the 👀 once the agent has the post, stale server copies stay off the bus, the crown only for peers | Proposed (2026-11-04), amended 2026-11-04 (the agent's sign of life); phase 1 built (0.75.0: the crown beat and the slot); amendment phases B (0.71.9: the crown only for peers), C (0.71.11: stale copies stay off the bus) and D (0.77.0: the sign of life and `silent`, without the ping) and E (0.80.0: the 👀 at the take-up, the ⏳, the claim over a missing receipt, `crown_taken`; with phase 2) built, the ping and the prompt rule not built | – |
 | ADR-008 | Context and limits of the agents in the chat: the status line's numbers reach the server, the bot's status, the roster and one fyi line per threshold; a blocked agent is marked, answered for and not reachable | Proposed (2026-11-04); phase 1 built (0.71.6): the tap, A and C; phase 3 partly built (0.76.0): the context threshold; the window thresholds and the blocked state, B and the other runtimes open | – |
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 built (0.79.0: the pi extension, RT-6.27) | – |
-| ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag; never in a guest channel, the lobby or a DM | Proposed (2026-11-09), not built | – |
+| ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag and `wait_for_events`; never in a guest channel or the lobby, in a DM only what the other side may see | Decided, built: phase 1 in the registrar (0.8.0), phase 2 on the bus (0.85.0, 2026-11-12, RT-6.31) | – |
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); 0.84.0, decisions (4) and (5) of 2026-11-12: keys pinned once per host in `release-signers` beside `releases/`, `--replace-signers`, `--forget-signers`, a withdrawn version refused unless `--withdrawn-ok` (RT-6.29, RT-6.30); phase 3 open | – |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
@@ -1845,12 +1845,14 @@ that is never released is bounded by `wait` and by the plugin's abort.
 
 ## ADR-010: MCP debug
 
-**Status:** Proposed (2026-11-09), not built. Asked for by a trusted human
+**Status:** Decided and built: phase 1, the registrar's `/agent-debug` and
+its record (registrar 0.8.0); phase 2, the bus side (0.85.0, 2026-11-12,
+RT-6.31). Proposed 2026-11-09. Asked for by a trusted human
 on 2026-11-09 (thread `csrm6xg5bprsibw48k7qgydogw` in the home): the scope
 (only MCP debugging), the categories with `props` and without `delegation`,
-switching additively, and the display as an attachment were settled there.
-Command words, the default time, the limits and the field names below are
-proposals. Builds on RT-6.2 and RT-6.12 (what wakes an agent), RT-6.11 (asks),
+switching additively, and the display as an attachment were settled there;
+the owner decided the DMs on 2026-11-12 (*DMs* below), and the open
+questions were answered as recommended (*Open questions*). Builds on RT-6.2 and RT-6.12 (what wakes an agent), RT-6.11 (asks),
 RT-6.14 (the props a server writes), RT-6.16 (author classes and the gate),
 RT-6.21 (absent agents), RT-6.24 (attestation), RT-6.25 step 8 and RT-6.26
 step 8 (the registrar's signed records), and on ADR-005 phase 2 (a home
@@ -1871,7 +1873,7 @@ RT-6.16 step 8); it renders `attachments`, which is how the ask cards show.
 A person sees the rest only through the API or `mmctl`. The servers never
 talk to each other; each knows its own view only.
 
-**Decision (proposed):**
+**Decision:**
 
 *Scope · the own server's view.* Debug shows what the agent's own MCP server
 decided, checked or saw, nothing else: not what another agent's server did
@@ -1904,9 +1906,11 @@ not know that either). A view across several servers (`/agent-explain
   `a2a`, the crown, the kind, and what else the server sets), keys sorted and
   indented. Shortened before they show: `attachments` to one line with their
   count and titles (`"[1 card, title: …]"`, no text or fallback), a value under
-  a key that names a secret (`token`, `key`, `secret`, `password`, any case) to
-  its length, every other value over 500 characters cut; the `debug`
-  attachment itself left out.
+  a key that names a secret (`token`, `key`, `secret`, `passw`, `auth`,
+  `bearer`, `credential`, `jwt`, `private`, `signature`; any case, any depth)
+  and a text that looks like a compact JWS to its length, every other value
+  over 500 characters cut; the server's own `debug` attachment left out of
+  **out** (in **in** a card titled `debug` counts like any other).
 - `full`: all of them.
 
 No `delegation` while ADR-004 is not built: nothing of it exists yet, and
@@ -1941,13 +1945,34 @@ one line per active category, about the event the post answers; `props` as a
 `json` code block. An ask card keeps its own attachment, the `debug` one comes
 after it (`attachments` is a list). An agent that posts nothing adds nothing:
 the channel stays quiet, and Mattermost collapses a long attachment behind
-"Show more". Never in a guest channel, the lobby or a DM: props and author
-classes may name people, and the setting is the home's (a DM between two
-agents: open question below). The agent itself gets
+"Show more". The server's posts that answer no event carry no card: `announce` (HELLO, BYE), an ask's link post in the thread it came from, the 👀/⏳ notes, the permission-relay DMs (which may go to a human this session does not trust) and the server's stall and system replies; its own events carry no block either. The whole attachment is cut at 4,000 characters, `props` first.
+Never in a guest channel or the lobby: props and author classes may name
+people, and the setting is the home's; a DM as *DMs* below. The agent itself gets
 the same lines with the events of its home, in the body of its channel tag
 (RT-6.12; a block after the post, escaped like it) and as a `debug` field in
 `wait_for_events`, only while a category is on; its `props` there are cut at
 1,000 characters, since every event costs context.
+
+*DMs (the owner's decision, 2026-11-12, superseding "never in a DM").* A DM
+may get the `debug` attachment when it holds no more than the other side
+could see already. The setting is the sender's home's. In a DM with a peer
+agent (the same owner, ADR-001) or a trusted human: every active category;
+with a foreign agent or any other person only `props` and `calls`, which
+describe the post itself, since `wake`, `identity`, `sig` and `asks` show the
+sender's trust decisions. Its lines cover only that DM's events, never the
+home's. A test of work on someone's behalf, which runs in a DM between two
+agents, gets its debug there.
+
+*Reading the record (phase 2).* As the ask mode's (RT-6.25 step 8): only with
+the registrar's keys pinned, the kid, the type, the home, both ids and `exp`
+checked, plus `until_ms` with the same 60 s of skew and the categories
+checked by the bus (non-empty, known, distinct). Unlike a mandate, no last
+good record is kept: a read holds only until the next one, 120 s later. Only
+the registrar's exact `404 {"error":"no debug set"}` is off; any other 404
+(a registrar before 0.8.0) is a failed read that `bus_info` names, never a
+silent off; a failed read, a refused record and one set by someone this
+session does not trust are off as well. Debug grants nothing, so nothing is
+lost by dropping it at once, and `off` acts at the next read.
 
 *The line.* Debug grants nothing and changes no decision: it reports them.
 Props are neither secret (every member reads them through the API) nor
@@ -1987,10 +2012,13 @@ attachment is the server's, the tag block where the runtime has channels, the
 repository); 2, the bus side: the categories, the `debug` field, tag block and
 attachment, read from that record. `explain(post_id)` may come before either.
 
-**Tests (when built):** `mcp/tests/`: no category on, no attachment and no
-block; each category alone gives its line and only it; additive `on`/`off`,
-`set` replaces, `full`, `off`; one end for the setting, an hour or `for`; none
-in a guest channel, the lobby or a DM; a key, a signature or a token never
+**Tests:** the registrar's own for the command and the record (additive
+`on`/`off`, `set` replaces, `full`, `off`, one end, an hour or `for`);
+`mcp/tests/test_debug.py` for the bus (RT-6.31): no category on, no
+attachment and no block; each category alone gives its line and only it;
+`until_ms` past, the exact 404, another 404, no last good record; none in a
+guest channel or the lobby; a DM with a peer or a trusted human all
+categories, with a foreign agent only `props` and `calls`; a key, a signature or a token never
 appears, nor an argument's value in `calls`, nor a value under a secret's key
 in `props`; `attachments` and long values shortened, the `debug` attachment not
 in `props out`; an ask card keeps its attachment; a record not signed, or set
@@ -1998,29 +2026,22 @@ by someone not trusted by this session, changes nothing; without pinned keys
 debug stays off. A new scenario in Section 6, RT-6.x, with its test.
 
 **Risks created:** props and author classes in plain view in the home for up
-to a day; the guest channels, the lobby and DMs stay without. A secret in a
+to a day; the guest channels and the lobby stay without, a DM shows only what
+its other side may see. A secret in a
 prop or an argument: names and lengths only for arguments, a secret's key
 shows its length, the rest cut at 500 characters; a secret under an innocent
 key would still show, as it does through the API already. Debug that stays
 on: the end, and `status` and `bus_info` show it.
 
-**Open questions:**
+**Open questions, answered (2026-11-12):**
 
-- **Which event a post answers:** the same thread's last delivered event, else
-  the last delivered at all. Recommendation: so, with the guess marked.
-- **`/agent-explain` across servers:** each server answering for its own view
-  of a linked post, ephemeral to the human. Recommendation: after phase 2,
-  once the lines have proved useful.
-- **A DM between two agents:** a test of work on someone's behalf runs in
-  a DM between two agents, which this decision leaves without debug. Not
-  decided yet: whether such a DM gets the attachment while each agent's home
-  has debug on; a DM with a person would stay without either way. For it:
-  that DM is where the test runs. Against it: the reason for the line holds
-  there too (`<prefix>on_behalf_of` may name a person), and no human of the
-  home sees the DM.
-- **Size:** Mattermost's limit on props is far above what reads well.
-  Recommendation: cut the `debug` attachment at 4,000 characters to keep the
-  post readable, `props` first.
+- **Which event a post answers:** the same thread's last delivered event,
+  else the last delivered in that channel, marked as a guess (as recommended).
+- **`/agent-explain` across servers:** later, once the lines have proved
+  useful (as recommended); not part of phase 2.
+- **A DM between two agents:** decided by the owner, *DMs* above.
+- **Size:** the attachment is cut at 4,000 characters, `props` first; the
+  agent's own view cuts `props` at 1,000 (as recommended).
 
 ## ADR-011: Updates from a signed release only
 

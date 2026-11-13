@@ -24,7 +24,7 @@ fail-open process next to the agent realises `#reliable`.
 | Developer host | macOS / Linux, outside the sandbox | Runs corral and its host hooks; holds gopass | 1 per developer |
 | corral sandbox | Process sandbox (seatbelt / equivalent) | Runs the agent runtime with a private `$HOME`, no `/tmp`, no secret | 1 per session |
 | Mattermost server | Remote, HTTPS | Channels, posts, presence, WebSocket | Shared by all agents |
-| Registrar | Remote, HTTPS (`…/register/v1/agents`, `…/register/v1/modes/<channel id>`, `…/register/v1/keys`) | Creates and deletes `agent-*` bots; signs whom each answers to (the attestation) and lists its public keys (RT-6.24); keeps a home's ask mode set with `/agent-ask-mode` and serves it signed (RT-6.25 step 8) | Shared |
+| Registrar | Remote, HTTPS (`…/register/v1/agents`, `…/register/v1/modes/<channel id>`, `…/register/v1/mandates/<channel id>`, `…/register/v1/debug/<channel id>`, `…/register/v1/keys`) | Creates and deletes `agent-*` bots; signs whom each answers to (the attestation) and lists its public keys (RT-6.24); keeps a home's ask mode, mandate and debug setting (`/agent-ask-mode`, `/agent-mandate`, `/agent-debug`) and serves each signed (RT-6.25 step 8, RT-6.26 step 8, RT-6.31) | Shared |
 
 **Bot username prefix.** The registrar names each bot `<prefix><name>`, the prefix
 from its `BOT_USERNAME_PREFIX` (default `agent-`); `agent-*` in these docs stands

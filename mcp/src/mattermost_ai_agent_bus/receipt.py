@@ -90,7 +90,7 @@ def wakes_holder(post: Post, cls: str, holder_id: str, holder_name: str, home: s
     if unread.names_me(post.message, holder_id, holder_name):
         return True
     return (cls not in gate.AGENTS and not post.from_webhook
-            and not tasks._mentions(post.message) and not channel.broadcast(post.message))
+            and not tasks.mentions(post.message) and not channel.broadcast(post.message))
 
 
 async def arrived(client: ChatPort, post: Post, uid: str, gated: bool) -> None:

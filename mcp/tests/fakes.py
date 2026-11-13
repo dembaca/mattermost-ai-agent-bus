@@ -89,6 +89,9 @@ class FakeChat:
         self.mandate_records: dict[str, str | BaseException] = {}
         self.guests: set[str] = set()   # guest_channel_ids (RT-6.22)
         self.fetched_mandates: list[str] = []
+        # RT-6.31: the registrar's debug record per home (or what it raises), each read.
+        self.debug_records: dict[str, str | BaseException] = {}
+        self.fetched_debug: list[str] = []
         # RT-6.26: the home's pinned posts (or an exception they raise), how
         # often they were read; channel ids by name besides the work channel.
         self.pinned: list[Post | Mapping[str, Any]] | BaseException = []
@@ -200,6 +203,15 @@ class FakeChat:
         it raises; None (404) for a home without one. Counted in `fetched_mandates`."""
         self.fetched_mandates.append(channel_id)
         got = self.mandate_records.get(channel_id)
+        if isinstance(got, BaseException):
+            raise got
+        return got
+
+    async def debug_record(self, channel_id: str) -> str | None:
+        """`debug_records[channel_id]` (RT-6.31 step 2): a JWS, or an exception
+        it raises; None (the exact 404) for a home without one. Counted in `fetched_debug`."""
+        self.fetched_debug.append(channel_id)
+        got = self.debug_records.get(channel_id)
         if isinstance(got, BaseException):
             raise got
         return got

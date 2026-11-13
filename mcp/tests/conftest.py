@@ -46,9 +46,10 @@ def _isolate_bus_env(monkeypatch, tmp_path, request):
 
     monkeypatch.setattr(session_file, "_hosted_dir", None)
     # What the attestation code remembers per process (RT-6.24).
-    from mattermost_ai_agent_bus import askroute, attest, lease, life, mandate, owners, receipt, usage
+    from mattermost_ai_agent_bus import askroute, attest, debug, lease, life, mandate, owners, receipt, usage
 
     attest._started.clear()
+    debug.reset()  # the debug record read and the events seen (RT-6.31)
     usage.reset()  # the last usage report of the session (ADR-008)
     life.reset()  # the agent's last sign (ADR-007 amendment step 1)
     # ADR-007 phase E: receipts owed and watched, the holder seen, a takeover.

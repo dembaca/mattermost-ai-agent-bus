@@ -44,6 +44,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from . import a2a
+
 if TYPE_CHECKING:
     from .port import ChatPort
 
@@ -59,6 +61,8 @@ MODE_MODES = ("direct", "coordinator")
 # The registrar's signed mandate of a home (RT-6.26 step 8, ADR-006 phase 2).
 MANDATE_TYP = "mm-agent-mandate+jwt"
 MANDATE_NOTE_MAX = 200
+# The registrar's signed debug setting of a home (RT-6.31, ADR-010 phase 2).
+DEBUG_TYP = "mm-agent-debug+jwt"
 ENV = "MM_BOT_ATTESTATION"
 KEYS_ENV = "MM_REGISTRAR_KEYS"
 ENROLLMENT, SECRET = "enrollment", "secret"
@@ -383,6 +387,66 @@ def verify_mandate(token: object, keys: Mapping[str, Ed25519PublicKey], *, chann
         return None, "malformed"
     if record is not None and record.channel_id != channel_id:
         return None, "channel_id mismatch"
+    return record, why
+
+
+# --- the debug setting of a home (RT-6.31, ADR-010 phase 2) ------------------------
+
+@dataclass(frozen=True)
+class DebugRecord:
+    """A verified debug record: the categories a human switched on for a home
+    with the registrar's `/agent-debug`, in canonical order, until when, and
+    who set them (name lower case)."""
+
+    channel_id: str
+    categories: tuple[str, ...]
+    set_by: str
+    set_by_id: str
+    set_at_ms: int
+    until_ms: int  # the setting's end, unix ms; exp is the signature's freshness
+    iat: int
+    exp: int
+    kid: str
+
+
+def _debug_record(payload: Mapping[str, Any], kid: str) -> DebugRecord | str:
+    """The record's claims, typed; why not when one is missing or malformed.
+    The categories are checked here, not left to the registrar: a non-empty
+    list of distinct known names (`full` is the registrar's word, never a claim)."""
+    channel_id, set_by_id = payload.get("channel_id"), payload.get("set_by_id")
+    set_by, cats = _handle(payload.get("set_by")), payload.get("categories")
+    set_at, until = _int(payload.get("set_at_ms")), _int(payload.get("until_ms"))
+    if not (isinstance(channel_id, str) and _ID.fullmatch(channel_id)
+            and isinstance(set_by_id, str) and _ID.fullmatch(set_by_id)
+            and set_by is not None and set_at is not None and set_at > 0
+            and until is not None and until > 0):
+        return "bad claims"
+    if (not isinstance(cats, list) or not cats or not all(isinstance(c, str) for c in cats)
+            or len(set(cats)) != len(cats) or not set(cats) <= set(a2a.DEBUG_CATEGORIES)):
+        return "bad categories"
+    return DebugRecord(channel_id=channel_id,
+                       categories=tuple(c for c in a2a.DEBUG_CATEGORIES if c in cats),
+                       set_by=set_by, set_by_id=set_by_id, set_at_ms=set_at, until_ms=until,
+                       iat=payload["iat"], exp=payload["exp"], kid=kid)
+
+
+def verify_debug(token: object, keys: Mapping[str, Ed25519PublicKey], *, channel_id: str,
+                 now: float | None = None) -> tuple[DebugRecord | None, str]:
+    """The registrar's debug record for the home `channel_id` when it is sound
+    (RT-6.31 step 2): a pinned key signed it, EdDSA and the debug type (a mode
+    or mandate record is refused here), not expired, issued not later than now,
+    for this home, and its setting not ended (`until_ms`), each with SKEW_SEC.
+    Else (None, why). Never raises."""
+    now = time.time() if now is None else now
+    try:
+        record, why = _verify_jws(token, keys, typ=DEBUG_TYP, now=now, parse=_debug_record)
+    except Exception as exc:  # noqa: BLE001 — strict: malformed is invalid, never an error
+        log.debug("debug record not verified: %s", type(exc).__name__)
+        return None, "malformed"
+    if record is not None and record.channel_id != channel_id:
+        return None, "channel_id mismatch"
+    if record is not None and record.until_ms + SKEW_SEC * 1000 <= now * 1000:
+        return None, "ended"
     return record, why
 
 

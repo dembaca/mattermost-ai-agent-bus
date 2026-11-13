@@ -95,7 +95,7 @@ def classify_post(
     return None
 
 
-def _channel_type(event: ClassifiedEvent) -> str:
+def channel_type(event: ClassifiedEvent) -> str:
     """D, G, O or P, as the WebSocket or the channel read named it; O for neither."""
     data = (event.raw or {}).get("data") or {}
     return (event.channel.type if event.channel else "") or data.get("channel_type") or "O"
@@ -696,7 +696,7 @@ class WebSocketInbox:
         for e in self._waiting():
             if e.edited and not e.gated:
                 found.setdefault(e.post.channel_id, []).append(e)
-        return [unread.Pending(UnreadChannel(cid, _channel_type(events[0])), len(events),
+        return [unread.Pending(UnreadChannel(cid, channel_type(events[0])), len(events),
                                [e.post for e in events]) for cid, events in found.items()]
 
     def _first_waiting(self, channel_id: str) -> int | None:
