@@ -602,7 +602,7 @@ def _release() -> dict[str, Any]:
     the self-update line alone (RT-6.32), named by the version it names."""
     state = release.read_state()
     text = release.line(state=state)
-    newest = state.newest if state else release.read_auto().get("TARGET", "")
+    newest = state.newest if state else release.target_version(release.read_auto().get("TARGET", ""))
     return {"release": {"newest": newest, "line": text}} if newest and text else {}
 
 

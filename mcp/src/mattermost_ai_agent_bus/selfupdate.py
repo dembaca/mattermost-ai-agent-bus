@@ -5,7 +5,8 @@ in docs/arc42/06-runtime-view.md).
 or 404 with exactly `{"error":"no release set"}`: no target and no keys
 offered. The record (`typ` mm-agent-release+jwt, the registrar's key) offers
 the release keys (`signers`) and may name the version hosts update themselves
-to (`version`). It counts only verified with the pinned registrar keys
+to (`version`): `v<x.y.z>`, or `latest`, the newest release tag the host's
+release check knows that is not withdrawn (RT-6.32 step 4). It counts only verified with the pinned registrar keys
 (MM_REGISTRAR_KEYS, attest.verify_release).
 
 The MCP server never reads it: the host copy's installer (`--auto`, at the
@@ -19,7 +20,7 @@ again (mm_registrar_release in bin/mm-agent-lib.sh):
     STATUS=ok|none|failed|nokeys
     WHY=<printable text, at most 200 characters>
     KID=<the registrar key's kid>          (ok)
-    VERSION=<x.y.z>                        (ok, when the record names one)
+    VERSION=<x.y.z>|latest                 (ok, when the record names one)
     SIGNER=<type> <base64>                 (ok, one per key)
 
 Any other 404, a timeout, a redirect, an answer over RECORD_MAX and a record

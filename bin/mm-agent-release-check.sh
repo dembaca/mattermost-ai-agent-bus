@@ -19,7 +19,8 @@
 # `### Breaking`, `Needs:` lines in their grammar (mm_release_needs_ok; any
 # other is dropped and logged) and `Withdrawn: v<x.y.z>` lines. It writes them
 # to release.env in the host state directory (0600, in one rename), and NEWEST
-# with the withdrawn versions to release-withdrawn.env beside releases/, for
+# with the withdrawn versions and the tags it tried (TAG, for `latest`,
+# RT-6.32 step 4) to release-withdrawn.env beside releases/, for
 # the installer (RT-6.29 step 2). A tag that
 # does not pass is logged once (release-rejected.env) and never shown. A check
 # that fails leaves release.env as it was; release-check.at records the last
@@ -114,8 +115,10 @@ fi
 if [[ "$(basename "$(dirname "$SELF")")" == releases ]]; then
   mm_registrar_release "$SELF/mcp/.venv/bin/python"
   case "$MM_RR_STATUS" in
-    ok) mm_auto_state "$STATE" REGISTRAR=ok "TARGET=$MM_RR_VERSION" "KEYS=$(mm_release_keystate)" "AT=$now"
-        say "the registrar names ${MM_RR_VERSION:+v}${MM_RR_VERSION:-no version} (its record verified; release keys: $(mm_release_keystate))" ;;
+    ok) target="$(mm_release_target "$MM_RR_VERSION" "$parent/$MM_WITHDRAWN_FILE")"
+        mm_auto_state "$STATE" REGISTRAR=ok "TARGET=$target" "KEYS=$(mm_release_keystate)" "AT=$now"
+        if [[ "$MM_RR_VERSION" == latest ]]; then named="$target"; else named="${MM_RR_VERSION:+v}${MM_RR_VERSION:-no version}"; fi
+        say "the registrar names $named (its record verified; release keys: $(mm_release_keystate))" ;;
     none | nokeys) mm_auto_state "$STATE" "REGISTRAR=$MM_RR_STATUS" TARGET= KEYS= "AT=$now" ;;
     *) mm_auto_state "$STATE" REGISTRAR=failed
        say "${MM_RR_WHY:-the release record was not read}" ;;
@@ -237,13 +240,19 @@ tmp="$STATE/.release.env.$$"
 } >"$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$STATE/release.env" ||
   { rm -f "$tmp"; die "could not write $STATE/release.env"; }
 # The withdrawn versions for the installer, beside releases/ (decision (5)):
-# where XDG_STATE_HOME cannot move them.
+# where XDG_STATE_HOME cannot move them. With them the tags listed above
+# (TAG, newest first, passed or not): `latest` in the registrar's record is the
+# newest of them not withdrawn (mm_release_latest, RT-6.32 step 4).
 wtmp="$parent/.$MM_WITHDRAWN_FILE.$$"
 if [[ -L "$parent/$MM_WITHDRAWN_FILE" ]] ||
-   ! { printf 'NEWEST=%s\n%s' "$newest" "$withdrawn" >"$wtmp" && chmod 600 "$wtmp" &&
-       mv -f "$wtmp" "$parent/$MM_WITHDRAWN_FILE"; }; then
+   ! { printf 'NEWEST=%s\n%s%s' "$newest" "$withdrawn" "$(sed 's/^/TAG=/' <<<"$candidates")"$'\n' >"$wtmp" &&
+       chmod 600 "$wtmp" && mv -f "$wtmp" "$parent/$MM_WITHDRAWN_FILE"; }; then
   rm -f "$wtmp"
   say "could not write $parent/$MM_WITHDRAWN_FILE; the installer does not know the withdrawn versions"
+fi
+# The registrar names `latest`: its tag as of this check, for the notice.
+if [[ "${MM_RR_STATUS:-}" == ok && "${MM_RR_VERSION:-}" == latest ]]; then
+  mm_auto_state "$STATE" "TARGET=$(mm_release_target latest "$parent/$MM_WITHDRAWN_FILE")"
 fi
 # The last check that succeeded: --if-due counts from it.
 printf '%s\n' "$now" >"$STATE/release-check.at"

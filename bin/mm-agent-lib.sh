@@ -894,6 +894,42 @@ mm_release_withdrawn() {
   printf '%s\n' "$newest"
 }
 
+# mm_release_latest <file>: the newest TAG that <file> (release-withdrawn.env,
+# RT-6.30 step 4) lists and does not list as WITHDRAWN: what `latest` in the
+# registrar's record stands for (RT-6.32 step 4). The TAG lines are the tags
+# the release check listed and tried, whether they passed its check or not:
+# the installer's signature check decides, and a newest tag that fails it is
+# a refusal, never a reason to take an older one. Fails when there is none (no
+# file, a symlink, a file from a check before 0.87.0, every tag withdrawn).
+mm_release_latest() {
+  local file="$1" text k v tags="" gone="" t
+  [[ -f "$file" && ! -L "$file" ]] || return 1
+  text="$(mm_read_file "$file" 65536)" || return 1
+  while IFS='=' read -r k v; do
+    [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    case "$k" in
+      TAG) tags+="$v"$'\n' ;;
+      WITHDRAWN) gone+="$v"$'\n' ;;
+    esac
+  done <<<"$text"
+  while IFS= read -r t; do
+    [[ -n "$t" ]] || continue
+    if ! grep -qxF "$t" <<<"$gone"; then printf '%s\n' "$t"; return 0; fi
+  done < <(printf '%s' "$tags" | sort -t. -k1,1nr -k2,2nr -k3,3nr)
+  return 1
+}
+
+# mm_release_target <named> <file>: the TARGET of release-auto.env for the
+# version the registrar's record names: x.y.z as it is; for `latest`,
+# `latest (v<x.y.z>)` with mm_release_latest's tag, or `latest` while none is
+# known (RT-6.32 steps 4 and 6).
+mm_release_target() {
+  local t
+  if [[ "$1" != latest ]]; then printf '%s\n' "$1"
+  elif t="$(mm_release_latest "$2")"; then printf 'latest (v%s)\n' "$t"
+  else printf 'latest\n'; fi
+}
+
 # MM_RELEASE_URL (default the GitHub repository) → MM_REL_URL: a plain https
 # URL (no user, query or space), or an absolute local path (a mirror, the
 # tests) out of every sandbox's reach.
@@ -1138,7 +1174,7 @@ mm_install_lock_live() {
 # attest.verify_release) with MM_REGISTRAR_KEYS, from /, with an environment
 # of PATH, HOME, LC_ALL, the registrar's keys and URLs and TLS and proxy settings only, stopped after
 # 30 s. Its output is checked again here: MM_RR_STATUS (ok, none, failed,
-# nokeys), MM_RR_WHY, MM_RR_KID, MM_RR_VERSION (x.y.z or ""), MM_RR_KEYS (one
+# nokeys), MM_RR_WHY, MM_RR_KID, MM_RR_VERSION (x.y.z, latest or ""), MM_RR_KEYS (one
 # `<type> <base64>` per line, by mm_release_parse_keys). Never fails.
 # shellcheck disable=SC2034 # MM_RR_* are read by the caller
 mm_registrar_release() {
@@ -1166,7 +1202,7 @@ mm_registrar_release() {
       STATUS) [[ -z "$st" && "$v" =~ ^(ok|none|failed|nokeys)$ ]] && st="$v" ;;
       WHY) MM_RR_WHY="$(tr -cd '[:print:]' <<<"$v" | cut -c1-200)" ;;
       KID) if [[ "$v" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then MM_RR_KID="$v"; fi ;;
-      VERSION) if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -z "$MM_RR_VERSION" ]]; then MM_RR_VERSION="$v"; else bad=1; fi ;;
+      VERSION) if [[ ( "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "$v" == latest ) && -z "$MM_RR_VERSION" ]]; then MM_RR_VERSION="$v"; else bad=1; fi ;;
       SIGNER) keys+="$v"$'\n' ;;
     esac
   done <<<"$out"
@@ -1209,7 +1245,8 @@ mm_release_keystate() {
 }
 
 # mm_auto_state <state dir> KEY=value…: merge into release-auto.env (0600, one
-# rename); the values are words, versions and epochs only. For the notice.
+# rename); the values are words, versions and epochs only (TARGET also
+# `latest (v<x.y.z>)`, mm_release_target). For the notice.
 mm_auto_state() {
   local dir="$1" f line k kv keep="" new="" tmp
   shift
@@ -1243,12 +1280,17 @@ mm_auto_log() {
 # will do for a host copy session of <version>, in plain words (RT-6.32); fails
 # when there is nothing to say. The same text as release.py's auto_line().
 mm_release_auto_notice() {
-  local have="$1" dir="$2" layout="$3" text k v target="" keys="" out=""
+  local have="$1" dir="$2" layout="$3" text k v target="" shown="" keys="" out=""
+  local latest_re='^latest \(v([0-9]+\.[0-9]+\.[0-9]+)\)$'
   [[ "$have" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
   if [[ -f "$dir/$MM_AUTO_FILE" && ! -L "$dir/$MM_AUTO_FILE" ]] && text="$(mm_read_file "$dir/$MM_AUTO_FILE" 4096)"; then
     while IFS='=' read -r k v; do
       case "$k" in
-        TARGET) [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && target="$v" ;;
+        TARGET)
+          # `latest` alone: no tag known yet, nothing to say.
+          if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then target="$v" shown="v$v"
+          elif [[ "$v" =~ $latest_re ]]; then target="${BASH_REMATCH[1]}" shown="$v"
+          elif [[ "$v" == latest ]]; then target="" shown=""; fi ;;
         KEYS) [[ "$v" =~ ^(none|match|mismatch|bad)$ ]] && keys="$v" ;;
       esac
     done <<<"$text"
@@ -1260,7 +1302,7 @@ mm_release_auto_notice() {
   elif [[ "$keys" == bad ]]; then
     out="the release keys on this host can't be used (see release-auto.log): no self-update"
   elif [[ -n "$target" ]] && mm_version_newer "$have" "$target"; then
-    out="updates itself to v${target} when this session ends"
+    out="updates itself to ${shown} when this session ends"
   fi
   [[ -n "$out" ]] || return 1
   printf '%s\n' "$out"

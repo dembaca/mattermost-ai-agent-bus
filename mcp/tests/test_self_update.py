@@ -164,3 +164,37 @@ def test_bus_info_carries_auto(tmp_path, monkeypatch):
     out = release.notice("1.2.0")
     assert out["auto"]["applies"] is False
     assert "updates itself between sessions" in release.NOTE
+
+
+def test_a_latest_record_verifies_and_renders():
+    """RT-6.32 step 2 (the owner's decision of 2026-11-13): `version` may be
+    `latest`, that lowercase word exactly; render passes it on."""
+    got, why = attest.verify_release(record(version="latest"), KEYS)
+    assert why == "" and got is not None and got.version == attest.RELEASE_LATEST == "latest"
+    assert "VERSION=latest" in selfupdate.render("ok", got, "").splitlines()
+
+
+@pytest.mark.parametrize("version", ["Latest", "LATEST", "latest ", " latest", "vlatest", "latest\n",
+                                     "newest", "", "latest-1", ["latest"], 1])
+def test_a_near_miss_of_latest_is_refused(version):
+    """RT-6.32 step 2: anything but `v<x.y.z>` or `latest` is a bad version."""
+    assert attest.verify_release(record(version=version), KEYS) == (None, "bad version")
+
+
+def test_the_notice_names_latest_with_its_tag(tmp_path):
+    """RT-6.32 step 7: TARGET `latest (v<x.y.z>)` names the tag; `latest`
+    alone, before the release check knows one, says nothing."""
+    layout = tmp_path / "host"
+    layout.mkdir()
+    _auto(tmp_path, "REGISTRAR=ok\nTARGET=latest (v1.3.0)\nKEYS=match\n")
+    assert release.auto_line("1.2.0", tmp_path, layout) == \
+        "updates itself to latest (v1.3.0) when this session ends"
+    assert release.auto_line("1.3.0", tmp_path, layout) == ""
+    assert release.auto_info("1.2.0", tmp_path, layout)["target"] == "latest (v1.3.0)"
+    _auto(tmp_path, "TARGET=latest\nKEYS=match\n")
+    assert release.auto_line("1.2.0", tmp_path, layout) == ""
+    assert release.auto_info("1.2.0", tmp_path, layout)["target"] == "latest"
+    _auto(tmp_path, "TARGET=latest (1.3.0)\n")
+    assert "target" not in release.auto_info("1.2.0", tmp_path, layout)
+    assert [release.target_version(t) for t in ("1.3.0", "latest (v1.3.0)", "latest", "latest (v1.3)")] == \
+        ["1.3.0", "1.3.0", "", ""]

@@ -64,8 +64,11 @@ MANDATE_NOTE_MAX = 200
 # The registrar's signed debug setting of a home (RT-6.31, ADR-010 phase 2).
 DEBUG_TYP = "mm-agent-debug+jwt"
 # The registrar's signed release record (RT-6.32, ADR-011 phase 3): the
-# release keys it offers and the version hosts update themselves to.
+# release keys it offers and the version hosts update themselves to: a fixed
+# v<x.y.z>, or RELEASE_LATEST, the newest release tag the host's release check
+# knows that is not withdrawn (the owner's decision of 2026-11-13).
 RELEASE_TYP = "mm-agent-release+jwt"
+RELEASE_LATEST = "latest"
 RELEASE_SIGNERS_MAX = 16
 # One release key line, as mm_release_parse_keys in bin/mm-agent-lib.sh reads
 # it: an Ed25519 type, its base64, an optional comment.
@@ -463,11 +466,11 @@ def verify_debug(token: object, keys: Mapping[str, Ed25519PublicKey], *, channel
 @dataclass(frozen=True)
 class ReleaseRecord:
     """A verified release record: the release keys the registrar offers
-    (`<type> <base64>` each, in its order) and the version it names, '' for
-    keys only."""
+    (`<type> <base64>` each, in its order) and the version it names: x.y.z,
+    RELEASE_LATEST, or '' for keys only."""
 
     signers: tuple[str, ...]
-    version: str  # x.y.z without the v, or ''
+    version: str  # x.y.z without the v, 'latest', or ''
     set_at_ms: int
     iat: int
     exp: int
@@ -497,7 +500,8 @@ def release_key(line: object) -> str | None:
 
 def _release_record(payload: Mapping[str, Any], kid: str) -> ReleaseRecord | str:
     """The record's claims, typed; why not when one is missing or malformed:
-    a non-empty list of distinct release keys, an optional `v<x.y.z>`."""
+    a non-empty list of distinct release keys, an optional `v<x.y.z>` or
+    `latest` (that lowercase word exactly, RT-6.32 step 2)."""
     signers, version, set_at = payload.get("signers"), payload.get("version"), _int(payload.get("set_at_ms"))
     if set_at is None or set_at <= 0:
         return "bad claims"
@@ -506,9 +510,11 @@ def _release_record(payload: Mapping[str, Any], kid: str) -> ReleaseRecord | str
     keys = [release_key(s) for s in signers]
     if any(k is None for k in keys) or len(set(keys)) != len(keys):
         return "bad signers"
-    if version is not None and not (isinstance(version, str) and _RELEASE_VERSION.fullmatch(version)):
+    if version is not None and not (isinstance(version, str) and (
+            version == RELEASE_LATEST or _RELEASE_VERSION.fullmatch(version))):
         return "bad version"
-    return ReleaseRecord(signers=tuple(k for k in keys if k), version=(version or "")[1:],
+    named = RELEASE_LATEST if version == RELEASE_LATEST else (version or "")[1:]
+    return ReleaseRecord(signers=tuple(k for k in keys if k), version=named,
                          set_at_ms=set_at, iat=payload["iat"], exp=payload["exp"], kid=kid)
 
 

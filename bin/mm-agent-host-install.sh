@@ -61,9 +61,11 @@
 # sessions: it reads the registrar's signed release record (verified with
 # MM_REGISTRAR_KEYS by this tree's own Python), pins the release keys it offers
 # when the host has none yet (and refuses a record with other keys than the
-# pinned ones), and installs the version it names as `--release` would, with
-# every check: only forward, only a tag signed by a pinned key, not withdrawn,
-# not held (--hold), and only when no other session of this host copy runs.
+# pinned ones), and installs the version it names as `--release` would (for
+# `latest`, the newest release tag the host's release check knows that is not
+# withdrawn), with every check: only forward, only a tag signed by a pinned
+# key, not withdrawn, not held (--hold), and only when no other session of
+# this host copy runs.
 # It exits 0 when there is nothing to do and logs one line per decision in
 # release-auto.log in the host state directory.
 #
@@ -292,13 +294,17 @@ if [[ "$AUTO" -eq 1 ]]; then
   # Keys pinned once (guard rail 1): taken from the registrar only when the
   # host has none, neither release-signers nor MM_RELEASE_SIGNERS; then a
   # different set is refused, and changing keys is a person's step.
+  # `latest` (RT-6.32 step 4) stands for the newest tag the host's release
+  # check knows that is not withdrawn: `latest (v<x.y.z>)`, `latest` while
+  # none is known.
+  target="$(mm_release_target "$MM_RR_VERSION" "$pd/$MM_WITHDRAWN_FILE")"
   if ! mm_release_signers "$pd"; then
-    mm_auto_state "$AUTO_STATE" REGISTRAR=ok "TARGET=$MM_RR_VERSION" KEYS=bad "AT=$(date +%s)"
+    mm_auto_state "$AUTO_STATE" REGISTRAR=ok "TARGET=$target" KEYS=bad "AT=$(date +%s)"
     auto_say "no self-update: $MM_REL_ERR" refused
     exit 0
   fi
   keystate="$(mm_release_keystate)"
-  mm_auto_state "$AUTO_STATE" REGISTRAR=ok "TARGET=$MM_RR_VERSION" "KEYS=$keystate" "AT=$(date +%s)"
+  mm_auto_state "$AUTO_STATE" REGISTRAR=ok "TARGET=$target" "KEYS=$keystate" "AT=$(date +%s)"
   if [[ "$keystate" == mismatch ]]; then
     auto_say "refused: the registrar's record (key ${MM_RR_KID:-?}) names release keys other than those pinned in $MM_REL_FROM_TEXT; no self-update. Changing keys is a person's step on the host: --release v<version> --replace-signers with MM_RELEASE_SIGNERS" refused
     exit 0
@@ -321,8 +327,15 @@ if [[ "$AUTO" -eq 1 ]]; then
     exit 0
   fi
   have="$(version_of "$DEST")"
-  if ! mm_version_newer "$have" "$MM_RR_VERSION"; then
-    auto_say "the registrar names v$MM_RR_VERSION, not newer than $have here: nothing to do" current
+  # The version to go to: the one named, or latest's tag as the last release
+  # check left it (none known yet: the check below finds it).
+  if [[ "$MM_RR_VERSION" == latest ]]; then
+    want="$(mm_release_latest "$pd/$MM_WITHDRAWN_FILE" || true)" named="$target"
+  else
+    want="$MM_RR_VERSION" named="v$MM_RR_VERSION"
+  fi
+  if [[ -n "$want" ]] && ! mm_version_newer "$have" "$want"; then
+    auto_say "the registrar names $named, not newer than $have here: nothing to do" current
     exit 0
   fi
   # The withdrawn versions as of now: the host's release check runs first
@@ -332,15 +345,30 @@ if [[ "$AUTO" -eq 1 ]]; then
   bash "$SELF/bin/mm-agent-release-check.sh" --state-dir "$AUTO_STATE" >&2 ||
     echo "mm-agent-host-install: the release check failed; using the withdrawn versions it wrote before, if any" >&2
   if [[ ! -f "$pd/$MM_WITHDRAWN_FILE" || -L "$pd/$MM_WITHDRAWN_FILE" ]]; then
-    auto_say "v$MM_RR_VERSION waits: the withdrawn versions are unknown (no release check passed on this host yet)" failed
+    auto_say "$named waits: the withdrawn versions are unknown (no release check passed on this host yet)" failed
     exit 0
   fi
-  if by="$(mm_release_withdrawn "$MM_RR_VERSION" "$pd/$MM_WITHDRAWN_FILE")"; then
-    auto_say "the registrar names v$MM_RR_VERSION, which the CHANGELOG of v$by withdrew: no self-update" refused
+  # latest as of this check: its newest tag not withdrawn, whether that tag
+  # passed the check or not. The --release path below verifies it; a newest
+  # tag that fails there is a refusal, never a step back to an older one.
+  if [[ "$MM_RR_VERSION" == latest ]]; then
+    named="$(mm_release_target latest "$pd/$MM_WITHDRAWN_FILE")"
+    mm_auto_state "$AUTO_STATE" "TARGET=$named"
+    if ! want="$(mm_release_latest "$pd/$MM_WITHDRAWN_FILE")"; then
+      auto_say "the registrar names latest, and the release check knows no release tag that is not withdrawn: no self-update" failed
+      exit 0
+    fi
+    if ! mm_version_newer "$have" "$want"; then
+      auto_say "the registrar names $named, not newer than $have here: nothing to do" current
+      exit 0
+    fi
+  fi
+  if by="$(mm_release_withdrawn "$want" "$pd/$MM_WITHDRAWN_FILE")"; then
+    auto_say "the registrar names $named, which the CHANGELOG of v$by withdrew: no self-update" refused
     exit 0
   fi
-  RELEASE="v$MM_RR_VERSION" VER="$MM_RR_VERSION" TAG="v$MM_RR_VERSION"
-  echo "mm-agent-host-install: the registrar names v$VER (this host runs $have): updating" >&2
+  RELEASE="v$want" VER="$want" TAG="v$want"
+  echo "mm-agent-host-install: the registrar names $named (this host runs $have): updating" >&2
 fi
 
 # Whether the host's release check (RT-6.30) lists version $1 as withdrawn:
@@ -766,11 +794,11 @@ layout
 if [[ "$AUTO" -eq 1 ]]; then
   busy="$( { recorded_keys; unrecorded_sessions; } | grep -vxF -e "${CORRAL_SESSION_ID:-?}" | sort -u | tr '\n' ' ' || true)"
   if [[ "$STATE_OK" -eq 0 ]]; then
-    auto_say "v$VER waits: the state directory cannot tell which sessions run" waiting
+    auto_say "$named waits: the state directory cannot tell which sessions run" waiting
     exit 0
   fi
   if [[ -n "$busy" ]]; then
-    auto_say "v$VER waits: other sessions of this host copy run (${busy% }); the last one to end updates it" waiting
+    auto_say "$named waits: other sessions of this host copy run (${busy% }); the last one to end updates it" waiting
     exit 0
   fi
 fi
@@ -922,7 +950,7 @@ install_dispatcher "$name"
 # only way back.
 if [[ "$gc" -eq 1 ]]; then collect_garbage; else echo "no release removed: a step above failed" >&2; fi
 
-[[ "$AUTO" -eq 0 ]] || auto_say "updated to v$VER ($have before), signed release $TAG, signed by $SIGNER" updated
+[[ "$AUTO" -eq 0 ]] || auto_say "updated to $named ($have before), signed release $TAG, signed by $SIGNER" updated
 if [[ -n "$RELEASE" && "$ENFORCE" -eq 1 ]]; then
   kind="signed release $TAG, signed by $SIGNER, a key pinned in $MM_REL_FROM_TEXT"
   head_line="$head_sha (tag object $TAG_ID)"
