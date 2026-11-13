@@ -198,19 +198,30 @@ export function secretCommand(env: Env): string | null {
   return cmd ? `!${cmd}` : null
 }
 
+// The server's Python environment (RT-6.27 step 1): uv keeps a project's in
+// <project>/.venv, which a read-only checkout (a corral grant) refuses, so it
+// goes into the user's cache, one per checkout (by its real path). The checkout
+// stays untouched: with --locked uv only reads uv.lock, and the project goes in
+// as an editable install that points at the checkout's sources.
+export function venvDir(env: Env, root: string): string {
+  const cache = env.XDG_CACHE_HOME || join(env.HOME || homedir(), ".cache")
+  return join(cache, "mm-agent-bus", `venv-${sha16(real(root) || root)}`)
+}
+
 // The MCP server as pi.registerMcpServer takes it (an mcp.json entry). Its
 // environment is pi's plus these: a Claude Code session's id and project,
 // inherited when pi was started from its shell, would key the server's files
 // on that session: blanked, and the workspace named, where the extension
 // looks (RT-6.27 step 1, as RT-6.20 step 2). No channel push: Claude Code's.
-// Its tools are declared to the model ("direct"), not left to codemode.
+// Its Python environment in the user's cache (venvDir). Its tools are declared
+// to the model ("direct"), not left to codemode.
 export function mcpConfig(root: string, workspace: string, env: Env = {}) {
   const secret = secretCommand(env)
   return {
     command: "uv",
     args: ["run", "--locked", "--project", join(root, "mcp"), "mattermost-ai-agent-bus-mcp"],
     env: { CLAUDE_CODE_SESSION_ID: "", CLAUDE_PROJECT_DIR: "", MM_CHANNEL_PUSH: "0", MM_WORKSPACE: workspace,
-           ...(secret ? { MM_REG_SECRET: secret } : {}) },
+           UV_PROJECT_ENVIRONMENT: venvDir(env, root), ...(secret ? { MM_REG_SECRET: secret } : {}) },
     cwd: workspace,
     exposure: "direct" as const,
     timeout: MCP_TIMEOUT_SEC,

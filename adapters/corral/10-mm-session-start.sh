@@ -67,7 +67,7 @@ no_bus() {
     if unregister_again; then
       rm -f "$MM_AGENT_SESSION_FILE"
     else
-      log "WARNING: could not unregister ${NAME} again; postEnd retries"
+      log "WARNING: could not unregister ${NAME} again: ${MM_UNREG_WHY}; postEnd retries"
     fi
   fi
   rm -f "${HOST_READY:-}"
@@ -128,11 +128,9 @@ fi
 source "$BIN/mm-agent-lib.sh"
 
 # Unregister the bot this run registered: with its own token first, which the
-# registrar always accepts for it, then with the registration secret.
-unregister_again() {
-  mm_with_token "$BIN/mm-agent-unregister.sh" "$NAME" >/dev/null 2>&1 ||
-    { [[ -n "${MM_REG_SECRET:-}" ]] && mm_with_secret "$BIN/mm-agent-unregister.sh" "$NAME" >/dev/null 2>&1; }
-}
+# registrar always accepts for it, then with the registration secret; on
+# failure MM_UNREG_WHY says why for each (no credential in it).
+unregister_again() { mm_unregister_bot "$NAME"; }
 
 # Version only: the installed plugins include the corral homes, which a sandbox
 # writes, so the notice names no plugin path; the only path it names is this
@@ -441,12 +439,17 @@ fi
 # From here on a failure must not leak the bot account we just created.
 cleanup_and_fail() {
   log "$1"
-  if unregister_again; then rm -f "$MM_AGENT_SESSION_FILE"; fi
+  if unregister_again; then
+    rm -f "$MM_AGENT_SESSION_FILE"
+    log "unregistered ${NAME} again"
+  else
+    log "WARNING: could not unregister ${NAME} again: ${MM_UNREG_WHY}; postEnd retries"
+  fi
   exit 1
 }
 
 if ! chan_exports="$(mm_with_token "$BIN/mm-agent-channels.sh" resolve)"; then
-  cleanup_and_fail "channel resolution failed — unregistered ${NAME} again"
+  cleanup_and_fail "channel resolution failed"
 fi
 eval "$chan_exports"
 

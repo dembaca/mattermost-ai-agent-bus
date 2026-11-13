@@ -70,6 +70,9 @@ class FakeMattermost:
     prefix: str = "agent-"  # the registrar's BOT_USERNAME_PREFIX (arc42 §7.1)
     register_reply: dict | None = None  # the registrar's answer instead of a bot
     register_error: tuple[int, str] | None = None  # the registrar's refusal: status, plain text
+    # DELETE /register/v1/agents/<name> by its bearer credential: (status, plain text);
+    # "{auth}" in the text is the Authorization header (a proxy echoing it)
+    unregister_error: dict[str, tuple[int, str]] = field(default_factory=dict)
     missing: set[str] = field(default_factory=set)  # channel names answered with 404
     user_props: dict | None = None  # the bot's user props (custom status)
     registrar_keys: dict | None = None  # GET /register/v1/keys (RT-6.24); None: 404
@@ -187,6 +190,16 @@ def _handler(fake: FakeMattermost):
             body = json.loads(raw) if raw else {}
             p = self.path.split("?")[0]
             fake.writes.append((self.command, p, body))
+            auth = self.headers.get("Authorization") or ""
+            if (p.startswith("/register/v1/agents/") and self.command == "DELETE"
+                    and auth.removeprefix("Bearer ") in fake.unregister_error):
+                code, text = fake.unregister_error[auth.removeprefix("Bearer ")]
+                b = text.replace("{auth}", auth).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                return self.wfile.write(b)
             if p in fake.deny:
                 return self._send({"message": "no permission"}, 403)
             if p == "/api/v4/users/usernames":  # people, for the mention check (RT-6.11)
@@ -198,7 +211,7 @@ def _handler(fake: FakeMattermost):
                 return self._send([{"user_id": u, "status": fake.presence.get(u, "offline")}
                                    for u in body])
             if (p.startswith("/register/v1/agents/") and self.command == "DELETE"
-                    and self.headers.get("Authorization") != "Bearer bot-token-for-tests"):
+                    and auth not in ("Bearer bot-token-for-tests", "Bearer reg-secret-for-tests")):
                 return self._send({"message": "unauthorized"}, 401)
             if p == "/register/v1/agents" and self.command == "POST" and fake.register_error:
                 code, text = fake.register_error

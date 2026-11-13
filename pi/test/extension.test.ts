@@ -3,9 +3,9 @@
 //   node --test pi/test/extension.test.ts
 import assert from "node:assert/strict"
 import { createHash } from "node:crypto"
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { after, afterEach, before, beforeEach, mock, test } from "node:test"
 import { fileURLToPath } from "node:url"
@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url"
 import ocBus from "../../opencode/plugin/mattermost-agent-bus.ts"
 import { busFile as ocBusFile } from "../../opencode/plugin/mattermost-agent-bus.ts"
 import mattermostAgentBus, { busFile, busRoot, create, hookApi, MCP_TIMEOUT_SEC, mcpConfig, secretCommand, SERVER, SKILL,
-  timing, waitSec, wakeBackoffMs } from "../mattermost-agent-bus.ts"
+  timing, venvDir, waitSec, wakeBackoffMs } from "../mattermost-agent-bus.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = dirname(dirname(HERE))
@@ -151,7 +151,8 @@ test("RT-6.27 step 1: the MCP server and the skill at session_start, nothing whe
   await f.emit("session_start", { reason: "startup" })
   assert.deepEqual(f.registered, [{ name: SERVER, config: {
     command: "uv", args: ["run", "--locked", "--project", join(REPO, "mcp"), "mattermost-ai-agent-bus-mcp"],
-    env: { CLAUDE_CODE_SESSION_ID: "", CLAUDE_PROJECT_DIR: "", MM_CHANNEL_PUSH: "0", MM_WORKSPACE: ws },
+    env: { CLAUDE_CODE_SESSION_ID: "", CLAUDE_PROJECT_DIR: "", MM_CHANNEL_PUSH: "0", MM_WORKSPACE: ws,
+           UV_PROJECT_ENVIRONMENT: join(homedir(), ".cache", "mm-agent-bus", `venv-${sha16(realpathSync(REPO))}`) },
     cwd: ws, exposure: "direct", timeout: MCP_TIMEOUT_SEC,
     description: f.registered[0].config.description } }])
   assert.deepEqual(await f.emit("resources_discover", { cwd: ws, reason: "startup" }),
@@ -377,6 +378,20 @@ test("RT-6.27: the default export is pi's factory and starts nothing", async () 
   await settle(30)
   assert.ok(handlers.includes("session_start") && handlers.includes("agent_settled"))
   assert.equal(calls.length, 0)
+})
+
+test("RT-6.27 step 1: the server's environment in the user's cache, one per checkout, never in it", () => {
+  const venv = (env: Record<string, string>, root = REPO) => mcpConfig(root, ws, env).env.UV_PROJECT_ENVIRONMENT
+  const id = sha16(realpathSync(REPO))
+  assert.equal(venv({ XDG_CACHE_HOME: "/c", HOME: "/h" }), `/c/mm-agent-bus/venv-${id}`)
+  assert.equal(venv({ XDG_CACHE_HOME: "", HOME: "/h" }), `/h/.cache/mm-agent-bus/venv-${id}`)
+  // Keyed by the real path: a symlink to the checkout shares its environment, another checkout does not.
+  const link = join(tmp, "bus-link")
+  symlinkSync(REPO, link)
+  assert.equal(venv({ HOME: "/h" }, link), venv({ HOME: "/h" }))
+  assert.notEqual(venvDir({ HOME: "/h" }, tmp), venvDir({ HOME: "/h" }, REPO))
+  // Outside corral alike: one rule, one more environment per user.
+  assert.equal(venv({ HOME: "/h", MM_BUS_MCP_ENDPOINT: "tcp://127.0.0.1:1" }), venv({ HOME: "/h" }))
 })
 
 test("RT-6.27 step 1: the secret by its command for the server alone, never its value", () => {

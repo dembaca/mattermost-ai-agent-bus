@@ -3,6 +3,33 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.86.3
+
+### Fixed
+
+- **pi's MCP server starts from a read-only checkout**
+  ([RT-6.27](docs/arc42/06-runtime-view.md) step 1): the extension's
+  `uv run --locked --project <checkout>/mcp` built its environment in the
+  checkout's `mcp/.venv`, which a corral read grant refuses (`failed to remove
+  file … Operation not permitted`). The server now gets
+  `UV_PROJECT_ENVIRONMENT` in the user's cache
+  (`~/.cache/mm-agent-bus/venv-<hash of the checkout>`), one per checkout,
+  under corral and without (there in the corral home, so one per corral
+  home and checkout); the checkout stays untouched. It is a cache, safe to
+  delete.
+- **[adapters/pi.md](adapters/pi.md) under corral**: the sandbox must read the
+  bus checkout (`providers.paths.ro`), or pi lists no extension; pi started
+  from `~` has no project `.envrc` and so no project channel and no bot.
+- **A failed unregister says why** ([RT-6.1](docs/arc42/06-runtime-view.md)
+  step 7, RT-6.18): the corral `postEnd` hook logged only
+  `could not unregister <name>`; it now logs
+  `could not unregister <name>: token: <reason>; secret: <reason>`, and the
+  start hook's unregister-again does the same (its channel failure no longer
+  says `unregistered … again` before it tried). No token or secret in it:
+  `mm-agent-unregister.sh` prints the HTTP status and only a JSON
+  `.message`/`.error`, printable and cut to 200, never one that holds the
+  credential, and never plain text (it printed the whole answer before).
+
 ## 0.86.2
 
 ### Fixed

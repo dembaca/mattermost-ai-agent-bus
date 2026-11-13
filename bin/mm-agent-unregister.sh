@@ -33,7 +33,15 @@ CODE="${RESP##*$'\n'}"
 BODY="${RESP%$'\n'*}"
 
 if [[ "$CODE" != "200" && "$CODE" != "204" && "$CODE" != "404" ]]; then
-  echo "unregister failed http=${CODE}: ${BODY}" >&2
+  # The registrar's JSON .message/.error, printable, cut to 200; never one that
+  # holds the credential (a proxy echoing headers). Plain text is not shown at
+  # all: an encoded echo of the credential would pass a literal check.
+  WHY="$(printf '%s' "$BODY" | jq -r '(.message // .error // empty) | tostring' 2>/dev/null || true)"
+  if [[ -n "$WHY" && ( "$BODY" == *"$TOKEN"* || "$WHY" == *"$TOKEN"* ) ]]; then
+    WHY="(the answer is not shown: it holds the credential)"
+  fi
+  WHY="$(printf '%s' "$WHY" | head -c 200 | tr -cd '[:print:]')" || WHY=""
+  echo "unregister failed http=${CODE}${WHY:+: ${WHY}}" >&2
   exit 1
 fi
 echo "unregistered ${PREFIX}${NAME} (http=${CODE})"
