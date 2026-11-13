@@ -366,3 +366,118 @@ def test_auto_takes_no_other_option(run, tmp_path):
     r = run(INSTALL, "--auto", "--downgrade", MM_BUS_HOST_DIR=str(tmp_path / "host" / "current"))
     assert r.code != 0 and "--auto takes no other option" in r.stderr
     assert not Path(tmp_path / "host" / "release-signers").exists()
+
+
+# --- `latest` (the owner's decision of 2026-11-13, RT-6.32 step 4) -----------------
+
+def tag_next(h, keys, signer: str = "owner", changelog: str = "") -> str:
+    """One more release after h.nxt in the clone, its tag signed by `signer`."""
+    later = bump(h.nxt)
+    (h.origin / "CHANGELOG.md").write_text(f"# Changelog\n\n## {later}\n\n{changelog or '- later'}\n\n"
+                                           f"## {h.nxt}\n\n- next\n")
+    set_version(h.origin, later)
+    sign(h.origin, f"v{later}", keys[signer])
+    return later
+
+
+def test_latest_installs_the_newest_tag_not_withdrawn(mm, run, tmp_path, keys, host):
+    """RT-6.32 step 4: the record names `latest`: the newest tag the host's
+    release check knows that is not withdrawn (v{nxt} is, by the newest's
+    CHANGELOG), installed as a fixed version would be; the decision line and
+    TARGET say `latest (v<x.y.z>)`. At the next session end the tag list the
+    check left says not newer: nothing to do."""
+    sign(host.origin, f"v{host.nxt}", keys["owner"])
+    later = tag_next(host, keys, changelog=f"Withdrawn: v{host.nxt}")
+    mm.registrar_release = (200, record([body(keys["owner"])], "latest"))
+    r = end(run, tmp_path, host)
+    assert r.code == 0, r.stderr
+    assert f"self-update: updated to latest (v{later})" in r.stderr, r.stderr
+    assert host.dest.resolve() == host.layout / "releases" / later
+    assert auto_env(run)["TARGET"] == f"latest (v{later})" and auto_env(run)["RESULT"] == "updated"
+    withdrawn = (host.layout / "release-withdrawn.env").read_text().splitlines()
+    assert f"TAG={later}" in withdrawn and f"WITHDRAWN={host.nxt}" in withdrawn
+    r = end(run, tmp_path, host)
+    assert r.code == 0 and "self-update: " not in r.stderr, r.stderr
+    assert f"the registrar names latest (v{later}), not newer than {later} here" in log(run)
+
+
+def test_latest_not_newer_changes_nothing(mm, run, tmp_path, keys, host):
+    """RT-6.32 step 4: the newest tag is the version this host runs: nothing
+    to do, and the terminal hears nothing."""
+    g(host.origin, "-c", f"user.signingKey={keys['owner']}", "tag", "-s", "-m", f"v{VERSION}",
+      f"v{VERSION}", "HEAD~1")
+    mm.registrar_release = (200, record([body(keys["owner"])], "latest"))
+    r = end(run, tmp_path, host)
+    assert r.code == 0 and "self-update: " not in r.stderr, r.stderr
+    unchanged(host)
+    assert f"the registrar names latest (v{VERSION}), not newer than {VERSION} here" in log(run)
+    assert auto_env(run)["RESULT"] == "current"
+
+
+def test_latest_with_a_bad_signature_on_the_newest_is_refused(mm, run, tmp_path, keys, host):
+    """RT-6.32 step 4: the newest tag is signed by a key not pinned: a
+    refusal, logged and in the terminal, nothing changes, and no step back to
+    the older tag that would pass (v{nxt})."""
+    sign(host.origin, f"v{host.nxt}", keys["owner"])
+    later = tag_next(host, keys, signer="stranger")
+    mm.registrar_release = (200, record([body(keys["owner"])], "latest"))
+    r = end(run, tmp_path, host)
+    assert r.code == 0 and "self-update: not updated" in r.stderr, r.stderr
+    unchanged(host)
+    assert not (host.layout / "releases" / host.nxt).exists()
+    assert "not pinned" in log(run) and auto_env(run)["RESULT"] == "failed"
+    assert auto_env(run)["TARGET"] == f"latest (v{later})"
+
+
+def lib(script: str, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["bash", "-c", f'source "{ROOT}/bin/mm-agent-lib.sh"; {script}', "_", *args],
+                          capture_output=True, text=True)
+
+
+def test_latest_is_the_newest_tag_not_withdrawn(tmp_path):
+    """RT-6.32 step 4, mm_release_latest: from the release check's TAG and
+    WITHDRAWN lines, the newest tag not withdrawn (a withdrawn newest is
+    skipped); none known: `latest` alone; a file from before 0.87.0 has no
+    TAG lines. mm_release_target is TARGET's text."""
+    f = tmp_path / "release-withdrawn.env"
+    f.write_text("NEWEST=1.2.0\nWITHDRAWN=1.10.0\nTAG=1.9.0\nTAG=1.10.0\nTAG=1.2.0\nTAG=x;rm\n")
+    assert lib('mm_release_latest "$1"', str(f)).stdout == "1.9.0\n"
+    assert lib('mm_release_target latest "$1"', str(f)).stdout == "latest (v1.9.0)\n"
+    assert lib('mm_release_target 1.4.0 "$1"', str(f)).stdout == "1.4.0\n"
+    f.write_text("NEWEST=1.2.0\nWITHDRAWN=1.2.0\nTAG=1.2.0\n")
+    assert lib('mm_release_latest "$1"', str(f)).returncode == 1
+    f.write_text("NEWEST=1.2.0\n")
+    assert lib('mm_release_target latest "$1"', str(f)).stdout == "latest\n"
+    assert lib('mm_release_target latest "$1"', str(tmp_path / "none")).stdout == "latest\n"
+
+
+def test_the_notice_names_latest(run, tmp_path):
+    """RT-6.32 step 7: TARGET `latest (v<x.y.z>)` reads `updates itself to
+    latest (v<x.y.z>) …`, in bash and in the server alike; `latest` alone
+    (no tag known yet) says nothing."""
+    layout = tmp_path / "layout"
+    layout.mkdir()
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    h = SimpleNamespace(layout=layout)
+    (run.state_dir / "release-auto.env").write_text("REGISTRAR=ok\nTARGET=latest (v99.0.0)\nKEYS=match\n")
+    want = "updates itself to latest (v99.0.0) when this session ends"
+    assert bash_auto_notice(run, h, VERSION) == want
+    assert release.auto_line(VERSION, run.state_dir, layout) == want
+    (run.state_dir / "release-auto.env").write_text("REGISTRAR=ok\nTARGET=latest\nKEYS=match\n")
+    assert bash_auto_notice(run, h, VERSION) == ""
+    assert release.auto_line(VERSION, run.state_dir, layout) == ""
+    assert release.auto_info(VERSION, run.state_dir, layout)["target"] == "latest"
+
+
+@pytest.mark.parametrize("version, status", [("latest", "ok"), ("1.2.3", "ok"), ("Latest", "failed"),
+                                             ("latest ", "failed"), ("vlatest", "failed")])
+def test_the_bash_recheck_takes_latest(tmp_path, version, status):
+    """RT-6.32 step 2: mm_registrar_release checks the Python's lines again;
+    VERSION is x.y.z or `latest`, anything else refuses the record."""
+    py = tmp_path / "python"
+    py.write_text("#!/bin/sh\nprintf 'STATUS=ok\\nWHY=\\nKID=abc\\nVERSION=%s\\nSIGNER=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5\\n' "
+                  f"'{version}'\n")
+    py.chmod(0o755)
+    p = subprocess.run(["bash", "-c", f'source "{ROOT}/bin/mm-agent-lib.sh"; MM_REGISTRAR_KEYS=k mm_registrar_release "$1"; '
+                        'echo "$MM_RR_STATUS|$MM_RR_VERSION"', "_", str(py)], capture_output=True, text=True)
+    assert p.stdout.strip() == f"{status}|{version if status == 'ok' else ''}", p.stderr

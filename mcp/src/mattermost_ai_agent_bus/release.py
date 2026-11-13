@@ -61,6 +61,9 @@ CHILD_ENV = ("MM_RELEASE_URL", "MM_RELEASE_SIGNERS", "MM_BUS_HOST_DIR", "CORRAL_
 
 _VER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _TAG = re.compile(r"^v\d+\.\d+\.\d+$")
+# A TARGET when the registrar names `latest` (RT-6.32 step 4): the newest tag
+# the host's release check knows that is not withdrawn, once it knows one.
+_LATEST = re.compile(r"^latest(?: \(v(\d+\.\d+\.\d+)\))?$")
 
 # The Needs: grammar (ADR-011 point 3, CLAUDE.md "Releasing"): `MM_*` names,
 # versions x.y.z and lowercase words of at most 15 letters, each with an
@@ -337,7 +340,8 @@ def held(layout: Path | None) -> bool:
 
 def read_auto(directory: Path | None = None) -> dict[str, str]:
     """release-auto.env, every field checked again: REGISTRAR, KEYS and RESULT
-    as their words, TARGET a version, AT and RESULT_AT epochs."""
+    as their words, TARGET a version, `latest` or `latest (v<x.y.z>)`, AT
+    and RESULT_AT epochs."""
     text = _read((directory or state_dir()) / AUTO_FILE, 4096) or ""
     out: dict[str, str] = {}
     for ln in text.splitlines():
@@ -346,7 +350,7 @@ def read_auto(directory: Path | None = None) -> dict[str, str]:
             continue
         if key in _AUTO_WORDS and value in _AUTO_WORDS[key]:
             out[key] = value
-        elif key == "TARGET" and _VER.match(value):
+        elif key == "TARGET" and (_VER.match(value) or _LATEST.match(value)):
             out[key] = value
         elif key in ("AT", "RESULT_AT") and value.isdigit():
             out[key] = value
@@ -370,9 +374,19 @@ def auto_line(have: str | None = None, directory: Path | None = None,
         return "the registrar names a release key this host doesn't trust: no self-update"
     if keys == "bad":
         return "the release keys on this host can't be used (see release-auto.log): no self-update"
-    if target and _key(target) > _key(have):
-        return f"updates itself to v{target} when this session ends"
+    want = target_version(target)
+    if want and _key(want) > _key(have):
+        return f"updates itself to {target if _LATEST.match(target) else 'v' + want} when this session ends"
     return ""
+
+
+def target_version(target: str) -> str:
+    """The x.y.z a TARGET of release-auto.env stands for: itself, the one in
+    `latest (v<x.y.z>)`, '' for `latest` while the newest tag is not known."""
+    if _VER.match(target):
+        return target
+    m = _LATEST.match(target)
+    return m[1] if m and m[1] else ""
 
 
 def auto_info(have: str | None = None, directory: Path | None = None,

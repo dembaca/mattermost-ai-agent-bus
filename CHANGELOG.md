@@ -3,6 +3,37 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.87.0
+
+### Added
+
+- **The registrar may name `latest`** (the owner's decision of 2026-11-13,
+  ADR-011 phase 3,
+  [RT-6.32](docs/arc42/06-runtime-view.md#632-self-update-between-sessions)
+  step 4): besides a fixed `v<x.y.z>`, the release record's `version` may be
+  `latest` (registrar 0.10.0, `RELEASE_VERSION=latest`). `--auto` then takes
+  the newest tag of the host's release check's list that is not withdrawn
+  (the check now writes its tags as `TAG` lines into
+  `release-withdrawn.env`, [RT-6.30](docs/arc42/06-runtime-view.md) step 4)
+  and goes the way of a fixed version: only forward, signed by a pinned key,
+  not withdrawn, between sessions, `--hold` respected. A newest tag that
+  fails the signature check is refused; the host does not step back to an
+  older one. The five guard rails are unchanged; the fixed pin stays for
+  staged rollouts.
+- Latency: a new tag reaches a `latest` host at the end of its first session
+  after the daily release check has listed it, so up to about a day. When
+  timing matters, a fixed pin is the fast path.
+- The decision lines in `release-auto.log`, `TARGET` in `release-auto.env`,
+  the notice and `bus_info`'s `release.auto.target` say `latest (v<x.y.z>)`,
+  or `latest` while the newest tag is not known yet: `updates itself to
+  latest (v<x.y.z>) when this session ends`.
+
+A host before 0.87.0 refuses a record that names `latest` (a failed read:
+nothing pinned, no update). Name a fixed 0.87.0 or newer until every host runs
+one, then `latest`.
+
+Needs: registrar 0.10.0 for latest, every host on 0.87.0 first
+
 ## 0.86.4
 
 ### Fixed

@@ -2045,7 +2045,7 @@ on: the end, and `status` and `bus_info` show it.
 
 ## ADR-011: Updates from a signed release only
 
-**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy; phase 1b built (0.82.0, RT-6.29): `--release v<x.y.z>`, the tag verified against pinned keys when the host sets them (opt-in, decision (3) below); phase 2 built (0.83.0, RT-6.30): the release check and the notice, as point 3 and the open questions' recommendations (*Phase 2 as built* below); decisions (4) and (5) of 2026-11-12 built (0.84.0, RT-6.29, RT-6.30): the pinned keys as a host property, a withdrawn version refused; phase 3 built (0.86.0, RT-6.32, the owner's decisions of 2026-11-13 below): the registrar distributes the release keys once and names the version, and corral's host copy updates itself to it between sessions, bounded by five guard rails, while the code's signature stays the owner's. Proposed 2026-11-09. Asked for by a trusted human on
+**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy; phase 1b built (0.82.0, RT-6.29): `--release v<x.y.z>`, the tag verified against pinned keys when the host sets them (opt-in, decision (3) below); phase 2 built (0.83.0, RT-6.30): the release check and the notice, as point 3 and the open questions' recommendations (*Phase 2 as built* below); decisions (4) and (5) of 2026-11-12 built (0.84.0, RT-6.29, RT-6.30): the pinned keys as a host property, a withdrawn version refused; phase 3 built (0.86.0, RT-6.32, the owner's decisions of 2026-11-13 below): the registrar distributes the release keys once and names the version, and corral's host copy updates itself to it between sessions, bounded by five guard rails, while the code's signature stays the owner's. `latest` built (0.87.0, the decision of 2026-11-13 below): the record may name the newest release tag that is not withdrawn instead of a version. Proposed 2026-11-09. Asked for by a trusted human on
 2026-11-09 ("probably not quite simple with plugin incl. MCP server and
 sandbox hooks"). Options, a recommendation and open questions; command words,
 file names and variables below are proposals. Builds on Section 7.1 (the
@@ -2154,6 +2154,29 @@ every host as in phase 1b. Five guard rails bound it:
 5. *Operator config, no host toggle.* Self-update is on when the registrar
    names a version and the host has pinned release keys; no host variable
    switches it.
+
+*Decision of 2026-11-13 (dembaca): `latest`.* Besides a fixed `v<x.y.z>`,
+the record may name `latest`: the operator sets `RELEASE_VERSION=latest`
+(registrar 0.10.0), and the claim `version` is that lowercase word, nothing
+else in the record changes. It stands for the newest release tag the host's
+release check knows (its list of the newest tags at `MM_RELEASE_URL`) that is
+not withdrawn; from there a host takes the path of a fixed version, and the
+five guard rails stay as they are: only forward, only a tag signed by a pinned
+key (a newest tag that fails that check is a refusal, never a step back to an
+older tag), not withdrawn, between sessions, `--hold` respected. The fixed pin
+stays, for staged rollouts: name a version, watch it, name the next. The
+trade-off: with `latest` the operator approves every release the owner signs
+in advance, so a bad release reaches every host at its next session end, until
+a patch withdraws it (`Withdrawn:` in its CHANGELOG) or a host is held. A
+second one: a newest tag that can never pass (unsigned, signed by a key not
+pinned, moved, another version in its tree) halts self-update on every
+`latest` host, and each session end tries it again, until a newer signed tag
+is pushed or that tag is removed upstream; a fixed pin has no such cost. And
+the latency: a new tag reaches a `latest` host at the end of its first
+session after the daily release check (RT-6.30 step 5) has listed it, so up
+to about a day; when timing matters, a fixed pin is the fast path. Hosts
+before 0.87.0 refuse a record that names `latest`; the operator names a fixed
+0.87.0 or newer until every host runs one (RT-6.32 steps 4 and 8).
 
 **Context:** One release has several parts, installed in different places
 and restarted by different things:
@@ -2457,7 +2480,9 @@ attacker's keys on a host that has none yet (pin `MM_RELEASE_SIGNERS` before
 the first contact to close that) and moves pinned hosts forward to any newer
 signed release, never a withdrawn one and never past `--hold`. A bad but signed
 release reaches every host at its next session end before anyone looks: the
-operator names versions on purpose, `Withdrawn:` stops further installs, and
+operator names versions on purpose (with `latest` every signed release in
+advance, until a patch withdraws the bad one or a host is held),
+`Withdrawn:` stops further installs, and
 `--rollback` stays manual. A killed `--auto` can leave `.install.lock`, which
 no longer blocks: it holds the installer's pid and the next run takes it over.
 corral runs hooks without a timeout: the stop hook stops `--auto` after 600 s

@@ -81,7 +81,10 @@ installs or rolls back to it on purpose. Before the first check (`--check`) the
 installer says the withdrawn versions are unknown.
 
 **Self-update between sessions** (from 0.86.0, registrar 0.9.0). When the registrar's
-operator names a release, the host copy updates itself to it when a session ends and
+operator names a release (a fixed `v<x.y.z>`, or from 0.87.0 and registrar 0.10.0
+`latest`, the newest release tag the host's release check knows that is not withdrawn,
+[RT-6.32](../docs/arc42/06-runtime-view.md#632-self-update-between-sessions) step 4),
+the host copy updates itself to it when a session ends and
 no other session of it runs: the stop hook, after the bot is gone, runs
 `mm-agent-host-install.sh --auto`. It reads the registrar's signed release record
 (verified with `MM_REGISTRAR_KEYS`; without them nothing is taken), pins the release

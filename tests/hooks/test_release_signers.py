@@ -186,7 +186,8 @@ def test_the_check_uses_the_pinned_keys(run, tmp_path, keys, origin):
     assert "its signature checked (signed by " in r.stdout and f"keys from {f})" in r.stdout
     assert (run.state_dir / "release.env").read_text().count("VERIFIED=yes") == 1
     w = layout_dir(tmp_path) / "release-withdrawn.env"
-    assert w.read_text() == "NEWEST=90.1.0\nWITHDRAWN=90.0.1\n"
+    # TAG: the tags the check tried, for `latest` (RT-6.32 step 4).
+    assert w.read_text() == "NEWEST=90.1.0\nWITHDRAWN=90.0.1\nTAG=90.1.0\n"
     assert w.stat().st_mode & 0o777 == 0o600
     pin(tmp_path, keys["stranger"])
     r = check(run, tmp_path, origin, None)
