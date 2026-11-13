@@ -742,3 +742,28 @@ def test_the_floor_reads_the_need_when_it_is_the_question():
     ]:
         texts = askroute.decided(need, decision, answers)
         assert askroute.classify("question", *texts) == ("approval", named), need
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("need,named", [
+    ("Merge PR #5 now?", "merge"),
+    ("CI is green. Deploy 0.86.1 to hogan?", "deploy"),
+    ("Should I push the tag?", "release"),  # FLOOR order: the tag before the push
+    ("Install 02dadca on hogan?", "install"),
+])
+async def test_the_needs_question_is_read_beside_a_decision(monkeypatch, need, named):
+    """RT-6.11, RT-6.25 step 1, security: the need is the card's title and what the human
+    reacts to; its questions are read beside a decision too, its other sentences not."""
+    c = _Client()
+    _coordinator_mode(monkeypatch, c)
+    out = json.loads(await server.ask_human(need=need, decision="Go ahead as recommended?",
+                                            answers=["go", "wait"], kind="question"))
+    assert (out["kind"], out["floor"]) == ("approval", named)
+
+
+def test_a_needs_question_counts_without_its_code_quotes_and_urls():
+    """RT-6.25 step 1: what _questions does not count as asked, the floor does not read."""
+    assert server._asked('PR #5 is merged. Is a word like "release" an action?') == (
+        "Is a word like   an action?")
+    assert server._asked("Which next? `git push` runs later.") == "Which next?"
+    assert server._asked("PR #5 is merged and deployed.") == ""

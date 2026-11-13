@@ -442,6 +442,37 @@ async def test_a_code_block_in_the_decision_keeps_its_lines(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_code_span_at_a_line_start_opens_no_block(monkeypatch):
+    """RT-6.11 step 1: a backtick fence's info string holds no backtick (CommonMark)."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="```uv run pytest``` on hogan? It takes a minute.")
+    assert title_of(c.posted[0]) == "```uv run pytest``` on hogan?"
+    assert _fields(c.posted[0])["Context"] == "It takes a minute."
+
+
+@pytest.mark.asyncio
+async def test_a_need_of_nothing_but_code_titles_its_first_line(monkeypatch):
+    """RT-6.11 step 1: the block's first line is the title, the whole block the context."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="```bash\nuv run pytest -q\nuv run mypy\n```")
+    assert title_of(c.posted[0]) == "uv run pytest -q"
+    assert _fields(c.posted[0])["Context"] == "```bash\nuv run pytest -q\nuv run mypy\n```"
+
+
+@pytest.mark.asyncio
+async def test_an_unclosed_block_in_need_is_closed_before_the_context(monkeypatch):
+    """RT-6.11 step 1: the context after need's open block is not code."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="Run this on hogan?\n```bash\nuv run pytest -q",
+                           context="Hogan only.")
+    assert title_of(c.posted[0]) == "Run this on hogan?"
+    assert _fields(c.posted[0])["Context"] == "```bash\nuv run pytest -q\n```\n\nHogan only."
+
+
+@pytest.mark.asyncio
 async def test_one_open_ask_per_human_at_a_time(monkeypatch):
     """RT-6.11 step 2: several questions at once are asked one after the other."""
     c = _Client()
