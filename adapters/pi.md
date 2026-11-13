@@ -38,7 +38,9 @@ pi starts the server with its own environment plus `MM_WORKSPACE` (the session's
 directory), an empty `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PROJECT_DIR`, and
 `MM_CHANNEL_PUSH=0`, and `UV_PROJECT_ENVIRONMENT` in your cache
 (`~/.cache/mm-agent-bus/venv-<hash of the checkout>`): uv never writes into the
-checkout, which may be read-only. Its tools are declared to the model (`exposure: direct`)
+checkout, which may be read-only. Under `corral run pi`, `~` is the corral home, so
+there is one environment per corral home and checkout. It is a cache: delete
+`~/.cache/mm-agent-bus/venv-*` at any time, the next start builds it again. Its tools are declared to the model (`exposure: direct`)
 and may take 180 s. Put the `MM_*` settings (`MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_TEAM`,
 `MM_CHANNEL`, `MM_PROJECT_CHANNEL`, `MM_TRUSTED_HUMANS`, [README](../README.md#configuration))
 into the environment pi starts with. Remove a copy of the skill you installed yourself

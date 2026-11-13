@@ -441,14 +441,15 @@ cleanup_and_fail() {
   log "$1"
   if unregister_again; then
     rm -f "$MM_AGENT_SESSION_FILE"
+    log "unregistered ${NAME} again"
   else
-    log "WARNING: could not unregister ${NAME} again: ${MM_UNREG_WHY}"
+    log "WARNING: could not unregister ${NAME} again: ${MM_UNREG_WHY}; postEnd retries"
   fi
   exit 1
 }
 
 if ! chan_exports="$(mm_with_token "$BIN/mm-agent-channels.sh" resolve)"; then
-  cleanup_and_fail "channel resolution failed — unregistered ${NAME} again"
+  cleanup_and_fail "channel resolution failed"
 fi
 eval "$chan_exports"
 

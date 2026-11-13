@@ -14,7 +14,9 @@ before 0.5.0 are described in the git history.
   file … Operation not permitted`). The server now gets
   `UV_PROJECT_ENVIRONMENT` in the user's cache
   (`~/.cache/mm-agent-bus/venv-<hash of the checkout>`), one per checkout,
-  under corral and without; the checkout stays untouched.
+  under corral and without (there in the corral home, so one per corral
+  home and checkout); the checkout stays untouched. It is a cache, safe to
+  delete.
 - **[adapters/pi.md](adapters/pi.md) under corral**: the sandbox must read the
   bus checkout (`providers.paths.ro`), or pi lists no extension; pi started
   from `~` has no project `.envrc` and so no project channel and no bot.
@@ -22,10 +24,11 @@ before 0.5.0 are described in the git history.
   step 7, RT-6.18): the corral `postEnd` hook logged only
   `could not unregister <name>`; it now logs
   `could not unregister <name>: token: <reason>; secret: <reason>`, and the
-  start hook's unregister-again does the same. No token or secret in it:
-  `mm-agent-unregister.sh` prints the registrar's `.message`/`.error` or
-  plain text, printable and cut to 200, and withholds an answer that holds
-  the credential (it printed the whole answer before).
+  start hook's unregister-again does the same (its channel failure no longer
+  says `unregistered … again` before it tried). No token or secret in it:
+  `mm-agent-unregister.sh` prints the HTTP status and only a JSON
+  `.message`/`.error`, printable and cut to 200, never one that holds the
+  credential, and never plain text (it printed the whole answer before).
 
 ## 0.86.2
 

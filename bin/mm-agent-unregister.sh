@@ -33,11 +33,11 @@ CODE="${RESP##*$'\n'}"
 BODY="${RESP%$'\n'*}"
 
 if [[ "$CODE" != "200" && "$CODE" != "204" && "$CODE" != "404" ]]; then
-  # The registrar's .message/.error or its plain text, printable, cut to 200;
-  # never an answer that holds the credential (a proxy echoing headers).
+  # The registrar's JSON .message/.error, printable, cut to 200; never one that
+  # holds the credential (a proxy echoing headers). Plain text is not shown at
+  # all: an encoded echo of the credential would pass a literal check.
   WHY="$(printf '%s' "$BODY" | jq -r '(.message // .error // empty) | tostring' 2>/dev/null || true)"
-  [[ -n "$WHY" ]] || WHY="$BODY"
-  if [[ "$BODY" == *"$TOKEN"* || "$WHY" == *"$TOKEN"* ]]; then
+  if [[ -n "$WHY" && ( "$BODY" == *"$TOKEN"* || "$WHY" == *"$TOKEN"* ) ]]; then
     WHY="(the answer is not shown: it holds the credential)"
   fi
   WHY="$(printf '%s' "$WHY" | head -c 200 | tr -cd '[:print:]')" || WHY=""

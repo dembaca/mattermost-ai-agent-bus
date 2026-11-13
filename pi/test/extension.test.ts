@@ -385,7 +385,6 @@ test("RT-6.27 step 1: the server's environment in the user's cache, one per chec
   const id = sha16(realpathSync(REPO))
   assert.equal(venv({ XDG_CACHE_HOME: "/c", HOME: "/h" }), `/c/mm-agent-bus/venv-${id}`)
   assert.equal(venv({ XDG_CACHE_HOME: "", HOME: "/h" }), `/h/.cache/mm-agent-bus/venv-${id}`)
-  assert.ok(!venv({ HOME: "/h" }).startsWith(REPO), "never in the checkout (read-only under corral)")
   // Keyed by the real path: a symlink to the checkout shares its environment, another checkout does not.
   const link = join(tmp, "bus-link")
   symlinkSync(REPO, link)
