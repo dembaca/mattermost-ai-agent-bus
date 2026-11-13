@@ -100,6 +100,19 @@ def test_fetch_tells_none_from_a_failed_read():
         selfupdate.fetch(url, transport=_transport(200, {"record": "x" * 9000}))
 
 
+def test_proxy_and_trust_store_only_from_the_given_variables():
+    """httpx reads no environment and no ~/.netrc there: the proxy and the CA
+    come from the variables the installer passes, NO_PROXY honoured."""
+    url = "https://reg.example.com/register/v1/release"
+    assert selfupdate.network(url, {}) == (None, True)
+    assert selfupdate.network(url, {"HTTPS_PROXY": "http://proxy:3128"})[0] == "http://proxy:3128"
+    for no in ("*", "reg.example.com", ".example.com", "example.com"):
+        assert selfupdate.network(url, {"https_proxy": "http://p:1", "NO_PROXY": f"x.org, {no}"})[0] is None
+    assert selfupdate.network("http://127.0.0.1:1/x", {"HTTPS_PROXY": "http://p:1"})[0] is None
+    with pytest.raises(selfupdate.Failed, match="SSL_CERT"):
+        selfupdate.fetch(url, environ={"SSL_CERT_FILE": "/nonexistent/ca.pem"})
+
+
 def test_the_url_follows_the_registrars():
     assert selfupdate.release_url({"MM_REGISTER_URL": "https://r.example/register/v1/agents/"}) == \
         "https://r.example/register/v1/release"
@@ -113,14 +126,14 @@ def test_read_and_render(monkeypatch):
     """The lines the installer parses: STATUS, WHY, KID, VERSION, SIGNER."""
     assert selfupdate.read({})[0] == "nokeys"
     env = {"MM_REGISTRAR_KEYS": _x(_key()), "MM_CHAT_URL": "https://chat.example"}
-    monkeypatch.setattr(selfupdate, "fetch", lambda url: record())
+    monkeypatch.setattr(selfupdate, "fetch", lambda url, **_: record())
     status, rec, why = selfupdate.read(env)
     assert status == "ok" and rec is not None
     out = selfupdate.render(status, rec, why).splitlines()
     assert out[0] == "STATUS=ok" and "VERSION=1.2.3" in out and f"SIGNER={OWNER}" in out
-    monkeypatch.setattr(selfupdate, "fetch", lambda url: record(typ=attest.MODE_TYP))
+    monkeypatch.setattr(selfupdate, "fetch", lambda url, **_: record(typ=attest.MODE_TYP))
     assert selfupdate.read(env)[0] == "failed"
-    monkeypatch.setattr(selfupdate, "fetch", lambda url: None)
+    monkeypatch.setattr(selfupdate, "fetch", lambda url, **_: None)
     assert selfupdate.read(env)[0] == "none"
 
 

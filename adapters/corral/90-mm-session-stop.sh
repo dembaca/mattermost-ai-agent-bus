@@ -89,27 +89,47 @@ RELEASE_FILE="${STATE_DIR}/${SESSION_KEY}.release"
 # record goes, then the installer of the release this session ran (out of
 # every sandbox's reach, checked above) runs `--auto`, which updates the host
 # copy to the version the registrar names when that is due, allowed and no
-# other session of it runs, and otherwise does nothing. Its outcome is one line
-# on stderr; its output goes to release-auto.out in the state directory; it
-# never fails this hook. Only for a release of the host copy's layout
-# (releases/<name>), with an environment of the host's settings only: no token,
-# no registration secret.
+# other session of it runs, and otherwise does nothing. corral runs hooks
+# without a timeout: the installer is stopped after SELF_UPDATE_MAX seconds
+# (TERM; its EXIT trap removes its lock and half-made release). Every decision
+# is a line in release-auto.log; the terminal gets one line only when
+# something happened or waits (updated, refused, failed, waiting, held), none
+# for "nothing to do". Its output goes to release-auto.out in the state
+# directory; it never fails this hook. Only for a release of the host copy's
+# layout (releases/<name>), with an environment of the host's settings only:
+# no token, no registration secret.
+SELF_UPDATE_MAX=600
 self_update() {
-  local layout host v out="${STATE_DIR}/release-auto.out" line sh_bin
+  local layout host v out="${STATE_DIR}/release-auto.out" line sh_bin start rc=0 result="" at=""
   local -a e
   rm -f "$RELEASE_FILE"
   layout="$(dirname "$ROOT")"
   [[ "${layout##*/}" == releases && -f "$ROOT/bin/mm-agent-host-install.sh" && ! -L "$out" ]] || return 0
+  declare -F mm_bounded >/dev/null || return 0
   host="${MM_BUS_HOST_DIR:-$(dirname "$layout")/current}"
-  e=(PATH="$PATH" MM_BUS_HOST_DIR="$host")
+  e=(PATH="$PATH" MM_BUS_HOST_DIR="$host" UV_HTTP_TIMEOUT=60)
   for v in HOME USER LOGNAME LANG LC_ALL TMPDIR XDG_STATE_HOME CORRAL_SANDBOX CORRAL_SESSION_ID CORRAL_WORKDIR \
-           MM_RELEASE_URL MM_RELEASE_SIGNERS MM_REGISTRAR_KEYS MM_REGISTER_URL MM_CHAT_URL; do
+           MM_RELEASE_URL MM_RELEASE_SIGNERS MM_REGISTRAR_KEYS MM_REGISTER_URL MM_CHAT_URL \
+           SSL_CERT_FILE SSL_CERT_DIR HTTPS_PROXY https_proxy NO_PROXY no_proxy; do
     if [[ -n "${!v+set}" ]]; then e+=("$v=${!v}"); fi
   done
   sh_bin="$(command -v bash)" || return 0
-  env -i "${e[@]}" "$sh_bin" "$ROOT/bin/mm-agent-host-install.sh" --auto </dev/null >"$out" 2>&1 || true
-  line="$(grep '^mm-agent-host-install: ' "$out" 2>/dev/null | tail -n1 | cut -c1-300)" || line=""
-  [[ -z "$line" ]] || log "self-update: ${line#mm-agent-host-install: }"
+  start="$(date +%s)"
+  mm_bounded "$SELF_UPDATE_MAX" env -i "${e[@]}" "$sh_bin" "$ROOT/bin/mm-agent-host-install.sh" --auto \
+    </dev/null >"$out" 2>&1 || rc=$?
+  if [[ "$rc" -eq 124 ]]; then
+    mm_auto_log "$STATE_DIR" "stopped by the end hook after ${SELF_UPDATE_MAX} s; nothing changed"
+    log "self-update: stopped after ${SELF_UPDATE_MAX} s; nothing changed (${out})"
+    return 0
+  fi
+  if [[ -f "$STATE_DIR/$MM_AUTO_FILE" && ! -L "$STATE_DIR/$MM_AUTO_FILE" ]]; then
+    result="$(sed -n 's/^RESULT=//p' "$STATE_DIR/$MM_AUTO_FILE" | tail -n1)"
+    at="$(sed -n 's/^RESULT_AT=//p' "$STATE_DIR/$MM_AUTO_FILE" | tail -n1)"
+  fi
+  [[ "$at" =~ ^[0-9]+$ && "$at" -ge "$start" ]] || return 0
+  case "$result" in updated | refused | failed | waiting | held) ;; *) return 0 ;; esac
+  line="$(tail -n1 "$STATE_DIR/$MM_AUTO_LOG" 2>/dev/null | cut -d' ' -f2- | cut -c1-300)" || line=""
+  [[ -z "$line" ]] || log "self-update: ${line}"
 }
 trap 'self_update' EXIT
 shopt -u nocasematch

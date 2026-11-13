@@ -27,6 +27,14 @@ before 0.5.0 are described in the git history.
   this session ends`, `held`, or that the registrar names a key the host
   doesn't trust. The release check reads the record for it, nothing more.
 
+- The installer's lock holds its pid: a lock whose installer is gone is taken
+  over, and the release check no longer waits for it. git gives up a stalled
+  transfer after 60 s, and the end hook stops `--auto` after 600 s.
+
+A host without release keys becomes a checked one at its first session end
+after the registrar offers keys: it pins them then, and from that point it
+refuses a release whose signature they don't verify.
+
 Self-update starts with sessions that began on 0.86.0: install it once by hand.
 
 Needs: registrar 0.9.0 for self updates

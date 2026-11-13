@@ -325,6 +325,16 @@ if [[ "$AUTO" -eq 1 ]]; then
     auto_say "the registrar names v$MM_RR_VERSION, not newer than $have here: nothing to do" current
     exit 0
   fi
+  # The withdrawn versions as of now: the host's release check runs first
+  # (RT-6.30; it writes release-withdrawn.env), and without that list there
+  # is no self-update.
+  echo "mm-agent-host-install: running the release check before updating" >&2
+  bash "$SELF/bin/mm-agent-release-check.sh" --state-dir "$AUTO_STATE" >&2 ||
+    echo "mm-agent-host-install: the release check failed; using the withdrawn versions it wrote before, if any" >&2
+  if [[ ! -f "$pd/$MM_WITHDRAWN_FILE" || -L "$pd/$MM_WITHDRAWN_FILE" ]]; then
+    auto_say "v$MM_RR_VERSION waits: the withdrawn versions are unknown (no release check passed on this host yet)" failed
+    exit 0
+  fi
   if by="$(mm_release_withdrawn "$MM_RR_VERSION" "$pd/$MM_WITHDRAWN_FILE")"; then
     auto_say "the registrar names v$MM_RR_VERSION, which the CHANGELOG of v$by withdrew: no self-update" refused
     exit 0
@@ -367,9 +377,20 @@ layout() {
   ! sandbox_writable "$parent" || die "$DEST can be changed from inside a corral sandbox; pick another MM_BUS_HOST_DIR"
   # One installer at a time: a second one's garbage collection could remove
   # the release the first is preparing. mkdir is atomic (no flock on macOS).
-  mkdir "$parent/.install.lock" 2>/dev/null ||
-    die "another installer runs on $parent (remove $parent/.install.lock if none does)"
+  # The lock holds the installer's pid; one whose installer is gone (killed,
+  # a stopped end hook) is taken over by one rename and said so.
+  if ! mkdir "$parent/.install.lock" 2>/dev/null; then
+    local stale="$parent/.install.lock.stale.$$" was
+    mm_install_lock_live "$parent/.install.lock" &&
+      die "another installer runs on $parent (remove $parent/.install.lock if none does)"
+    was="$(mm_read_file "$parent/.install.lock/pid" 64 2>/dev/null | tr -cd '0-9')" || was=""
+    mv "$parent/.install.lock" "$stale" 2>/dev/null && rm -rf "$stale" && mkdir "$parent/.install.lock" 2>/dev/null ||
+      die "another installer runs on $parent (remove $parent/.install.lock if none does)"
+    echo "mm-agent-host-install: took over the lock of an installer that is gone (pid ${was:-unknown})" >&2
+    [[ -z "$AUTO_STATE" ]] || mm_auto_log "$AUTO_STATE" "took over the lock of an installer that is gone (pid ${was:-unknown})"
+  fi
   LOCK="$parent/.install.lock"
+  printf '%s\n' "$$" >"$LOCK/pid"
   DEST="$parent/$(basename "$DEST")"
   RELEASES="$parent/releases" PREV="$parent/previous" HOOKS="$DEST.hooks"
   [[ ! -L "$RELEASES" ]] || die "$RELEASES is a symlink; refused"
@@ -519,6 +540,8 @@ collect_garbage() {
   for d in "$DEST" "$PREV"; do
     if n="$(release_of "$d")"; then keep+="$n "; fi
   done
+  # The release this installer runs from (the end hook's, under --auto).
+  [[ "$SELF" != "$RELEASES"/* ]] || keep+="${SELF##*/} "
   [[ "$STATE_OK" -eq 1 ]] || { echo "no release removed" >&2; return 0; }
   while IFS= read -r n; do [[ -z "$n" ]] || keep+="$n "; done < <(recorded_releases)
   shopt -s nullglob

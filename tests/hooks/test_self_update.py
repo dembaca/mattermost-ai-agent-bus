@@ -34,6 +34,7 @@ from mattermost_ai_agent_bus import release
 from test_host_install import INSTALL, VERSION, clone, uv
 from test_host_install_release import bump, g, set_version, sign
 from test_release_signers import body, pin, pinned
+from test_turn_end import STOP
 
 keys = signed.keys
 pytestmark = signed.pytestmark
@@ -82,7 +83,11 @@ def host(run, tmp_path):
     py.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
     py.chmod(0o755)
     nxt = bump(VERSION)
+    (origin / "CHANGELOG.md").write_text(f"# Changelog\n\n## {nxt}\n\n- next\n")
+    g(origin, "add", "CHANGELOG.md")
     set_version(origin, nxt)
+    # A release check passed before on this host: the withdrawn list exists.
+    (dest.parent / "release-withdrawn.env").write_text(f"NEWEST={VERSION}\n")
     return SimpleNamespace(dest=dest, rel=rel, origin=origin, nxt=nxt, layout=dest.parent)
 
 
@@ -224,7 +229,12 @@ def test_no_update(mm, run, tmp_path, keys, host, case):
     elif case == "registrar 500":
         mm.registrar_release = (500, {"error": "boom"})
     elif case == "withdrawn":
-        (host.layout / "release-withdrawn.env").write_text(f"NEWEST=99.0.0\nWITHDRAWN={host.nxt}\n")
+        # A later release withdrew it; the release check --auto runs first finds that.
+        later = bump(host.nxt)
+        (host.origin / "CHANGELOG.md").write_text(
+            f"# Changelog\n\n## {later}\n\nWithdrawn: v{host.nxt}\n\n## {host.nxt}\n\n- next\n")
+        set_version(host.origin, later)
+        sign(host.origin, f"v{later}", keys["owner"])
     elif case == "held":
         assert run(INSTALL, "--hold", MM_BUS_HOST_DIR=str(host.dest)).code == 0
     elif case == "another session":
@@ -240,7 +250,52 @@ def test_no_update(mm, run, tmp_path, keys, host, case):
             "other 404": "no release endpoint", "registrar 500": "HTTP 500",
             "keys only": "names no version"}[case]
     assert want in log(run), log(run)
-    assert "self-update: " in r.stderr
+    # The terminal hears of what happened or waits, not of "nothing to do".
+    quiet = case in ("equal", "lower", "registrar 404", "keys only")
+    assert ("self-update: " in r.stderr) is not quiet, r.stderr
+
+
+def test_without_a_withdrawn_list_nothing_is_installed(mm, run, tmp_path, keys, host):
+    """RT-6.32 step 4: --auto runs the release check first; when no withdrawn
+    list exists after it (no check ever passed), no self-update."""
+    (host.layout / "release-withdrawn.env").unlink()
+    sign(host.origin, f"v{host.nxt}", keys["owner"])
+    for bad in ("99.0.0", "99.0.1", "99.0.2"):  # the check's three newest fail: it fails
+        g(host.origin, "tag", f"v{bad}")
+    mm.registrar_release = (200, record([body(keys["owner"])], f"v{host.nxt}"))
+    r = end(run, tmp_path, host)
+    assert r.code == 0 and "withdrawn versions are unknown" in r.stderr, r.stderr
+    unchanged(host)
+
+
+def test_a_stale_installer_lock_is_taken_over(mm, run, tmp_path, keys, host):
+    """RT-6.32 step 5, RT-6.28 step 1: the lock holds the installer's pid; one
+    whose installer is gone is taken over, one whose installer lives is not."""
+    sign(host.origin, f"v{host.nxt}", keys["owner"])
+    mm.registrar_release = (200, record([body(keys["owner"])], f"v{host.nxt}"))
+    lock = host.layout / ".install.lock"
+    lock.mkdir()
+    (lock / "pid").write_text(f"{os.getpid()}\n")
+    r = end(run, tmp_path, host)
+    assert "another installer runs" in log(run) and "self-update: not updated" in r.stderr
+    unchanged_lock = lock.exists()
+    (lock / "pid").write_text("999999\n")
+    r = end(run, tmp_path, host)
+    assert unchanged_lock and "took over the lock of an installer that is gone (pid 999999)" in log(run)
+    assert host.dest.resolve() == host.layout / "releases" / host.nxt, log(run)
+    assert not lock.exists()
+
+
+def test_the_end_hook_bounds_the_installer(tmp_path):
+    """RT-6.32 step 5: corral runs hooks without a timeout; mm_bounded stops a
+    command after its seconds and leaves no watchdog behind."""
+    t = time.time()
+    p = subprocess.run(["bash", "-c", f'source "{ROOT}/bin/mm-agent-lib.sh"; mm_bounded 1 sleep 30; echo "rc=$?"'],
+                       capture_output=True, text=True, timeout=20)
+    assert p.stdout.strip() == "rc=124" and time.time() - t < 10
+    p = subprocess.run(["bash", "-c", f'source "{ROOT}/bin/mm-agent-lib.sh"; mm_bounded 5 sh -c "exit 3"; echo "rc=$?"'],
+                       capture_output=True, text=True, timeout=20)
+    assert p.stdout.strip() == "rc=3"
 
 
 def test_the_bot_goes_even_when_the_update_fails(mm, run, tmp_path, keys, host):
@@ -256,6 +311,30 @@ def test_the_bot_goes_even_when_the_update_fails(mm, run, tmp_path, keys, host):
     assert ("DELETE", "/register/v1/agents/gone") in [(m, p) for m, p, _ in mm.writes]
     assert "not updated" in log(run) and "self-update: not updated" in r.stderr
     unchanged(host)
+
+
+def test_the_start_hook_says_what_will_happen(mm, run, tmp_path, host):
+    """RT-6.32 step 7: a session starting from a release of the host copy is
+    told, in plain words, that the host updates itself when it ends."""
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / "release-auto.env").write_text(f"REGISTRAR=ok\nTARGET={host.nxt}\nKEYS=match\n")
+    r = run(str(host.layout / "current.hooks" / "mm-session-start.sh"), CORRAL_SESSION_ID="sess-s",
+            MM_REG_SECRET="test-secret", MM_PROJECT_CHANNEL="proj-x", MM_TEAM="team", MM_BOT_TOKEN=None)
+    assert f"updates itself to v{host.nxt} when this session ends (RT-6.32)" in r.stderr, r.stderr
+
+
+def test_the_turn_end_banner_says_it_updates_itself(mm, run, tmp_path, monkeypatch):
+    """RT-6.32 step 7, RT-6.2 step 8: the banner names the self-update and
+    leaves out the command for a human."""
+    layout = tmp_path / "layout"
+    layout.mkdir()
+    monkeypatch.setattr(release, "layout_dir", lambda root=None: layout)
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / "release.env").write_text(f"NEWEST={VERSION}\nVERIFIED=yes\n")
+    (run.state_dir / "release-auto.env").write_text("REGISTRAR=ok\nTARGET=99.0.0\nKEYS=match\n")
+    r = run(STOP)
+    assert r.passed and "updates itself to v99.0.0 when this session ends" in r.banner, r.banner
+    assert "a human installs it" not in r.banner
 
 
 def test_hold_and_unhold(run, tmp_path, host):

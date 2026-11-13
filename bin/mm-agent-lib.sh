@@ -888,14 +888,15 @@ mm_release_tools() {
 # temporary files in MM_REL_TMP, a directory only the host sees: no system or
 # global config, attributes file, fsmonitor, hook, credential helper or
 # replace refs, LC_ALL=C (its messages are matched), only the https and file
-# protocols, no HTTP redirect, every received object checked (RT-6.29 step 2).
+# protocols, no HTTP redirect, a transfer slower than 1 byte/s for 60 s given up
+# (RT-6.32: the end hook waits for it), every received object checked (RT-6.29 step 2).
 mm_rgit() {
   LC_ALL=C TMPDIR="$MM_REL_TMP" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
     GIT_NO_REPLACE_OBJECTS=1 \
     git --no-optional-locks -c core.attributesFile=/dev/null -c core.fsmonitor=false \
     -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false \
     -c protocol.allow=never -c protocol.https.allow=always -c protocol.file.allow=always \
-    -c http.followRedirects=false \
+    -c http.followRedirects=false -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 \
     -c credential.helper= -c transfer.fsckObjects=true --git-dir="$MM_REL_GIT_DIR" "$@"
 }
 
@@ -1037,6 +1038,45 @@ mm_release_held() {
   [[ -e "$1/$MM_HOLD_FILE" || -L "$1/$MM_HOLD_FILE" ]]
 }
 
+# mm_bounded <seconds> <command…>: run the command, its stdout and stderr as
+# they are, and stop it after <seconds>: TERM to it and its children (the
+# installer's EXIT trap then removes its lock and half-made release). No
+# watchdog process is left behind. Its exit status, 124 when stopped.
+mm_bounded() {
+  local max="$1" pid end rc=0
+  shift
+  "$@" &
+  pid=$!
+  end=$((SECONDS + max))
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( SECONDS >= end )); then
+      pkill -TERM -P "$pid" 2>/dev/null || true
+      kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid" 2>/dev/null || rc=$?
+  return "$rc"
+}
+
+# mm_install_lock_live <lock dir>: whether the installer's lock (.install.lock
+# beside releases/) belongs to a running installer: the pid it holds lives, or
+# it holds none yet and is younger than ten minutes (an installer between its
+# mkdir and writing the pid, or one from before 0.86.0). A lock whose
+# installer is gone is stale (RT-6.28, RT-6.32).
+mm_install_lock_live() {
+  local pid
+  [[ -d "$1" ]] || return 1
+  pid="$(mm_read_file "$1/pid" 64 2>/dev/null | tr -cd '0-9')" || pid=""
+  if [[ -n "$pid" ]]; then
+    kill -0 "$pid" 2>/dev/null
+  else
+    [[ -z "$(find "$1" -maxdepth 0 -mmin +10 2>/dev/null)" ]]
+  fi
+}
+
 # mm_registrar_release <python>: the registrar's release record, read and
 # verified by the host copy's own Python (mattermost_ai_agent_bus.selfupdate,
 # attest.verify_release) with MM_REGISTRAR_KEYS, from /, with an environment
@@ -1046,7 +1086,7 @@ mm_release_held() {
 # `<type> <base64>` per line, by mm_release_parse_keys). Never fails.
 # shellcheck disable=SC2034 # MM_RR_* are read by the caller
 mm_registrar_release() {
-  local py="$1" out="" line k v st="" keys="" bad=0 pid w
+  local py="$1" out="" line k v st="" keys="" bad=0
   local -a e
   MM_RR_STATUS=failed MM_RR_WHY="" MM_RR_KID="" MM_RR_VERSION="" MM_RR_KEYS=""
   if [[ -z "${MM_REGISTRAR_KEYS:-}" ]]; then
@@ -1061,14 +1101,8 @@ mm_registrar_release() {
   for k in MM_REGISTER_URL MM_CHAT_URL SSL_CERT_FILE SSL_CERT_DIR HTTPS_PROXY https_proxy NO_PROXY no_proxy; do
     if [[ -n "${!k:-}" ]]; then e+=("$k=${!k}"); fi
   done
-  out="$(cd / && {
-    env -i "${e[@]}" "$py" -I -m mattermost_ai_agent_bus.selfupdate </dev/null 2>/dev/null &
-    pid=$!
-    { sleep 30; kill "$pid"; } >/dev/null 2>&1 &
-    w=$!
-    wait "$pid" 2>/dev/null
-    kill "$w" 2>/dev/null
-  } | head -c 16384)" || out=""
+  out="$(cd / && mm_bounded 30 env -i "${e[@]}" "$py" -I -m mattermost_ai_agent_bus.selfupdate \
+           </dev/null 2>/dev/null | head -c 16384)" || out=""
   while IFS= read -r line; do
     k="${line%%=*}" v="${line#*=}"
     [[ "$line" == *=* ]] || continue
@@ -1168,7 +1202,7 @@ mm_release_auto_notice() {
   elif [[ "$keys" == mismatch ]]; then
     out="the registrar names a release key this host doesn't trust: no self-update"
   elif [[ "$keys" == bad ]]; then
-    out="the release keys pinned on this host are refused: no self-update"
+    out="the release keys on this host can't be used (see release-auto.log): no self-update"
   elif [[ -n "$target" ]] && mm_version_newer "$have" "$target"; then
     out="updates itself to v${target} when this session ends"
   fi

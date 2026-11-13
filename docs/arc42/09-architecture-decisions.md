@@ -2424,8 +2424,10 @@ decision runs: corral's stop hook, after the bot is removed or kept, on every
 way out of the hook (its `EXIT` trap), runs the recorded release's installer
 with `--auto`; the dispatcher is unchanged, so corral asks nothing new. `--auto`
 logs one line per decision in `release-auto.log`, exits 0 when there is
-nothing to do, and otherwise runs the `--release` path with every check; its
-exit status never reaches corral. Keys are compared as sets of keys by type
+nothing to do, and otherwise runs the release check (so the withdrawn list is
+current; without one no update) and then the `--release` path with every
+check; its exit status never reaches corral, it is stopped after 600 s, and
+the terminal hears of it only when something happened or waits. Keys are compared as sets of keys by type
 and decoded key (`ssh-keygen -l`), so order, comments and spelling do not
 count; the registrar publishes them canonical. `set_at_ms` is the registrar's
 start time and orders nothing. The first self-update needs a session that
@@ -2457,7 +2459,10 @@ signed release, never a withdrawn one and never past `--hold`. A bad but signed
 release reaches every host at its next session end before anyone looks: the
 operator names versions on purpose, `Withdrawn:` stops further installs, and
 `--rollback` stays manual. A killed `--auto` can leave `.install.lock`, which
-then refuses later runs until removed (logged each time).
+no longer blocks: it holds the installer's pid and the next run takes it over.
+corral runs hooks without a timeout: the stop hook stops `--auto` after 600 s
+and git gives up a stalled transfer after 60 s, so a session's end waits at
+most that long.
 
 **Open questions:**
 
@@ -2481,10 +2486,10 @@ then refuses later runs until removed (logged each time).
   have no end hook between sessions; a server could run `--auto` at its own
   exit, but that is the process that held the token. Recommendation: leave them
   on `--release` by hand until point 7's configs point at the host copy.
-- **A stale `.install.lock` after a killed `--auto`:** (open, phase 3) it
-  refuses every later install until removed, logged at each session end.
-  Recommendation: record the installer's pid in the lock and let `--auto` take
-  over a lock whose process is gone, if it happens in practice.
+- **A stale `.install.lock` after a killed `--auto`:** (built in phase 3 as
+  recommended) the lock holds the installer's pid; the next installer takes
+  over a lock whose process is gone and logs it, and the release check does
+  not wait for it.
 - **Who runs the release check:** (built in phase 2 as recommended: both) the installer only (no network from a
   session), or also the MCP server as a bounded child once a day (it runs in
   every harness, but spawns `git` against the network from the process that

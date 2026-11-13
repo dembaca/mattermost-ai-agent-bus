@@ -31,9 +31,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import ssl
 import sys
 import time
 from collections.abc import Mapping
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -62,13 +64,39 @@ def release_url(environ: Mapping[str, str]) -> str | None:
     return f"{root}/release"
 
 
-def fetch(url: str, timeout: float = TIMEOUT, transport: httpx.BaseTransport | None = None) -> str | None:
+def network(url: str, environ: Mapping[str, str]) -> tuple[str | None, ssl.SSLContext | bool]:
+    """The proxy and the certificate check for `url`, taken from these
+    variables only (httpx reads no environment and no ~/.netrc here): an
+    https URL goes through HTTPS_PROXY / https_proxy unless NO_PROXY /
+    no_proxy names its host (`*`, the host, or a domain it ends in);
+    SSL_CERT_FILE / SSL_CERT_DIR replace the default trust store."""
+    proxy = None
+    if url.startswith("https://"):
+        proxy = environ.get("HTTPS_PROXY") or environ.get("https_proxy") or None
+        host = (urlsplit(url).hostname or "").lower()
+        for entry in (environ.get("NO_PROXY") or environ.get("no_proxy") or "").split(","):
+            e = entry.strip().lower().lstrip(".")
+            if e and (e == "*" or host == e or host.endswith("." + e)):
+                proxy = None
+    cafile, capath = environ.get("SSL_CERT_FILE") or None, environ.get("SSL_CERT_DIR") or None
+    verify: ssl.SSLContext | bool = (ssl.create_default_context(cafile=cafile, capath=capath)
+                                     if cafile or capath else True)
+    return proxy, verify
+
+
+def fetch(url: str, timeout: float = TIMEOUT, transport: httpx.BaseTransport | None = None,
+          environ: Mapping[str, str] | None = None) -> str | None:
     """The record's JWS; None for the registrar's own `no release set`. No
-    Authorization header, no redirect, at most RECORD_MAX bytes. Raises
-    Failed for anything else."""
+    Authorization header, no redirect, at most RECORD_MAX bytes, proxy and
+    trust store only as network() takes them. Raises Failed for anything else."""
     body = bytearray()
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=False, transport=transport) as http, \
+        proxy, verify = network(url, {} if environ is None else environ)
+    except (OSError, ValueError) as exc:
+        raise Failed(f"bad SSL_CERT_FILE or SSL_CERT_DIR ({type(exc).__name__})") from None
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=False, transport=transport, trust_env=False,
+                          proxy=proxy, verify=verify) as http, \
                 http.stream("GET", url, headers={"Accept": "application/json"}) as resp:
             for chunk in resp.iter_bytes():
                 body += chunk
@@ -105,7 +133,7 @@ def read(environ: Mapping[str, str] | None = None, now: float | None = None,
     if url is None:
         return "failed", None, "no registrar URL (MM_REGISTER_URL or MM_CHAT_URL)"
     try:
-        token = fetch(url)
+        token = fetch(url, environ=environ)
     except Failed as exc:
         return "failed", None, f"the registrar's release record: {exc}"
     if token is None:

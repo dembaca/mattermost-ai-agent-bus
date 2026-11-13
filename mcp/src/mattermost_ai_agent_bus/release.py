@@ -284,8 +284,18 @@ def line(have: str | None = None, state: State | None = None,
     bin/mm-agent-lib.sh."""
     have = VERSION if have is None else have
     st = state if state is not None else read_state(directory)
-    if st is None or not _VER.match(have):
+    if not _VER.match(have):
         return ""
+    parts: list[str] = []
+    if st is not None:
+        parts += _release_parts(st, have)
+    auto = auto_line(have, directory)  # RT-6.32, also before the first release check
+    if auto:
+        parts.append(auto)
+    return "; ".join(parts)
+
+
+def _release_parts(st: State, have: str) -> list[str]:
     parts: list[str] = []
     if have in st.withdrawn:
         parts.append(f"this host's {have} is withdrawn (CHANGELOG of v{st.newest})")
@@ -301,10 +311,7 @@ def line(have: str | None = None, state: State | None = None,
     elif _key(st.newest) < _key(have):
         parts.append(f"the newest release that passes the check is v{st.newest}, older than "
                      f"{have}: the repository may be frozen or rewound")
-    auto = auto_line(have, directory)
-    if auto:
-        parts.append(auto)
-    return "; ".join(parts)
+    return parts
 
 
 # --- self-update between sessions (RT-6.32) ------------------------------------------
@@ -362,7 +369,7 @@ def auto_line(have: str | None = None, directory: Path | None = None,
     if keys == "mismatch":
         return "the registrar names a release key this host doesn't trust: no self-update"
     if keys == "bad":
-        return "the release keys pinned on this host are refused: no self-update"
+        return "the release keys on this host can't be used (see release-auto.log): no self-update"
     if target and _key(target) > _key(have):
         return f"updates itself to v{target} when this session ends"
     return ""

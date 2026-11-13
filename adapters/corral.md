@@ -93,7 +93,9 @@ without release keys, never inside a session. Once per host: install 0.86.0 by h
 `MM_REGISTRAR_KEYS` and `MM_CHAT_URL` (or `MM_REGISTER_URL`) in the environment corral
 runs its hooks with; to choose the keys yourself, pin `MM_RELEASE_SIGNERS` before the
 first contact. `mm-agent-host-install.sh --hold` stops it on this host until
-`--unhold` (`release-hold` beside `releases/`). Each decision is one line in
+`--unhold` (`release-hold` beside `releases/`). The end hook stops it after 600 s
+(corral's hooks have no timeout), and the terminal hears of it only when it updated,
+refused, failed, waits or is held. Each decision is one line in
 `~/.local/state/mm-agent-bus/release-auto.log`; the start hook, `--check`, the
 turn-end banner and `bus_info` say what will happen
 ([arc42 RT-6.32](../docs/arc42/06-runtime-view.md#632-self-update-between-sessions)).
