@@ -38,6 +38,21 @@ then `git push origin v<version>`. Never `-f`: a tag is never moved or re-signed
 (hosts refuse a moved tag). Agents never sign and never create or push version
 tags. `MM_RELEASE_URL` as a local path is for a mirror and the tests.
 
+With the key on a YubiKey (FIDO2, `sk-ssh-ed25519`), macOS's own `ssh-keygen`
+cannot sign ("No FIDO SecurityKeyProvider specified"); Homebrew's can
+(`brew install openssh`). `MM_RELEASE_SIGNERS` holds bare keys, `verify-tag`
+needs the principal in front:
+
+```bash
+echo "mm-release $(cat ~/.ssh/id_ed25519_sk.pub)" > "$TMPDIR/allowed"
+git -c gpg.format=ssh -c gpg.ssh.program=/opt/homebrew/bin/ssh-keygen \
+    -c user.signingkey="$HOME/.ssh/id_ed25519_sk" \
+    tag -s v<version> -m v<version> <merge commit>     # touch the key
+git -c gpg.ssh.program=/opt/homebrew/bin/ssh-keygen \
+    -c gpg.ssh.allowedSignersFile="$TMPDIR/allowed" \
+    verify-tag v<version> && git push origin v<version>
+```
+
 What a release needs first goes into its CHANGELOG entry as a line of its own,
 `Needs: MM_PROPS_PREFIX alike on every server`: only `MM_*` names, versions `x.y.z`
 and lowercase words of at most 15 letters, each with an optional `,` or `.`, at most
