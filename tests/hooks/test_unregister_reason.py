@@ -30,6 +30,18 @@ def test_a_bot_its_server_unregistered_is_gone_not_a_warning(mm, run):
     assert not (run.state_dir / "sess-gone.env").exists()
 
 
+def test_a_failing_registrar_keeps_the_warning_even_for_a_dead_token(mm, run):
+    """RT-6.1 step 7: gone already needs the registrar's own 401 (or 404) for the
+    token; a registrar that fails (502) proves nothing, whatever /users/me says."""
+    _session(run, "sess-502", token="revoked-with-its-bot")
+    mm.unregister_error = {"revoked-with-its-bot": (502, '{"message": "bad gateway"}')}
+    r = run(STOP, CORRAL_SESSION_ID="sess-502", MM_BOT_TOKEN=None, MM_REG_SECRET=None)
+    assert "WARNING: could not unregister mac-proj-eee555: token: unregister failed http=502" in r.stderr, \
+        r.stderr
+    assert "unregistered already" not in r.stderr
+    assert (run.state_dir / "sess-502.env").exists()
+
+
 def test_a_live_token_the_registrar_refuses_keeps_the_warning(mm, run):
     """RT-6.1 step 7: the token still works on /users/me, so the bot is there and
     the failure is real (500): the WARNING stays, and the file for the retry."""

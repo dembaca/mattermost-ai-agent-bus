@@ -56,6 +56,7 @@ cd /
 log() { echo "mm-bus: $*" >&2; }
 
 REGISTERED=0
+HOST_STARTED=0  # 1 once the host process was launched (unregister_again)
 # Fail closed: no bus for this session. The bot goes again (its session file
 # stays only when that fails, for postEnd or the sweep to retry); the sandbox
 # learns why (MM_BUS_UNAVAILABLE, the note) and gets nothing else.
@@ -129,14 +130,22 @@ source "$BIN/mm-agent-lib.sh"
 
 # Unregister the bot this run registered: with its own token first, which the
 # registrar always accepts for it, then with the registration secret; on
-# failure MM_UNREG_WHY says why for each (no credential in it). A host process
-# that did not get ready was stopped with SIGTERM, whose exit work may have
-# unregistered the bot first: a token Mattermost rejects then counts as done.
+# failure MM_UNREG_WHY says why for each (no credential in it). Once the host
+# process was started, it may have unregistered the bot first (its exit work on
+# SIGTERM): then a token both the registrar and Mattermost refuse counts as
+# done (mm_unregister_or_gone, RT-6.1 step 7). Logs what it did on success.
 unregister_again() {
   local rc=0
-  mm_unregister_or_gone "$NAME" || rc=$?
-  [[ "$rc" -ne 2 ]] || log "${NAME} unregistered already (by its MCP server)"
-  [[ "$rc" -eq 2 ]] || return "$rc"
+  if [[ "$HOST_STARTED" -eq 1 ]]; then
+    mm_unregister_or_gone "$NAME" || rc=$?
+  else
+    mm_unregister_bot "$NAME" || rc=$?
+  fi
+  case "$rc" in
+    0) log "unregistered ${NAME} again" ;;
+    2) log "${NAME} unregistered already (by its MCP server)" ;;
+    *) return 1 ;;
+  esac
 }
 
 # Version only: the installed plugins include the corral homes, which a sandbox
@@ -448,7 +457,6 @@ cleanup_and_fail() {
   log "$1"
   if unregister_again; then
     rm -f "$MM_AGENT_SESSION_FILE"
-    log "unregistered ${NAME} again"
   else
     log "WARNING: could not unregister ${NAME} again: ${MM_UNREG_WHY}; postEnd retries"
   fi
@@ -608,7 +616,7 @@ host_env=(HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin")
 for v in USER LOGNAME LANG LC_ALL LC_CTYPE TMPDIR; do
   if [[ -n "${!v:-}" ]]; then host_env+=("${v}=${!v}"); fi
 done
-HOST_PID="" HOST_PORT="" HOST_HOOK=""
+HOST_PID="" HOST_PORT="" HOST_HOOK="" HOST_STARTED=1
 # A taken-over bot's host process also learns the Claude session it was kept
 # for (MM_BUS_KEPT_SID, a key), to log a resume of another one (step 10).
 if jq -nc --rawfile key /dev/fd/4 --rawfile tok /dev/fd/5 --argjson base "$ENV_JSON" --arg kept "$KEPT_SID" '

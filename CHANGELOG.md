@@ -11,12 +11,13 @@ before 0.5.0 are described in the git history.
   ([RT-6.1](docs/arc42/06-runtime-view.md) step 7, RT-6.18 step 7): `postEnd`
   stops the host MCP server first, whose exit work unregisters the bot, then
   unregistered again with the now dead token, got `401`, warned and kept the
-  session file. When the unregister fails and Mattermost rejects the token
-  (`401` on `/users/me`, the sweep's check, now `mm_token_dead` in
-  `mm-agent-lib.sh`), it logs `<name> unregistered already (by its MCP
-  server)` and removes the file; any other failure keeps the warning and the
-  file. The start hook's unregister-again after stopping a host process that
-  did not get ready does the same.
+  session file. When the registrar refuses the token (`401`, or `404`) and
+  Mattermost does too (`401` on `/users/me`; `mm_token_gone` in
+  `mm-agent-lib.sh`, now the sweep's rule as well), it logs `<name>
+  unregistered already (by its MCP server)` and removes the file; a failing
+  or unreachable registrar and any other failure keep the warning and the
+  file. The start hook's unregister-again does the same once it had started
+  the host process.
 - **A post handed over no longer counts as pending**
   ([RT-6.2](docs/arc42/06-runtime-view.md) step 1, RT-6.12 step 3, RT-6.22):
   the read watermark skipped a handed-over post while an older post of the
@@ -27,7 +28,9 @@ before 0.5.0 are described in the git history.
   check reported `pending=1 fyi=1`, `wait_for_events` returned nothing, and
   the Stop hook or pi's turn-end blocked turn after turn until the agent
   posted in that channel. The inbox now remembers such posts and the mark
-  passes them once the older one is handled.
+  passes them once the older one is handled; it keeps the newest post the
+  mark passed, too, so an older post that arrives late and pulls the mark
+  back moves it past that one again once handed over.
 
 ## 0.86.3
 

@@ -716,8 +716,11 @@ class WebSocketInbox:
         still waits in the queue. Then it is remembered, and the mark passes it
         once that older post is handled: a mention handed over before an older
         channel post (the pusher acks its batch mentions first, wait_for_events
-        returns them first) never counts as pending again. Unconnected,
-        nothing moves: the backfill still has to read from the mark."""
+        returns them first) never counts as pending again. The newest post the
+        mark passed stays remembered too: an older post that arrives later
+        pulls the mark back (_put, watermark.hold), and its hand-over moves it
+        to that newest one again, not just to itself. Unconnected, nothing
+        moves: the backfill still has to read from the mark."""
         cid, pid, created = post.channel_id, post.id, post.create_at
         if self._ws is None or not (self._bot_user_id and cid and pid and created):
             return
@@ -728,14 +731,14 @@ class WebSocketInbox:
         if not ready:
             return
         created, pid = max(ready)
-        for _, p in ready:
-            del behind[p]
-        if not behind:
-            del self._behind[cid]
         try:
             watermark.advance(self._bot_user_id, cid, pid, created)
         except Exception as exc:  # noqa: BLE001 — never fail delivery over bookkeeping
             log.warning("read watermark of %s not moved: %s", cid, exc)
+            return  # all of them stay remembered: the next hand-over tries again
+        for _, p in ready:
+            if p != pid:
+                del behind[p]
 
     async def view(self, channel_id: str) -> None:
         """Best-effort: clear Mattermost's unread display of the channel for
