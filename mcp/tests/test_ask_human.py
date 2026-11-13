@@ -222,6 +222,97 @@ async def test_an_ask_never_notifies_everyone(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_an_ask_never_mentions_another_person(monkeypatch):
+    """RT-6.11 step 1: ask_human treats a person's @-mention in its fields as
+    post_message does: plain, listed in unmentioned; an agent keeps its @, and
+    only the mention the server writes for the asked human notifies."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(
+        need="Merge #61 as @kollegin said?", context="@Dembaca wrote it, @agent-mac-1 reviewed",
+        recommendation="yes", decision="Merge it, tell @kollegin",
+        where="PR of @kollegin", answers=["go", "no, ask @dembaca"], kind="question"))
+    post = c.posted[0]
+    assert post["message"] == "\U0001F64B @dembaca"
+    assert title_of(post) == "Merge #61 as kollegin said?"
+    fields = _fields(post)
+    assert fields["Context"] == "Dembaca wrote it, @agent-mac-1 reviewed"
+    assert fields["Decision"] == "Merge it, tell kollegin"
+    assert fields["Where"] == "PR of kollegin"
+    assert "no, ask dembaca" in fields["Answer"]
+    assert "@kollegin" not in json.dumps(post) and "@Dembaca" not in json.dumps(post)
+    assert out["answers"] == ["go", "no, ask dembaca"]
+    assert out["unmentioned"] == ["Dembaca", "dembaca", "kollegin"]
+    assert "mentions the one human it asks" in out["hint"]
+
+
+@pytest.mark.asyncio
+async def test_code_keeps_its_mentions_as_written(monkeypatch):
+    """RT-6.11 step 1: Mattermost takes no mention from code, so a code block
+    or span keeps its @ in an ask (its block still whole in Context, #213) and
+    in post_message alike; the prose around it is still cleaned."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    block = "```\ngit log --author=@kollegin @channel\n```"
+    out = json.loads(await server.ask_human(
+        need=f"Run this? It lists `git log --author=@dembaca` too.\n{block}",
+        context="as @kollegin said"))
+    await server.post_message(f"{block}\n`@kollegin` and @kollegin")
+    assert title_of(c.posted[0]) == "Run this?"
+    assert _fields(c.posted[0])["Context"] == (
+        f"It lists `git log --author=@dembaca` too.\n{block}\n\nas kollegin said")
+    assert out["unmentioned"] == ["kollegin"]
+    assert c.posted[1]["message"] == f"{block}\n`@kollegin` and kollegin"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text,plain,removed", [
+    ("ping @dembaca.anything", "ping dembaca.anything", ["dembaca"]),
+    ("ping @dembaca-x", "ping dembaca-x", ["dembaca"]),
+    ("ping @dembaca_x", "ping dembaca_x", ["dembaca"]),
+    ("as _@dembaca_ said", "as _dembaca_ said", ["dembaca"]),
+    ("hey @all_x", "hey all_x", ["all"]),
+    ("hey _@all_", "hey _all_", ["all"]),
+    ("@channel: now", "channel: now", ["channel"]),
+    ("ping @agent-mac-1.", "ping @agent-mac-1.", []),
+    ("mail a@dembaca.de", "mail a@dembaca.de", []),
+])
+async def test_a_mention_mattermost_would_read_is_found(monkeypatch, text, plain, removed):
+    """RT-6.11: Mattermost cuts a name before a trailing . - _ until a user or
+    @channel/@here/@all matches, and a mention in italics notifies too: such a
+    name of a person or of everyone turns plain; an agent's stays."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.post_message(text))
+    assert c.posted[0]["message"] == plain
+    assert out.get("unmentioned", []) == removed
+
+
+@pytest.mark.asyncio
+async def test_a_person_with_an_agent_prefix_is_still_a_person(monkeypatch):
+    """RT-6.11: the agent prefix proves nothing; the lookup (is_bot) decides."""
+    class Smith(_NamingClient):
+        PEOPLE = {"dembaca", "agent-smith"}
+
+    c = Smith()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.post_message("@agent-smith and @agent-mac-1"))
+    assert c.posted[0]["message"] == "agent-smith and @agent-mac-1"
+    assert out["unmentioned"] == ["agent-smith"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("human", ["channel", "@All", "here_x", "two words", "@@dembaca"])
+async def test_the_asked_human_is_one_person(monkeypatch, human):
+    """RT-6.11: human names one person; @channel/@here/@all or no username at all
+    is refused, nothing is posted."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(need="Merge #61?", human=human))
+    assert c.posted == [] and "not one person" in json.dumps(out)
+
+
+@pytest.mark.asyncio
 async def test_to_all_wakes_every_agent_through_the_props(monkeypatch):
     """RT-6.11 step 1: to="all" writes props.a2a.to (with the kind a first word
     gives); the text needs no @channel. Anything else for a reply is refused."""
@@ -619,13 +710,13 @@ class _AskedClient(_NamingClient):
 
 @pytest.mark.asyncio
 async def test_agents_stay_mentioned_with_any_registrar_prefix(monkeypatch):
-    """RT-6.11, arc42 §7.1: with prefix bot- a bot-… agent is never looked up
-    as a person and keeps its mention; a human's name still turns plain."""
+    """RT-6.11, arc42 §7.1: with prefix bot- a bot-… agent keeps its mention,
+    being no person by the lookup; a human's name still turns plain."""
     monkeypatch.setenv("MM_AGENT_PREFIX", "bot-")
     c = _AskedClient()
     out, humans = await server._unmention(c, "@bot-mac-1 please review, @dembaca FYI")
     assert out == "@bot-mac-1 please review, dembaca FYI" and humans == ["dembaca"]
-    assert c.asked == {"dembaca"}
+    assert {"bot-mac-1", "dembaca"} <= c.asked
 
 
 def _answers():
