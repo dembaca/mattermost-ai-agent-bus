@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections import deque
 from collections.abc import Collection, Mapping
@@ -47,6 +48,9 @@ LINE_MAX = 500
 TRACES = 200  # delivered events remembered, the newest last
 CALLS_MAX = 5
 _CUT = "… (cut)"
+# The card's table: Mattermost renders a markdown table in an attachment's text
+# only with a header row, so the header says what the columns are.
+TABLE_HEAD = "| what | value (times in UTC) |\n|:--|:--|"
 
 NO_KEYS = ("the registrar's keys are not pinned (MM_REGISTRAR_KEYS): nothing is read "
            "from the registrar, debug stays off")
@@ -77,6 +81,7 @@ class Trace:
     thread: str
     post_id: str
     lines: dict[str, str]
+    sig_rows: tuple[tuple[str, str], ...]
     props_in: Mapping[str, Any]
     via: str = ""
     at: float = field(default_factory=time.time)
@@ -104,6 +109,16 @@ def _note(key: tuple[str, ...], msg: str, *args: object) -> None:
 
 def _iso(ms: int) -> str:
     return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _short(sec: float, now: float | None = None) -> str:
+    """A time for people, always UTC: `19:11:30Z` when it is today, else
+    `2026-11-12 21:15Z`."""
+    now = time.time() if now is None else now
+    at = datetime.fromtimestamp(sec, timezone.utc)
+    if at.date() == datetime.fromtimestamp(now, timezone.utc).date():
+        return at.strftime("%H:%M:%SZ")
+    return at.strftime("%Y-%m-%d %H:%MZ")
 
 
 # --- the record (step 2) ----------------------------------------------------------
@@ -250,22 +265,21 @@ async def _identity(client: ChatPort, item: Mapping[str, Any], author: str) -> s
 
 
 async def _sig(client: ChatPort, state: State, item: Mapping[str, Any], author: str,
-               uid: str) -> str:
-    parts = [f"debug record valid (kid {state.kid}, exp {_iso(state.exp * 1000)}, "
-             "from the registrar)"]
+               uid: str) -> tuple[tuple[str, str], ...]:
+    """The records the server relied on, one (label, value) per fact."""
+    rows = [("debug record", f"valid, kid {state.kid}, exp {_short(state.exp)}, from the registrar")]
     if item.get("from_agent") and author:
         claim = await owners.attested(client, author)
-        parts.append(f"author's attestation valid (kid {claim.kid}, exp {_iso(claim.exp * 1000)}, "
-                     "from its account)" if claim is not None
-                     else "author's attestation none or not valid: its description decides")
+        rows.append(("attestation", f"valid, kid {claim.kid}, exp {_short(claim.exp)}, from its account"
+                     if claim is not None else "none or not valid: its description decides"))
     if uid:
         mode = await askroute.info(client, uid)
-        parts.append(f"ask mode {mode['mode']} from {mode['source']}"
-                     + (" (signed)" if mode.get("signed") else " (unsigned)"))
+        rows.append(("ask mode", f"{mode['mode']} from {mode['source']}"
+                     + (" (signed)" if mode.get("signed") else " (unsigned)")))
     m, why = await mandate.current(client)
-    parts.append(f"mandate from {m.source}, until {_iso(m.until_ms)}" if m is not None
-                 else f"no mandate: {why[:120]}")
-    return "; ".join(parts)
+    rows.append(("mandate", f"from {m.source}, until {_short(m.until_ms / 1000)}" if m is not None
+                 else f"none: {why[:120]}"))
+    return tuple(rows)
 
 
 def _asks(item: Mapping[str, Any], uid: str, root: str, now: float) -> str:
@@ -300,10 +314,11 @@ async def remember(client: ChatPort, item: Mapping[str, Any], post: Post, *, sta
     now = time.time()
     lines = {"wake": _wake(item, mine=mine, crown=crown),
              "identity": await _identity(client, item, post.user_id),
-             "sig": await _sig(client, state, item, post.user_id, uid),
              "asks": _asks(item, uid, post.root_id, now)}
+    sig = await _sig(client, state, item, post.user_id, uid)
+    lines["sig"] = "; ".join(f"{k}: {v}" for k, v in sig)
     trace = Trace(channel_id=post.channel_id, thread=post.thread, post_id=post.id,
-                  lines=lines, props_in=dict(props_in), at=now)
+                  lines=lines, sig_rows=sig, props_in=dict(props_in), at=now)
     _traces.append(trace)
     return trace
 
@@ -382,6 +397,18 @@ def _line(name: str, text: str) -> str:
     return line if len(line) <= LINE_MAX else line[:LINE_MAX - 1] + "…"
 
 
+# A value is text, never markup: a bot's description may name an owner as a link or image.
+_ESCAPE = re.compile(r"[\\`*_\[\]<>!|]")
+
+
+def _row(label: str, text: str) -> str:
+    """One table row: the label in bold, the value on one line, as literal text
+    (backslash first, then markdown characters and `|`, each escaped once)."""
+    value = _ESCAPE.sub(r"\\\g<0>", " ".join(text.split()))
+    value = value if len(value) <= LINE_MAX else value[:LINE_MAX - 1] + "…"
+    return f"| **{label}** | {value} |"
+
+
 def _json(value: Mapping[str, Any] | None, indent: int | None) -> str:
     return json.dumps(dict(value or {}), sort_keys=True, indent=indent, ensure_ascii=False,
                       separators=None if indent else (",", ":"), default=str)
@@ -409,8 +436,8 @@ def _blocks(blocks: list[tuple[str, str]], room: int) -> str:
 def attachment(state: State, trace: Trace | None, guess: bool, *, call: str,
                props_out: Mapping[str, Any] | None,
                allowed: Collection[str] | None = None) -> str:
-    """The `debug` attachment's text for the agent's post (step 5): one line per
-    active category (of `allowed`), about `trace`, the event the post answers;
+    """The `debug` attachment's text for the agent's post (step 5): a table, one row
+    per fact of each active category (of `allowed`), about `trace`, the event the post answers;
     props as two `json` blocks; at most ATTACHMENT_MAX characters, props cut
     first. '' with no category to show."""
     cats = [c for c in state.categories if allowed is None or c in allowed]
@@ -423,20 +450,22 @@ def attachment(state: State, trace: Trace | None, guess: bool, *, call: str,
                 f"thread, {_ago(time.time() - trace.at)})")
     else:
         head = f"event: post {trace.post_id}, the last delivered in this thread"
-    lines = [head]
+    rows = [_row("event", head.removeprefix("event: "))]
     for c in cats:
         if c == a2a.DEBUG_CALLS:
-            lines.append(_line(c, call))
+            rows.append(_row(c, call))
         elif c == a2a.DEBUG_PROPS:
             continue
         elif trace is None:
-            lines.append(_line(c, "no event"))
+            rows.append(_row(c, "no event"))
+        elif c == "sig":
+            rows.extend(_row(k, v) for k, v in trace.sig_rows)
         else:
             text = trace.lines.get(c, "-")
             if c == "wake" and trace.via:
                 text += f"; {trace.via}"
-            lines.append(_line(c, text))
-    text = "\n".join(lines)
+            rows.append(_row(c, text))
+    text = "\n".join([TABLE_HEAD, *rows])
     if a2a.DEBUG_PROPS in cats:
         room = ATTACHMENT_MAX - len(text) - 1
         shown = _blocks([("props in", _json(trace.props_in if trace else None, 2)),

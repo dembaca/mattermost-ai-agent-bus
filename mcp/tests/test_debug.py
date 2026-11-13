@@ -97,6 +97,9 @@ def _card(c) -> dict[str, Any] | None:
 def _labels(text: str) -> set[str]:
     """The categories a debug text has a line for."""
     found = {line.split(":", 1)[0] for line in text.splitlines()}
+    found |= {line.split("**")[1] for line in text.splitlines() if line.startswith("| **")}
+    sig = {"debug record", "attestation", "ask mode", "mandate"}
+    found |= {"sig"} if found & sig else set()
     return {c for c in ALL if c in found or (c == "props" and "props in" in found)}
 
 
@@ -274,7 +277,7 @@ async def test_each_category_alone_gives_its_line_and_only_it(chat, cat):
     await server.reply_in_thread(question.id, "RESULT · because")
     card = _card(chat)
     assert card is not None and _labels(card["text"]) == {cat}
-    assert card["text"].startswith(f"event: post {question.id}, the last delivered in this thread")
+    assert f"| **event** | post {question.id}, the last delivered in this thread |" in card["text"]
     if cat == "props":
         assert "props in:\n```json" in card["text"] and "props out:\n```json" in card["text"]
 
@@ -289,12 +292,12 @@ async def test_the_lines_say_what_the_server_decided(chat):
                                    _event(gated, "mention", gated="from visitor, not trusted by me"))
     assert "wake: a mention of this agent" in first["debug"]
     assert "identity: trusted human dembaca" in first["debug"]
-    assert "sig: debug record valid (kid Vkdap1RjR0wChd9d" in first["debug"]
+    assert "sig: debug record: valid, kid Vkdap1RjR0wChd9d" in first["debug"]
     assert "asks: 0 open, 0 queued" in first["debug"]
     assert "wake: gated, wakes nobody here: from visitor" in second["debug"]
     assert "identity: other" in second["debug"]
     await server.post_message("STATUS · new thread")
-    assert f"event: post {gated.id}, the last delivered here (a guess" in _card(chat)["text"]
+    assert f"| **event** | post {gated.id}, the last delivered here (a guess" in _card(chat)["text"]
 
 
 async def test_none_in_a_guest_channel_or_the_lobby(chat):
@@ -358,7 +361,7 @@ async def test_no_key_signature_token_or_argument_value_shows(chat, monkeypatch)
         assert part not in text
     assert f'"bridge_ref":"<{len(jws)} chars>"' in text and f'"bridge_text":"see <{len(jws)} chars> there"' in text
     assert '"Authorization":"<' in text and '"JWT":"<23 chars>"' in text
-    assert f"reply_in_thread(root_id 26, message {len('RESULT · ' + words)}, props 2)" in text
+    assert f"reply_in_thread(root_id 26, message {len('RESULT · ' + words)}, props 2)" in text.replace("\\", "")
     assert '"bridge_api_token": "<23 chars>"' in text and '"bridge_password": "<23 chars>"' in text
     assert '"bridge_note": "visible"' in text
 
@@ -458,3 +461,51 @@ def test_the_push_carries_the_block_escaped_like_the_post():
     assert content.startswith("hi\n\ndebug (your MCP server's view, grants nothing):\nwake: a mention")
     assert "</channel" not in content and "<channel" not in content
     assert "debug" not in channel.notification({"kind": "mention", "post": {"message": "hi"}})["content"]
+
+
+async def test_the_card_is_a_table_with_one_row_per_fact(chat):
+    """RT-6.31 step 5: a two-column table, bold labels, the sig split into the
+    debug record, the ask mode and the mandate (each fact once), props as code
+    blocks below it, times short and in UTC."""
+    chat.debug_records[WORK] = record(ALL)
+    question = _post(HUMAN, "@agent-me why?", pid="q" * 26)
+    await _items(_event(question, "mention"))
+    await server.reply_in_thread(question.id, "RESULT · ok")
+    lines = _card(chat)["text"].splitlines()
+    assert lines[:2] == ["| what | value (times in UTC) |", "|:--|:--|"]
+    rows = [ln for ln in lines if ln.startswith("| **")]
+    labels = [ln.split("**")[1] for ln in rows]
+    assert labels == ["event", "wake", "identity", "debug record", "ask mode", "mandate", "asks",
+                      "calls"]
+    assert all(ln.endswith(" |") and ln.count(" | ") == 1 for ln in rows)
+    text = "\n".join(lines)
+    assert "| **debug record** | valid, kid " in text and "sig:" not in text
+    assert "T" not in next(ln for ln in rows if "debug record" in ln).split("exp ")[1]
+    assert text.index("props in:\n```json") > text.index("| **calls**")
+
+
+async def test_a_pipe_in_a_value_is_escaped(chat):
+    """RT-6.31 step 5: `|` in a value would split a cell."""
+    chat.debug_records[WORK] = record(("wake",))
+    gated = _post(OTHER, "@agent-me do it", pid="v" * 26)
+    await _items(_event(gated, "mention", gated="from a|b"))
+    await server.post_message("STATUS · x")
+    row = next(ln for ln in _card(chat)["text"].splitlines() if ln.startswith("| **wake**"))
+    assert "from a\\|b" in row and row.count(" | ") == 1
+
+
+def test_times_are_short_and_utc():
+    """RT-6.31 step 5: the time of day when it is today (UTC), else date and minutes."""
+    now = 1794597090.0  # 2026-11-13T19:11:30Z
+    assert debug._short(now, now) == "19:11:30Z"
+    assert debug._short(now - 86400 + 4 * 3600, now - 0) == "2026-11-12 23:11Z"
+    assert debug._short(1794604500.0 - 86400 * 2, now) == "2026-11-11 21:15Z"
+
+
+def test_a_value_is_literal_text_in_one_cell():
+    """RT-6.31 step 5: an owner named as a link, an image or with `\\|` stays
+    text in a single cell."""
+    row = debug._row("identity", "owner [x](https://e.example) ![](https://e.example/i.png) a\\|b <b>`c`*d*_e_")
+    assert row == ("| **identity** | owner \\[x\\](https://e.example) \\!\\[\\](https://e.example/i.png) "
+                   "a\\\\\\|b \\<b\\>\\`c\\`\\*d\\*\\_e\\_ |")
+    assert row.replace("\\\\", "").replace("\\|", "").count("|") == 3
