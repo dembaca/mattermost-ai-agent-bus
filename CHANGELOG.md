@@ -3,6 +3,19 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.87.1
+
+### Changed
+
+- **The debug card's top part is a table**
+  ([RT-6.31](docs/arc42/06-runtime-view.md) step 5, presentation only): two
+  columns, one row per fact, the label in bold, `|` in a value escaped; the
+  props stay as `json` blocks below. `sig` is split into its own rows (debug
+  record, attestation, ask mode, mandate), so each fact appears once; the
+  mandate's reason no longer reads `no mandate: mandate post ...`. Times are
+  short and in UTC (`19:11:30Z` today, else `2026-11-12 21:15Z`). Categories,
+  DM filtering and the 4,000-character cap are unchanged.
+
 ## 0.87.0
 
 ### Added
