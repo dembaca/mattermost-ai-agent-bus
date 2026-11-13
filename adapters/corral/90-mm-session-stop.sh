@@ -232,15 +232,15 @@ fi
 # does not sit there looking available.
 mm_with_token "$BIN/mm-agent-status.sh" offline >/dev/null 2>&1 || true
 
-# With the bot's own token first, which the registrar always accepts for it.
-if { [[ -n "${MM_BOT_TOKEN:-}" ]] && mm_with_token "$BIN/mm-agent-unregister.sh" "$MM_REG_BOT_NAME" >/dev/null 2>&1; } ||
-  { [[ -n "${MM_REG_SECRET:-}" ]] && mm_with_secret "$BIN/mm-agent-unregister.sh" "$MM_REG_BOT_NAME" >/dev/null 2>&1; }; then
+# With the bot's own token first, which the registrar always accepts for it,
+# then with the secret; a failure says why for each (no credential in it).
+if mm_unregister_bot "$MM_REG_BOT_NAME"; then
   log "unregistered ${MM_REG_BOT_NAME}"
   rm -f "$SESSION_FILE"
 else
   # Keep the session file: it holds the only credential that can still remove
   # this bot. Deleting it here is what turns a failed teardown into a permanent
   # orphan.
-  log "WARNING: could not unregister ${MM_REG_BOT_NAME}"
+  log "WARNING: could not unregister ${MM_REG_BOT_NAME}: ${MM_UNREG_WHY}"
   log "         retry: $BIN/mm-agent-sweep.sh"
 fi

@@ -67,6 +67,38 @@ mm_creds_from_fds
 mm_with_token() { MM_BOT_TOKEN_FD=3 "$@" 3< <(printf '%s\n' "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}"); }
 mm_with_secret() { MM_REG_SECRET_FD=3 "$@" 3< <(printf '%s\n' "${MM_REG_SECRET:-}"); }
 
+# Unregister bot NAME as the corral host hooks do: with its own token first,
+# which the registrar always accepts for it, then with the registration secret;
+# the helper's output is dropped. On failure MM_UNREG_WHY says why, for a log:
+# "token: <reason>; secret: <reason>", each the helper's stderr on one line,
+# printable, cut to 160, with the token and the secret blanked.
+#   mm_unregister_bot "$NAME" || log "could not unregister ${NAME}: ${MM_UNREG_WHY}"
+mm_unregister_bot() {
+  local name="$1" tok="no token" sec="no secret"
+  MM_UNREG_WHY=""
+  if [[ -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]]; then
+    mm_unregister_with mm_with_token "$name" && return 0
+    tok="$MM_UNREG_WHY"
+  fi
+  if [[ -n "${MM_REG_SECRET:-}" ]]; then
+    mm_unregister_with mm_with_secret "$name" && return 0
+    sec="$MM_UNREG_WHY"
+  fi
+  MM_UNREG_WHY="token: ${tok}; secret: ${sec}"
+  return 1
+}
+mm_unregister_with() {
+  local out v
+  MM_UNREG_WHY=""
+  out="$("$1" "${BASH_SOURCE[0]%/*}/mm-agent-unregister.sh" "$2" 2>&1 >/dev/null)" && return 0
+  for v in "${MM_BOT_TOKEN:-}" "${MATTERMOST_TOKEN:-}" "${MM_REG_SECRET:-}"; do
+    [[ -z "$v" ]] || out="${out//"$v"/[hidden]}"
+  done
+  out="$(printf '%s' "$out" | tr '\n\t' '  ' | tr -cd '[:print:]' | cut -c1-160)" || out=""
+  MM_UNREG_WHY="${out:-no reason given}"
+  return 1
+}
+
 # What a corral sandbox can write (arc42 §7.1, §7.3): every corral home,
 # ~/.claude (the homes share it), the session's workdir and corral's temporary
 # directories. A path that is not absolute or has a . or .. component counts as
