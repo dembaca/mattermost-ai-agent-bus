@@ -181,7 +181,8 @@ def snapshot(base: Path, skip: Path) -> dict[str, tuple[int, int]]:
 
 def test_the_check_writes_only_its_state_and_src_git(run, tmp_path, keys, origin):
     """RT-6.30: it installs nothing: besides src.git only release.env,
-    release-check.at, release-withdrawn.env (and release-rejected.env) change; --if-due skips a
+    release-check.at, release-withdrawn.env (and release-rejected.env) change, and release-auto.env
+    with what the registrar names (RT-6.32); --if-due skips a
     check a day old; inside corral it refuses."""
     sign(origin, "v90.1.0", keys["owner"])
     src = tmp_path / "host" / "src.git"
@@ -192,7 +193,7 @@ def test_the_check_writes_only_its_state_and_src_git(run, tmp_path, keys, origin
     state = run.state_dir.relative_to(tmp_path)
     # and the withdrawn list for the installer, beside releases/ (RT-6.29 step 2).
     assert changed == {str(state / "release.env"), str(state / "release-check.at"),
-                       "host/release-withdrawn.env"}
+                       "host/release-withdrawn.env", str(state / "release-auto.env")}
     assert not (tmp_path / "host" / "releases").exists() and not (tmp_path / "host" / "current").exists()
     stamp = (run.state_dir / "release-check.at").read_text()
     assert check(run, tmp_path, origin, pub(keys["owner"]), "--if-due", "86400").code == 0

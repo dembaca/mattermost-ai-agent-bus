@@ -83,7 +83,35 @@ SESSION_KEY="${CORRAL_SESSION_ID:-$$}"
 # corral runs (mm-hook-dispatch.sh) chose this release's stop hook by it. The
 # record goes when the session ends.
 RELEASE_FILE="${STATE_DIR}/${SESSION_KEY}.release"
-trap 'rm -f "$RELEASE_FILE"' EXIT
+
+# --- self-update between sessions (RT-6.32, ADR-011 phase 3) -------------------
+# Last, on every way out of this hook, after the bot was removed or kept: the
+# record goes, then the installer of the release this session ran (out of
+# every sandbox's reach, checked above) runs `--auto`, which updates the host
+# copy to the version the registrar names when that is due, allowed and no
+# other session of it runs, and otherwise does nothing. Its outcome is one line
+# on stderr; its output goes to release-auto.out in the state directory; it
+# never fails this hook. Only for a release of the host copy's layout
+# (releases/<name>), with an environment of the host's settings only: no token,
+# no registration secret.
+self_update() {
+  local layout host v out="${STATE_DIR}/release-auto.out" line sh_bin
+  local -a e
+  rm -f "$RELEASE_FILE"
+  layout="$(dirname "$ROOT")"
+  [[ "${layout##*/}" == releases && -f "$ROOT/bin/mm-agent-host-install.sh" && ! -L "$out" ]] || return 0
+  host="${MM_BUS_HOST_DIR:-$(dirname "$layout")/current}"
+  e=(PATH="$PATH" MM_BUS_HOST_DIR="$host")
+  for v in HOME USER LOGNAME LANG LC_ALL TMPDIR XDG_STATE_HOME CORRAL_SANDBOX CORRAL_SESSION_ID CORRAL_WORKDIR \
+           MM_RELEASE_URL MM_RELEASE_SIGNERS MM_REGISTRAR_KEYS MM_REGISTER_URL MM_CHAT_URL; do
+    if [[ -n "${!v+set}" ]]; then e+=("$v=${!v}"); fi
+  done
+  sh_bin="$(command -v bash)" || return 0
+  env -i "${e[@]}" "$sh_bin" "$ROOT/bin/mm-agent-host-install.sh" --auto </dev/null >"$out" 2>&1 || true
+  line="$(grep '^mm-agent-host-install: ' "$out" 2>/dev/null | tail -n1 | cut -c1-300)" || line=""
+  [[ -z "$line" ]] || log "self-update: ${line#mm-agent-host-install: }"
+}
+trap 'self_update' EXIT
 shopt -u nocasematch
 
 BIN="$ROOT/bin"

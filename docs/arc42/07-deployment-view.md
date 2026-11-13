@@ -166,6 +166,23 @@ environment like every `MM_*` setting: set them where corral's hooks see them, o
 check runs with the defaults (no keys: `signature not checked`). The start hook, the
 turn-end banner, `--check` and `bus_info` show the notice; a human installs the release.
 
+**Self-update between sessions** (ADR-011 phase 3, RT-6.32). The registrar's operator
+may name the release corral's host copies run, in one record signed with the
+registrar's key (`GET …/register/v1/release`), which also offers the release keys.
+corral's stop hook, after the bot is gone, runs the recorded release's installer with
+`--auto`: it reads that record with the host copy's own Python (verified with
+`MM_REGISTRAR_KEYS`, which must therefore be in corral's hook environment with
+`MM_CHAT_URL` or `MM_REGISTER_URL`), pins the offered keys in `release-signers` only
+when the host has none, refuses other keys afterwards, and installs a newer, not
+withdrawn, signed version as `--release` does, only when no other session of the host
+copy runs. Files: `release-hold` beside `releases/` (`--hold`, `--unhold`: the stop
+switch, out of `XDG_STATE_HOME`'s reach), and in the state directory
+`release-auto.env` (what the notice says), `release-auto.log` (one line per decision)
+and `release-auto.out` (the last run's output). The release check's child also gets
+`MM_REGISTRAR_KEYS`, `MM_REGISTER_URL`, `MM_CHAT_URL` and the TLS and proxy variables,
+to read the record for the notice. Harnesses without corral have no end hook and
+update by hand as before.
+
 **From a clone** (`--from`, or the checkout the installer is in) every install is
 marked `SOURCE=unsigned`, for development. It copies only what is
 committed (`git archive HEAD`, so no untracked file and no cache), and refuses a clone

@@ -10,6 +10,9 @@
 #   mm-agent-host-install.sh --forget-signers   # remove the release keys pinned on this host
 #   mm-agent-host-install.sh --release vX.Y.Z --replace-signers  # pin other keys
 #   mm-agent-host-install.sh --check         # compare host copy vs installed plugin
+#   mm-agent-host-install.sh --hold          # stop self-updates on this host
+#   mm-agent-host-install.sh --unhold        # allow them again
+#   mm-agent-host-install.sh --auto          # self-update (corral's end hook runs it)
 #
 # Run it on the HOST, in a normal terminal — never inside corral — from a git
 # clone no session works in, after reviewing it (git log, git diff). corral's preStart/postEnd
@@ -54,7 +57,17 @@
 # bot token never enters the sandbox (RT-6.18). A release goes when neither
 # link nor a running session (recorded by preStart) uses it.
 #
-# Spec: arc42 §7.1 (docs/arc42/07-deployment-view.md), RT-6.28, RT-6.29.
+# --auto (ADR-011 phase 3, RT-6.32) is what corral's end hook runs between
+# sessions: it reads the registrar's signed release record (verified with
+# MM_REGISTRAR_KEYS by this tree's own Python), pins the release keys it offers
+# when the host has none yet (and refuses a record with other keys than the
+# pinned ones), and installs the version it names as `--release` would, with
+# every check: only forward, only a tag signed by a pinned key, not withdrawn,
+# not held (--hold), and only when no other session of this host copy runs.
+# It exits 0 when there is nothing to do and logs one line per decision in
+# release-auto.log in the host state directory.
+#
+# Spec: arc42 §7.1 (docs/arc42/07-deployment-view.md), RT-6.28, RT-6.29, RT-6.32.
 set -euo pipefail
 
 here="${0%/*}"
@@ -65,9 +78,16 @@ source "$SELF/bin/mm-agent-lib.sh"
 # Commands only from PATH entries no sandbox can write (arc42 §7.3).
 mm_safe_path
 
-die() { echo "mm-agent-host-install: $*" >&2; exit 1; }
+# In --auto every refusal is a decision, logged once in release-auto.log.
+AUTO=0 AUTO_STATE=""
+die() {
+  if [[ "$AUTO" -eq 1 ]]; then echo "mm-agent-host-install: not updated: $*" >&2; else echo "mm-agent-host-install: $*" >&2; fi
+  [[ "$AUTO" -eq 0 || -z "$AUTO_STATE" ]] || mm_auto_log "$AUTO_STATE" "not updated: $*"
+  [[ "$AUTO" -eq 0 || -z "$AUTO_STATE" ]] || mm_auto_state "$AUTO_STATE" "RESULT=failed" "RESULT_AT=$(date +%s)"
+  exit 1
+}
 
-FROM="" RELEASE="" ENFORCE=0 CHECK=0 ROLLBACK=0 DOWNGRADE=0 WITHDRAWN_OK=0 FORGET=0 MM_REL_REPLACE=0
+FROM="" RELEASE="" ENFORCE=0 CHECK=0 ROLLBACK=0 DOWNGRADE=0 WITHDRAWN_OK=0 FORGET=0 MM_REL_REPLACE=0 HOLD=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="${2:-}"; shift 2 ;;
@@ -78,6 +98,9 @@ while [[ $# -gt 0 ]]; do
     --withdrawn-ok) WITHDRAWN_OK=1; shift ;;
     --forget-signers) FORGET=1; shift ;;
     --replace-signers) MM_REL_REPLACE=1; shift ;;
+    --hold) HOLD=hold; shift ;;
+    --unhold) HOLD=unhold; shift ;;
+    --auto) AUTO=1; shift ;;
     -h|--help) sed -n '2,/^set -euo/p' "$0" | sed '$d'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
@@ -93,6 +116,9 @@ fi
 [[ "$FORGET" -eq 0 || ( -z "$FROM$RELEASE" && "$CHECK$ROLLBACK$DOWNGRADE$WITHDRAWN_OK$MM_REL_REPLACE" == 00000 ) ]] ||
   die "--forget-signers takes no other option"
 [[ "$MM_REL_REPLACE" -eq 0 || -n "$RELEASE" ]] || die "--replace-signers goes with --release"
+others="$FROM$RELEASE$CHECK$ROLLBACK$DOWNGRADE$WITHDRAWN_OK$FORGET$MM_REL_REPLACE"
+[[ -z "$HOLD" || ( "$AUTO" -eq 0 && "$others" == 000000 ) ]] || die "--$HOLD takes no other option"
+[[ "$AUTO" -eq 0 || ( -z "$HOLD" && "$others" == 000000 ) ]] || die "--auto takes no other option"
 
 DEST="${MM_BUS_HOST_DIR:-$HOME/.local/share/mm-agent-bus/current}"
 # Relative paths are the operator's; then work from /, never from a checkout.
@@ -114,6 +140,10 @@ if [[ "$CHECK" -eq 1 ]]; then
     bash "$SELF/bin/mm-agent-release-check.sh" || true
     if note="$(mm_release_notice "$have")"; then
       printf 'release:    %s — to install it: %s/bin/mm-agent-host-install.sh --release v<version>\n' "$note" "$DEST"
+    fi
+    # Self-update (RT-6.32): what the registrar named, the keys, the hold.
+    if note="$(mm_release_auto_notice "$have" "$(mm_state_dir)" "$(dirname "$DEST")")"; then
+      printf 'self-update: %s\n' "$note"
     fi
   fi
   [[ -n "$want" && "$have" == "$want" ]]
@@ -164,6 +194,143 @@ if [[ "$FORGET" -eq 1 ]]; then
   [[ -z "${MM_RELEASE_SIGNERS+set}" ]] ||
     echo "MM_RELEASE_SIGNERS is set in this shell: runs from it still check the signature, and a --release run pins its keys again."
   exit 0
+fi
+
+# Release keys into release-signers in layout directory $1 (decision (4) of
+# 2026-11-12; RT-6.32 for those the registrar offers): only `<type> <base64>`
+# lines ($2), 0600, in one rename; $3 says what was done. Not when the
+# directory is not this user's own or others can write it.
+write_signers() {
+  local d="$1" f="$1/$MM_SIGNERS_FILE" tmp="$1/.$MM_SIGNERS_FILE.$$" text
+  text="# Release keys pinned by mm-agent-host-install.sh (RT-6.29, RT-6.32); --forget-signers removes them."$'\n'"$2"
+  if ! mm_own_path "$d"; then
+    echo "mm-agent-host-install: WARNING: $d is not this user's own or others can write it: the release keys are not pinned" >&2
+    return 1
+  fi
+  { (umask 077 && printf '%s' "$text" >"$tmp") && chmod 600 "$tmp" && mv -f "$tmp" "$f"; } ||
+    { rm -f "$tmp"; echo "mm-agent-host-install: WARNING: could not write $f: the release keys are not pinned" >&2; return 1; }
+  echo "$3: later runs and the release check use them when MM_RELEASE_SIGNERS is unset (--forget-signers removes them)."
+}
+
+# The host state directory for --hold, --unhold and --auto's log: resolved,
+# never one a sandbox can write ("" then).
+auto_state_dir() {
+  local s
+  s="$(mm_state_dir)"
+  mkdir -p "$s" 2>/dev/null && chmod 700 "$s" 2>/dev/null
+  s="$(cd -P "$s" 2>/dev/null && pwd -P)" || return 0
+  sandbox_writable "$s" || printf '%s\n' "$s"
+}
+
+# --hold and --unhold (RT-6.32): self-updates stop on this host until
+# --unhold. The hold is a file beside releases/ (MM_BUS_HOST_DIR's parent),
+# out of XDG_STATE_HOME's reach like release-signers; anything there of that
+# name holds, so only a person on the host lifts it.
+if [[ -n "$HOLD" ]]; then
+  d="$(dirname "$DEST")"
+  mkdir -p "$d" 2>/dev/null || die "cannot create $d"
+  d="$(cd -P "$d" && pwd -P)"
+  f="$d/$MM_HOLD_FILE"
+  ! sandbox_writable "$d" || die "$d can be changed from inside a corral sandbox; refused"
+  s="$(auto_state_dir)"
+  if [[ "$HOLD" == hold ]]; then
+    if mm_release_held "$d"; then
+      echo "Self-updates are held on this host already ($f)."
+    else
+      tmp="$d/.$MM_HOLD_FILE.$$"
+      { (umask 077 && printf 'held by mm-agent-host-install.sh --hold at %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$tmp") &&
+        mv -f "$tmp" "$f"; } || { rm -f "$tmp"; die "could not write $f"; }
+      echo "Held: this host no longer updates itself ($f) until mm-agent-host-install.sh --unhold; --release still installs by hand."
+    fi
+    [[ -z "$s" ]] || mm_auto_log "$s" "held by --hold"
+  else
+    if [[ -d "$f" && ! -L "$f" ]]; then
+      die "$f is a directory; look at it, then remove it by hand"
+    elif [[ -e "$f" || -L "$f" ]]; then
+      rm -f "$f" || die "could not remove $f"
+      echo "Unheld: this host updates itself again, between sessions, to the version the registrar names."
+    else
+      echo "Self-updates are not held on this host; nothing changed."
+    fi
+    [[ -z "$s" ]] || mm_auto_log "$s" "unheld by --unhold"
+  fi
+  exit 0
+fi
+
+# --- self-update between sessions (ADR-011 phase 3, RT-6.32) -------------------
+# corral's end hook runs `--auto` after the session's bot is gone. Every step
+# that finds nothing to do or a reason not to says so in one line of
+# release-auto.log and exits 0; what goes on is the --release path below with
+# all of its checks, the version the registrar named, and no --downgrade,
+# --withdrawn-ok or --replace-signers.
+auto_say() {
+  echo "mm-agent-host-install: $1"
+  mm_auto_log "$AUTO_STATE" "$1"
+  mm_auto_state "$AUTO_STATE" "RESULT=$2" "RESULT_AT=$(date +%s)"
+}
+if [[ "$AUTO" -eq 1 ]]; then
+  AUTO_STATE="$(auto_state_dir)"
+  [[ -n "$AUTO_STATE" ]] || die "no host state directory out of every sandbox's reach; nothing done"
+  pd="$(cd -P "$(dirname "$DEST")" 2>/dev/null && pwd -P)" || die "$(dirname "$DEST") does not exist: no host copy to update"
+  ! sandbox_writable "$pd" || die "$pd can be changed from inside a corral sandbox; nothing done"
+  # The stop switch (guard rail 4), before anything is read.
+  if mm_release_held "$pd"; then
+    auto_say "held ($pd/$MM_HOLD_FILE): no self-update until --unhold" held
+    exit 0
+  fi
+  # The registrar's record, verified by this tree's own Python with the pinned
+  # registrar keys; without them nothing is taken (guard rail 1).
+  mm_registrar_release "$SELF/mcp/.venv/bin/python"
+  case "$MM_RR_STATUS" in
+    nokeys) mm_auto_state "$AUTO_STATE" REGISTRAR=nokeys TARGET= KEYS=
+            auto_say "$MM_RR_WHY" nothing; exit 0 ;;
+    none) mm_auto_state "$AUTO_STATE" REGISTRAR=none TARGET= KEYS=
+          auto_say "the registrar names no release: nothing to do" nothing; exit 0 ;;
+    failed) mm_auto_state "$AUTO_STATE" REGISTRAR=failed
+            auto_say "${MM_RR_WHY:-the release record was not read}; nothing changed" failed; exit 0 ;;
+  esac
+  # Keys pinned once (guard rail 1): taken from the registrar only when the
+  # host has none, neither release-signers nor MM_RELEASE_SIGNERS; then a
+  # different set is refused, and changing keys is a person's step.
+  if ! mm_release_signers "$pd"; then
+    mm_auto_state "$AUTO_STATE" REGISTRAR=ok "TARGET=$MM_RR_VERSION" KEYS=bad "AT=$(date +%s)"
+    auto_say "no self-update: $MM_REL_ERR" refused
+    exit 0
+  fi
+  keystate="$(mm_release_keystate)"
+  mm_auto_state "$AUTO_STATE" REGISTRAR=ok "TARGET=$MM_RR_VERSION" "KEYS=$keystate" "AT=$(date +%s)"
+  if [[ "$keystate" == mismatch ]]; then
+    auto_say "refused: the registrar's record (key ${MM_RR_KID:-?}) names release keys other than those pinned in $MM_REL_FROM_TEXT; no self-update. Changing keys is a person's step on the host: --release v<version> --replace-signers with MM_RELEASE_SIGNERS" refused
+    exit 0
+  fi
+  if [[ "$keystate" == none ]]; then
+    n="$(grep -c . <<<"$MM_RR_KEYS")"
+    write_signers "$pd" "$MM_RR_KEYS" "Pinned the $n release key(s) the registrar's signed record offers in $pd/$MM_SIGNERS_FILE" ||
+      { auto_say "the release keys the registrar offers could not be pinned; no self-update" failed; exit 0; }
+    mm_auto_log "$AUTO_STATE" "pinned the $n release key(s) the registrar offers (its record signed by key ${MM_RR_KID:-?}) in $pd/$MM_SIGNERS_FILE"
+    mm_release_signers "$pd" || { auto_say "no self-update: $MM_REL_ERR" refused; exit 0; }
+    mm_auto_state "$AUTO_STATE" KEYS=match
+  fi
+  if [[ -z "$MM_RR_VERSION" ]]; then
+    auto_say "the registrar offers keys and names no version: nothing to do" nothing
+    exit 0
+  fi
+  # Only forward, only signed (guard rail 2).
+  if [[ "$MM_REL_ENFORCE" -ne 1 ]]; then
+    auto_say "no release keys on this host: it never updates by itself (unchecked mode)" refused
+    exit 0
+  fi
+  have="$(version_of "$DEST")"
+  if ! mm_version_newer "$have" "$MM_RR_VERSION"; then
+    auto_say "the registrar names v$MM_RR_VERSION, not newer than $have here: nothing to do" current
+    exit 0
+  fi
+  if by="$(mm_release_withdrawn "$MM_RR_VERSION" "$pd/$MM_WITHDRAWN_FILE")"; then
+    auto_say "the registrar names v$MM_RR_VERSION, which the CHANGELOG of v$by withdrew: no self-update" refused
+    exit 0
+  fi
+  RELEASE="v$MM_RR_VERSION" VER="$MM_RR_VERSION" TAG="v$MM_RR_VERSION"
+  echo "mm-agent-host-install: the registrar names v$VER (this host runs $have): updating" >&2
 fi
 
 # Whether the host's release check (RT-6.30) lists version $1 as withdrawn:
@@ -453,21 +620,14 @@ if [[ -n "$RELEASE" ]]; then
   # and refused other keys without --replace-signers; the same keys change
   # nothing.
   store_signers() {
-    local f="$parent/$MM_SIGNERS_FILE" tmp="$parent/.$MM_SIGNERS_FILE.$$" text verb
-    text="# Release keys pinned by mm-agent-host-install.sh --release (RT-6.29); --forget-signers removes them."$'\n'"$MM_REL_KEYS"
-    if ! mm_own_path "$parent"; then
-      echo "mm-agent-host-install: WARNING: $parent is not this user's own or others can write it: the release keys are not pinned" >&2
-      return 0
-    fi
+    local f="$parent/$MM_SIGNERS_FILE" verb
     if [[ -n "$MM_REL_PINNED" ]]; then
       [[ "$(sort -u <<<"$MM_REL_KEYS")" != "$(sort -u <<<"$MM_REL_PINNED")" ]] || return 0
       verb="Replaced the release keys pinned in $f with those of MM_RELEASE_SIGNERS (--replace-signers)"
     else
       verb="Pinned the release keys of MM_RELEASE_SIGNERS in $f"
     fi
-    { (umask 077 && printf '%s' "$text" >"$tmp") && chmod 600 "$tmp" && mv -f "$tmp" "$f"; } ||
-      { rm -f "$tmp"; echo "mm-agent-host-install: WARNING: could not write $f: the release keys are not pinned" >&2; return 0; }
-    echo "$verb: later runs and the release check use them when MM_RELEASE_SIGNERS is unset (--forget-signers removes them)."
+    write_signers "$parent" "$MM_REL_KEYS" "$verb" || true
   }
   # verify-tag's temporary files go into the installer's own lock directory,
   # which only the host sees (set by layout()).
@@ -576,6 +736,21 @@ command -v uv >/dev/null 2>&1 ||
 # starting meanwhile sees the old or the new release, never half of one, and a
 # failed step leaves current as it was.
 layout
+# Between sessions only (guard rail 3): no other session of this host copy may
+# run, by its release record or a live session file (this session's own record
+# went before the end hook called this, and its own key is left out); a state
+# directory that cannot tell counts as busy.
+if [[ "$AUTO" -eq 1 ]]; then
+  busy="$( { recorded_keys; unrecorded_sessions; } | grep -vxF -e "${CORRAL_SESSION_ID:-?}" | sort -u | tr '\n' ' ' || true)"
+  if [[ "$STATE_OK" -eq 0 ]]; then
+    auto_say "v$VER waits: the state directory cannot tell which sessions run" waiting
+    exit 0
+  fi
+  if [[ -n "$busy" ]]; then
+    auto_say "v$VER waits: other sessions of this host copy run (${busy% }); the last one to end updates it" waiting
+    exit 0
+  fi
+fi
 # A host copy from before this layout moves (step 5): every corral session
 # running from it would lose its postEnd, since corral runs it by a path whose
 # file changes. Done with no session running.
@@ -724,6 +899,7 @@ install_dispatcher "$name"
 # only way back.
 if [[ "$gc" -eq 1 ]]; then collect_garbage; else echo "no release removed: a step above failed" >&2; fi
 
+[[ "$AUTO" -eq 0 ]] || auto_say "updated to v$VER ($have before), signed release $TAG, signed by $SIGNER" updated
 if [[ -n "$RELEASE" && "$ENFORCE" -eq 1 ]]; then
   kind="signed release $TAG, signed by $SIGNER, a key pinned in $MM_REL_FROM_TEXT"
   head_line="$head_sha (tag object $TAG_ID)"

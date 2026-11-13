@@ -104,6 +104,20 @@ if [[ -n "$DUE" ]]; then
   last="$(mm_read_file "$STATE/release-check.at" 64 2>/dev/null | tr -cd '0-9')" || last=""
   if [[ -n "$last" ]] && (( now - last < DUE )); then exit 0; fi
 fi
+# The registrar's release record, for the notice only (RT-6.32): what it
+# names and how its keys relate to the pinned ones, in release-auto.env. Read
+# and verified by this tree's own Python with MM_REGISTRAR_KEYS; nothing is
+# pinned or installed here (the installer's --auto does that, between
+# sessions, after reading it again). A failed read keeps what was there.
+mm_registrar_release "$SELF/mcp/.venv/bin/python"
+case "$MM_RR_STATUS" in
+  ok) mm_auto_state "$STATE" REGISTRAR=ok "TARGET=$MM_RR_VERSION" "KEYS=$(mm_release_keystate)" "AT=$now"
+      say "the registrar names ${MM_RR_VERSION:+v}${MM_RR_VERSION:-no version} (its record verified; release keys: $(mm_release_keystate))" ;;
+  none | nokeys) mm_auto_state "$STATE" "REGISTRAR=$MM_RR_STATUS" TARGET= KEYS= "AT=$now" ;;
+  *) mm_auto_state "$STATE" REGISTRAR=failed
+     say "${MM_RR_WHY:-the release record was not read}" ;;
+esac
+
 # The installer fetches into src.git: not at the same time.
 if [[ -e "$parent/.install.lock" ]]; then
   say "the installer runs; not checked"

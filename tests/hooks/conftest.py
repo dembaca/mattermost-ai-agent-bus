@@ -73,6 +73,8 @@ class FakeMattermost:
     missing: set[str] = field(default_factory=set)  # channel names answered with 404
     user_props: dict | None = None  # the bot's user props (custom status)
     registrar_keys: dict | None = None  # GET /register/v1/keys (RT-6.24); None: 404
+    # GET /register/v1/release (RT-6.32): (status, JSON body); None: no such route
+    registrar_release: tuple[int, object] | None = None
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -142,6 +144,8 @@ def _handler(fake: FakeMattermost):
                     return self._send({"id": ME, "is_bot": True, **props})
                 return self._send({"id": ME, "is_bot": True, "bot_description": fake.bot_description,
                                    **props})
+            if p == "/register/v1/release" and fake.registrar_release is not None:
+                return self._send(fake.registrar_release[1], fake.registrar_release[0])
             if p == "/register/v1/keys" and fake.registrar_keys is not None:
                 return self._send(fake.registrar_keys)
             if p.startswith("/api/v4/teams/name/"):

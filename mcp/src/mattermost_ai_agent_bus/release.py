@@ -51,9 +51,13 @@ POLL = 3600.0
 STATE_MAX = 65536
 # What the child gets of this server's environment besides PATH and HOME:
 # where the releases come from, the pinned keys, where src.git lies, the
-# session's workdir (which the script's own sandbox check counts). Never a
-# token, the registration secret or anything else of the session.
-CHILD_ENV = ("MM_RELEASE_URL", "MM_RELEASE_SIGNERS", "MM_BUS_HOST_DIR", "CORRAL_WORKDIR")
+# session's workdir (which the script's own sandbox check counts), and what
+# reading the registrar's release record takes (RT-6.32): its pinned keys, its
+# URL, TLS and proxy settings. Never a token, the registration secret or
+# anything else of the session.
+CHILD_ENV = ("MM_RELEASE_URL", "MM_RELEASE_SIGNERS", "MM_BUS_HOST_DIR", "CORRAL_WORKDIR",
+             "MM_REGISTRAR_KEYS", "MM_REGISTER_URL", "MM_CHAT_URL", "SSL_CERT_FILE", "SSL_CERT_DIR",
+             "HTTPS_PROXY", "https_proxy", "NO_PROXY", "no_proxy")
 
 _VER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _TAG = re.compile(r"^v\d+\.\d+\.\d+$")
@@ -66,8 +70,17 @@ _TAG = re.compile(r"^v\d+\.\d+\.\d+$")
 NEEDS_PATTERN = r"^(MM_[A-Z0-9_]+|[0-9]+\.[0-9]+\.[0-9]+|[a-z]{1,15})[,.]?( (MM_[A-Z0-9_]+|[0-9]+\.[0-9]+\.[0-9]+|[a-z]{1,15})[,.]?)*$"
 NEEDS_MAX = 120
 _NEEDS = re.compile(NEEDS_PATTERN)
-NOTE = ("a human installs a release on the host (mm-agent-host-install.sh --release); "
-        "you never run the installer, and an update never runs by itself")
+NOTE = ("a human installs a release on the host (mm-agent-host-install.sh --release), or the "
+        "host copy updates itself between sessions to the version the registrar names (RT-6.32); "
+        "you never run the installer")
+# Self-update (ADR-011 phase 3, RT-6.32): what the installer's --auto and the
+# release check last saw of the registrar's release record, in the host state
+# directory; the hold beside releases/.
+AUTO_FILE = "release-auto.env"
+HOLD_FILE = "release-hold"
+_AUTO_WORDS = {"REGISTRAR": ("ok", "none", "failed", "nokeys"),
+               "KEYS": ("none", "match", "mismatch", "bad"),
+               "RESULT": ("updated", "failed", "waiting", "held", "nothing", "refused", "current")}
 
 
 def needs_ok(text: str) -> bool:
@@ -233,10 +246,15 @@ def notice(have: str | None = None, state: State | None = None,
     have = VERSION if have is None else have
     if not _VER.match(have):
         return {}  # this server's own version unknown: nothing to compare
-    out: dict[str, Any] = {"this": {"version": have, "source": source_label()}}
+    out: dict[str, Any] = {"this": {"version": have, "source": source_label()},
+                           "auto": auto_info(have, directory)}
     st = state if state is not None else read_state(directory)
     if st is None:
         out["check"] = "none yet: the host's release check has not found a release that passes"
+        auto = auto_line(have, directory)
+        if auto:
+            out["notice"] = auto
+            out["note"] = NOTE
         return out
     out["newest"] = st.newest
     out["signature"] = "checked" if st.verified else "not checked"
@@ -268,7 +286,7 @@ def line(have: str | None = None, state: State | None = None,
     st = state if state is not None else read_state(directory)
     if st is None or not _VER.match(have):
         return ""
-    parts = []
+    parts: list[str] = []
     if have in st.withdrawn:
         parts.append(f"this host's {have} is withdrawn (CHANGELOG of v{st.newest})")
     if _key(st.newest) > _key(have):
@@ -283,7 +301,93 @@ def line(have: str | None = None, state: State | None = None,
     elif _key(st.newest) < _key(have):
         parts.append(f"the newest release that passes the check is v{st.newest}, older than "
                      f"{have}: the repository may be frozen or rewound")
+    auto = auto_line(have, directory)
+    if auto:
+        parts.append(auto)
     return "; ".join(parts)
+
+
+# --- self-update between sessions (RT-6.32) ------------------------------------------
+
+def layout_dir(root: Path | None = None) -> Path | None:
+    """The host copy's layout directory (releases/' parent) when this server
+    runs from one of its releases; None for the plugin or a checkout, which
+    never update themselves."""
+    root = root or ROOT
+    return root.parent.parent if root.parent.name == "releases" else None
+
+
+def held(layout: Path | None) -> bool:
+    """release-hold beside releases/: anything of that name holds."""
+    if layout is None:
+        return False
+    try:
+        os.lstat(layout / HOLD_FILE)
+    except OSError:
+        return False
+    return True
+
+
+def read_auto(directory: Path | None = None) -> dict[str, str]:
+    """release-auto.env, every field checked again: REGISTRAR, KEYS and RESULT
+    as their words, TARGET a version, AT and RESULT_AT epochs."""
+    text = _read((directory or state_dir()) / AUTO_FILE, 4096) or ""
+    out: dict[str, str] = {}
+    for ln in text.splitlines():
+        key, sep, value = ln.partition("=")
+        if not sep:
+            continue
+        if key in _AUTO_WORDS and value in _AUTO_WORDS[key]:
+            out[key] = value
+        elif key == "TARGET" and _VER.match(value):
+            out[key] = value
+        elif key in ("AT", "RESULT_AT") and value.isdigit():
+            out[key] = value
+    return out
+
+
+def auto_line(have: str | None = None, directory: Path | None = None,
+              layout: Path | None = None, root: Path | None = None) -> str:
+    """What self-update will do, in plain words, for a host copy session of
+    `have`; '' for the plugin or a checkout, or when there is nothing to say.
+    The same text as mm_release_auto_notice in bin/mm-agent-lib.sh."""
+    have = VERSION if have is None else have
+    layout = layout if layout is not None else layout_dir(root)
+    if layout is None or not _VER.match(have):
+        return ""
+    auto = read_auto(directory)
+    keys, target = auto.get("KEYS", ""), auto.get("TARGET", "")
+    if held(layout):
+        return "self-update held on this host (mm-agent-host-install.sh --unhold lifts it)"
+    if keys == "mismatch":
+        return "the registrar names a release key this host doesn't trust: no self-update"
+    if keys == "bad":
+        return "the release keys pinned on this host are refused: no self-update"
+    if target and _key(target) > _key(have):
+        return f"updates itself to v{target} when this session ends"
+    return ""
+
+
+def auto_info(have: str | None = None, directory: Path | None = None,
+              layout: Path | None = None, root: Path | None = None) -> dict[str, Any]:
+    """bus_info's `release.auto`: whether self-update applies here, what the
+    registrar named when last read, the keys, held, the last decision."""
+    have = VERSION if have is None else have
+    layout = layout if layout is not None else layout_dir(root)
+    if layout is None:
+        return {"applies": False, "why": "only corral's host copy updates itself, between sessions"}
+    auto = read_auto(directory)
+    out: dict[str, Any] = {"applies": True, "held": held(layout)}
+    for key, name in (("REGISTRAR", "registrar"), ("TARGET", "target"), ("KEYS", "keys"),
+                      ("RESULT", "last")):
+        if auto.get(key):
+            out[name] = auto[key]
+    if auto.get("AT"):
+        out["read_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(auto["AT"])))
+    text = auto_line(have, directory, layout)
+    if text:
+        out["will"] = text
+    return out
 
 
 # --- the check, as a bounded child --------------------------------------------------

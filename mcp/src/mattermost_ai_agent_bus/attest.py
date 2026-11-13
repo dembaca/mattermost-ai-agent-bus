@@ -63,6 +63,14 @@ MANDATE_TYP = "mm-agent-mandate+jwt"
 MANDATE_NOTE_MAX = 200
 # The registrar's signed debug setting of a home (RT-6.31, ADR-010 phase 2).
 DEBUG_TYP = "mm-agent-debug+jwt"
+# The registrar's signed release record (RT-6.32, ADR-011 phase 3): the
+# release keys it offers and the version hosts update themselves to.
+RELEASE_TYP = "mm-agent-release+jwt"
+RELEASE_SIGNERS_MAX = 16
+# One release key line, as mm_release_parse_keys in bin/mm-agent-lib.sh reads
+# it: an Ed25519 type, its base64, an optional comment.
+RELEASE_KEY = re.compile(r"(ssh-ed25519|sk-ssh-ed25519@openssh\.com)[ \t]+([A-Za-z0-9+/]+={0,2})([ \t].*)?")
+_RELEASE_VERSION = re.compile(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 ENV = "MM_BOT_ATTESTATION"
 KEYS_ENV = "MM_REGISTRAR_KEYS"
 ENROLLMENT, SECRET = "enrollment", "secret"
@@ -448,6 +456,74 @@ def verify_debug(token: object, keys: Mapping[str, Ed25519PublicKey], *, channel
     if record is not None and record.until_ms + SKEW_SEC * 1000 <= now * 1000:
         return None, "ended"
     return record, why
+
+
+# --- the release record (RT-6.32, ADR-011 phase 3) ------------------------------
+
+@dataclass(frozen=True)
+class ReleaseRecord:
+    """A verified release record: the release keys the registrar offers
+    (`<type> <base64>` each, in its order) and the version it names, '' for
+    keys only."""
+
+    signers: tuple[str, ...]
+    version: str  # x.y.z without the v, or ''
+    set_at_ms: int
+    iat: int
+    exp: int
+    kid: str
+
+
+def release_key(line: object) -> str | None:
+    """`<type> <base64>` of one release key line when it is one: the shape of
+    mm_release_parse_keys, and a base64 that decodes to an SSH key blob of
+    that type, re-encoded in standard base64 so one key has one spelling. None
+    otherwise. `set_at_ms` of the record is the registrar's start time and keys
+    nothing here."""
+    if not isinstance(line, str) or len(line) > 1024 or any(c < " " and c != "\t" for c in line):
+        return None
+    m = RELEASE_KEY.fullmatch(line.strip())
+    if m is None:
+        return None
+    try:
+        blob = base64.b64decode(m[2], validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    name = m[1].encode()
+    if blob[:4] != len(name).to_bytes(4, "big") or blob[4:4 + len(name)] != name:
+        return None
+    return f"{m[1]} {base64.b64encode(blob).decode('ascii')}"  # canonical: one spelling per key
+
+
+def _release_record(payload: Mapping[str, Any], kid: str) -> ReleaseRecord | str:
+    """The record's claims, typed; why not when one is missing or malformed:
+    a non-empty list of distinct release keys, an optional `v<x.y.z>`."""
+    signers, version, set_at = payload.get("signers"), payload.get("version"), _int(payload.get("set_at_ms"))
+    if set_at is None or set_at <= 0:
+        return "bad claims"
+    if not isinstance(signers, list) or not 0 < len(signers) <= RELEASE_SIGNERS_MAX:
+        return "bad signers"
+    keys = [release_key(s) for s in signers]
+    if any(k is None for k in keys) or len(set(keys)) != len(keys):
+        return "bad signers"
+    if version is not None and not (isinstance(version, str) and _RELEASE_VERSION.fullmatch(version)):
+        return "bad version"
+    return ReleaseRecord(signers=tuple(k for k in keys if k), version=(version or "")[1:],
+                         set_at_ms=set_at, iat=payload["iat"], exp=payload["exp"], kid=kid)
+
+
+def verify_release(token: object, keys: Mapping[str, Ed25519PublicKey],
+                   now: float | None = None) -> tuple[ReleaseRecord | None, str]:
+    """The registrar's release record when it is sound (RT-6.32 step 2): a
+    pinned key signed it, EdDSA and the release type (any other record is
+    refused here), not expired and issued not later than now with SKEW_SEC,
+    and its claims in shape. Else (None, why). Never raises."""
+    now = time.time() if now is None else now
+    try:
+        return _verify_jws(token, keys, typ=RELEASE_TYP, now=now, parse=_release_record)
+    except Exception as exc:  # noqa: BLE001 — strict: malformed is invalid, never an error
+        log.debug("release record not verified: %s", type(exc).__name__)
+        return None, "malformed"
 
 
 def _unverified_payload(token: str) -> dict[str, Any] | None:
