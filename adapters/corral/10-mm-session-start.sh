@@ -129,8 +129,15 @@ source "$BIN/mm-agent-lib.sh"
 
 # Unregister the bot this run registered: with its own token first, which the
 # registrar always accepts for it, then with the registration secret; on
-# failure MM_UNREG_WHY says why for each (no credential in it).
-unregister_again() { mm_unregister_bot "$NAME"; }
+# failure MM_UNREG_WHY says why for each (no credential in it). A host process
+# that did not get ready was stopped with SIGTERM, whose exit work may have
+# unregistered the bot first: a token Mattermost rejects then counts as done.
+unregister_again() {
+  local rc=0
+  mm_unregister_or_gone "$NAME" || rc=$?
+  [[ "$rc" -ne 2 ]] || log "${NAME} unregistered already (by its MCP server)"
+  [[ "$rc" -eq 2 ]] || return "$rc"
+}
 
 # Version only: the installed plugins include the corral homes, which a sandbox
 # writes, so the notice names no plugin path; the only path it names is this

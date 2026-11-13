@@ -17,7 +17,7 @@ from test_channel import Conn
 from mattermost_ai_agent_bus import channel, gate, lease, ownpost, server, unread
 from mattermost_ai_agent_bus.client import MattermostAdapter, SessionInfo, channel_list, post_of
 from mattermost_ai_agent_bus.model import Channel, ChannelUser, UnreadChannel
-from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
+from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
 GUEST = "g" * 26     # ~guest-a, a guest channel
 LATER = "k" * 26     # ~guest-b, a channel the bot is added to at runtime
@@ -292,6 +292,39 @@ async def test_the_count_takes_only_mentions_and_my_threads_in_a_guest_channel(c
     # The same channel as no guest: @channel and the post for all agents count, as before.
     rows = await unread.channels(chat, {GUEST})
     assert [p.message for p in rows[0].posts] == ["@agent-me look", "@channel hi", "all agents"]
+
+
+@pytest.mark.parametrize("by", ["push", "wait_for_events"])
+async def test_a_guest_post_handed_over_counts_no_more(chat, by):
+    """RT-6.2 step 1, RT-6.22 step 3 (the owner's live test, 0.86.4): in a guest
+    channel a reply in the agent's thread and, newer, an agent's fyi mention.
+    Handed over mentions first (the pusher acks its batch item by item; a
+    wait_for_events for one event takes the mention first), the mention must
+    not count as pending once the older reply is handed over too: else the
+    turn-end check reports `pending=1 fyi=1` that wait_for_events never returns."""
+    root, now = "r" * 26, int(time.time() * 1000)
+    reply = {"id": "1" * 26, "user_id": HUMAN, "channel_id": GUEST, "create_at": now + 1,
+             "message": "thanks", "root_id": root}
+    fyi = {"id": "2" * 26, "user_id": "a" * 26, "channel_id": GUEST, "create_at": now + 2,
+           "message": "@agent-me ACK", "root_id": root, "props": {"a2a": {"intent": "fyi"}}}
+    chat.channels = [UnreadChannel(GUEST, "O", last_post_at=now + 2)]
+    chat.posts = [fyi, reply]
+    inbox = WebSocketInbox(client=chat)  # type: ignore[arg-type]
+    inbox._bot_user_id, inbox._bot_username = BOT, "agent-me"
+    inbox._ws = _Socket()
+    for kind, post in (("watched_channel", reply), ("mention", fyi)):
+        await inbox._queue.put(ClassifiedEvent(kind=kind, post=post_of(post), guest=True))
+    if by == "push":
+        taken = await inbox.take(timeout_sec=1, max_events=10)
+        assert [e.post.id for e in taken] == [fyi["id"], reply["id"]]  # the mention first
+        for event in taken:  # as server._push_delivered, one item at a time
+            await inbox.ack([event], typing=False)
+    else:
+        first = await inbox.wait_for_events(timeout_sec=1, max_events=1)
+        assert [e.post.id for e in first] == [fyi["id"]]
+        assert [e.post.id for e in await inbox.wait_for_events(timeout_sec=1)] == [reply["id"]]
+        inbox.stop_typing()
+    assert await unread.channels(chat, {GUEST}, guests={GUEST}, threads={root}) == []
 
 
 # --- membership changes (RT-6.22 step 1) -------------------------------------------------

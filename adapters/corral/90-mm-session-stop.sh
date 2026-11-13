@@ -234,8 +234,16 @@ mm_with_token "$BIN/mm-agent-status.sh" offline >/dev/null 2>&1 || true
 
 # With the bot's own token first, which the registrar always accepts for it,
 # then with the secret; a failure says why for each (no credential in it).
-if mm_unregister_bot "$MM_REG_BOT_NAME"; then
+# The MCP server's exit work (SIGTERM above) has usually unregistered the bot
+# already: then Mattermost rejects its token (401 on /users/me), and the bot
+# is gone, not orphaned (RT-6.1 step 7).
+rc=0
+mm_unregister_or_gone "$MM_REG_BOT_NAME" || rc=$?
+if [[ "$rc" -eq 0 ]]; then
   log "unregistered ${MM_REG_BOT_NAME}"
+  rm -f "$SESSION_FILE"
+elif [[ "$rc" -eq 2 ]]; then
+  log "${MM_REG_BOT_NAME} unregistered already (by its MCP server)"
   rm -f "$SESSION_FILE"
 else
   # Keep the session file: it holds the only credential that can still remove

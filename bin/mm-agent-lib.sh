@@ -87,6 +87,22 @@ mm_unregister_bot() {
   MM_UNREG_WHY="token: ${tok}; secret: ${sec}"
   return 1
 }
+# As mm_unregister_bot, but a bot whose own token Mattermost rejects after the
+# unregister failed (mm_token_dead) is gone already: its MCP server's exit work
+# unregistered it (RT-6.18 step 7). Returns 0 unregistered, 2 gone already,
+# 1 failed (MM_UNREG_WHY says why).
+#   mm_unregister_or_gone "$NAME" || rc=$?
+mm_unregister_or_gone() {
+  mm_unregister_bot "$1" && return 0
+  if [[ -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]] && mm_token_dead; then return 2; fi
+  return 1
+}
+# Whether Mattermost rejects this shell's bot token: a 401 on /users/me means
+# the bot, and its token with it, is gone. Another status or none proves
+# nothing. In a subshell, so MM_API_* stay as they were.
+mm_token_dead() {
+  [[ "$( (mm_api GET "/api/v4/users/me" >/dev/null 2>&1 || exit 0; printf '%s' "$MM_API_STATUS") )" == 401 ]]
+}
 mm_unregister_with() {
   local out v
   MM_UNREG_WHY=""
@@ -1424,13 +1440,12 @@ mm_unregister_session_file() {
       mm_with_token "$BIN/mm-agent-unregister.sh" "$name" 2>&1 >/dev/null
      ) )"; then
     rc=0
-  elif [[ "$( (
+  elif (
       export MM_AGENT_SESSION_FILE="$f"
-      mm_load_session_file >/dev/null 2>&1 || exit 0
+      mm_load_session_file >/dev/null 2>&1 || exit 1
       export -n MM_BOT_TOKEN MATTERMOST_TOKEN
-      mm_api GET "/api/v4/users/me" >/dev/null 2>&1 || exit 0
-      printf '%s' "$MM_API_STATUS"
-     ) )" == "401" ]]; then
+      mm_token_dead
+     ); then
     rc=2
   else
     printf '%s' "${err:-no reason given}"

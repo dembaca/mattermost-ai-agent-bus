@@ -316,7 +316,8 @@ async def test_a_post_queued_behind_the_watermark_holds_it_back():
     inbox.handled(post_of({"id": "own2", "channel_id": "dm1", "create_at": 3000}))
     assert watermark.at("bot1", "dm1") == 1499  # an older post still waits
     await inbox.wait_for_events(timeout_sec=1)
-    assert watermark.read("bot1")["dm1"] == ("late", 1500)
+    # Handed over, late lets the mark pass own2 too, handled while it waited (0.86.4).
+    assert watermark.read("bot1")["dm1"] == ("own2", 3000)
 
 
 @pytest.mark.asyncio

@@ -11,11 +11,34 @@ TOKEN = "bot-token-for-tests"
 SECRET = "reg-secret-for-tests"
 
 
-def _session(run, sid: str, name: str = "mac-proj-eee555") -> None:
+def _session(run, sid: str, name: str = "mac-proj-eee555", token: str = TOKEN) -> None:
     d = run.state_dir
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{sid}.env").write_text(
-        f"MM_REG_BOT_NAME={name}\nMM_BOT_USERNAME=agent-{name}\nMM_BOT_TOKEN={TOKEN}\n")
+        f"MM_REG_BOT_NAME={name}\nMM_BOT_USERNAME=agent-{name}\nMM_BOT_TOKEN={token}\n")
+
+
+def test_a_bot_its_server_unregistered_is_gone_not_a_warning(mm, run):
+    """RT-6.1 step 7, RT-6.18 step 7: the MCP server's exit work unregistered the
+    bot, so the registrar and Mattermost reject its token (401 on the DELETE and
+    on /users/me): postEnd says so, without a WARNING, and removes the file."""
+    _session(run, "sess-gone", token="revoked-with-its-bot")
+    r = run(STOP, CORRAL_SESSION_ID="sess-gone", MM_BOT_TOKEN=None, MM_REG_SECRET=None)
+    assert r.code == 0, r.stderr
+    assert "mac-proj-eee555 unregistered already (by its MCP server)" in r.stderr, r.stderr
+    assert "WARNING" not in r.stderr and "retry: " not in r.stderr, r.stderr
+    assert not (run.state_dir / "sess-gone.env").exists()
+
+
+def test_a_live_token_the_registrar_refuses_keeps_the_warning(mm, run):
+    """RT-6.1 step 7: the token still works on /users/me, so the bot is there and
+    the failure is real (500): the WARNING stays, and the file for the retry."""
+    _session(run, "sess-live")
+    mm.unregister_error = {TOKEN: (500, '{"message": "registrar down"}')}
+    r = run(STOP, CORRAL_SESSION_ID="sess-live", MM_BOT_TOKEN=None, MM_REG_SECRET=None)
+    assert "WARNING: could not unregister mac-proj-eee555" in r.stderr, r.stderr
+    assert "unregistered already" not in r.stderr
+    assert (run.state_dir / "sess-live.env").exists()
 
 
 def test_a_failed_unregister_says_why_for_token_and_secret(mm, run):

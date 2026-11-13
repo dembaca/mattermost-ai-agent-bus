@@ -118,6 +118,9 @@ class WebSocketInbox:
     # Events the channel pusher took and has not acknowledged (take / ack / nack):
     # still unhandled, so they count as waiting for the watermark and the counters.
     _out: list[ClassifiedEvent] = field(default_factory=list, repr=False, init=False)
+    # Per channel, the posts handled while an older one there still waited (post
+    # id -> create_at): the read watermark passes them once that one is handled.
+    _behind: dict[str, dict[str, int]] = field(default_factory=dict, repr=False, init=False)
     _queue: asyncio.Queue[ClassifiedEvent] = field(
         default_factory=asyncio.Queue, repr=False, init=False
     )
@@ -710,14 +713,25 @@ class WebSocketInbox:
     def handled(self, post: Post) -> None:
         """RT-6.2: the post is handled (handed over, gated, or the bot's own):
         the channel's read watermark passes it, unless an older post there
-        still waits in the queue. Unconnected, nothing moves: the backfill
-        still has to read from the mark."""
+        still waits in the queue. Then it is remembered, and the mark passes it
+        once that older post is handled: a mention handed over before an older
+        channel post (the pusher acks its batch mentions first, wait_for_events
+        returns them first) never counts as pending again. Unconnected,
+        nothing moves: the backfill still has to read from the mark."""
         cid, pid, created = post.channel_id, post.id, post.create_at
         if self._ws is None or not (self._bot_user_id and cid and pid and created):
             return
+        behind = self._behind.setdefault(cid, {})
+        behind[pid] = created
         first = self._first_waiting(cid)
-        if first is not None and first <= created:
+        ready = [(at, p) for p, at in behind.items() if first is None or at < first]
+        if not ready:
             return
+        created, pid = max(ready)
+        for _, p in ready:
+            del behind[p]
+        if not behind:
+            del self._behind[cid]
         try:
             watermark.advance(self._bot_user_id, cid, pid, created)
         except Exception as exc:  # noqa: BLE001 — never fail delivery over bookkeeping

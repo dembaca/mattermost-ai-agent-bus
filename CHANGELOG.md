@@ -3,6 +3,32 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.86.4
+
+### Fixed
+
+- **No false `could not unregister` at the end of a corral session**
+  ([RT-6.1](docs/arc42/06-runtime-view.md) step 7, RT-6.18 step 7): `postEnd`
+  stops the host MCP server first, whose exit work unregisters the bot, then
+  unregistered again with the now dead token, got `401`, warned and kept the
+  session file. When the unregister fails and Mattermost rejects the token
+  (`401` on `/users/me`, the sweep's check, now `mm_token_dead` in
+  `mm-agent-lib.sh`), it logs `<name> unregistered already (by its MCP
+  server)` and removes the file; any other failure keeps the warning and the
+  file. The start hook's unregister-again after stopping a host process that
+  did not get ready does the same.
+- **A post handed over no longer counts as pending**
+  ([RT-6.2](docs/arc42/06-runtime-view.md) step 1, RT-6.12 step 3, RT-6.22):
+  the read watermark skipped a handed-over post while an older post of the
+  same channel still waited in the inbox, and moved later only to that older
+  one. The push acknowledges a batch mentions first, and `wait_for_events`
+  returns them first, so a mention (often an agent's fyi `ACK` in a guest
+  channel, where little else moves the mark) stayed pending: the turn-end
+  check reported `pending=1 fyi=1`, `wait_for_events` returned nothing, and
+  the Stop hook or pi's turn-end blocked turn after turn until the agent
+  posted in that channel. The inbox now remembers such posts and the mark
+  passes them once the older one is handled.
+
 ## 0.86.3
 
 ### Fixed
