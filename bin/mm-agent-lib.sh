@@ -72,13 +72,15 @@ mm_with_secret() { MM_REG_SECRET_FD=3 "$@" 3< <(printf '%s\n' "${MM_REG_SECRET:-
 # the helper's output is dropped. On failure MM_UNREG_WHY says why, for a log:
 # "token: <reason>; secret: <reason>", each the helper's stderr on one line,
 # printable, cut to 160, with the token and the secret blanked.
+# MM_UNREG_TOKEN_HTTP is the registrar's status for the token attempt ("" for
+# none or no answer).
 #   mm_unregister_bot "$NAME" || log "could not unregister ${NAME}: ${MM_UNREG_WHY}"
 mm_unregister_bot() {
   local name="$1" tok="no token" sec="no secret"
-  MM_UNREG_WHY=""
+  MM_UNREG_WHY="" MM_UNREG_TOKEN_HTTP=""
   if [[ -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]]; then
     mm_unregister_with mm_with_token "$name" && return 0
-    tok="$MM_UNREG_WHY"
+    tok="$MM_UNREG_WHY" MM_UNREG_TOKEN_HTTP="$MM_UNREG_HTTP"
   fi
   if [[ -n "${MM_REG_SECRET:-}" ]]; then
     mm_unregister_with mm_with_secret "$name" && return 0
@@ -87,10 +89,32 @@ mm_unregister_bot() {
   MM_UNREG_WHY="token: ${tok}; secret: ${sec}"
   return 1
 }
+# As mm_unregister_bot, for a bot whose MCP server may have unregistered it
+# first (its exit work, RT-6.18 step 7): returns 0 unregistered, 2 gone already
+# (mm_token_gone), 1 failed (MM_UNREG_WHY says why).
+#   mm_unregister_or_gone "$NAME" || rc=$?
+mm_unregister_or_gone() {
+  mm_unregister_bot "$1" && return 0
+  if mm_token_gone "$MM_UNREG_TOKEN_HTTP"; then return 2; fi
+  return 1
+}
+# The bot of this shell's token is gone already (RT-6.1 step 7): the
+# registrar refused that token (HTTP status $1: 401, or 404) and Mattermost
+# does too (401 on /users/me). A registrar that fails (5xx) or does not answer,
+# and any other answer of Mattermost, prove nothing. mm_api runs in a
+# subshell, so MM_API_* stay as they were.
+mm_token_gone() {
+  [[ "$1" == 401 || "$1" == 404 ]] || return 1
+  [[ -n "${MM_BOT_TOKEN:-${MATTERMOST_TOKEN:-}}" ]] || return 1
+  [[ "$( (mm_api GET "/api/v4/users/me" >/dev/null 2>&1 || exit 0; printf '%s' "$MM_API_STATUS") )" == 401 ]]
+}
+# One unregister through the helper; on failure MM_UNREG_WHY (as above) and
+# MM_UNREG_HTTP, the status the helper reports ("" for none).
 mm_unregister_with() {
   local out v
-  MM_UNREG_WHY=""
+  MM_UNREG_WHY="" MM_UNREG_HTTP=""
   out="$("$1" "${BASH_SOURCE[0]%/*}/mm-agent-unregister.sh" "$2" 2>&1 >/dev/null)" && return 0
+  if [[ "$out" =~ ^unregister\ failed\ http=([0-9]{3}) ]]; then MM_UNREG_HTTP="${BASH_REMATCH[1]}"; fi
   for v in "${MM_BOT_TOKEN:-}" "${MATTERMOST_TOKEN:-}" "${MM_REG_SECRET:-}"; do
     [[ -z "$v" ]] || out="${out//"$v"/[hidden]}"
   done
@@ -1409,30 +1433,25 @@ mm_kept_candidate() {
 }
 
 # Unregister the bot of a session file with the file's own token, which the
-# registrar always accepts for it; when Mattermost rejects that token too
-# (401), the bot is gone already. Either way the file goes, and with it the
+# registrar always accepts for it; when the registrar refuses that token and
+# Mattermost does too, the bot is gone already (mm_token_gone). Either way the
+# file goes, and with it the
 # session's host state directory (hosted/<file name>/). Returns 0 unregistered,
 # 2 gone already, 1 failed (the reason on stdout). The file is loaded in a
 # subshell, so one bot's values never reach the next. Needs BIN.
 mm_unregister_session_file() {
-  local f="$1" name="$2" err rc d
+  local f="$1" name="$2" err rc=0 d
   # shellcheck disable=SC2030,SC2031
-  if err="$( (
+  err="$( (
       export MM_AGENT_SESSION_FILE="$f"
-      mm_load_session_file || exit 1
+      mm_load_session_file >/dev/null 2>&1 || exit 1
       export -n MM_BOT_TOKEN MATTERMOST_TOKEN
-      mm_with_token "$BIN/mm-agent-unregister.sh" "$name" 2>&1 >/dev/null
-     ) )"; then
-    rc=0
-  elif [[ "$( (
-      export MM_AGENT_SESSION_FILE="$f"
-      mm_load_session_file >/dev/null 2>&1 || exit 0
-      export -n MM_BOT_TOKEN MATTERMOST_TOKEN
-      mm_api GET "/api/v4/users/me" >/dev/null 2>&1 || exit 0
-      printf '%s' "$MM_API_STATUS"
-     ) )" == "401" ]]; then
-    rc=2
-  else
+      mm_unregister_with mm_with_token "$name" && exit 0
+      if mm_token_gone "$MM_UNREG_HTTP"; then exit 2; fi
+      printf '%s' "$MM_UNREG_WHY"
+      exit 1
+     ) )" || rc=$?
+  if [[ "$rc" -ne 0 && "$rc" -ne 2 ]]; then
     printf '%s' "${err:-no reason given}"
     return 1
   fi

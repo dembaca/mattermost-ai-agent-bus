@@ -246,7 +246,8 @@ async def test_the_watermark_does_not_pass_events_given_back(monkeypatch, tmp_pa
     assert watermark.at("u" * 26, "c" * 26) < 1000
     got = await inbox.wait_for_events(timeout_sec=1)
     assert [e.post.create_at for e in got] == [1000, 2000]
-    assert watermark.at("u" * 26, "c" * 26) == 2000  # handed over, now it passes
+    # Handed over, now it passes them and m, handed over before them (RT-6.2 step 1, 0.86.4).
+    assert watermark.at("u" * 26, "c" * 26) == 3000
     inbox.stop_typing()
 
 

@@ -17,7 +17,7 @@ from test_channel import Conn
 from mattermost_ai_agent_bus import channel, gate, lease, ownpost, server, unread
 from mattermost_ai_agent_bus.client import MattermostAdapter, SessionInfo, channel_list, post_of
 from mattermost_ai_agent_bus.model import Channel, ChannelUser, UnreadChannel
-from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
+from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
 GUEST = "g" * 26     # ~guest-a, a guest channel
 LATER = "k" * 26     # ~guest-b, a channel the bot is added to at runtime
@@ -292,6 +292,89 @@ async def test_the_count_takes_only_mentions_and_my_threads_in_a_guest_channel(c
     # The same channel as no guest: @channel and the post for all agents count, as before.
     rows = await unread.channels(chat, {GUEST})
     assert [p.message for p in rows[0].posts] == ["@agent-me look", "@channel hi", "all agents"]
+
+
+ROOT = "r" * 26
+
+
+def _handed_over_chat(chat, *posts):
+    """The chat with these posts, each channel reading only its own; an inbox over it."""
+    chat.channels = [UnreadChannel(cid, "O", last_post_at=max(p["create_at"] for p in posts))
+                     for cid in dict.fromkeys(p["channel_id"] for p in posts)]
+    chat.posts = sorted(posts, key=lambda p: -p["create_at"])
+    every = chat.channel_posts
+
+    async def own_channel(cid, **kw):
+        return [p for p in await every(cid, **kw) if p.channel_id == cid]
+
+    chat.channel_posts = own_channel
+    inbox = WebSocketInbox(client=chat)  # type: ignore[arg-type]
+    inbox._bot_user_id, inbox._bot_username = BOT, "agent-me"
+    inbox._ws = _Socket()
+    return inbox
+
+
+def _guest_reply_and_fyi(now):
+    reply = {"id": "1" * 26, "user_id": HUMAN, "channel_id": GUEST, "create_at": now + 1,
+             "message": "thanks", "root_id": ROOT}
+    fyi = {"id": "2" * 26, "user_id": "a" * 26, "channel_id": GUEST, "create_at": now + 2,
+           "message": "@agent-me ACK", "root_id": ROOT, "props": {"a2a": {"intent": "fyi"}}}
+    return reply, fyi
+
+
+@pytest.mark.parametrize("two", [False, True], ids=["guest", "guest+home"])
+@pytest.mark.parametrize("by", ["push", "wait_for_events"])
+async def test_a_guest_post_handed_over_counts_no_more(chat, by, two):
+    """RT-6.2 step 1, RT-6.22 step 3 (the owner's live test, 0.86.4): in a guest
+    channel a reply in the agent's thread and, newer, an agent's fyi mention.
+    Handed over mentions first (the pusher acks its batch item by item; a
+    wait_for_events for one event takes the mention first), the mention must
+    not count as pending once the older reply is handed over too: else the
+    turn-end check reports `pending=1 fyi=1` that wait_for_events never returns.
+    guest+home: the same in the home at once, each channel's mark on its own."""
+    now = int(time.time() * 1000)
+    reply, fyi = _guest_reply_and_fyi(now)
+    plain = {"id": "3" * 26, "user_id": HUMAN, "channel_id": WORK, "create_at": now + 3,
+             "message": "status"}
+    named = {"id": "4" * 26, "user_id": HUMAN, "channel_id": WORK, "create_at": now + 4,
+             "message": "@agent-me look"}
+    queued = [("watched_channel", reply), ("mention", fyi)]
+    if two:
+        queued = [queued[0], ("watched_channel", plain), queued[1], ("mention", named)]
+    inbox = _handed_over_chat(chat, *(p for _, p in queued))
+    for kind, post in queued:
+        await inbox._queue.put(ClassifiedEvent(kind=kind, post=post_of(post),
+                                               guest=post["channel_id"] == GUEST))
+    mentions = [p["id"] for k, p in queued if k == "mention"]
+    if by == "push":
+        taken = await inbox.take(timeout_sec=1, max_events=10)
+        assert [e.post.id for e in taken][:len(mentions)] == mentions  # the mentions first
+        for event in taken:  # as server._push_delivered, one item at a time
+            await inbox.ack([event], typing=False)
+    else:
+        first = await inbox.wait_for_events(timeout_sec=1, max_events=1)
+        assert [e.post.id for e in first] == [fyi["id"]]
+        rest = await inbox.wait_for_events(timeout_sec=1)
+        assert {e.post.id for e in rest} == {p["id"] for _, p in queued} - {fyi["id"]}
+        inbox.stop_typing()
+    assert await unread.channels(chat, {GUEST, WORK}, guests={GUEST}, threads={ROOT}) == []
+
+
+async def test_an_older_post_arriving_after_a_hand_over_keeps_it_handed_over(chat):
+    """RT-6.2 step 1: the fyi mention is handed over and the mark passes it; then the
+    older reply arrives (on its way meanwhile) and pulls the mark back before it
+    (watermark.hold). Handed over too, the reply lets the mark pass the mention
+    again: nothing counts."""
+    reply, fyi = _guest_reply_and_fyi(int(time.time() * 1000))
+    inbox = _handed_over_chat(chat, reply, fyi)
+    await inbox._put(ClassifiedEvent(kind="mention", post=post_of(fyi), guest=True))
+    assert [e.post.id for e in await inbox.wait_for_events(timeout_sec=1)] == [fyi["id"]]
+    await inbox._put(ClassifiedEvent(kind="watched_channel", post=post_of(reply), guest=True))
+    pending = await unread.channels(chat, {GUEST}, guests={GUEST}, threads={ROOT})
+    assert reply["id"] in [p.id for row in pending for p in row.posts]  # it waits
+    assert [e.post.id for e in await inbox.wait_for_events(timeout_sec=1)] == [reply["id"]]
+    inbox.stop_typing()
+    assert await unread.channels(chat, {GUEST}, guests={GUEST}, threads={ROOT}) == []
 
 
 # --- membership changes (RT-6.22 step 1) -------------------------------------------------
