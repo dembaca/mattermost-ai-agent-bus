@@ -3,8 +3,9 @@
 Two classes of ask. A *question* is content: approach A or B, what first, who
 does X. An *approval* is an action with effect. ask_human takes the class the
 agent declares (`kind`, default approval) and makes it an approval whenever
-its need, decision or answers name an action with effect (FLOOR, the one list
-of them): the floor decides, never the agent, and unclear stays approval.
+its decision, answers or need's questions name an action with effect (FLOOR,
+the one list of them; all of need without a decision, `decided`): the floor
+decides, never the agent, and unclear stays approval.
 
 Two modes per home. `direct`: every ask goes to its human (RT-6.11).
 `coordinator`: a question of an agent that does not hold its home's crown goes
@@ -117,6 +118,19 @@ def floor(*texts: str) -> str | None:
     """The first action with effect the texts name (FLOOR), None for none."""
     text = " ".join(t for t in texts if t)
     return next((name for name, rx in FLOOR if rx.search(text)), None)
+
+
+def decided(need: str, decision: str, answers: list[str],
+            asked: str = "") -> tuple[str, ...]:
+    """What the floor reads (step 1, RT-6.11): what a human's answer picks and
+    reacts to. The decision, the answers and `asked`, the need's questions
+    (server._asked: its sentences ending in ?, without code, quotes and URLs);
+    all of need without a decision, when it is the question itself. Its other
+    sentences beside a decision are the situation, like context: they may tell
+    what is merged, released or installed."""
+    if not decision.strip():
+        return (need, " ".join(answers))
+    return (decision, asked, " ".join(answers))
 
 
 def classify(declared: str, *texts: str) -> tuple[str, str | None]:

@@ -396,6 +396,82 @@ async def test_only_the_first_sentence_is_the_title(monkeypatch):
     assert fields["Context"] == "Ready now: review passed.\n\nOpen only 1.1."
 
 
+_BLOCK = "```bash\ncd ~/mm-bus. && git pull\n\n\nuv run pytest -q   # **all** of it\n```"
+
+
+def _fields(post):
+    return {f["title"]: f["value"] for f in post["props"]["attachments"][0]["fields"]}
+
+
+@pytest.mark.asyncio
+async def test_a_code_block_in_need_reaches_the_card_whole(monkeypatch):
+    """RT-6.11 step 1: the title is the first sentence before the block; the block goes
+    to Context with its line breaks, never cut at a sentence end, joined or unbolded."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(
+        need=f"Run these on hogan? They pull and test.\n{_BLOCK}\nThen tell me the result.",
+        context="Hogan only.")
+    post = c.posted[0]
+    assert post["message"] == "\U0001F64B @dembaca"
+    assert title_of(post) == "Run these on hogan?"
+    assert _fields(post)["Context"] == (
+        f"They pull and test.\n{_BLOCK}\nThen tell me the result.\n\nHogan only.")
+
+
+@pytest.mark.asyncio
+async def test_a_need_that_opens_with_a_code_block_keeps_it(monkeypatch):
+    """RT-6.11 step 1: the title is the first sentence outside a block; the block stays
+    in front of the rest."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need=f"{_BLOCK}\nMay I run this on hogan? It takes a minute.")
+    post = c.posted[0]
+    assert title_of(post) == "May I run this on hogan?"
+    assert _fields(post)["Context"] == f"{_BLOCK}\n\nIt takes a minute."
+
+
+@pytest.mark.asyncio
+async def test_a_code_block_in_the_decision_keeps_its_lines(monkeypatch):
+    """RT-6.11 step 1: blank lines are folded outside a block only."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="Install 0.86.1 on hogan?",
+                           decision=f"Run on hogan:\n\n\n{_BLOCK}\n\n\nthen restart.")
+    assert _fields(c.posted[0])["Decision"] == f"Run on hogan:\n\n{_BLOCK}\n\nthen restart."
+
+
+@pytest.mark.asyncio
+async def test_a_code_span_at_a_line_start_opens_no_block(monkeypatch):
+    """RT-6.11 step 1: a backtick fence's info string holds no backtick (CommonMark)."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="```uv run pytest``` on hogan? It takes a minute.")
+    assert title_of(c.posted[0]) == "```uv run pytest``` on hogan?"
+    assert _fields(c.posted[0])["Context"] == "It takes a minute."
+
+
+@pytest.mark.asyncio
+async def test_a_need_of_nothing_but_code_titles_its_first_line(monkeypatch):
+    """RT-6.11 step 1: the block's first line is the title, the whole block the context."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="```bash\nuv run pytest -q\nuv run mypy\n```")
+    assert title_of(c.posted[0]) == "uv run pytest -q"
+    assert _fields(c.posted[0])["Context"] == "```bash\nuv run pytest -q\nuv run mypy\n```"
+
+
+@pytest.mark.asyncio
+async def test_an_unclosed_block_in_need_is_closed_before_the_context(monkeypatch):
+    """RT-6.11 step 1: the context after need's open block is not code."""
+    c = _Client()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    await server.ask_human(need="Run this on hogan?\n```bash\nuv run pytest -q",
+                           context="Hogan only.")
+    assert title_of(c.posted[0]) == "Run this on hogan?"
+    assert _fields(c.posted[0])["Context"] == "```bash\nuv run pytest -q\n```\n\nHogan only."
+
+
 @pytest.mark.asyncio
 async def test_one_open_ask_per_human_at_a_time(monkeypatch):
     """RT-6.11 step 2: several questions at once are asked one after the other."""

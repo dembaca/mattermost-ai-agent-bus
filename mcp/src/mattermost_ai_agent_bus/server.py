@@ -1026,10 +1026,48 @@ def _one_line(text: str) -> str:
     return " ".join(str(text).split())
 
 
+# A fence line of a code block: ``` or ~~~, three or more, at the start of a line;
+# a backtick fence's info string holds no backtick (CommonMark), so "```ls``` on
+# hogan?" is a code span in a sentence, not a block.
+_FENCE = re.compile(r"[ \t]*(?:(`{3,})(?!.*`)|(~{3,}))")
+
+
+def _fence_parts(text: str) -> tuple[list[tuple[bool, str]], str]:
+    """Text as (in a code block, part) in order, the parts joined giving it back,
+    and the fence still open at its end ('' for none). A fence closes at one of
+    the same mark at least as long, else at the end."""
+    parts: list[tuple[bool, str]] = []
+    fence = ""
+    for line in text.splitlines(keepends=True):
+        m = _FENCE.match(line)
+        mark = (m[1] or m[2]) if m else ""
+        if not fence and mark:
+            fence = mark
+            parts.append((True, line))
+            continue
+        if fence and mark and mark[0] == fence[0] and len(mark) >= len(fence):
+            # The closing line's break belongs to the text after it.
+            fence = ""
+            parts[-1] = (True, parts[-1][1] + line.rstrip("\n"))
+            parts.append((False, line[len(line.rstrip("\n")):]))
+            continue
+        if parts and parts[-1][0] == bool(fence):
+            parts[-1] = (parts[-1][0], parts[-1][1] + line)
+        else:
+            parts.append((bool(fence), line))
+    return parts, fence
+
+
+def _fenced(text: str) -> list[tuple[bool, str]]:
+    return _fence_parts(text)[0]
+
+
 def _paragraphs(text: str) -> str:
     """Line breaks, lists and markdown kept; the ends trimmed, a run of blank
-    lines made one (RT-6.11 step 1)."""
-    return re.sub(r"\n[ \t]*(?:\n[ \t]*)+", "\n\n", str(text).replace("\r\n", "\n")).strip()
+    lines made one, but not in a code block (RT-6.11 step 1)."""
+    text = str(text).replace("\r\n", "\n")
+    return "".join(part if code else re.sub(r"\n[ \t]*(?:\n[ \t]*)+", "\n\n", part)
+                   for code, part in _fenced(text)).strip()
 
 
 # One word, no link: a markdown link, a URL, text with spaces or a backtick
@@ -1051,11 +1089,36 @@ def _headline(need: str) -> tuple[str, str]:
 
     Only the first sentence is the title; an agent that writes the whole
     explanation into need gets the rest moved to context, so the post is not
-    bold from end to end. Its own ** would close the bold early: dropped.
+    bold from end to end. Its own ** would close the bold early: dropped. The
+    title is the first sentence of the first text outside a code block, so a
+    block is never cut or joined into one line: it goes to context whole, and
+    the rest keeps its line breaks.
     """
-    text = _one_line(need).replace("**", "")
-    head = _SENTENCE_END.split(text, maxsplit=1)[0]
-    return head, text[len(head):].strip()
+    need = str(need).replace("\r\n", "\n")
+    parts, unclosed = _fence_parts(need)
+    # A block left open is closed, so the context after it is not code too.
+    close = f"\n{unclosed}" if unclosed else ""
+    for i, (code, part) in enumerate(parts):
+        if code or not part.strip():
+            continue
+        lead = part.lstrip()
+        end = _SENTENCE_END.search(lead)
+        head = _one_line(lead[:end.start()] if end else lead).replace("**", "")
+        before = "".join(p for _, p in parts[:i]).strip()
+        rest = (lead[end.end():] if end else "") + "".join(p for _, p in parts[i + 1:])
+        rest = rest.strip() + close if rest.strip() else ""
+        return head, "\n\n".join(x for x in (before, rest) if x)
+    # Nothing but code: its first line is the title, the block stays whole.
+    lines = [x for x in need.splitlines() if x.strip() and not _FENCE.match(x)]
+    return _one_line(lines[0] if lines else need), need.strip() + close
+
+
+def _asked(need: str) -> str:
+    """The sentences of need that ask (RT-6.11 step 1, RT-6.25 step 1): those
+    ending in a question mark, without code, quotes and URLs, as _questions
+    counts them. What the human reacts to, also beside a decision."""
+    text = _NOT_ASKED.sub(" ", str(need))
+    return " ".join(s for s in _SENTENCE_END.split(text) if _QUESTION_END.search(s))
 
 
 def _title_and_context(need: str, context: str) -> tuple[str, str]:
@@ -1660,13 +1723,14 @@ async def ask_human(
     short sentence ("Go to install 02dadca on hogan?"; there is no `question`
     argument, an unknown one is refused); more go to context. For a decision:
     context — the situation; recommendation — what you would do and why;
-    decision — written out, which a 👍 approves as it stands. These three show
-    as markdown: more than a few sentences as short lines or a list, not one
-    paragraph. where: PR, thread or host; PRs and issues as markdown links. blocking: true if you cannot go on without it. answers: 2–4 plain texts,
+    decision — written out, which a 👍 approves as it stands. These three are
+    markdown: more than a few sentences as short lines or a list. where: PR,
+    thread or host; PRs and issues as markdown links. blocking: true if you
+    cannot go on without it. answers: 2–4 plain texts,
     no emojis (the server adds 👍 = first, the go, and 👎, or 1️⃣–4️⃣; an
     approval: ["go", "no-go"]); chosen names the one a reaction picks. human
-    defaults to your responsible human. The ask is always a top-level post, its thread its own; root_id
-    links it from that thread.
+    defaults to your responsible human. The ask is a top-level post with its
+    own thread; root_id links it from that thread.
 
     One question per ask: several in need and context are refused (an answer
     often settles the next). A further ask while one to that human is open is
@@ -1680,13 +1744,14 @@ async def ask_human(
     exactly this ask, within 24 h of it: a later answer comes with
     expired: true and approves nothing; resolve_ask it and ask again. Until
     then the server reminds the human in its thread (RT-6.19). When it is
-    settled, call resolve_ask. Mention humans nowhere else; elsewhere write
-    their name without @.
+    settled, call resolve_ask. Mention humans nowhere else; write their name
+    without @.
 
-    kind: question (approach, order, who does X) or approval (default); naming
-    a merge, deploy, release, install, delete, push, external write or spending
-    makes it an approval. In ask mode coordinator a question goes to your 👑,
-    whose answer is advice (RT-6.25). only_human: only the human can answer
+    kind: question (approach, order, who does X) or approval (default); the
+    floor reads decision, answers and need's questions (all of need without a
+    decision): a merge, deploy, release, install, delete, push, external write
+    or spending there makes it an approval. In ask mode coordinator a question
+    goes to your 👑, whose answer is advice (RT-6.25). only_human: only the human can answer
     (their own settings or action): it goes to them, never via the 👑.
     """
     _done_typing()
@@ -1716,7 +1781,8 @@ async def ask_human(
     if not who:
         return _refused("ask_human", "no human to ask: pass human, or set MM_RESPONSIBLE_HUMAN / MM_TRUSTED_HUMANS")
     # RT-6.25: the server's floor decides the class, then the mode whom it goes to.
-    effective, floored = askroute.classify(kind, need, decision, " ".join(answer_list))
+    effective, floored = askroute.classify(
+        kind, *askroute.decided(need, decision, answer_list, asked=_asked(need)))
     if effective == askroute.APPROVAL and len(answer_list) > 2:
         # RT-6.11 step 1: an approval is go / no-go, 👍 and 👎; three or four
         # alternatives with their keycaps are for a question.

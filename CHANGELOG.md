@@ -3,6 +3,31 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.86.1
+
+### Fixed
+
+- **A question's situation no longer makes it an approval**
+  ([RT-6.25](docs/arc42/06-runtime-view.md) step 1, RT-6.11): the floor reads
+  what a human's answer picks or reacts to: the `decision`, the `answers` and
+  the questions of the `need` (its sentences ending in `?`, outside code,
+  quotes and URLs); all of the `need` when there is no `decision`. Beside a
+  decision the need's other sentences are the situation: "PR #209 is merged (0.84.0)",
+  "once registrar 0.8.0 is deployed", "a record naming the release to run"
+  no longer refuse a question with three or four answers. An action in the
+  decision, in an answer ("tag it now", also the noun in "the lines in its
+  tag"), in a need's question ("Install 02dadca on hogan?" beside "Go
+  ahead as recommended?") or anywhere in a need without a decision is still
+  an approval.
+- **An ask card keeps its code blocks** (RT-6.11 step 1): `need` was made one
+  line, so a fenced block in it reached the card's `Context` joined into one
+  line, `**` dropped and possibly cut at a `.` inside it. The title is now the
+  first sentence outside a code block; the rest goes to `Context` with its
+  line breaks and its blocks whole, and blank lines inside a block (of `need`,
+  `context`, `recommendation` or `decision`) are no longer folded. A block
+  left open in `need` is closed before the context; a code span at a line
+  start ("```uv run pytest``` on hogan?") opens no block.
+
 ## 0.86.0
 
 ### Added
