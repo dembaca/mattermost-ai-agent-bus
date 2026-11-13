@@ -20,6 +20,9 @@ before 0.5.0 are described in the git history.
   fails the signature check is refused; the host does not step back to an
   older one. The five guard rails are unchanged; the fixed pin stays for
   staged rollouts.
+- Latency: a new tag reaches a `latest` host at the end of its first session
+  after the daily release check has listed it, so up to about a day. When
+  timing matters, a fixed pin is the fast path.
 - The decision lines in `release-auto.log`, `TARGET` in `release-auto.env`,
   the notice and `bus_info`'s `release.auto.target` say `latest (v<x.y.z>)`,
   or `latest` while the newest tag is not known yet: `updates itself to

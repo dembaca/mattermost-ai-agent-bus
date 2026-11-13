@@ -2167,7 +2167,14 @@ older tag), not withdrawn, between sessions, `--hold` respected. The fixed pin
 stays, for staged rollouts: name a version, watch it, name the next. The
 trade-off: with `latest` the operator approves every release the owner signs
 in advance, so a bad release reaches every host at its next session end, until
-a patch withdraws it (`Withdrawn:` in its CHANGELOG) or a host is held. Hosts
+a patch withdraws it (`Withdrawn:` in its CHANGELOG) or a host is held. A
+second one: a newest tag that can never pass (unsigned, signed by a key not
+pinned, moved, another version in its tree) halts self-update on every
+`latest` host, and each session end tries it again, until a newer signed tag
+is pushed or that tag is removed upstream; a fixed pin has no such cost. And
+the latency: a new tag reaches a `latest` host at the end of its first
+session after the daily release check (RT-6.30 step 5) has listed it, so up
+to about a day; when timing matters, a fixed pin is the fast path. Hosts
 before 0.87.0 refuse a record that names `latest`; the operator names a fixed
 0.87.0 or newer until every host runs one (RT-6.32 steps 4 and 8).
 
