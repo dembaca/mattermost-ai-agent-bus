@@ -361,7 +361,7 @@ async def test_no_key_signature_token_or_argument_value_shows(chat, monkeypatch)
         assert part not in text
     assert f'"bridge_ref":"<{len(jws)} chars>"' in text and f'"bridge_text":"see <{len(jws)} chars> there"' in text
     assert '"Authorization":"<' in text and '"JWT":"<23 chars>"' in text
-    assert f"reply_in_thread(root_id 26, message {len('RESULT · ' + words)}, props 2)" in text
+    assert f"reply_in_thread(root_id 26, message {len('RESULT · ' + words)}, props 2)" in text.replace("\\", "")
     assert '"bridge_api_token": "<23 chars>"' in text and '"bridge_password": "<23 chars>"' in text
     assert '"bridge_note": "visible"' in text
 
@@ -500,3 +500,12 @@ def test_times_are_short_and_utc():
     assert debug._short(now, now) == "19:11:30Z"
     assert debug._short(now - 86400 + 4 * 3600, now - 0) == "2026-11-12 23:11Z"
     assert debug._short(1794604500.0 - 86400 * 2, now) == "2026-11-11 21:15Z"
+
+
+def test_a_value_is_literal_text_in_one_cell():
+    """RT-6.31 step 5: an owner named as a link, an image or with `\\|` stays
+    text in a single cell."""
+    row = debug._row("identity", "owner [x](https://e.example) ![](https://e.example/i.png) a\\|b <b>`c`*d*_e_")
+    assert row == ("| **identity** | owner \\[x\\](https://e.example) \\!\\[\\](https://e.example/i.png) "
+                   "a\\\\\\|b \\<b\\>\\`c\\`\\*d\\*\\_e\\_ |")
+    assert row.replace("\\\\", "").replace("\\|", "").count("|") == 3

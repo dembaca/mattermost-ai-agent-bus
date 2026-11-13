@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections import deque
 from collections.abc import Collection, Mapping
@@ -396,9 +397,14 @@ def _line(name: str, text: str) -> str:
     return line if len(line) <= LINE_MAX else line[:LINE_MAX - 1] + "…"
 
 
+# A value is text, never markup: a bot's description may name an owner as a link or image.
+_ESCAPE = re.compile(r"[\\`*_\[\]<>!|]")
+
+
 def _row(label: str, text: str) -> str:
-    """One table row: the label in bold, the value on one line, `|` escaped."""
-    value = " ".join(text.split()).replace("|", "\\|")
+    """One table row: the label in bold, the value on one line, as literal text
+    (backslash first, then markdown characters and `|`, each escaped once)."""
+    value = _ESCAPE.sub(r"\\\g<0>", " ".join(text.split()))
     value = value if len(value) <= LINE_MAX else value[:LINE_MAX - 1] + "…"
     return f"| **{label}** | {value} |"
 
