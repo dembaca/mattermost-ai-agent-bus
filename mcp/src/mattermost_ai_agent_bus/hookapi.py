@@ -598,10 +598,12 @@ async def last_post(client: MattermostAdapter, query: Mapping[str, str], body: M
 def _release() -> dict[str, Any]:
     """The release notice for the turn-end banner (RT-6.30, RT-6.2 step 8),
     riding on the read the Stop hook makes every turn end: the host's check
-    is the server's to read, in a keyless session too."""
+    is the server's to read, in a keyless session too. Before the first check,
+    the self-update line alone (RT-6.32), named by the version it names."""
     state = release.read_state()
-    text = release.line(state=state) if state else ""
-    return {"release": {"newest": state.newest, "line": text}} if state and text else {}
+    text = release.line(state=state)
+    newest = state.newest if state else release.read_auto().get("TARGET", "")
+    return {"release": {"newest": newest, "line": text}} if newest and text else {}
 
 
 async def _last(client: MattermostAdapter, query: Mapping[str, str],

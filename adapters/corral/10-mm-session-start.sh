@@ -242,6 +242,12 @@ chmod 700 "$STATE_DIR"
 if note="$(mm_release_notice "$(mm_tree_version "$ROOT")" "$STATE_DIR" 2>/dev/null)"; then
   log "${note}; this host copy: $(mm_tree_version "$ROOT"), $(mm_release_kind "$ROOT") — a human installs it with the host copy's installer: $ROOT/bin/mm-agent-host-install.sh --release v<version> (RT-6.30)"
 fi
+# What self-update does when this session ends (RT-6.32): only for a release
+# of the host copy's layout, from release-auto.env and the hold beside releases/.
+if [[ "$(basename "$(dirname "$ROOT")")" == releases ]] &&
+   note="$(mm_release_auto_notice "$(mm_tree_version "$ROOT")" "$STATE_DIR" "$(dirname "$(dirname "$ROOT")")" 2>/dev/null)"; then
+  log "${note} (RT-6.32)"
+fi
 SESSION_KEY="${CORRAL_SESSION_ID:-$$}"
 [[ "$SESSION_KEY" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || SESSION_KEY="$$"
 MM_AGENT_SESSION_FILE="${STATE_DIR}/${SESSION_KEY}.env"

@@ -888,14 +888,15 @@ mm_release_tools() {
 # temporary files in MM_REL_TMP, a directory only the host sees: no system or
 # global config, attributes file, fsmonitor, hook, credential helper or
 # replace refs, LC_ALL=C (its messages are matched), only the https and file
-# protocols, no HTTP redirect, every received object checked (RT-6.29 step 2).
+# protocols, no HTTP redirect, a transfer slower than 1 byte/s for 60 s given up
+# (RT-6.32: the end hook waits for it), every received object checked (RT-6.29 step 2).
 mm_rgit() {
   LC_ALL=C TMPDIR="$MM_REL_TMP" GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
     GIT_NO_REPLACE_OBJECTS=1 \
     git --no-optional-locks -c core.attributesFile=/dev/null -c core.fsmonitor=false \
     -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false \
     -c protocol.allow=never -c protocol.https.allow=always -c protocol.file.allow=always \
-    -c http.followRedirects=false \
+    -c http.followRedirects=false -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 \
     -c credential.helper= -c transfer.fsckObjects=true --git-dir="$MM_REL_GIT_DIR" "$@"
 }
 
@@ -1015,6 +1016,195 @@ mm_release_notice() {
     out="${out:+$out; }release v${newest} is out (${step})"
   elif mm_version_newer "$newest" "$have"; then
     out="${out:+$out; }the newest release that passes the check is v${newest}, older than ${have}: the repository may be frozen or rewound"
+  fi
+  [[ -n "$out" ]] || return 1
+  printf '%s\n' "$out"
+}
+
+# --- self-update between sessions (ADR-011 phase 3, RT-6.32) --------------------
+# The registrar may offer the release keys and name the version hosts update
+# themselves to, in a record signed with its key. Beside releases/ (the layout
+# directory, out of XDG_STATE_HOME's reach, like release-signers):
+# release-hold, which stops self-updates (--hold, --unhold). In the host state
+# directory, for the notice only: release-auto.env (what the registrar named
+# when last read, the keys' state, the last decision) and release-auto.log
+# (one line per decision).
+# shellcheck disable=SC2034 # read by the installer and the release check
+MM_HOLD_FILE=release-hold MM_AUTO_FILE=release-auto.env MM_AUTO_LOG=release-auto.log
+
+# Whether self-updates are held on the host copy in layout directory $1:
+# anything named release-hold there counts, a symlink too (fail safe).
+mm_release_held() {
+  [[ -e "$1/$MM_HOLD_FILE" || -L "$1/$MM_HOLD_FILE" ]]
+}
+
+# mm_bounded <seconds> <command…>: run the command, its stdout and stderr as
+# they are, and stop it after <seconds>: TERM to it and its children (the
+# installer's EXIT trap then removes its lock and half-made release). No
+# watchdog process is left behind. Its exit status, 124 when stopped.
+mm_bounded() {
+  local max="$1" pid end rc=0
+  shift
+  "$@" &
+  pid=$!
+  end=$((SECONDS + max))
+  while kill -0 "$pid" 2>/dev/null; do
+    if (( SECONDS >= end )); then
+      pkill -TERM -P "$pid" 2>/dev/null || true
+      kill -TERM "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid" 2>/dev/null || rc=$?
+  return "$rc"
+}
+
+# mm_install_lock_live <lock dir>: whether the installer's lock (.install.lock
+# beside releases/) belongs to a running installer: the pid it holds lives, or
+# it holds none yet and is younger than ten minutes (an installer between its
+# mkdir and writing the pid, or one from before 0.86.0). A lock whose
+# installer is gone is stale (RT-6.28, RT-6.32).
+mm_install_lock_live() {
+  local pid
+  [[ -d "$1" ]] || return 1
+  pid="$(mm_read_file "$1/pid" 64 2>/dev/null | tr -cd '0-9')" || pid=""
+  if [[ -n "$pid" ]]; then
+    kill -0 "$pid" 2>/dev/null
+  else
+    [[ -z "$(find "$1" -maxdepth 0 -mmin +10 2>/dev/null)" ]]
+  fi
+}
+
+# mm_registrar_release <python>: the registrar's release record, read and
+# verified by the host copy's own Python (mattermost_ai_agent_bus.selfupdate,
+# attest.verify_release) with MM_REGISTRAR_KEYS, from /, with an environment
+# of PATH, HOME, LC_ALL, the registrar's keys and URLs and TLS and proxy settings only, stopped after
+# 30 s. Its output is checked again here: MM_RR_STATUS (ok, none, failed,
+# nokeys), MM_RR_WHY, MM_RR_KID, MM_RR_VERSION (x.y.z or ""), MM_RR_KEYS (one
+# `<type> <base64>` per line, by mm_release_parse_keys). Never fails.
+# shellcheck disable=SC2034 # MM_RR_* are read by the caller
+mm_registrar_release() {
+  local py="$1" out="" line k v st="" keys="" bad=0
+  local -a e
+  MM_RR_STATUS=failed MM_RR_WHY="" MM_RR_KID="" MM_RR_VERSION="" MM_RR_KEYS=""
+  if [[ -z "${MM_REGISTRAR_KEYS:-}" ]]; then
+    MM_RR_STATUS=nokeys MM_RR_WHY="no registrar keys pinned (MM_REGISTRAR_KEYS): nothing taken from the registrar"
+    return 0
+  fi
+  if [[ ! -x "$py" || -d "$py" ]]; then
+    MM_RR_WHY="no Python environment in the host copy ($py)"
+    return 0
+  fi
+  e=(HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin LC_ALL=C MM_REGISTRAR_KEYS="$MM_REGISTRAR_KEYS")
+  for k in MM_REGISTER_URL MM_CHAT_URL SSL_CERT_FILE SSL_CERT_DIR HTTPS_PROXY https_proxy NO_PROXY no_proxy; do
+    if [[ -n "${!k:-}" ]]; then e+=("$k=${!k}"); fi
+  done
+  out="$(cd / && mm_bounded 30 env -i "${e[@]}" "$py" -I -m mattermost_ai_agent_bus.selfupdate \
+           </dev/null 2>/dev/null | head -c 16384)" || out=""
+  while IFS= read -r line; do
+    k="${line%%=*}" v="${line#*=}"
+    [[ "$line" == *=* ]] || continue
+    case "$k" in
+      STATUS) [[ -z "$st" && "$v" =~ ^(ok|none|failed|nokeys)$ ]] && st="$v" ;;
+      WHY) MM_RR_WHY="$(tr -cd '[:print:]' <<<"$v" | cut -c1-200)" ;;
+      KID) if [[ "$v" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then MM_RR_KID="$v"; fi ;;
+      VERSION) if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -z "$MM_RR_VERSION" ]]; then MM_RR_VERSION="$v"; else bad=1; fi ;;
+      SIGNER) keys+="$v"$'\n' ;;
+    esac
+  done <<<"$out"
+  case "$st" in
+    "") MM_RR_STATUS=failed MM_RR_WHY="the registrar's release record was not read (no answer from the host copy's Python)"; return 0 ;;
+    ok) ;;
+    *) MM_RR_STATUS="$st" MM_RR_VERSION=""; return 0 ;;
+  esac
+  if [[ "$bad" -eq 1 ]] || ! mm_release_parse_keys "the registrar's release record" "$keys" || [[ -z "$MM_REL_PARSED" ]]; then
+    MM_RR_STATUS=failed MM_RR_VERSION="" MM_RR_WHY="the registrar's release record has a line out of its form; refused"
+    return 0
+  fi
+  MM_RR_STATUS=ok MM_RR_KEYS="$MM_REL_PARSED"
+}
+
+# After mm_release_signers and an `ok` mm_registrar_release: how the keys the
+# registrar offers relate to the host's: `none` (no pin yet: they would be
+# pinned), `match` (the same set) or `mismatch` (refused: a person changes keys
+# on the host, --replace-signers). Compared as sets of keys, by type and the
+# decoded key (ssh-keygen's fingerprint), so another spelling of the same key
+# (padding, order, a comment) is the same key; without ssh-keygen by text.
+mm_release_key_ids() {
+  local n ids
+  n="$(grep -c . <<<"$1")"
+  if ids="$(grep . <<<"$1" | ssh-keygen -l -f /dev/stdin 2>/dev/null | awk '{print $2, $NF}')" &&
+     [[ "$(grep -c . <<<"$ids")" -eq "$n" ]]; then
+    sort -u <<<"$ids"
+  else
+    sort -u <<<"$1"
+  fi
+}
+mm_release_keystate() {
+  if [[ "${MM_REL_FROM:-none}" == none ]]; then
+    printf 'none\n'
+  elif [[ "$(mm_release_key_ids "$MM_RR_KEYS")" == "$(mm_release_key_ids "$MM_REL_KEYS")" ]]; then
+    printf 'match\n'
+  else
+    printf 'mismatch\n'
+  fi
+}
+
+# mm_auto_state <state dir> KEY=value…: merge into release-auto.env (0600, one
+# rename); the values are words, versions and epochs only. For the notice.
+mm_auto_state() {
+  local dir="$1" f line k kv keep="" new="" tmp
+  shift
+  f="$dir/$MM_AUTO_FILE"
+  [[ -d "$dir" && ! -L "$dir" && ! -L "$f" ]] || return 0
+  for kv in "$@"; do new+="$kv"$'\n'; done
+  if [[ -f "$f" ]]; then
+    while IFS= read -r line; do
+      k="${line%%=*}"
+      [[ "$line" == *=* && "$k" =~ ^[A-Z_]+$ && $'\n'"$new" != *$'\n'"$k="* ]] || continue
+      keep+="$line"$'\n'
+    done < <(mm_read_file "$f" 4096 || true)
+  fi
+  tmp="$dir/.$MM_AUTO_FILE.$$"
+  { (umask 077 && printf '%s%s' "$keep" "$new" >"$tmp") && mv -f "$tmp" "$f"; } 2>/dev/null || rm -f "$tmp"
+}
+
+# mm_auto_log <state dir> <text>: one line per self-update decision in
+# release-auto.log, the newest 200 kept.
+mm_auto_log() {
+  local dir="$1" f tmp text
+  f="$dir/$MM_AUTO_LOG"
+  [[ -d "$dir" && ! -L "$dir" && ! -L "$f" ]] || return 0
+  text="$(head -n1 <<<"$2" | tr -cd '[:print:]' | cut -c1-400)"
+  tmp="$dir/.$MM_AUTO_LOG.$$"
+  { { tail -n 199 "$f" 2>/dev/null || true; printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$text"; } >"$tmp" &&
+    chmod 600 "$tmp" && mv -f "$tmp" "$f"; } 2>/dev/null || rm -f "$tmp"
+}
+
+# mm_release_auto_notice <version> <state dir> <layout dir>: what self-update
+# will do for a host copy session of <version>, in plain words (RT-6.32); fails
+# when there is nothing to say. The same text as release.py's auto_line().
+mm_release_auto_notice() {
+  local have="$1" dir="$2" layout="$3" text k v target="" keys="" out=""
+  [[ "$have" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  if [[ -f "$dir/$MM_AUTO_FILE" && ! -L "$dir/$MM_AUTO_FILE" ]] && text="$(mm_read_file "$dir/$MM_AUTO_FILE" 4096)"; then
+    while IFS='=' read -r k v; do
+      case "$k" in
+        TARGET) [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && target="$v" ;;
+        KEYS) [[ "$v" =~ ^(none|match|mismatch|bad)$ ]] && keys="$v" ;;
+      esac
+    done <<<"$text"
+  fi
+  if mm_release_held "$layout"; then
+    out="self-update held on this host (mm-agent-host-install.sh --unhold lifts it)"
+  elif [[ "$keys" == mismatch ]]; then
+    out="the registrar names a release key this host doesn't trust: no self-update"
+  elif [[ "$keys" == bad ]]; then
+    out="the release keys on this host can't be used (see release-auto.log): no self-update"
+  elif [[ -n "$target" ]] && mm_version_newer "$have" "$target"; then
+    out="updates itself to v${target} when this session ends"
   fi
   [[ -n "$out" ]] || return 1
   printf '%s\n' "$out"

@@ -181,8 +181,9 @@ def snapshot(base: Path, skip: Path) -> dict[str, tuple[int, int]]:
 
 def test_the_check_writes_only_its_state_and_src_git(run, tmp_path, keys, origin):
     """RT-6.30: it installs nothing: besides src.git only release.env,
-    release-check.at, release-withdrawn.env (and release-rejected.env) change; --if-due skips a
-    check a day old; inside corral it refuses."""
+    release-check.at, release-withdrawn.env (and release-rejected.env) change;
+    from a checkout it reads no registrar record (RT-6.32: only a host copy's
+    release does); --if-due skips a check a day old; inside corral it refuses."""
     sign(origin, "v90.1.0", keys["owner"])
     src = tmp_path / "host" / "src.git"
     before = snapshot(tmp_path, src)

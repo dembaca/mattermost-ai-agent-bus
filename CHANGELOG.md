@@ -3,6 +3,42 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.86.0
+
+### Added
+
+- **The host copy updates itself between sessions** (ADR-011 phase 3,
+  [RT-6.32](docs/arc42/06-runtime-view.md#632-self-update-between-sessions)):
+  the registrar (0.9.0) publishes one signed release record for its
+  installation, `GET …/register/v1/release` (`mm-agent-release+jwt`): the
+  release keys it offers and, optionally, the version hosts run. At the end of
+  a corral session, after the bot is gone, the stop hook runs
+  `mm-agent-host-install.sh --auto`, which reads the record (verified with
+  `MM_REGISTRAR_KEYS` by the host copy's own Python), pins the offered keys
+  when the host has none yet, refuses a record with other keys than the pinned
+  ones, and installs the named version as `--release` would: only forward,
+  only a tag signed by a pinned key, never a withdrawn one, and only when no
+  other session of the host copy runs. A running session keeps its version.
+  Without pinned registrar keys nothing is taken from the registrar.
+- `--hold` and `--unhold`: a host's stop switch for self-updates
+  (`release-hold` beside `releases/`).
+- The notice (the start hook, the turn-end banner, `--check`, `bus_info`'s
+  `release.auto`) says what will happen: `updates itself to v<x.y.z> when
+  this session ends`, `held`, or that the registrar names a key the host
+  doesn't trust. The release check reads the record for it, nothing more.
+
+- The installer's lock holds its pid: a lock whose installer is gone is taken
+  over, and the release check no longer waits for it. git gives up a stalled
+  transfer after 60 s, and the end hook stops `--auto` after 600 s.
+
+A host without release keys becomes a checked one at its first session end
+after the registrar offers keys: it pins them then, and from that point it
+refuses a release whose signature they don't verify.
+
+Self-update starts with sessions that began on 0.86.0: install it once by hand.
+
+Needs: registrar 0.9.0 for self updates
+
 ## 0.85.0
 
 ### Added

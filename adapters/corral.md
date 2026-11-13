@@ -79,6 +79,27 @@ check recorded it in `release-withdrawn.env` beside `releases/`) is refused by
 `--release` and `--rollback`, naming the release that withdrew it; `--withdrawn-ok`
 installs or rolls back to it on purpose. Before the first check (`--check`) the
 installer says the withdrawn versions are unknown.
+
+**Self-update between sessions** (from 0.86.0, registrar 0.9.0). When the registrar's
+operator names a release, the host copy updates itself to it when a session ends and
+no other session of it runs: the stop hook, after the bot is gone, runs
+`mm-agent-host-install.sh --auto`. It reads the registrar's signed release record
+(verified with `MM_REGISTRAR_KEYS`; without them nothing is taken), pins the release
+keys the record offers when this host has none yet, refuses a record with other keys
+than the pinned ones, and installs only a newer, not withdrawn version whose tag a
+pinned key signed, with every check of `--release`. Never down, never on a host
+without release keys, never inside a session. Once per host: install 0.86.0 by hand
+(the first self-update comes from a session that started on it), and have
+`MM_REGISTRAR_KEYS` and `MM_CHAT_URL` (or `MM_REGISTER_URL`) in the environment corral
+runs its hooks with; to choose the keys yourself, pin `MM_RELEASE_SIGNERS` before the
+first contact. `mm-agent-host-install.sh --hold` stops it on this host until
+`--unhold` (`release-hold` beside `releases/`). The end hook stops it after 600 s
+(corral's hooks have no timeout), and the terminal hears of it only when it updated,
+refused, failed, waits or is held. Each decision is one line in
+`~/.local/state/mm-agent-bus/release-auto.log`; the start hook, `--check`, the
+turn-end banner and `bus_info` say what will happen
+([arc42 RT-6.32](../docs/arc42/06-runtime-view.md#632-self-update-between-sessions)).
+
 The output, `--check` and the start hook say `signed release v<x.y.z>`,
 `release v<x.y.z> (signature not checked)`, or `unsigned` for an install from a clone
 (below).

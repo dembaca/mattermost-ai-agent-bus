@@ -2,7 +2,8 @@
 
 Post props, custom status and crown, unread counters and the profile the
 registrar wrote are Mattermost's. Only the modules in ALLOWED read or write
-them, and only client.py talks HTTP; the rest of the server gets bus types
+them, and only client.py talks HTTP (and selfupdate.py, which the server never
+runs: RT-6.32); the rest of the server gets bus types
 (model.py), a post as a Post that client.post_of built.
 
 The modules in PORT_MODULES talk to the chat through port.ChatPort only: they
@@ -23,6 +24,8 @@ ALLOWED = {
     "client.py": "the Mattermost adapter: REST, unread counters, profile, Mattermost's own props",
     "a2a.py": "the bus's props: agent_card and a2a, written and read back",
     "lease.py": "custom status, crown and roster: the lease, read and written through client.py",
+    "selfupdate.py": "the registrar's release record over HTTP, read on the host by the installer and the "
+                     "release check, never by the server (RT-6.32)",
 }
 # Keys that are a carrier wherever they appear.
 CARRIERS = {

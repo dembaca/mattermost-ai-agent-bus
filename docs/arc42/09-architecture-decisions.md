@@ -2045,7 +2045,7 @@ on: the end, and `status` and `bus_info` show it.
 
 ## ADR-011: Updates from a signed release only
 
-**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy; phase 1b built (0.82.0, RT-6.29): `--release v<x.y.z>`, the tag verified against pinned keys when the host sets them (opt-in, decision (3) below); phase 2 built (0.83.0, RT-6.30): the release check and the notice, as point 3 and the open questions' recommendations (*Phase 2 as built* below); decisions (4) and (5) of 2026-11-12 built (0.84.0, RT-6.29, RT-6.30): the pinned keys as a host property, a withdrawn version refused. Proposed 2026-11-09. Asked for by a trusted human on
+**Status:** Accepted, phase 1a built (0.81.0, RT-6.28): the layout, the switch and the rollback of the host copy; phase 1b built (0.82.0, RT-6.29): `--release v<x.y.z>`, the tag verified against pinned keys when the host sets them (opt-in, decision (3) below); phase 2 built (0.83.0, RT-6.30): the release check and the notice, as point 3 and the open questions' recommendations (*Phase 2 as built* below); decisions (4) and (5) of 2026-11-12 built (0.84.0, RT-6.29, RT-6.30): the pinned keys as a host property, a withdrawn version refused; phase 3 built (0.86.0, RT-6.32, the owner's decisions of 2026-11-13 below): the registrar distributes the release keys once and names the version, and corral's host copy updates itself to it between sessions, bounded by five guard rails, while the code's signature stays the owner's. Proposed 2026-11-09. Asked for by a trusted human on
 2026-11-09 ("probably not quite simple with plugin incl. MCP server and
 sandbox hooks"). Options, a recommendation and open questions; command words,
 file names and variables below are proposals. Builds on Section 7.1 (the
@@ -2122,6 +2122,38 @@ this; a missing or unreadable file refuses nothing, and a missing one is said
 `-dev` or `-legacy` build too), is refused the same way: a rollback target can
 be withdrawn too, and in an emergency `--withdrawn-ok` is one word away
 (RT-6.29 step 2).
+
+*The owner's decisions for phase 3 (dembaca, 2026-11-13): the registrar
+distributes keys and names a version.* The registrar's operator is trusted.
+There is no chat command and nothing per team: one record for the
+registrar's installation (`GET …/register/v1/release`, `mm-agent-release+jwt`,
+the attestation key), which offers the release keys (`signers`) and may name
+the version hosts run (`version`); 404 `{"error":"no release set"}` offers
+neither. This changes "the registrar signs no release" below only so far: the
+registrar's key decides *which* signed release a host runs and hands out the
+keys *once*; the code's signature stays the owner's release key, checked on
+every host as in phase 1b. Five guard rails bound it:
+
+1. *Keys pinned once.* A host takes the keys only when it has no pin
+   (neither `release-signers` nor `MM_RELEASE_SIGNERS`), after verifying the
+   record with the pinned registrar keys; without those nothing is taken.
+   Afterwards a different key set from the registrar is refused, logged and
+   shown (the notice, `bus_info`); changing keys stays a person's step on the
+   host (`--replace-signers`).
+2. *Only forward, only signed.* A host updates by itself only to a tag signed
+   by a pinned key, newer than what it runs and not withdrawn; never down
+   (`--rollback` stays manual); every `--release` check applies; a host
+   without keys never updates by itself.
+3. *Between sessions.* At a session's end (corral's end hook, through the
+   unchanged dispatcher), only when no other session of the host copy runs; a
+   running session keeps its version; never from a sandbox or a tree one can
+   write.
+4. *A stop switch per host.* `--hold` until `--unhold`, a file beside
+   `releases/` out of `XDG_STATE_HOME`'s reach; the notice and `bus_info` say
+   `held`.
+5. *Operator config, no host toggle.* Self-update is on when the registrar
+   names a version and the host has pinned release keys; no host variable
+   switches it.
 
 **Context:** One release has several parts, installed in different places
 and restarted by different things:
@@ -2234,7 +2266,12 @@ developer runs `--release`, after the notice; a minor release with
 terminal first. The plugin keeps Claude Code's own update, whose auto-update
 is on or off, not per kind of release (open question). Pull, not push: a
 trusted human's `/agent-update` that installs on every host of a home is not
-part of this decision (alternative (c)).
+part of this decision (alternative (c)). *Since phase 3 (2026-11-13):* corral's
+host copy also updates itself between sessions to the version the registrar's
+operator names, within the five guard rails above (RT-6.32); the operator
+setting that version is the approval, a host's `--hold` its veto. A breaking
+release is named there only on purpose: its `Needs:` lines reach every agent's
+notice first (RT-6.30), and the operator names it when they hold.
 
 *5 · Running sessions, the listener, the crown and asks.* An update never
 stops a session: it runs on with the version it started (its server, and
@@ -2280,7 +2317,14 @@ review what it signed. The registrar may help distribute: it can list the
 release keys next to its own at `…/register/v1/keys`, one out-of-band channel
 for `MM_RELEASE_SIGNERS`; and it may later publish which release a team has
 approved (open question), never below a host's current version and never
-instead of the code's own signature.
+instead of the code's own signature. *Changed by phase 3 (2026-11-13), only so
+far:* the registrar still signs no release. Its key signs one record for its
+installation that offers the release keys and names a version (RT-6.32); a
+host takes the keys from it once, when it has none, and never replaces them on
+its word; what it installs is still a tag the owner's release key signed. A
+leaked attestation key can therefore pin keys on a host that has none yet
+(first contact) and choose among signed releases on the others: forward only,
+never a withdrawn one, never past `--hold`.
 
 *Where the chain ends.* The host side runs only signed code. The sandbox side
 does not: the skill (in every agent's context), `hooks.json` and the turn
@@ -2304,6 +2348,16 @@ everything: it installs what the marketplace source publishes, with no
 signature check this bus could pin, and does not reach the host copy at all.
 (f) The MCP server updates itself: it would install code from inside the
 process that holds the token, triggered by what it reads on the bus.
+For phase 3 (2026-11-13): (g) a chat command (`/agent-update`) or a record per
+team: more to verify and to scope, and a trusted account in chat would steer
+installs; the owner chose one record per registrar installation, set by its
+operator. (h) Keys and version from the registrar on every read (no pin): the
+registrar's key would decide the code; refused, keys are pinned once. (i) The
+update inside the session (the server or a turn hook): the code a session runs
+would change under it, and it would run where the token lives; it runs in
+corral's end hook instead. (j) A host variable that switches self-update on:
+one more setting per host and a workdir's `.envrc` could flip it; the operator's
+record and `--hold` decide instead.
 
 **Consequences:** Plus: the host side runs only what the release key signed;
 an update is one command with a rollback; every server tells what is
@@ -2319,8 +2373,11 @@ every harness, corral or not.
 `previous`, `--rollback`, `--downgrade` and the release recorded per session;
 the non-corral configs pointed at the host copy. 2, the release check and the
 notice (`bus_info`, the banner, the roster's version column), and the
-`Needs:` line as a release rule in CLAUDE.md with a doc-check. 3, if wanted,
-the registrar's approved-release record. Phase 1 is split: **1a** (built,
+`Needs:` line as a release rule in CLAUDE.md with a doc-check. 3 (built,
+0.86.0, RT-6.32; replaces the first draft's "a record per team naming the
+release"): one release record per registrar installation, which offers the
+keys and names the version corral's host copies update themselves to between
+sessions (*Phase 3 as built* below). Phase 1 is split: **1a** (built,
 0.81.0, RT-6.28) is the layout, the switch and the rollback without a
 signature: an install from a clone lands in `releases/<version>-dev.<12 hex of
 the commit>/` with `SOURCE=unsigned`, and a host copy from before the layout
@@ -2354,7 +2411,30 @@ when the text is too long (the HELLO card's `version` stands in), with `unchecke
 for a release without a checked signature, `unsigned` for a host copy from a clone,
 and `plugin` for a tree without a `SOURCE` (the plugin, a checkout).
 
-**Tests (phases 1a, 1b and 2 built: `tests/hooks/test_host_install.py`, `test_host_install_release.py`, `test_release_check.py`, `test_release_signers.py` (decisions (4) and (5)), `mcp/tests/test_release.py`; the rest when built):** `tests/hooks/`: `--release` installs a tag signed by a
+*Phase 3 as built (0.86.0, RT-6.32).* Who reads the record: never the MCP
+server (it parses nothing from the network, as in phase 2), but the host
+copy's own Python (`mattermost_ai_agent_bus.selfupdate`, the same
+`attest._verify_jws` as every registrar record), started by bash with a clean
+environment, whose fixed output lines `mm_registrar_release` checks again, each
+key with `mm_release_parse_keys`. Two callers read it: the installer's new
+`--auto`, which decides and acts, and the release check, for the notice only
+(`release-auto.env` in the state directory). Nothing the check writes decides
+anything: `--auto` reads and verifies the record itself every time. Where the
+decision runs: corral's stop hook, after the bot is removed or kept, on every
+way out of the hook (its `EXIT` trap), runs the recorded release's installer
+with `--auto`; the dispatcher is unchanged, so corral asks nothing new. `--auto`
+logs one line per decision in `release-auto.log`, exits 0 when there is
+nothing to do, and otherwise runs the release check (so the withdrawn list is
+current; without one no update) and then the `--release` path with every
+check; its exit status never reaches corral, it is stopped after 600 s, and
+the terminal hears of it only when something happened or waits. Keys are compared as sets of keys by type
+and decoded key (`ssh-keygen -l`), so order, comments and spelling do not
+count; the registrar publishes them canonical. `set_at_ms` is the registrar's
+start time and orders nothing. The first self-update needs a session that
+started on 0.86.0: older stop hooks do not know `--auto`. Without corral there
+is no end hook: those harnesses update as in phase 1b.
+
+**Tests (phases 1a, 1b, 2 and 3 built: `tests/hooks/test_host_install.py`, `test_host_install_release.py`, `test_release_check.py`, `test_release_signers.py` (decisions (4) and (5)), `test_self_update.py` (phase 3), `mcp/tests/test_release.py`, `mcp/tests/test_self_update.py`; the rest when built):** `tests/hooks/`: `--release` installs a tag signed by a
 pinned key; refuses an unsigned one, one signed by another key, one whose
 name differs from its tag object's or whose tree has another version, one that
 moved, and a malformed version; refuses an older version without
@@ -2371,6 +2451,18 @@ pins it, until they unpin it: kept offline, rotated like the registrar's keys
 (pin old and new together). A bad release stays validly signed for ever:
 the downgrade guard and the notice keep hosts from going back to it, and its
 withdrawal is an open question. A new row in Section 11 when accepted.
+Phase 3 adds: the registrar's attestation key now also chooses which signed
+release hosts run and offers the keys at first contact, so its leak pins an
+attacker's keys on a host that has none yet (pin `MM_RELEASE_SIGNERS` before
+the first contact to close that) and moves pinned hosts forward to any newer
+signed release, never a withdrawn one and never past `--hold`. A bad but signed
+release reaches every host at its next session end before anyone looks: the
+operator names versions on purpose, `Withdrawn:` stops further installs, and
+`--rollback` stays manual. A killed `--auto` can leave `.install.lock`, which
+no longer blocks: it holds the installer's pid and the next run takes it over.
+corral runs hooks without a timeout: the stop hook stops `--auto` after 600 s
+and git gives up a stalled transfer after 60 s, so a session's end waits at
+most that long.
 
 **Open questions:**
 
@@ -2386,10 +2478,18 @@ withdrawal is an open question. A new row in Section 11 when accepted.
   every server of a home ask its own responsible human (an ask, RT-6.11) to
   update, installing nothing. Recommendation: after phase 2, if the pull
   notice is not enough.
-- **The registrar's approved release:** a record per team naming the release
-  to run, signed with its key, which the notice shows next to the newest
-  verified tag, never below a host's version. Recommendation: phase 3, only if
-  teams want to hold back.
+- **The registrar's approved release:** (decided 2026-11-13 and built in
+  phase 3, RT-6.32) not a record per team but one per registrar installation,
+  set by its operator, offering the keys once and naming the version hosts
+  update themselves to; a team or host holds back with `--hold`.
+- **Self-update without corral:** (open, phase 3) harnesses without corral
+  have no end hook between sessions; a server could run `--auto` at its own
+  exit, but that is the process that held the token. Recommendation: leave them
+  on `--release` by hand until point 7's configs point at the host copy.
+- **A stale `.install.lock` after a killed `--auto`:** (built in phase 3 as
+  recommended) the lock holds the installer's pid; the next installer takes
+  over a lock whose process is gone and logs it, and the release check does
+  not wait for it.
 - **Who runs the release check:** (built in phase 2 as recommended: both) the installer only (no network from a
   session), or also the MCP server as a bounded child once a day (it runs in
   every harness, but spawns `git` against the network from the process that
