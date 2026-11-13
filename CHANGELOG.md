@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.86.2
+
+### Fixed
+
+- **An ask notifies only the human it asks**
+  ([RT-6.11](docs/arc42/06-runtime-view.md) step 1): an @-mention of a person
+  in `need`, `context`, `recommendation`, `decision`, `where` or an answer
+  notified that person, since `ask_human` wrote only `@channel`, `@here` and
+  `@all` plain. Its fields now go through the same check as `post_message`:
+  a person's name turns plain and is listed in `unmentioned`, an agent keeps
+  its @, and the mention the server writes for the asked human stays.
+
 ## 0.86.1
 
 ### Fixed

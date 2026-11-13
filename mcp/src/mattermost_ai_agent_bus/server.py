@@ -1759,13 +1759,16 @@ async def ask_human(
         return _refused("ask_human", bad)
     client = _get_client()
     me = await client.get_me()
-    # Free text of the model: nothing but the ask itself may notify (RT-6.11).
+    # Free text of the model: nothing but the ask itself may notify (RT-6.11):
+    # a person's @-mention turns plain as in post_message, @channel/@here/@all too.
     # RT-6.11 step 1: a list of plain texts, emojis stripped, each one line and
     # cleaned like the rest; an entry that is nothing but a mark is refused, not dropped.
-    cleaned = [_unbroadcast(x) for x in (need, context, recommendation, decision, where,
-                                         *(asks.clean_answer(x) for x in answers or []))]
+    cleaned = [await _unmention(client, x) for x in (
+        need, context, recommendation, decision, where,
+        *(asks.clean_answer(x) for x in answers or []))]
     need, context, recommendation, decision, where, *answer_list = (c[0] for c in cleaned)
-    everyone = sorted({n for c in cleaned for n in c[1]})
+    removed = {n for c in cleaned for n in c[1]}
+    everyone = sorted(removed - set(_EVERYONE)) + sorted(removed & set(_EVERYONE))
     if empty := [i + 1 for i, a in enumerate(answer_list) if not a.strip()]:
         return _out("ask_human", {
             "posted": False,

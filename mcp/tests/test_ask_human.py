@@ -222,6 +222,46 @@ async def test_an_ask_never_notifies_everyone(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_an_ask_never_mentions_another_person(monkeypatch):
+    """RT-6.11 step 1: ask_human treats a person's @-mention in its fields as
+    post_message does: plain, listed in unmentioned; an agent keeps its @, and
+    only the mention the server writes for the asked human notifies."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    out = json.loads(await server.ask_human(
+        need="Merge #61 as @kollegin said?", context="@Dembaca wrote it, @agent-mac-1 reviewed",
+        recommendation="yes", decision="Merge it, tell @kollegin",
+        where="PR of @kollegin", answers=["go", "no, ask @dembaca"], kind="question"))
+    post = c.posted[0]
+    assert post["message"] == "\U0001F64B @dembaca"
+    assert title_of(post) == "Merge #61 as kollegin said?"
+    fields = _fields(post)
+    assert fields["Context"] == "Dembaca wrote it, @agent-mac-1 reviewed"
+    assert fields["Decision"] == "Merge it, tell kollegin"
+    assert fields["Where"] == "PR of kollegin"
+    assert "no, ask dembaca" in fields["Answer"]
+    assert "@kollegin" not in json.dumps(post) and "@Dembaca" not in json.dumps(post)
+    assert out["answers"] == ["go", "no, ask dembaca"]
+    assert out["unmentioned"] == ["Dembaca", "dembaca", "kollegin"]
+    assert "ask_human" in out["hint"]
+
+
+@pytest.mark.asyncio
+async def test_a_mention_in_an_asks_code_block_is_handled_as_in_post_message(monkeypatch):
+    """RT-6.11 step 1: a code block in need still reaches Context whole (#213);
+    a mention in it turns plain as post_message turns it, one in a code span stays."""
+    c = _NamingClient()
+    monkeypatch.setattr(server, "_get_client", lambda: c)
+    block = "```\ngit log --author=@kollegin\n```"
+    await server.ask_human(need=f"Run this? It lists `@dembaca` too.\n{block}")
+    await server.post_message(block)
+    assert title_of(c.posted[0]) == "Run this?"
+    assert _fields(c.posted[0])["Context"] == (
+        "It lists `@dembaca` too.\n```\ngit log --author=kollegin\n```")
+    assert c.posted[1]["message"] == "```\ngit log --author=kollegin\n```"
+
+
+@pytest.mark.asyncio
 async def test_to_all_wakes_every_agent_through_the_props(monkeypatch):
     """RT-6.11 step 1: to="all" writes props.a2a.to (with the kind a first word
     gives); the text needs no @channel. Anything else for a reply is refused."""
