@@ -14,7 +14,7 @@ from fakes import BOT, WORK, FakeChat
 from mattermost_ai_agent_bus import channel, lease, server, websocket_inbox
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import ChannelUser, UnreadChannel
-from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
+from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
 HUMAN = "h" * 26
 OTHER = "y" * 26   # a younger agent of the same home
@@ -130,6 +130,8 @@ async def test_a_reconnect_renews_the_crown_before_the_backfill(home, monkeypatc
     assert [i["post"]["id"] for i in items] == [P1]
     assert items[0]["from_trusted_human"] and "gated" not in items[0]
     assert await server._push_addressed(items[0])
+    # RT-6.6 step 5: woken as the crown holder, and the tag says so.
+    assert channel.notification(items[0])["meta"]["for_crown"] == "true"
 
 
 async def test_a_reconnect_takes_no_crown_another_agent_holds(home, monkeypatch):
@@ -170,6 +172,7 @@ async def test_a_held_post_is_pushed_when_the_crown_returns(home):
     await lease.command(home, "tick")
     assert lease.crown_held(BOT)
     assert pusher.connection.sent == [channel.notification(first), channel.notification(second)]
+    assert all(n["meta"]["for_crown"] == "true" for n in pusher.connection.sent)  # RT-6.6 step 5
     assert pusher.held == []
     await lease.command(home, "tick")
     assert len(pusher.connection.sent) == 2
@@ -203,3 +206,19 @@ async def test_the_recheck_leaves_an_fyi_post_held(home):
     await lease.command(home, "tick")
     assert pusher.connection.sent == [channel.notification(human)]
     assert pusher.held == [fyi, late]
+
+
+async def test_wait_for_events_marks_what_only_the_crown_wakes(home):
+    """RT-6.6 step 5: holding the crown, wait_for_events marks a human's plain
+    post for_crown: true, as the push's tag does; a mention is the agent's own and
+    carries no mark, and without the crown nothing is marked."""
+    plain = post_of({"id": P1, "user_id": HUMAN, "channel_id": WORK, "message": "deploy now?"})
+    named = post_of({"id": "q" * 26, "user_id": HUMAN, "channel_id": WORK, "message": "@agent-me deploy"})
+    events = [ClassifiedEvent(kind="watched_channel", post=plain), ClassifiedEvent(kind="mention", post=named)]
+    items = await server._event_items(events)
+    await server._crown_events(events, items)
+    assert "for_crown" not in items[0] and "for_crown" not in items[1]  # the crown has lapsed
+    await lease.command(home, "tick")
+    assert lease.crown_held(BOT)
+    await server._crown_events(events, items)
+    assert items[0]["for_crown"] is True and "for_crown" not in items[1]

@@ -1068,7 +1068,7 @@ mm_release_needs_ok() {
 # The same text as release.py's line(), which bus_info and the turn-end banner use.
 mm_release_notice() {
   local have="$1" dir="${2:-$(mm_state_dir)}" text k v ver rest newest="" verified="" step
-  local breaking=0 needs="" withdrawn=0 out=""
+  local breaking=0 needs="" withdrawn=0 out="" checked="" when=""
   [[ "$have" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
   [[ -f "$dir/release.env" && ! -L "$dir/release.env" ]] || return 1
   text="$(mm_read_file "$dir/release.env" 65536)" || return 1
@@ -1076,6 +1076,7 @@ mm_release_notice() {
     case "$k" in
       NEWEST) [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && newest="$v" ;;
       VERIFIED) [[ "$v" == yes || "$v" == no ]] && verified="$v" ;;
+      CHECKED_AT) [[ "$v" =~ ^[1-9][0-9]{0,9}$ ]] && checked="$v" ;;
     esac
   done <<<"$text"
   [[ -n "$newest" && -n "$verified" ]] || return 1
@@ -1107,10 +1108,22 @@ mm_release_notice() {
     if [[ "$verified" == yes ]]; then step+="; signature checked"; else step+="; signature not checked"; fi
     out="${out:+$out; }release v${newest} is out (${step})"
   elif mm_version_newer "$newest" "$have"; then
-    out="${out:+$out; }the newest release that passes the check is v${newest}, older than ${have}: the repository may be frozen or rewound"
+    # Never a step back: the check may just not have run since this version.
+    [[ -z "$checked" ]] || when="$(mm_epoch_utc_short "$checked")" || when=""
+    out="${out:+$out; }the release check${when:+ of $when} found v${newest} as newest, older than ${have}: not run since, or the repository is frozen or rewound"
   fi
   [[ -n "$out" ]] || return 1
   printf '%s\n' "$out"
+}
+
+# mm_release_newer <version> [state dir]: the host's release check found a
+# release newer than <version> (RT-6.30), so a notice may name the installer
+# for it; an older newest is never one to install.
+mm_release_newer() {
+  local f="${2:-$(mm_state_dir)}/release.env" newest
+  [[ -f "$f" && ! -L "$f" ]] || return 1
+  newest="$(mm_read_file "$f" 65536 | sed -n 's/^NEWEST=//p' | head -n1)" || return 1
+  [[ "$newest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && mm_version_newer "$1" "$newest"
 }
 
 # --- self-update between sessions (ADR-011 phase 3, RT-6.32) --------------------
@@ -1311,6 +1324,9 @@ mm_release_auto_notice() {
 # Epoch seconds → RFC 3339 UTC / local HH:MM, on GNU and BSD date alike.
 mm_epoch_rfc3339() {
   date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
+}
+mm_epoch_utc_short() {
+  date -u -d "@$1" '+%Y-%m-%d %H:%MZ' 2>/dev/null || date -u -r "$1" '+%Y-%m-%d %H:%MZ'
 }
 mm_epoch_hhmm() {
   date -d "@$1" +%H:%M 2>/dev/null || date -r "$1" +%H:%M

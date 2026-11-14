@@ -142,8 +142,9 @@ update_note() {
   newest="$RELEASE_NEWEST" rline="$RELEASE_LINE"
   if [[ "$newest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -n "$rline" && "$rel_notified" != "$newest" ]]; then
     rel_notified="$newest"
-    # A host copy that updates itself between sessions says so (RT-6.32).
-    if [[ "$rline" == *"updates itself to v"* ]]; then
+    # A host copy that updates itself between sessions says so (RT-6.32); a
+    # newest older than this session is never one to install (RT-6.30).
+    if [[ "$rline" == *"updates itself to v"* ]] || ! mm_version_newer "$(mm_tree_version "$BIN/..")" "$newest"; then
       notes="${notes:+$notes$'\n'}$MM_UPDATE $rline"
     else
       notes="${notes:+$notes$'\n'}$MM_UPDATE $rline — a human installs it on the host: mm-agent-host-install.sh --release v$newest"
