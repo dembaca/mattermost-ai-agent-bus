@@ -384,8 +384,10 @@ export async function setup(ctx: Plugin.Context) {
                        heldSince: 0, wakeKey: "", wakeRepeats: 0, wakeAfter: 0 })
     // `listening` stays as the last turn end left it: this turn's end decides (a failed check keeps it).
     last = id
+    // Requested with `busy`, before the stat: an interrupt's idle comes after it (RT-6.20 step 3).
+    const working = presence("working")
     await stat("turn", { by: "human" })
-    await presence("working")
+    await working
     await save()
     nudge()
   }
@@ -524,9 +526,12 @@ export async function setup(ctx: Plugin.Context) {
     t.byBus = true
     await stat("wake", { reason: String(r.reason || "") })
     if (await send(id, String(r.text), "wake", "Mattermost agent bus: wake-up")) {
+      // Requested before the stat, and not after an interrupt that came meanwhile
+      // (it cleared `busy` and requested idle): working never follows that idle.
+      const working = t.busy ? presence("working") : Promise.resolve()
       t.heldSince = 0
       await stat("turn", { by: "bus" })
-      await presence("working")
+      await working
       await save()
       return true
     }

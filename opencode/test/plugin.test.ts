@@ -410,6 +410,22 @@ test("RT-6.20 step 3: an interrupt's idle never overtakes the prompt's working (
   await fx.cleanup()
 })
 
+test("RT-6.20 step 3: an interrupt during the prompt's slow turn stat still ends idle (0.90.1)", async () => {
+  const fx = await start()
+  // `working` is requested with `busy`, before the stat: an idle requested
+  // while the stat is out queues behind it.
+  answers["/v1/stat"] = (_path: string, body: any) => (body?.k === "turn" ? { [LATER]: 150, body: { ok: true } }
+                                                                          : { ok: true })
+  const prompting = fx.hooks.prompt({ sessionID: "s1", messageID: "m", prompt: { text: "hi" }, delivery: "steer" })
+  await until(() => calls.some((c) => c.path === "/v1/stat" && c.body?.k === "turn"), "the turn stat is out")
+  await fx.emit("session.execution.interrupted", { sessionID: "s1", reason: "user" })
+  await prompting
+  const applied = () => done.filter((c) => c.path === "/v1/presence").map((c) => c.body.state)
+  await until(() => applied().length === 2, "both states applied")
+  assert.deepEqual(applied(), ["working", "idle"])
+  await fx.cleanup()
+})
+
 test("RT-6.20: an idle session holds one long poll, no timer; a wake starts one turn", async () => {
   const fx = await start()
   await fx.prompt()

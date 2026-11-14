@@ -14,7 +14,8 @@ before 0.5.0 are described in the git history.
   once sent `idle` beside it; the two could reach the server in either order,
   which then showed `working` until the lease ran out. The OpenCode plugin
   had the same race between its prompt hook's `working` and an interrupt's
-  `idle`. Both now send their presence calls one at a time
+  `idle`, and requests `working` as the turn starts now, before its turn
+  counter, so an interrupt during that counter is applied last. Both now send their presence calls one at a time
   (`presenceQueue`, in the shared keep-in-step helpers): a state goes out only
   once the call before it has settled, and one superseded while it waits is
   not sent. A run still never waits for the bus.
