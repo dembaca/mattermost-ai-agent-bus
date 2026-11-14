@@ -346,6 +346,18 @@ test("RT-6.27 step 4: a check the human overtook is dropped", async () => {
   await settle(100)
   assert.equal(f.sent.length, 0)
   assert.deepEqual(bodies("/v1/reminded"), [], "a dropped answer marks nothing")
+  // A prompt that comes while the mark is out takes over: the reason is not delivered.
+  answers["/v1/turn-end"] = { action: "answer", reason: "answer it", banner: "", posts: ["p1"] }
+  answers["/v1/reminded"] = HOLD
+  await f.emit("agent_start")
+  await f.emit("agent_settled", { aborted: false })
+  await until(() => held.some((x) => x.path === "/v1/reminded"), "the mark is out")
+  await f.emit("input", { text: "once more", source: "interactive" })
+  const m = held.find((x) => x.path === "/v1/reminded")!
+  held = held.filter((x) => x !== m)
+  m.res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, marked: 1 }))
+  await settle(100)
+  assert.equal(f.sent.length, 0, "no answer round into the human's new turn")
 })
 
 test("RT-6.27 step 6: after a compaction the own posts as context that starts no run", async () => {

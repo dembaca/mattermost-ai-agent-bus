@@ -343,6 +343,8 @@ export function create(pi: ExtensionAPI, deps: Deps = {}) {
     // does not block, so a server that cannot mark never blocks in a loop.
     const posts = Array.isArray(r?.posts) ? r.posts : []
     const marked = posts.length > 0 && !!(await bus("POST", "/v1/reminded", { post_ids: posts }))
+    // The same again: a prompt that came during the mark takes over.
+    if (t.human !== human || t.running || t.ours) return
     if (r && (r.action === "drain" || (r.action === "answer" && marked) || r.action === "signoff")) {
       if (r.action === "drain") t.drains += 1
       else if (r.action === "signoff") t.signoffAsked = true

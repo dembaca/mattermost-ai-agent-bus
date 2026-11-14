@@ -365,6 +365,18 @@ test("RT-6.20, RT-6.2 step 2: a bus post without an answer in its thread: one ro
   await fx.ended()
   // The sign-off was not asked yet: the server may still ask for it.
   assert.match(rest()[0].path, /drains=0&signoff_asked=0&by_bus=0&push=1&unanswered=1$/)
+  // Another session's prompt while the check was out (`last` moved on): nothing is marked.
+  await fx.prompt()
+  calls = []
+  answers["/v1/turn-end"] = HOLD
+  const ending = fx.ended()
+  while (!held.some((x) => x.path.startsWith("/v1/turn-end"))) await settle(5)
+  await fx.prompt("s2")
+  const h = held.find((x) => x.path.startsWith("/v1/turn-end"))!
+  held = held.filter((x) => x !== h)
+  h.res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(answer))
+  await ending
+  assert.deepEqual(calls.filter((c) => c.path === "/v1/reminded"), [])
   await fx.cleanup()
 })
 

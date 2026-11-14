@@ -396,7 +396,8 @@ export async function setup(ctx: Plugin.Context) {
       // The posts an answer names are marked only now that the block goes out, so
       // a dropped check leaves them due; an answer alone that cannot be marked
       // does not block, so a server that cannot mark never blocks in a loop.
-      const posts = Array.isArray(r?.posts) ? r.posts : []
+      // Not after an interrupt, a close or another session's turn: nothing would block.
+      const posts = Array.isArray(r?.posts) && !closed && !t.aborted && last === id ? r.posts : []
       const marked = posts.length > 0 && !!(await bus("POST", "/v1/reminded", { post_ids: posts }))
       if (r && (r.action === "drain" || (r.action === "answer" && marked) || r.action === "signoff")) {
         if (r.action === "drain") t.drains += 1
