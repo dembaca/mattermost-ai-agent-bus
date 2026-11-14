@@ -12,8 +12,10 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             post in the work channel; release {newest, line}: the notice of a
                             release the host's check passed, for the turn-end banner (RT-6.30);
                             ?unanswered=1: unanswered [{post_id, root_id, channel, author}],
-                            the posts that wait for an answer in their thread, each handed
-                            out once (RT-6.2 step 2)
+                            the posts that wait for an answer in their thread and were not
+                            reminded of yet; reading marks nothing (RT-6.2 step 2)
+    POST /v1/reminded       {post_ids: [...]} → {ok, marked}: the caller blocked a turn end
+                            for these posts, so none blocks again (RT-6.2 step 2)
     GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
                             message, to, intent, fyi, quiet, gated, names_agent, absent[, files]}]},
                             work channel
@@ -38,7 +40,7 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             reply_in_thread returns (mm-agent-post.sh): the tools'
                             own code (server.py), not a second implementation
     GET  /v1/turn-end       {action: drain|answer|signoff|idle, reason?, banner?, pending?,
-                            listen_since?, listen_until?} (?drains=N&signoff_asked=0|1
+                            posts?, listen_since?, listen_until?} (?drains=N&signoff_asked=0|1
                             &by_bus=0|1&push=0|1&listen_since=S&unanswered=0|1): the Stop hook's
                             decision, words and listen window for a turn plugin (RT-6.20)
     GET  /v1/wake           {wake, reason: dm|stall|reaction|addressed|digest|'', count, text}
@@ -594,10 +596,11 @@ async def last_post(client: MattermostAdapter, query: Mapping[str, str], body: M
     """The own latest post in the work channel (RT-6.2 step 2): from
     last-<uid>.env (ownpost.py) without a request, else from the channel's last
     100 posts; at 0 when there is none. unanswered=1 (the Stop hook): the posts
-    that wait for an answer in their thread, each handed out once."""
+    that wait for an answer in their thread, not reminded of yet; the hook marks
+    those it blocks for (POST /v1/reminded), so a dropped read marks nothing."""
     at, message, signed_off = await _last(client, query, body)
     out: dict[str, Any] = {"at": at, "message": message, "signed_off": signed_off, **_release()}
-    if _flag(query, "unanswered") and (rows := unanswered.remind(await _uid(client))):
+    if _flag(query, "unanswered") and (rows := unanswered.due(await _uid(client))):
         out["unanswered"] = rows
     return 200, out
 
@@ -831,6 +834,20 @@ MAX_STAT_VALUE = 4096
 _FIELD = re.compile(r"[a-z][a-z_]{0,15}")
 
 
+MAX_REMINDED = 20
+
+
+async def reminded(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
+    """The caller blocked a turn end for these posts (RT-6.2 step 2): none of
+    them blocks again (unanswered.remind). Marked by the caller, not the read,
+    so a check whose answer was dropped leaves them due."""
+    ids = body.get("post_ids")
+    if (not isinstance(ids, list) or len(ids) > MAX_REMINDED
+            or not all(isinstance(i, str) and _UID.fullmatch(i) for i in ids)):
+        raise BadRequest(f"post_ids: at most {MAX_REMINDED} post ids")
+    return 200, {"ok": True, "marked": unanswered.remind(await _uid(client), ids)}
+
+
 async def stat(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """One overhead counter for this session (RT-6.9) into the server's own
     stats file. Names and values only, as mm_stat writes them; a transcript
@@ -934,7 +951,8 @@ async def turn_end(client: MattermostAdapter, query: Mapping[str, str],
     (step 3) the plugin wakes the agent in: listen_since/listen_until in epoch
     s, absent when there is none; ?listen_since= is the running one's start.
     unanswered=1: posts that wait for an answer in their thread (RT-6.2 step 2)
-    block once each, as `answer`, or with the sign-off in one reason."""
+    block as `answer`, or with the sign-off in one reason; `posts` names them,
+    and the caller marks them (POST /v1/reminded) only when it really blocks."""
     drains, since = query.get("drains", "0"), query.get("listen_since", "0")
     if not drains.isdigit():
         raise BadRequest("drains: a count")
@@ -948,7 +966,7 @@ async def turn_end(client: MattermostAdapter, query: Mapping[str, str],
             return 200, turnend.drain(count, await unread.detail(client, rows) if rows else [])
     at, message, signed_off = await _last(client, query, body)
     uid = await _uid(client)
-    due = unanswered.remind(uid) if ask_answer else []
+    due = unanswered.due(uid) if ask_answer else []  # marked by the caller once it blocks
     if turnend.needs_signoff(message, asked=asked, by_bus=by_bus, push=push,
                              signed_off=signed_off):
         sign = turnend.signoff(push=push)
@@ -1048,6 +1066,7 @@ _ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "/v1/presence"): presence,
     ("POST", "/v1/usage"): usage_route,
     ("POST", "/v1/stat"): stat,
+    ("POST", "/v1/reminded"): reminded,
     ("POST", "/v1/post"): post_route,
     ("POST", "/v1/reply"): reply_route,
     ("GET", "/v1/turn-end"): turn_end,

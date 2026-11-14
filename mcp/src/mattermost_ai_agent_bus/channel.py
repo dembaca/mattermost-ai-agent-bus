@@ -379,11 +379,13 @@ class Pusher:
             await self.connection.notify(
                 permission.VERDICT, {"request_id": request_id, "behavior": behavior})
 
-    async def recheck(self, wakes: Callable[[dict[str, Any]], Awaitable[bool]]) -> int:
+    async def recheck(self, wakes: Callable[[dict[str, Any]], Awaitable[bool]],
+                      pushed: Callable[[dict[str, Any]], Awaitable[None]] | None = None) -> int:
         """RT-6.12 step 3: the crown came back (RT-6.6 step 6), so push at once,
         in their order, the held posts that `wakes` now says wake the agent;
         the rest stay for the digest. A gated item is never pushed. Each goes
-        out once: taken from the held list before it is sent. The number sent."""
+        out once: taken from the held list before it is sent, marked PUSHED and
+        handed to `pushed` once sent (RT-6.2 step 2). The number sent."""
         if not self.confirmed.is_set():
             return 0  # a reconnect not confirmed yet: the held posts stay, the digest sends them once it is
         sent = 0
@@ -403,6 +405,9 @@ class Pusher:
                 self.held.insert(at, item)
                 break
             sent += 1
+            item[PUSHED] = True
+            if pushed is not None:
+                await pushed(item)
         return sent
 
     def _timeout(self, cap: float) -> float:

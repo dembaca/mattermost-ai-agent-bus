@@ -80,17 +80,26 @@ async def test_what_needs_an_answer(delivered):
 
 
 @pytest.mark.asyncio
-async def test_an_agents_ack_never_owes_an_answer_back(delivered):
+async def test_an_agents_post_counts_only_when_it_wants_an_answer(delivered):
     """RT-6.2 step 2: agent A asks B; B's ACK or RESULT in A's thread is fyi,
-    so A owes no answer and the two never block each other in a loop. A plain
-    reply or a BLOCKED (a question) does wait for one."""
-    for word in ("ACK", "RESULT", "DONE"):
-        it = item("watched_channel", from_agent=True, intent=a2a.WORDS[word][2])
+    so A owes no answer and the two never block each other in a loop. An
+    agent's plain reply in A's thread ("thanks") owes none either; one whose
+    word asks for something (BLOCKED, TASK …), a mention or a DM does. A
+    human's plain reply there does too."""
+    def in_mine(pid, word="", **extra):
+        props = {"a2a": a2a.annotate(word)} if word else None
+        it = item("watched_channel", **extra)
         it["post"]["root_id"] = MINE
-        assert await delivered([(ev("watched_channel", "a", root=MINE), it)]) == []
-    it = item("watched_channel", from_agent=True, intent="reply")
-    it["post"]["root_id"] = MINE
-    assert await delivered([(ev("watched_channel", "b", root=MINE), it)]) == ["b"]
+        return ev("watched_channel", pid, root=MINE, props=props), it
+
+    for word in ("ACK", "RESULT", "DONE"):
+        assert await delivered([in_mine("a", word, from_agent=True, intent="fyi")]) == []
+    assert await delivered([in_mine("b", from_agent=True)]) == []  # a plain "thanks"
+    assert await delivered([in_mine("c", "BLOCKED", from_agent=True)]) == ["c"]
+    assert await delivered([in_mine("t", "TASK", from_agent=True)]) == ["c", "t"]
+    assert await delivered([(ev("mention", "m"), item("mention", from_agent=True))]) == ["c", "t", "m"]
+    assert await delivered([(ev("dm", "n", channel=DM), item("dm", from_agent=True))]) == ["c", "t", "m", "n"]
+    assert await delivered([in_mine("h")]) == ["c", "t", "m", "n", "h"]
 
 
 def test_capped_aged_and_kept_across_a_restart(monkeypatch):
@@ -110,14 +119,16 @@ def test_capped_aged_and_kept_across_a_restart(monkeypatch):
     assert unanswered.read(UID, now=now + unanswered.MAX_AGE_SEC + 1) == []
 
 
-def test_reminded_once():
-    """RT-6.2 step 2: each open post is handed out once; it stays open, but
-    blocks no further turn end."""
+def test_due_until_the_caller_reminds():
+    """RT-6.2 step 2: reading the due posts marks nothing; once the caller
+    blocked for one (remind), it stays open but blocks no further turn end."""
     unanswered.add(UID, post_of({"id": "a" * 26, "root_id": ROOT, "channel_id": WORK}),
                    channel="home", author="dembaca", dm=False)
-    assert unanswered.remind(UID) == [{"post_id": "a" * 26, "root_id": ROOT, "channel": "home",
-                                       "author": "dembaca"}]
-    assert unanswered.remind(UID) == []
+    row = {"post_id": "a" * 26, "root_id": ROOT, "channel": "home", "author": "dembaca"}
+    assert unanswered.due(UID) == [row] and unanswered.due(UID) == [row]
+    assert unanswered.remind(UID, ["b" * 26]) == 0 and unanswered.due(UID) == [row]
+    assert unanswered.remind(UID, ["a" * 26]) == 1 and unanswered.due(UID) == []
+    assert unanswered.remind(UID, ["a" * 26]) == 0
     assert [r.reminded for r in unanswered.read(UID)] == [True]
 
 
@@ -146,14 +157,19 @@ def client(monkeypatch):
 async def test_a_post_in_its_thread_answers_it(client):
     """RT-6.2 step 2: a reply in the thread (reply_in_thread, an ask_human's
     link line there) answers its open posts; in a DM any post there; a post
-    elsewhere, a reminder the server sends on its own or a permission prompt
-    does not."""
+    elsewhere, a reminder the server sends on its own, a permission prompt, a
+    line the server writes on its own (a permission verdict) or a pure status
+    (a sign-off in the thread) does not."""
     unanswered.add(UID, post_of({"id": "a" * 26, "root_id": ROOT, "channel_id": WORK}),
                    channel="home", author="h", dm=False)
     unanswered.add(UID, post_of({"id": "d" * 26, "channel_id": DM}), channel="", author="h", dm=True)
     await client.post("ACK · elsewhere", channel_id=WORK)
     await client.post("reminder", root_id=ROOT, props=a2a.props(kind=a2a.REMINDER))
     await client.post("allow?", channel_id=DM, props=a2a.props(kind=a2a.PERMISSION))
+    with unanswered.server_line():
+        await client.post("✅ allowed by h", channel_id=DM)
+    for status in ("IDLE · done: x", "\U0001F451 `BYE` · done", "HELLO @agent-me"):
+        await client.post(status, root_id=ROOT, props=a2a.props(status))
     assert len(unanswered.read(UID)) == 2
     await client.post("\U0001F64B ask x", root_id=ROOT, props=a2a.props(kind=a2a.ASK_LINK))
     assert [r.post_id for r in unanswered.read(UID)] == ["d" * 26]
@@ -171,19 +187,22 @@ async def _api(client):
 
 
 @pytest.mark.asyncio
-async def test_the_hook_api_hands_them_out_once():
+async def test_the_hook_api_hands_them_out_until_the_caller_marks_them():
     """RT-6.2 step 2, RT-6.17: GET /v1/last-post?unanswered=1 carries the open
-    posts not yet reminded, each once; without the flag nothing is handed out
-    (another reader never takes the Stop hook's reminder)."""
+    posts not yet reminded and marks nothing, so a read whose answer is dropped
+    leaves them due; POST /v1/reminded marks those the caller blocked for.
+    Without the flag nothing is handed out."""
     a, h = await _api(HookClient(uid=UID))
     try:
         unanswered.add(UID, post_of({"id": "a" * 26, "root_id": ROOT, "channel_id": WORK}),
                        channel="home", author="dembaca", dm=False)
         assert "unanswered" not in (await h.get("/v1/last-post")).json()
-        got = (await h.get("/v1/last-post?unanswered=1")).json()
-        assert got["unanswered"] == [{"post_id": "a" * 26, "root_id": ROOT, "channel": "home",
-                                      "author": "dembaca"}]
+        row = {"post_id": "a" * 26, "root_id": ROOT, "channel": "home", "author": "dembaca"}
+        assert (await h.get("/v1/last-post?unanswered=1")).json()["unanswered"] == [row]
+        assert (await h.get("/v1/last-post?unanswered=1")).json()["unanswered"] == [row]
+        assert (await h.post("/v1/reminded", json={"post_ids": ["a" * 26]})).json() == {"ok": True, "marked": 1}
         assert "unanswered" not in (await h.get("/v1/last-post?unanswered=1")).json()
+        assert (await h.post("/v1/reminded", json={"post_ids": ["nope"]})).status_code == 400
     finally:
         await h.aclose()
         await a.close()
@@ -192,8 +211,9 @@ async def test_the_hook_api_hands_them_out_once():
 @pytest.mark.asyncio
 async def test_turn_end_answers_first_then_signs_off(monkeypatch):
     """RT-6.20, RT-6.2 step 2: for a turn plugin (unanswered=1) an open post
-    blocks once as `answer`; with a sign-off due too, one `signoff` block
-    whose reason asks for the answer first."""
+    blocks as `answer`, naming its posts, until the caller marks them; with a
+    sign-off due too, one `signoff` block whose reason asks for the answer
+    first."""
     from mattermost_ai_agent_bus import ownpost
 
     a, h = await _api(HookClient(uid=UID, posts=[]))
@@ -203,11 +223,15 @@ async def test_turn_end_answers_first_then_signs_off(monkeypatch):
         r = (await h.get("/v1/turn-end?push=1&by_bus=1&unanswered=1")).json()
         assert r["action"] == "answer" and f"~home post {ROOT} by dembaca" in r["reason"]
         assert "reply_in_thread" in r["reason"] and "\U0001F4AC" in r["banner"]
+        assert r["posts"] == ["a" * 26]
+        # Dropped by the caller: still due.
+        assert (await h.get("/v1/turn-end?push=1&by_bus=1&unanswered=1")).json()["action"] == "answer"
+        await h.post("/v1/reminded", json={"post_ids": r["posts"]})
         assert (await h.get("/v1/turn-end?push=1&by_bus=1&unanswered=1")).json()["action"] == "idle"
         ownpost.record(UID, WORK, post_of({"id": "i" * 26, "message": "PROGRESS · x", "create_at": 2000}))
         unanswered.add(UID, post_of({"id": "b" * 26, "channel_id": DM}), channel="", author="h", dm=True)
         r = (await h.get("/v1/turn-end?push=0&unanswered=1")).json()
-        assert r["action"] == "signoff"
+        assert r["action"] == "signoff" and r["posts"] == ["b" * 26]
         assert r["reason"].index("DM post " + "b" * 26) < r["reason"].index("Then: Before this turn ends")
         assert r["banner"].count("\n") == 1
         # Without the flag (a plugin before 0.89.0) nothing is handed out.
@@ -255,3 +279,46 @@ async def test_only_a_pushed_post_waits(delivered, monkeypatch):
             it[channel.PUSHED] = True
         await server._push_delivered(it)
     assert [r.post_id[:1] for r in unanswered.read(UID)] == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_resolving_the_ask_settles_its_thread(monkeypatch):
+    """RT-6.2 step 2, RT-6.11: resolve_ask answers the ask's thread, with or
+    without a note: a human's text answer there is settled by resolving."""
+    from fakes import FakeChat
+
+    class Chat(FakeChat):
+        async def add_reaction(self, post_id, emoji):
+            pass
+
+    chat = Chat(uid=UID)
+    monkeypatch.setattr(server, "_get_client", lambda: chat)
+    for ask, note in (("a" * 26, ""), ("b" * 26, "merged, thanks")):
+        unanswered.add(UID, post_of({"id": "h" * 26, "root_id": ask, "channel_id": WORK}),
+                       channel="home", author="dembaca", dm=False)
+        await server.resolve_ask(ask, note)
+        assert unanswered.read(UID) == []
+
+
+@pytest.mark.asyncio
+async def test_a_held_post_pushed_when_the_crown_returns_waits(delivered):
+    """RT-6.2 step 2, RT-6.12 step 3: a post held for the digest and pushed
+    once the crown came back (Pusher.recheck) waits for an answer like one
+    pushed at once."""
+    e = ev("watched_channel", "c")
+    it = server._PushItem(item("watched_channel", for_crown=True))
+    it.event, it.batch = e, server._Batch([e])
+    await server._pushed_later(it)
+    assert [r.post_id[:1] for r in unanswered.read(UID)] == ["c"]
+
+
+@pytest.mark.asyncio
+async def test_raw_deliveries_get_names(delivered, monkeypatch):
+    """RT-6.2 step 2: wait_for_events(raw=true) hands over the full post,
+    without names: the reason still names channel and author."""
+    from fakes import FakeChat
+
+    chat = FakeChat(uid=UID, names={OTHER: "dembaca"})
+    monkeypatch.setattr(server, "_get_client", lambda: chat)
+    await delivered([(ev("mention", "a"), {"kind": "mention", "post": {"id": "a", "user_id": OTHER}})])
+    assert unanswered.read(UID)[0].author == "dembaca"

@@ -742,6 +742,22 @@ def test_an_unanswered_post_blocks_the_turn_end_once(mm, run):
     assert " 1\n" in (run.state_dir / f"unanswered-{ME}.env").read_text()  # reminded, still open
 
 
+def test_an_answer_that_cannot_be_marked_does_not_block(mm, run, monkeypatch):
+    """RT-6.2 step 2: the hook marks the posts it blocks for (POST
+    /v1/reminded); when that fails it lets the answer alone go, so it never
+    blocks in a loop, and the post stays due."""
+    from mattermost_ai_agent_bus import hookapi
+
+    async def broken(client, query, body):
+        raise RuntimeError("cannot write")
+
+    monkeypatch.setitem(hookapi._ROUTES, ("POST", "/v1/reminded"), broken)
+    last_post(run, "IDLE · done: x")
+    unanswered(run)
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+    assert (run.state_dir / f"unanswered-{ME}.env").read_text().endswith(" 0\n")
+
+
 def test_answer_and_signoff_share_one_block(mm, run):
     """RT-6.2 step 2: with a sign-off due too, one block: the answer first,
     then the sign-off; one banner line each. Then nothing blocks again."""

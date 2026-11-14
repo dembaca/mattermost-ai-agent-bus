@@ -345,9 +345,18 @@ test("RT-6.20, RT-6.2 step 2: a bus post without an answer in its thread: one ro
   const fx = await start()
   await fx.prompt()
   calls = []
-  answers["/v1/turn-end"] = { action: "answer", reason: "A post that reached you …", banner: "\u{1F4AC} Answering" }
+  const answer = { action: "answer", reason: "A post that reached you …", banner: "\u{1F4AC} Answering", posts: ["p1"] }
+  // The server cannot mark the post: no block, so it never blocks in a loop; the post stays due.
+  answers["/v1/turn-end"] = answer
   await fx.ended()
-  assert.deepEqual(rest()[1].body, { k: "block", kind: "answer" })
+  assert.deepEqual(rest()[1], { method: "POST", path: "/v1/reminded", body: { post_ids: ["p1"] } })
+  assert.equal(fx.sent.length, 0)
+  await fx.prompt()
+  calls = []
+  answers["/v1/reminded"] = { ok: true, marked: 1 }
+  await fx.ended()
+  // Marked as the block goes out, not by the read.
+  assert.deepEqual(rest().slice(1, 3).map((c) => c.body), [{ post_ids: ["p1"] }, { k: "block", kind: "answer" }])
   assert.deepEqual(fx.sent.at(-1), { sessionID: "s1", text: "A post that reached you …", description: "\u{1F4AC} Answering",
     metadata: { [MARK]: "answer" }, delivery: "queue", resume: true })
   calls = []

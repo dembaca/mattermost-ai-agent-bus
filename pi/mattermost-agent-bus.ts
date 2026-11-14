@@ -338,7 +338,12 @@ export function create(pi: ExtensionAPI, deps: Deps = {}) {
     const r = await bus("GET", `/v1/turn-end?${q}`, undefined, SLOW_MS)
     // The human typed meanwhile, or a wake-up went out: that run ends with its own check.
     if (t.human !== human || t.running || t.ours) return
-    if (r && (r.action === "drain" || r.action === "answer" || r.action === "signoff")) {
+    // The posts an answer names are marked only now that the block goes out, so
+    // a dropped check leaves them due; an answer alone that cannot be marked
+    // does not block, so a server that cannot mark never blocks in a loop.
+    const posts = Array.isArray(r?.posts) ? r.posts : []
+    const marked = posts.length > 0 && !!(await bus("POST", "/v1/reminded", { post_ids: posts }))
+    if (r && (r.action === "drain" || (r.action === "answer" && marked) || r.action === "signoff")) {
       if (r.action === "drain") t.drains += 1
       else if (r.action === "signoff") t.signoffAsked = true
       await stat("block", { kind: r.action })

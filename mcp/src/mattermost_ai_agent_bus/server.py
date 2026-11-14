@@ -2098,6 +2098,7 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
     await client.add_reaction(post_id, a2a.done_reaction())
     target = asks.whom_of(me.id, post_id)[0]
     was_open = asks.resolve(me.id, post_id)
+    unanswered.resolved(me.id, post_id)  # RT-6.2 step 2: a text answer in its thread is settled
     if was_open and target and asks.queued(me.id, target):
         try:  # RT-6.11 step 2: the next queued ask goes out at once
             await _post_queued(client, me, target)
@@ -2106,8 +2107,9 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
     if note:
         note, _ = await _unmention(client, note)
         stats.record("post", chars=len(note))
-        await client.post(lease.with_crown(note, me.id), root_id=post_id,
-                          props=a2a.props(note))
+        with unanswered.server_line():  # resolving answered the thread, the note adds nothing
+            await client.post(lease.with_crown(note, me.id), root_id=post_id,
+                              props=a2a.props(note))
     return _out("resolve_ask", {"ask": post_id, "was_open": was_open})
 
 
@@ -2337,13 +2339,16 @@ _NO_ANSWER_KINDS = (*a2a.SERVER_OWN, a2a.ASK_LINK, a2a.ASK_MODE, a2a.MANDATE)
 async def _note_unanswered(events: list[Any], items: list[dict[str, Any]]) -> None:
     """RT-6.2 step 2: a delivered post that needs an answer waits for one in
     its thread (unanswered.py): a mention or DM, a post for the crown holder
-    (for_crown), or a reply in a thread the agent posted in — by a human or an
-    agent, unless gated, fyi (an agent's ACK, RESULT, DONE …: so two agents
-    never owe each other answers in a loop), an expired answer, the 👑's advice,
-    a reaction, a system, webhook or server-own post, or the server's own
-    event. Never raises: bookkeeping."""
+    (for_crown), or a reply in a thread the agent posted in. A human's post
+    counts as it is; an agent's only when it wants an answer: it names this
+    agent, is a DM, or its word asks for something (intent action or reply:
+    TASK, DELEGATE, HANDOVER, CANCEL, BLOCKED, NO), so no courtesy reply between
+    agents ("thanks" → "np") blocks, and an ACK or RESULT never owes one back.
+    Never: gated, fyi, an expired answer, the 👑's advice, a reaction, a system,
+    webhook or server-own post, the server's own event. Never raises: bookkeeping."""
     try:
-        uid = await _my_id(_get_client()) if events else ""
+        client = _get_client()
+        uid = await _my_id(client) if events else ""
         for e, item in zip(events, items, strict=False):
             post = e.post
             if (not uid or e.kind in OWN_EVENTS or e.kind == "reaction" or e.gated or item.get("gated")
@@ -2351,13 +2356,18 @@ async def _note_unanswered(events: list[Any], items: list[dict[str, Any]]) -> No
                     or post.user_id == uid or post.type or post.from_webhook or a2a.system(post)
                     or post.kind in _NO_ANSWER_KINDS):
                 continue
+            dm = e.kind == "dm" or channel_type(e) in ("D", "G")
+            if item.get("from_agent") and not (
+                    e.kind == "mention" or dm or post.intent in (a2a.ACTION, a2a.REPLY)):
+                continue
             if not (e.kind in ("mention", "dm") or item.get("for_crown")
                     or (post.root_id and await _in_my_thread(item, uid))):
                 continue
             slim_post = item.get("post") or {}
+            if not (slim_post.get("channel") and slim_post.get("author")):
+                slim_post = await slim.post(client, post)  # raw=true: names for the reason
             unanswered.add(uid, post, channel=str(slim_post.get("channel") or ""),
-                           author=str(slim_post.get("author") or ""),
-                           dm=e.kind == "dm" or channel_type(e) in ("D", "G"))
+                           author=str(slim_post.get("author") or ""), dm=dm)
     except Exception as exc:  # noqa: BLE001 — the post is delivered all the same
         log.info("unanswered post not kept: %s", exc)
 
@@ -2645,8 +2655,14 @@ async def _wakes_now(item: dict[str, Any]) -> bool:
 async def _crown_returned() -> None:
     """RT-6.12 step 3: the crown passed to this agent (RT-6.6 step 6), so the
     posts held for the digest that now wake it are pushed at once; what
-    `channel.wakes` leaves (gated, fyi, another channel's) stays held."""
-    await _pusher.recheck(_wakes_now)
+    `channel.wakes` leaves (gated, fyi, another channel's) stays held. One
+    pushed now may wait for an answer like any pushed post (RT-6.2 step 2)."""
+    await _pusher.recheck(_wakes_now, pushed=_pushed_later)
+
+
+async def _pushed_later(item: dict[str, Any]) -> None:
+    if isinstance(item, _PushItem):
+        await _note_unanswered([item.event], [item])
 
 
 lease.on_crown(_crown_returned)
@@ -2797,9 +2813,10 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
             if rid not in _relay:  # never sent, answered, or more than 24 h old
                 if item.get("kind") != "dm":
                     return False  # in a channel it may be another agent's prompt
-                await _posted(client, await client.post(
-                    f"No open permission prompt `{rid}`: answered in the terminal, or more "
-                    "than 24 h old.", root_id=post.get("id")))
+                with unanswered.server_line():  # RT-6.2 step 2: the server's line, no answer
+                    await _posted(client, await client.post(
+                        f"No open permission prompt `{rid}`: answered in the terminal, or more "
+                        "than 24 h old.", root_id=post.get("id")))
                 return True
         pending = _relay.take(rid)
         if pending is None:  # expired since the check above
@@ -2807,9 +2824,10 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
         await _pusher.verdict(rid, behavior)
         who = item.get("trusted_human") or post.get("author") or "?"
         word = f"{a2a.symbol(Mark.ALLOWED)} allowed" if behavior == "allow" else f"{a2a.symbol(Mark.DENIED)} denied"
-        await _posted(client, await client.post(
-            f"{word} by {who} · `{rid}` sent to Claude Code; it applies unless the terminal "
-            "answered first.", root_id=pending.post_id))
+        with unanswered.server_line():  # RT-6.2 step 2: the server's line, no answer
+            await _posted(client, await client.post(
+                f"{word} by {who} · `{rid}` sent to Claude Code; it applies unless the terminal "
+                "answered first.", root_id=pending.post_id))
         asks.resolve((await client.get_me()).id, pending.post_id)
         _done_typing()
         return True
@@ -2826,9 +2844,10 @@ async def permissions_obsolete(client: MattermostAdapter) -> None:
     for rid, pending in _relay.take_all().items():
         try:
             uid = uid or (await client.get_me()).id
-            await _posted(client, await client.post(
-                f"{a2a.symbol(Mark.DESKTOP)} Answered in the terminal · `{rid}`: this prompt is closed.",
-                root_id=pending.post_id))
+            with unanswered.server_line():  # RT-6.2 step 2: the server's line, no answer
+                await _posted(client, await client.post(
+                    f"{a2a.symbol(Mark.DESKTOP)} Answered in the terminal · `{rid}`: this prompt is closed.",
+                    root_id=pending.post_id))
             asks.resolve(uid, pending.post_id)
         except Exception as exc:  # noqa: BLE001 — a note, never fail the turn's end
             log.info("permission prompt %s: no terminal note: %s", rid, exc)

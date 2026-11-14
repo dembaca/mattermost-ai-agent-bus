@@ -180,10 +180,11 @@ go_idle() {
 # LAST_HEAD: LAST_MSG without the 👑 and the backtick before its bus word
 # (`IDLE`, RT-6.14 step 2).
 # UNANSWERED: the posts that wait for an answer in their thread (RT-6.2 step 2),
-# one `~channel post <root> by <author>` each, `; ` between: the server hands
-# each out once (?unanswered=1), so the hook blocks for it once.
+# one `~channel post <root> by <author>` each, `; ` between, those not reminded
+# of yet (?unanswered=1). Reading marks nothing: the hook marks the posts it
+# blocks for (POST /v1/reminded, UNANSWERED_IDS), so each blocks once.
 LAST_MSG="" LAST_HEAD="" LAST_AT=0 SIGNED_OFF=0 RELEASE_NEWEST="" RELEASE_LINE="" RELEASE_OLDER=""
-UNANSWERED="" UNANSWERED_N=0
+UNANSWERED="" UNANSWERED_N=0 UNANSWERED_IDS="[]"
 my_last_post() {
   mm_bus GET '/v1/last-post?unanswered=1' || return 1
   UNANSWERED="$(jq -r '[(.unanswered // [])[] | (if .channel == "DM" then "DM" else "~\(.channel)" end)
@@ -191,6 +192,8 @@ my_last_post() {
     | head -n1 | cut -c1-1000)" || UNANSWERED=""
   UNANSWERED_N="$(jq -r '(.unanswered // []) | length' <<<"$MM_BUS_BODY" 2>/dev/null)" || UNANSWERED_N=0
   [[ "$UNANSWERED_N" =~ ^[0-9]+$ ]] || UNANSWERED_N=0
+  UNANSWERED_IDS="$(jq -c '[(.unanswered // [])[].post_id | strings]' <<<"$MM_BUS_BODY" 2>/dev/null)" ||
+    UNANSWERED_IDS="[]"
   RELEASE_NEWEST="$(jq -r '.release.newest // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || RELEASE_NEWEST=""
   RELEASE_LINE="$(jq -r '.release.line // ""' <<<"$MM_BUS_BODY" 2>/dev/null | head -n1 | cut -c1-400)" || RELEASE_LINE=""
   RELEASE_OLDER="$(jq -r '.release.older // false' <<<"$MM_BUS_BODY" 2>/dev/null)" || RELEASE_OLDER=""
@@ -257,12 +260,16 @@ my_last_post && have_post=1
 #
 # Before that, and whatever the window or the channel: a post that reached the
 # agent over the bus and needs an answer (a mention, a DM, a reply in its
-# thread, a post for the crown holder; never an fyi post) has none by it in its
+# thread, a post for the crown holder; an agent's only when it asks for one;
+# never an fyi post) has none by it in its
 # thread (RT-6.2 step 2, unanswered.py). An answer only in the terminal reaches
-# nobody. Each post blocks once (the server hands it out once); both due: one
-# block, the answer first. Same words as turnend.answer (RT-6.20).
+# nobody. Each post blocks once: the hook marks those it blocks for (POST
+# /v1/reminded); a mark that fails lets the answer alone go, so a server that
+# cannot mark never blocks in a loop. Both due: one block, the answer first.
+# Same words as turnend.answer (RT-6.20).
 CHANNEL=0; mm_channel_push && CHANNEL=1
 answer_reason="" answer_banner=""
+reminded() { mm_bus POST /v1/reminded "$(jq -nc --argjson ids "$UNANSWERED_IDS" '{post_ids: $ids}')"; }
 if [[ -n "$UNANSWERED" && "$UNANSWERED_N" -gt 0 ]]; then
   answer_reason="A post that reached you over the bus has no answer in its thread: ${UNANSWERED}. Answer it there"
   answer_reason+=" with reply_in_thread (root_id as given); the bus does not see your terminal. If it needs"
@@ -285,12 +292,13 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
   reason+=" You are asked because you posted or were sent something on the bus since your last IDLE; this check will not block you again this turn."
   banner="$MM_SIGNOFF Signing off on Mattermost before going idle"
   if [[ -n "$answer_reason" ]]; then
+    reminded || true  # the sign-off blocks once a turn anyway
     reason="$answer_reason"$'\n\n'"Then: $reason"
     banner="$answer_banner"$'\n'"$banner"
   fi
   block "$reason" "$banner" signoff
 fi
-if [[ -n "$answer_reason" ]]; then
+if [[ -n "$answer_reason" ]] && reminded; then
   block "$answer_reason" "$answer_banner" answer
 fi
 

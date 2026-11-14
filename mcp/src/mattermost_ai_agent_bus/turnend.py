@@ -108,16 +108,18 @@ def answer(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     reason = (f"A post that reached you over the bus has no answer in its thread: {where}. Answer it there "
               "with reply_in_thread (root_id as given); the bus does not see your terminal. If it needs "
               "no answer, just finish: this check will not block you again for it.")
+    # posts: what the caller marks reminded once it really blocks (POST /v1/reminded).
     return {"action": "answer", "reason": reason,
             "banner": f"{a2a.symbol(Mark.ANSWER)} Answering on Mattermost: {len(items)} post(s) "
-                      "without a reply in their thread"}
+                      "without a reply in their thread",
+            "posts": [str(r.get("post_id", "")) for r in items]}
 
 
 def combine(first: Mapping[str, Any], then: Mapping[str, Any]) -> dict[str, Any]:
     """One block for two checks (RT-6.2 step 2): the answer first, then the
     sign-off; the second's action, so the caller counts its sign-off asked."""
     return {"action": then["action"], "reason": f"{first['reason']}\n\nThen: {then['reason']}",
-            "banner": f"{first['banner']}\n{then['banner']}"}
+            "banner": f"{first['banner']}\n{then['banner']}", "posts": first["posts"]}
 
 
 def signoff(*, push: bool) -> dict[str, Any]:

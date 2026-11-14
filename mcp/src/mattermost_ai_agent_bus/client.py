@@ -1594,10 +1594,11 @@ class MattermostAdapter:
         """Keep the bot's latest post in the work channel for the Stop hook and
         the exit handler (ownpost.py); a post in a thread (or DM) answers the
         posts there that waited for it (unanswered.py, RT-6.2 step 2) — not a
-        reminder or other line the server sends on its own, nor a permission
-        prompt. Bookkeeping: never fails the post."""
+        line the server writes on its own (a reminder, a permission prompt or
+        verdict, a system reply), nor a pure status such as an IDLE
+        (`unanswered.answers`). Bookkeeping: never fails the post."""
         try:
-            if self.bot_id and post.kind not in (*a2a.SERVER_OWN, a2a.PERMISSION) and not a2a.system(post):
+            if self.bot_id:
                 unanswered.answered(self.bot_id, channel_id, post)
             if self.bot_id and channel_id == await self.work_channel_id():
                 ownpost.record(self.bot_id, channel_id, post)

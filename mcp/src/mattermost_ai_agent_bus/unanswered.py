@@ -1,12 +1,12 @@
 """Bus posts that reached the agent and have no answer by it in their thread
 yet (RT-6.2 step 2 in docs/arc42/06-runtime-view.md).
 
-A post that needs an answer — a mention or DM, a reply in a thread the agent
-posted in, a post for the crown holder; never an fyi post, a gated one or a
-reaction (server.py decides at delivery) — is kept here until the agent posts
-in its thread (or, for a DM, in that DM). The Stop hook and the turn plugins
-read the open ones once at a turn end and block once for them: an answer only
-in the terminal reaches nobody on the bus.
+A post that needs an answer (server.py decides at delivery, `_note_unanswered`)
+is kept here until the agent answers in its thread (or, for a DM, in that DM),
+or resolves the ask it belongs to. The Stop hook and the turn plugins read the
+open ones not yet reminded of at a turn end (`due`), and mark them (`remind`)
+only when they really block for them: an answer only in the terminal reaches
+nobody on the bus, and a read that is dropped leaves the post due.
 
 One line per post in ``unanswered-<uid>.env`` in the state directory, next to
 ``last-<uid>.env`` (ownpost.py), so a restarted server of the same bot keeps
@@ -20,12 +20,15 @@ turn end again; it stays until answered or aged out.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 import time
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from . import session_file
+from . import a2a, session_file
 from .model import Post
 
 log = logging.getLogger("mattermost_ai_agent_bus.unanswered")
@@ -33,6 +36,32 @@ log = logging.getLogger("mattermost_ai_agent_bus.unanswered")
 MAX = 10
 MAX_AGE_SEC = 24 * 3600
 DM = "DM"
+# Own posts that answer nothing: a line the server writes on its own (a
+# reminder, the context line, a permission prompt, an ask mode's or mandate's
+# acknowledgement) and a pure status: a sign-off, a HELLO, the roster. An ACK,
+# RESULT or DONE is a fair answer and counts.
+_NOT_ANSWER_KINDS = (*a2a.SERVER_OWN, a2a.PERMISSION, a2a.ASK_MODE, a2a.MANDATE)
+_STATUS_ONLY = ("HELLO", "IDLE", "BYE", "ASSIGNMENTS")
+# Set while the server posts a line of its own without a kind of its own (the
+# permission relay's verdict and notes, resolve_ask's note): no answer either.
+_server_line: contextvars.ContextVar[bool] = contextvars.ContextVar("server_line", default=False)
+
+
+@contextlib.contextmanager
+def server_line() -> Iterator[None]:
+    """Posts made inside are the server's own lines: they answer no post."""
+    token = _server_line.set(True)
+    try:
+        yield
+    finally:
+        _server_line.reset(token)
+
+
+def answers(post: Post) -> bool:
+    """Whether the agent's own post answers the open posts of its thread."""
+    if _server_line.get() or post.kind in _NOT_ANSWER_KINDS or a2a.system(post):
+        return False
+    return a2a.word(a2a.strip_crown(post.message).strip()) not in _STATUS_ONLY
 
 
 @dataclass(frozen=True)
@@ -87,7 +116,7 @@ def _write(uid: str, rows: list[Open]) -> None:
 
 
 def add(uid: str, post: Post, *, channel: str, author: str, dm: bool, now: float | None = None) -> None:
-    """A post that needs an answer reached the agent. Never raises."""
+    """A post that needs an answer reached the agent."""
     if not (uid and post.id):
         return
     rows = [r for r in read(uid, now) if r.post_id != post.id]
@@ -97,34 +126,45 @@ def add(uid: str, post: Post, *, channel: str, author: str, dm: bool, now: float
     _write(uid, rows)
 
 
-def answered(uid: str, channel_id: str, post: Post) -> None:
-    """The agent posted: in a thread, that thread's open posts are answered; in
-    a DM, every open post of that DM. Never raises."""
-    if not uid:
-        return
-    try:
-        rows = read(uid)
-    except Exception:  # noqa: BLE001 — bookkeeping never fails the post
-        return
-    if not rows:
-        return
-    thread = post.root_id or post.id
-    left = [r for r in rows if not (r.root_id == thread or (r.dm and r.channel_id == channel_id))]
+def _clear(uid: str, thread: str, dm_channel: str = "") -> None:
+    rows = read(uid)
+    left = [r for r in rows if not (r.root_id == thread or (dm_channel and r.dm and r.channel_id == dm_channel))]
     if len(left) != len(rows):
         _write(uid, left)
 
 
-def remind(uid: str, now: float | None = None) -> list[dict[str, str]]:
+def answered(uid: str, channel_id: str, post: Post) -> None:
+    """The agent posted: unless the post answers nothing (`answers`), in a
+    thread that thread's open posts are answered; in a DM, every open post of
+    that DM."""
+    if uid and answers(post):
+        _clear(uid, post.root_id or post.id, channel_id)
+
+
+def resolved(uid: str, ask_id: str) -> None:
+    """The agent resolved its ask: what waited in the ask's thread is settled."""
+    if uid and ask_id:
+        _clear(uid, ask_id)
+
+
+def due(uid: str, now: float | None = None) -> list[dict[str, str]]:
     """The open posts not reminded of yet, as the hook API hands them out
-    ({post_id, root_id, channel, author}); marks them reminded, so each blocks
-    one turn end at most."""
-    rows = read(uid, now)
-    due = [r for r in rows if not r.reminded]
-    if not due:
-        return []
-    _write(uid, [replace(r, reminded=True) for r in rows])
+    ({post_id, root_id, channel, author}). Marks nothing: the caller that
+    blocks for them marks them (`remind`)."""
     return [{k: v for k, v in asdict(r).items() if k in ("post_id", "root_id", "channel", "author")}
-            for r in due]
+            for r in read(uid, now) if not r.reminded]
+
+
+def remind(uid: str, post_ids: Iterable[str]) -> int:
+    """The caller blocked a turn end for these posts: each blocks no turn end
+    again. The number marked."""
+    wanted = set(post_ids)
+    rows = read(uid)
+    marked = [replace(r, reminded=True) if r.post_id in wanted and not r.reminded else r for r in rows]
+    n = sum(1 for a, b in zip(rows, marked, strict=True) if a is not b)
+    if n:
+        _write(uid, marked)
+    return n
 
 
 def remove(uid: str) -> None:
