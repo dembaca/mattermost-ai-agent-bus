@@ -290,6 +290,10 @@ test("RT-6.27 step 4, RT-6.2 step 2: a bus post without an answer in its thread:
   await until(() => calls.filter((c) => c.path.startsWith("/v1/turn-end")).length === 2, "the next check")
   // The sign-off was not asked yet: the server may still ask for it.
   assert.match(calls.filter((c) => c.path.startsWith("/v1/turn-end"))[1].path, /signoff_asked=0&/)
+  // Let the turn end settle (turn_end stat, then idle): a call still on its way
+  // would land in the next test's log, which counts presence calls exactly.
+  await until(() => bodies("/v1/presence").length === 2, "idle after the check")
+  assert.deepEqual(bodies("/v1/presence").at(-1), { state: "idle", label: "ws" })
 })
 
 test("RT-6.27 step 3: the human's interrupt: idle, no checks, no wake-up until the next prompt", async () => {
