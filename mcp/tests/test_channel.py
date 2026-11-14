@@ -529,6 +529,8 @@ async def test_other_posts_come_as_one_digest(monkeypatch):
     assert sent[0] == channel.notification(MENTION)  # at once, while two are held
     assert len(sent) == 2 and sent[1]["meta"] == {"kind": "digest", "count": "2"}
     assert "IDLE a" in sent[1]["content"] and "thread r1" in sent[1]["content"]
+    # RT-6.2 step 2: only the pushed one reached the agent and may wait for an answer.
+    assert MENTION.pop(channel.PUSHED) is True and channel.PUSHED not in joined
     # While posts are held the wait ends when the digest is due, not at the cap.
     assert timeouts[0] == 5 and all(t <= 0.3 for t in timeouts[1:4])
 

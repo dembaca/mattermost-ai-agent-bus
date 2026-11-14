@@ -4,8 +4,11 @@
 # Runs three checks in order, each blocking the stop with an instruction for the
 # agent and a one-line banner for the human:
 #   1. drain   — unread mentions/DMs are waiting: collect them via wait_for_events.
-#   2. sign-off — something changed on the bus since the agent's last IDLE/BYE
-#                (it posted, or an addressed event reached it): post one.
+#   2. answer, sign-off — a post that reached the agent over the bus has no
+#                answer by it in its thread: answer there (once per post); and
+#                something changed on the bus since the agent's last IDLE/BYE
+#                (it posted, or an addressed event reached it): post one. Both
+#                due: one block, the answer first.
 #   3. listen  — in a project channel, stay reachable for MM_LISTEN_SEC
 #                (default 5400; the 👑 coordinator MM_LISTEN_COORD_SEC, default
 #                7200): the agent starts bin/mm-agent-listen.sh in the
@@ -176,9 +179,18 @@ go_idle() {
 # server cannot tell; LAST_AT 0 when the agent never posted there.
 # LAST_HEAD: LAST_MSG without the 👑 and the backtick before its bus word
 # (`IDLE`, RT-6.14 step 2).
+# UNANSWERED: the posts that wait for an answer in their thread (RT-6.2 step 2),
+# one `~channel post <root> by <author>` each, `; ` between: the server hands
+# each out once (?unanswered=1), so the hook blocks for it once.
 LAST_MSG="" LAST_HEAD="" LAST_AT=0 SIGNED_OFF=0 RELEASE_NEWEST="" RELEASE_LINE="" RELEASE_OLDER=""
+UNANSWERED="" UNANSWERED_N=0
 my_last_post() {
-  mm_bus GET /v1/last-post || return 1
+  mm_bus GET '/v1/last-post?unanswered=1' || return 1
+  UNANSWERED="$(jq -r '[(.unanswered // [])[] | (if .channel == "DM" then "DM" else "~\(.channel)" end)
+                       + " post \(.root_id) by \(.author)"] | join("; ")' <<<"$MM_BUS_BODY" 2>/dev/null \
+    | head -n1 | cut -c1-1000)" || UNANSWERED=""
+  UNANSWERED_N="$(jq -r '(.unanswered // []) | length' <<<"$MM_BUS_BODY" 2>/dev/null)" || UNANSWERED_N=0
+  [[ "$UNANSWERED_N" =~ ^[0-9]+$ ]] || UNANSWERED_N=0
   RELEASE_NEWEST="$(jq -r '.release.newest // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || RELEASE_NEWEST=""
   RELEASE_LINE="$(jq -r '.release.line // ""' <<<"$MM_BUS_BODY" 2>/dev/null | head -n1 | cut -c1-400)" || RELEASE_LINE=""
   RELEASE_OLDER="$(jq -r '.release.older // false' <<<"$MM_BUS_BODY" 2>/dev/null)" || RELEASE_OLDER=""
@@ -242,7 +254,21 @@ my_last_post && have_post=1
 # before the window opened, and a second IDLE after each answer is just noise.
 # The same holds for a turn a channel push started (RT-6.12): it answers the
 # bus, and the agent stays reachable through the channel anyway.
+#
+# Before that, and whatever the window or the channel: a post that reached the
+# agent over the bus and needs an answer (a mention, a DM, a reply in its
+# thread, a post for the crown holder; never an fyi post) has none by it in its
+# thread (RT-6.2 step 2, unanswered.py). An answer only in the terminal reaches
+# nobody. Each post blocks once (the server hands it out once); both due: one
+# block, the answer first. Same words as turnend.answer (RT-6.20).
 CHANNEL=0; mm_channel_push && CHANNEL=1
+answer_reason="" answer_banner=""
+if [[ -n "$UNANSWERED" && "$UNANSWERED_N" -gt 0 ]]; then
+  answer_reason="A post that reached you over the bus has no answer in its thread: ${UNANSWERED}. Answer it there"
+  answer_reason+=" with reply_in_thread (root_id as given); the bus does not see your terminal. If it needs"
+  answer_reason+=" no answer, just finish: this check will not block you again for it."
+  answer_banner="$MM_ANSWER Answering on Mattermost: ${UNANSWERED_N} post(s) without a reply in their thread"
+fi
 if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -n "$LAST_MSG" ]] &&
   ! [[ "$BY_BUS" -eq 1 && "$CHANNEL" -eq 1 ]] &&
   [[ "$SIGNED_OFF" -eq 0 ]]; then
@@ -257,7 +283,15 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
   reason+=" conversation may be compacted while you are idle, and this post is handed back to you then."
   reason+=" If you coordinate and will be gone for long, hand over first."
   reason+=" You are asked because you posted or were sent something on the bus since your last IDLE; this check will not block you again this turn."
-  block "$reason" "$MM_SIGNOFF Signing off on Mattermost before going idle" signoff
+  banner="$MM_SIGNOFF Signing off on Mattermost before going idle"
+  if [[ -n "$answer_reason" ]]; then
+    reason="$answer_reason"$'\n\n'"Then: $reason"
+    banner="$answer_banner"$'\n'"$banner"
+  fi
+  block "$reason" "$banner" signoff
+fi
+if [[ -n "$answer_reason" ]]; then
+  block "$answer_reason" "$answer_banner" answer
 fi
 
 # --- 3. listen --------------------------------------------------------------

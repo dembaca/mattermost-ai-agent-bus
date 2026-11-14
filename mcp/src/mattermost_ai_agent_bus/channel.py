@@ -291,6 +291,9 @@ def digest(items: Sequence[Mapping[str, Any]], since: float) -> dict[str, Any]:
 # them, and nothing pushed shows them.
 CHANNEL_ID = "_channel_id"
 CREATE_AT = "_create_at"
+# Set on an item once it was pushed into the session (not held, not dropped):
+# it reached the agent, so it may wait for an answer (RT-6.2 step 2).
+PUSHED = "_pushed"
 
 
 def notification(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -483,6 +486,7 @@ class Pusher:
                     elif addressed is None or await addressed(item):
                         if not await self.send(notification(item)):
                             raise ConnectionError("push not sent")
+                        item[PUSHED] = True
                     elif item.get("guest") or item.get("lobby"):
                         pass  # RT-6.22: a guest channel and the lobby: no digest
                     else:

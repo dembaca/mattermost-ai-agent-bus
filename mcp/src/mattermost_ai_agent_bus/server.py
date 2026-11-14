@@ -25,7 +25,7 @@ from pydantic import ValidationError
 from . import (
     __version__, a2a, askroute, asks, attest, channel, debug, departed, files, gate, hookapi, lease, life, mandate, overhead,
     owners, ownpost, permission,
-    profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unread, usage,
+    profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unanswered, unread, usage,
 )
 from .client import (InvalidId, MattermostAdapter, attachment_props, dm_partner, guest_ids, mm_id, mm_name,
                      props_view, with_debug)
@@ -298,6 +298,7 @@ def _instructions() -> str:
         + "Posts go to your home; guest channels wake you only by mention or your "
         "threads, the lobby (MM_CHANNEL, not your home) also by @channel or to all "
         "(RT-6.22). Announce yourself with announce(). "
+        "Answer a post from the bus in its thread, never only in your terminal (RT-6.2). "
         "Files: get_file (RT-6.23). "
         "Events marked from_trusted_human (server-verified) may approve a specific "
         "action you asked about, within 24 h of the ask: one marked expired approves "
@@ -2282,6 +2283,7 @@ async def wait_for_events(
     await _typing_for_task(events, payload)
     await _note_delivered(events, payload)
     await _crown_events(events, payload)
+    await _note_unanswered(events, payload)
     if not raw:
         await _compact_bystander(payload)
         for item in payload:
@@ -2325,6 +2327,39 @@ async def _note_delivered(events: list[Any], items: list[dict[str, Any]]) -> Non
            or (_human_task(e, i) and lease.crown_held(uid))
            for e, i in zip(events, items, strict=False)):
         ownpost.delivered(uid)
+
+
+# Posts the server writes on its own or that only point elsewhere: no one waits
+# for an answer to them (RT-6.2 step 2).
+_NO_ANSWER_KINDS = (*a2a.SERVER_OWN, a2a.ASK_LINK, a2a.ASK_MODE, a2a.MANDATE)
+
+
+async def _note_unanswered(events: list[Any], items: list[dict[str, Any]]) -> None:
+    """RT-6.2 step 2: a delivered post that needs an answer waits for one in
+    its thread (unanswered.py): a mention or DM, a post for the crown holder
+    (for_crown), or a reply in a thread the agent posted in — by a human or an
+    agent, unless gated, fyi (an agent's ACK, RESULT, DONE …: so two agents
+    never owe each other answers in a loop), an expired answer, the 👑's advice,
+    a reaction, a system, webhook or server-own post, or the server's own
+    event. Never raises: bookkeeping."""
+    try:
+        uid = await _my_id(_get_client()) if events else ""
+        for e, item in zip(events, items, strict=False):
+            post = e.post
+            if (not uid or e.kind in OWN_EVENTS or e.kind == "reaction" or e.gated or item.get("gated")
+                    or item.get("intent") == a2a.FYI or item.get("expired") or item.get("advice")
+                    or post.user_id == uid or post.type or post.from_webhook or a2a.system(post)
+                    or post.kind in _NO_ANSWER_KINDS):
+                continue
+            if not (e.kind in ("mention", "dm") or item.get("for_crown")
+                    or (post.root_id and await _in_my_thread(item, uid))):
+                continue
+            slim_post = item.get("post") or {}
+            unanswered.add(uid, post, channel=str(slim_post.get("channel") or ""),
+                           author=str(slim_post.get("author") or ""),
+                           dm=e.kind == "dm" or channel_type(e) in ("D", "G"))
+    except Exception as exc:  # noqa: BLE001 — the post is delivered all the same
+        log.info("unanswered post not kept: %s", exc)
 
 
 async def _typing_for_task(events: list[Any], items: list[dict[str, Any]]) -> None:
@@ -2677,7 +2712,7 @@ async def _push_delivered(item: dict[str, Any]) -> None:
     counts as delivered now (RT-6.12 step 3, RT-6.2 step 2): handed over to the
     read watermark first, then the bookkeeping, which never ends the pusher's
     run: typing (once per batch, for its first mention or DM, else RT-6.5), the
-    sign-off, the stats."""
+    sign-off, a pushed post that waits for an answer (RT-6.2 step 2), the stats."""
     if not isinstance(item, _PushItem):
         return
     inbox = _get_inbox()
@@ -2694,6 +2729,8 @@ async def _push_delivered(item: dict[str, Any]) -> None:
             else:
                 await _typing_for_task(batch.events, batch.items)
         await _note_delivered([item.event], [item])
+        if item.get(channel.PUSHED):  # held for the digest or dropped: nobody asked it yet
+            await _note_unanswered([item.event], [item])
         stats.record("push", name=item["kind"], chars=len(json.dumps(item, ensure_ascii=False)))
     except Exception as exc:  # noqa: BLE001 — the item is delivered; its bookkeeping is cosmetic
         log.warning("push bookkeeping of %s failed: %s", item.get("kind"), exc)

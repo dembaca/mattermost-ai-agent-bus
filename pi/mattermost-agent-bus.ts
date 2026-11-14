@@ -13,7 +13,8 @@
 //   agent_start         presence working (not awaited)
 //   agent_settled       the final idle signal, not agent_end (which pi may
 //                       follow with a retry, a compaction or queued input):
-//                       GET /v1/turn-end → drain or sign-off as a user message
+//                       GET /v1/turn-end → drain, answer (a bus post without
+//                       a reply in its thread) or sign-off as a user message
 //                       that starts the next run, else presence "on the bus"
 //                       (the server's gates hold) or idle; aborted (Escape):
 //                       idle, no checks, no wake-up until the human's next
@@ -332,13 +333,14 @@ export function create(pi: ExtensionAPI, deps: Deps = {}) {
     }
     t.idleAt = Date.now()
     const human = t.human
-    const q = `drains=${t.drains}&signoff_asked=${+t.signoffAsked}&by_bus=${+t.byBus}&push=1`
+    // unanswered=1: a bus post without a reply in its thread blocks once (RT-6.2 step 2).
+    const q = `drains=${t.drains}&signoff_asked=${+t.signoffAsked}&by_bus=${+t.byBus}&push=1&unanswered=1`
     const r = await bus("GET", `/v1/turn-end?${q}`, undefined, SLOW_MS)
     // The human typed meanwhile, or a wake-up went out: that run ends with its own check.
     if (t.human !== human || t.running || t.ours) return
-    if (r && (r.action === "drain" || r.action === "signoff")) {
+    if (r && (r.action === "drain" || r.action === "answer" || r.action === "signoff")) {
       if (r.action === "drain") t.drains += 1
-      else t.signoffAsked = true
+      else if (r.action === "signoff") t.signoffAsked = true
       await stat("block", { kind: r.action })
       notify(String(r.banner || ""))
       deliver(String(r.reason))

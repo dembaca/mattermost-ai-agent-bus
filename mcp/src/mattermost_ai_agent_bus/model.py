@@ -30,6 +30,7 @@ class Mark(Enum):
     HEADER = "header"
     INBOX = "inbox"
     SIGNOFF = "signoff"
+    ANSWER = "answer"
     LOCK = "lock"
     DESKTOP = "desktop"
     ALLOWED = "allowed"

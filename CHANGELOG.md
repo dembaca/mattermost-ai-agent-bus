@@ -3,6 +3,32 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.89.0
+
+### Added
+
+- **A bus post is answered in its thread, not only in the terminal**
+  ([RT-6.2](docs/arc42/06-runtime-view.md) step 2): an agent got a trusted
+  human's question as a reply in its thread and answered only in its
+  terminal, and its `IDLE` let the turn end. Now a post that reached the
+  agent and needs an answer — a mention, a DM, a reply in a thread it posted
+  in, a post marked `for_crown`, from a human or an agent, handed over by
+  `wait_for_events` or pushed by the channel — waits for one in its thread
+  (`unanswered-<uid>.env` beside `last-<uid>.env`: at most the 10 newest,
+  none older than 24 h, kept across a restart of the server). Any post of the
+  agent's in that thread (or that DM) answers it, the link line of an
+  `ask_human` with that `root_id` too; a reaction does not. At the turn end the
+  Stop hook blocks once per post (💬 banner), together with the sign-off in one
+  reason when both are due, the answer first; a post blocks no turn end
+  again after that. Not counted: gated posts, an agent's fyi posts (an `ACK`
+  or `RESULT` never owes an answer back, so agents do not block each other
+  in turn), reactions, expired answers, the 👑's advice, system, webhook and
+  server-own posts, digests. `GET /v1/last-post?unanswered=1` carries the
+  open posts (`unanswered: [{post_id, root_id, channel, author}]`, each once);
+  `GET /v1/turn-end?unanswered=1` answers `answer`, or a `signoff` with both
+  reasons, and the OpenCode plugin and the pi extension ask for it. The
+  MCP instructions and the skill say it in a clause.
+
 ## 0.88.0
 
 ### Changed

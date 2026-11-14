@@ -713,3 +713,84 @@ def test_no_signoff_while_nothing_changed_since_the_idle(mm, run):
     run.state_dir.joinpath(f"turn-{ME}.env").unlink()
     last_post(run, "HELLO @agent-test")
     assert run(STOP, MM_LISTEN_SEC="0").blocked
+
+
+# --- RT-6.2 step 2: a bus post without an answer in its thread ---------------
+
+ASKED = "q" * 26
+
+
+def unanswered(run, post_id=ASKED, root_id=ASKED, channel=PROJECT, name="proj", author="dembaca",
+               dm=0, reminded=0) -> None:
+    """unanswered-<uid>.env as the MCP server keeps it (unanswered.py)."""
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    with (run.state_dir / f"unanswered-{ME}.env").open("a") as f:
+        f.write(f"{post_id} {root_id} {channel} {name} {author} {int(time.time())} {dm} {reminded}\n")
+
+
+def test_an_unanswered_post_blocks_the_turn_end_once(mm, run):
+    """RT-6.2 step 2: a post that reached the agent over the bus has no answer
+    by it in its thread: one block naming it, with the banner; the next stop
+    goes through, the post stays open but blocks no more."""
+    last_post(run, "IDLE · done: x")
+    unanswered(run)
+    r = run(STOP, MM_LISTEN_SEC="0")
+    assert r.blocked and f"~proj post {ASKED} by dembaca" in r.reason
+    assert "reply_in_thread" in r.reason and "the bus does not see your terminal" in r.reason
+    assert r.banner.startswith("\U0001F4AC Answering on Mattermost: 1 post(s)")
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+    assert " 1\n" in (run.state_dir / f"unanswered-{ME}.env").read_text()  # reminded, still open
+
+
+def test_answer_and_signoff_share_one_block(mm, run):
+    """RT-6.2 step 2: with a sign-off due too, one block: the answer first,
+    then the sign-off; one banner line each. Then nothing blocks again."""
+    last_post(run, "PROGRESS · working")
+    unanswered(run, "d" * 26, "d" * 26, "e" * 26, "DM", "dembaca", dm=1)
+    r = run(STOP, MM_LISTEN_SEC="0")
+    assert r.blocked
+    assert r.reason.index(f"DM post {'d' * 26} by dembaca") < r.reason.index("Then: Before this turn ends")
+    assert r.banner.splitlines()[0].startswith("\U0001F4AC") and "Signing off" in r.banner.splitlines()[1]
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+
+
+def test_an_answer_in_the_thread_clears_it(mm, run):
+    """RT-6.2 step 2: the agent's reply in that thread (here through
+    mm-agent-post.sh, the server's reply_in_thread) answers it: no answer
+    block, only the sign-off its post asks for."""
+    last_post(run, "IDLE · done: x")
+    unanswered(run, root_id="r" * 26)
+    assert run("bin/mm-agent-post.sh", PROJECT, "Yes, merged.", "r" * 26, **IN_PROJECT).code == 0
+    assert not (run.state_dir / f"unanswered-{ME}.env").exists()
+    r = run(STOP, MM_LISTEN_SEC="0")
+    assert r.blocked and "no answer in its thread" not in r.reason and "\U0001F4AC" not in r.banner
+    assert run(STOP, MM_LISTEN_SEC="0").passed
+
+
+def test_an_fyi_post_waits_for_no_answer(mm, run, monkeypatch):
+    """RT-6.2 step 2: of what wait_for_events hands over, an agent's fyi post
+    (an ACK, a RESULT) waits for no answer; a mention does: one block, for the
+    mention only."""
+    import asyncio
+
+    from mattermost_ai_agent_bus import server
+    from mattermost_ai_agent_bus.client import post_of
+    from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
+
+    async def my_id(_client):
+        return ME
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(run.state_dir.parent))
+    monkeypatch.setattr(server, "_get_client", lambda: None)
+    monkeypatch.setattr(server, "_my_id", my_id)
+
+    def ev(pid):
+        return ClassifiedEvent(kind="mention", post=post_of({"id": pid, "user_id": OTHER, "channel_id": PROJECT}))
+
+    asyncio.run(server._note_unanswered(
+        [ev("f" * 26), ev("m" * 26)],
+        [{"kind": "mention", "from_agent": True, "intent": "fyi", "post": {"channel": "proj", "author": "agent-b"}},
+         {"kind": "mention", "post": {"channel": "proj", "author": "dembaca"}}]))
+    last_post(run, "IDLE · done: x")
+    r = run(STOP, MM_LISTEN_SEC="0")
+    assert r.blocked and f"~proj post {'m' * 26} by dembaca" in r.reason and "f" * 26 not in r.reason

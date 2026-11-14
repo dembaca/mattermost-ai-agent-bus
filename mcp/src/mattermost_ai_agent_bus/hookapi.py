@@ -8,9 +8,12 @@ instead, served next to the WebSocket inbox in the server's event loop:
     GET  /v1/me             {user_id, username, project, crown_until, channel}
     GET  /v1/pending        {count[, stall: 1][, channels: [{id, type, pending, fyi}]]}
                             (?detail=1: up to 5 channels, with fyi counts)
-    GET  /v1/last-post      {at, message, signed_off[, release]}: the own latest post in the
-                            work channel; release {newest, line}: the notice of a release
-                            the host's check passed, for the turn-end banner (RT-6.30)
+    GET  /v1/last-post      {at, message, signed_off[, release][, unanswered]}: the own latest
+                            post in the work channel; release {newest, line}: the notice of a
+                            release the host's check passed, for the turn-end banner (RT-6.30);
+                            ?unanswered=1: unanswered [{post_id, root_id, channel, author}],
+                            the posts that wait for an answer in their thread, each handed
+                            out once (RT-6.2 step 2)
     GET  /v1/posts          {channel, posts: [{id, user_id, root_id, create_at, type,
                             message, to, intent, fyi, quiet, gated, names_agent, absent[, files]}]},
                             work channel
@@ -34,9 +37,9 @@ instead, served next to the WebSocket inbox in the server's event loop:
     POST /v1/reply          {root_id, message, channel_id?, to?, kind?} → what
                             reply_in_thread returns (mm-agent-post.sh): the tools'
                             own code (server.py), not a second implementation
-    GET  /v1/turn-end       {action: drain|signoff|idle, reason?, banner?, pending?,
+    GET  /v1/turn-end       {action: drain|answer|signoff|idle, reason?, banner?, pending?,
                             listen_since?, listen_until?} (?drains=N&signoff_asked=0|1
-                            &by_bus=0|1&push=0|1&listen_since=S): the Stop hook's
+                            &by_bus=0|1&push=0|1&listen_since=S&unanswered=0|1): the Stop hook's
                             decision, words and listen window for a turn plugin (RT-6.20)
     GET  /v1/wake           {wake, reason: dm|stall|reaction|addressed|digest|'', count, text}
                             (?since=MS&until=S): the listener's decision inside the
@@ -87,7 +90,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import (
     a2a, asks, channel, files, gate, lease, life, ownpost, release, session_file, stall, stats, tasks, turnend,
-    unread, usage,
+    unanswered, unread, usage,
 )
 from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
 from .model import Post
@@ -590,9 +593,13 @@ async def pending(client: MattermostAdapter, query: Mapping[str, str], body: Map
 async def last_post(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:
     """The own latest post in the work channel (RT-6.2 step 2): from
     last-<uid>.env (ownpost.py) without a request, else from the channel's last
-    100 posts; at 0 when there is none."""
+    100 posts; at 0 when there is none. unanswered=1 (the Stop hook): the posts
+    that wait for an answer in their thread, each handed out once."""
     at, message, signed_off = await _last(client, query, body)
-    return 200, {"at": at, "message": message, "signed_off": signed_off, **_release()}
+    out: dict[str, Any] = {"at": at, "message": message, "signed_off": signed_off, **_release()}
+    if _flag(query, "unanswered") and (rows := unanswered.remind(await _uid(client))):
+        out["unanswered"] = rows
+    return 200, out
 
 
 def _release() -> dict[str, Any]:
@@ -925,23 +932,29 @@ async def turn_end(client: MattermostAdapter, query: Mapping[str, str],
     keeps the turn's state; push=1: the plugin wakes the agent between turns,
     so a turn the bus started needs no sign-off. On idle, the listen window
     (step 3) the plugin wakes the agent in: listen_since/listen_until in epoch
-    s, absent when there is none; ?listen_since= is the running one's start."""
+    s, absent when there is none; ?listen_since= is the running one's start.
+    unanswered=1: posts that wait for an answer in their thread (RT-6.2 step 2)
+    block once each, as `answer`, or with the sign-off in one reason."""
     drains, since = query.get("drains", "0"), query.get("listen_since", "0")
     if not drains.isdigit():
         raise BadRequest("drains: a count")
     if not since.isdigit():
         raise BadRequest("listen_since: epoch s")
-    asked, by_bus, push = (_flag(query, n) for n in ("signoff_asked", "by_bus", "push"))
+    asked, by_bus, push, ask_answer = (_flag(query, n) for n in ("signoff_asked", "by_bus", "push", "unanswered"))
     if int(drains) < turnend.MAX_DRAIN:
         rows = await counted(client)
         count = sum(r.waiting for r in rows) + (1 if stall.waiting() else 0)  # as /v1/pending
         if count > 0:
             return 200, turnend.drain(count, await unread.detail(client, rows) if rows else [])
     at, message, signed_off = await _last(client, query, body)
+    uid = await _uid(client)
+    due = unanswered.remind(uid) if ask_answer else []
     if turnend.needs_signoff(message, asked=asked, by_bus=by_bus, push=push,
                              signed_off=signed_off):
-        return 200, turnend.signoff(push=push)
-    uid = await _uid(client)
+        sign = turnend.signoff(push=push)
+        return 200, turnend.combine(turnend.answer(due), sign) if due else sign
+    if due:
+        return 200, turnend.answer(due)
     start, until = turnend.listen_window(message, at, project=_project(client),
                                          coordinator=lease.crown_until(uid) > time.time(),
                                          since=int(since))

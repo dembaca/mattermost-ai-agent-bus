@@ -320,7 +320,7 @@ test("RT-6.20: a turn: working, drain at the end as synthetic input, then listen
   calls = []
   answers["/v1/turn-end"] = { action: "drain", reason: "You have 1 unread …", banner: "\u{1F4E8} Collecting 1" }
   await fx.ended()
-  assert.match(rest()[0].path, /^\/v1\/turn-end\?drains=0&signoff_asked=0&by_bus=0&push=1$/)
+  assert.match(rest()[0].path, /^\/v1\/turn-end\?drains=0&signoff_asked=0&by_bus=0&push=1&unanswered=1$/)
   assert.deepEqual(rest()[1].body, { k: "block", kind: "drain" })
   assert.deepEqual(fx.sent, [{ sessionID: "s1", text: "You have 1 unread …", description: "\u{1F4E8} Collecting 1",
     metadata: { [MARK]: "drain" }, delivery: "queue", resume: true }])
@@ -329,7 +329,7 @@ test("RT-6.20: a turn: working, drain at the end as synthetic input, then listen
   await fx.ran()
   answers["/v1/turn-end"] = idleIn()
   await fx.ended()
-  assert.match(rest()[0].path, /drains=1&signoff_asked=0&by_bus=0&push=1$/)
+  assert.match(rest()[0].path, /drains=1&signoff_asked=0&by_bus=0&push=1&unanswered=1$/)
   // The server's gates hold: reachable between turns (the status renews with its heartbeat), no end by time.
   assert.deepEqual(rest().slice(1, 3).map((c) => c.body), [{ k: "turn_end" }, { state: "bus", label: "ws" }])
   assert.equal(fx.sent.length, 1)
@@ -338,6 +338,24 @@ test("RT-6.20: a turn: working, drain at the end as synthetic input, then listen
   await fx.hooks.prompt({ sessionID: "s1", prompt: { text: "x" }, metadata: { [MARK]: "wake" }, delivery: "queue" })
   await settle()
   assert.deepEqual(calls.filter((c) => !c.path.startsWith("/v1/wake")), []) // the long poll runs on
+  await fx.cleanup()
+})
+
+test("RT-6.20, RT-6.2 step 2: a bus post without an answer in its thread: one round, no sign-off counted", async () => {
+  const fx = await start()
+  await fx.prompt()
+  calls = []
+  answers["/v1/turn-end"] = { action: "answer", reason: "A post that reached you …", banner: "\u{1F4AC} Answering" }
+  await fx.ended()
+  assert.deepEqual(rest()[1].body, { k: "block", kind: "answer" })
+  assert.deepEqual(fx.sent.at(-1), { sessionID: "s1", text: "A post that reached you …", description: "\u{1F4AC} Answering",
+    metadata: { [MARK]: "answer" }, delivery: "queue", resume: true })
+  calls = []
+  await fx.ran()
+  answers["/v1/turn-end"] = idleIn()
+  await fx.ended()
+  // The sign-off was not asked yet: the server may still ask for it.
+  assert.match(rest()[0].path, /drains=0&signoff_asked=0&by_bus=0&push=1&unanswered=1$/)
   await fx.cleanup()
 })
 
@@ -413,7 +431,7 @@ test("RT-6.20: a counter the woken turn cannot clear wakes again only after 1, 2
     await fx.ran()
     calls = []
     await fx.ended()
-    assert.match(rest()[0].path, /by_bus=1&push=1$/)
+    assert.match(rest()[0].path, /by_bus=1&push=1&unanswered=1$/)
     calls = []
   }
   await until(() => fx.sent.length === 1, "first wake")

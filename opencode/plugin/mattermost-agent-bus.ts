@@ -9,7 +9,8 @@
 //   skill.transform    the skill
 //   hook "prompt"      a human's prompt starts a turn: presence working (RT-6.2, RT-6.3)
 //   session.execution.succeeded / .failed
-//                      a turn ends: GET /v1/turn-end → drain or sign-off as
+//                      a turn ends: GET /v1/turn-end → drain, answer (a bus
+//                      post without a reply in its thread) or sign-off as
 //                      synthetic input that starts the next round, else
 //                      presence "on the bus" (reachable, no listen window:
 //                      the session is reachable as long as it lives, like a
@@ -69,7 +70,7 @@ const KEEP_MS = 24 * 3600_000 // turn state older than a day is not restored
 
 type Env = Record<string, string | undefined>
 type Json = Record<string, any>
-type Kind = "drain" | "signoff" | "wake" | "context"
+type Kind = "drain" | "answer" | "signoff" | "wake" | "context"
 
 export type Options = {
   // The bus checkout (with mcp/ and skills/); default: where this file really lies.
@@ -389,11 +390,12 @@ export async function setup(ctx: Plugin.Context) {
     last = id
     t.inFlight = true
     try {
-      const q = `drains=${t.drains}&signoff_asked=${+t.signoffAsked}&by_bus=${+t.byBus}&push=1`
+      // unanswered=1: a bus post without a reply in its thread blocks once (RT-6.2 step 2).
+      const q = `drains=${t.drains}&signoff_asked=${+t.signoffAsked}&by_bus=${+t.byBus}&push=1&unanswered=1`
       const r = await bus("GET", `/v1/turn-end?${q}`, undefined, SLOW_MS)
-      if (r && (r.action === "drain" || r.action === "signoff")) {
+      if (r && (r.action === "drain" || r.action === "answer" || r.action === "signoff")) {
         if (r.action === "drain") t.drains += 1
-        else t.signoffAsked = true
+        else if (r.action === "signoff") t.signoffAsked = true
         t.busy = true
         await stat("block", { kind: r.action })
         if (await send(id, String(r.reason), r.action, String(r.banner || ""))) return
