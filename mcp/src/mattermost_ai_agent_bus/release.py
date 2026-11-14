@@ -274,13 +274,20 @@ def notice(have: str | None = None, state: State | None = None,
             out["needs"] = needs
     if have in st.withdrawn:
         out["withdrawn"] = True
-    if _key(st.newest) < _key(have):
+    if older(st, have):
         out["older"] = True
     text = line(have, st)
     if text:
         out["notice"] = text
         out["note"] = NOTE
     return out
+
+
+def older(st: State, have: str | None = None) -> bool:
+    """The newest release the check found is older than this server's version
+    (RT-6.30 step 6): never one to install."""
+    have = VERSION if have is None else have
+    return bool(_VER.match(have)) and _key(st.newest) < _key(have)
 
 
 def line(have: str | None = None, state: State | None = None,

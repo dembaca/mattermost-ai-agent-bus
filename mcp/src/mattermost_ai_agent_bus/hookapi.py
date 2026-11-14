@@ -599,11 +599,16 @@ def _release() -> dict[str, Any]:
     """The release notice for the turn-end banner (RT-6.30, RT-6.2 step 8),
     riding on the read the Stop hook makes every turn end: the host's check
     is the server's to read, in a keyless session too. Before the first check,
-    the self-update line alone (RT-6.32), named by the version it names."""
+    the self-update line alone (RT-6.32), named by the version it names.
+    older: the newest is older than this server's version, decided where the
+    line is, so the hook names no installer for it (RT-6.30 step 6)."""
     state = release.read_state()
     text = release.line(state=state)
     newest = state.newest if state else release.target_version(release.read_auto().get("TARGET", ""))
-    return {"release": {"newest": newest, "line": text}} if newest and text else {}
+    if not (newest and text):
+        return {}
+    return {"release": {"newest": newest, "line": text,
+                        **({"older": True} if state and release.older(state) else {})}}
 
 
 async def _last(client: MattermostAdapter, query: Mapping[str, str],

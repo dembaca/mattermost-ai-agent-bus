@@ -209,6 +209,11 @@ def test_the_last_post_answer_carries_the_banner_line(tmp_path):
     out = hookapi._release()["release"]
     assert out["newest"] == "99.0.0"
     assert out["line"].startswith("release v99.0.0 is out (major; signature not checked)")
+    assert "older" not in out
+    # RT-6.30 step 6: older than this server, decided here: the hook names no installer.
+    state(tmp_path, "NEWEST=0.0.1\nVERIFIED=yes\n")
+    out = hookapi._release()["release"]
+    assert out["older"] is True and out["line"].startswith("the release check found v0.0.1 as newest")
 
 
 # --- the child -----------------------------------------------------------------------

@@ -1070,11 +1070,10 @@ mm_release_notice() {
   local have="$1" dir="${2:-$(mm_state_dir)}" text k v ver rest newest="" verified="" step
   local breaking=0 needs="" withdrawn=0 out="" checked="" when=""
   [[ "$have" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
-  [[ -f "$dir/release.env" && ! -L "$dir/release.env" ]] || return 1
+  newest="$(mm_release_newest "$dir")" || return 1
   text="$(mm_read_file "$dir/release.env" 65536)" || return 1
   while IFS='=' read -r k v; do
     case "$k" in
-      NEWEST) [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && newest="$v" ;;
       VERIFIED) [[ "$v" == yes || "$v" == no ]] && verified="$v" ;;
       CHECKED_AT) [[ "$v" =~ ^[1-9][0-9]{0,9}$ ]] && checked="$v" ;;
     esac
@@ -1120,10 +1119,20 @@ mm_release_notice() {
 # release newer than <version> (RT-6.30), so a notice may name the installer
 # for it; an older newest is never one to install.
 mm_release_newer() {
-  local f="${2:-$(mm_state_dir)}/release.env" newest
-  [[ -f "$f" && ! -L "$f" ]] || return 1
-  newest="$(mm_read_file "$f" 65536 | sed -n 's/^NEWEST=//p' | head -n1)" || return 1
-  [[ "$newest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && mm_version_newer "$1" "$newest"
+  local newest
+  newest="$(mm_release_newest "${2:-$(mm_state_dir)}")" && mm_version_newer "$1" "$newest"
+}
+
+# mm_release_newest <state dir>: NEWEST of release.env, the last valid line,
+# read as mm_release_notice reads it.
+mm_release_newest() {
+  local k v newest="" text
+  [[ -f "$1/release.env" && ! -L "$1/release.env" ]] || return 1
+  text="$(mm_read_file "$1/release.env" 65536)" || return 1
+  while IFS='=' read -r k v; do
+    [[ "$k" == NEWEST && "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && newest="$v"
+  done <<<"$text"
+  [[ -n "$newest" ]] && printf '%s\n' "$newest"
 }
 
 # --- self-update between sessions (ADR-011 phase 3, RT-6.32) --------------------
