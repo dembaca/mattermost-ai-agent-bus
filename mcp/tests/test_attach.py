@@ -15,6 +15,7 @@ from mattermost_ai_agent_bus.client import MattermostAdapter
 from mattermost_ai_agent_bus.model import Channel, Refused
 
 GUEST, DM, GROUP, OTHER, PEER, ROOT = "g" * 26, "d" * 26, "x" * 26, "o" * 26, "p" * 26, "r" * 26
+GONE = "n" * 26  # a channel id that does not exist, or is none of the bot's
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + bytes(20)
 JPEG = b"\xff\xd8\xff\xe0" + bytes(20)
 GIF = b"GIF89a" + bytes(10)
@@ -34,6 +35,9 @@ class Chat(HookClient):
         self.channel_ids = {"guest-x": GUEST, "elsewhere": OTHER}
 
     async def get_channel(self, channel_id: str) -> Channel:
+        if channel_id == GONE:
+            raise httpx.HTTPStatusError("404", request=httpx.Request("GET", "http://x"),
+                                        response=httpx.Response(404))
         if channel_id == DM:
             return Channel(id=DM, name=f"{BOT}__{PEER}", type="D")
         return Channel(id=channel_id, name="g-room", type="G" if channel_id == GROUP else "O")
@@ -173,6 +177,7 @@ async def test_the_channels_a_post_goes_to(api, query, cid):
 @pytest.mark.parametrize("query,status,why", [
     (f"&channel={GROUP}", 403, "only the home, a guest channel, the lobby or a DM"),
     (f"&channel={OTHER}", 403, "only the home"),
+    (f"&channel={GONE}", 403, "not a channel of the bot"),
     ("&channel=elsewhere", 400, "not the home, a guest channel or the lobby"),
     ("&to=dembaca", 400, "is a person"),
     (f"&to=agent-peer&channel={GUEST}", 400, "one of them"),
@@ -240,6 +245,11 @@ async def test_foreign_expired_and_too_many_ids_are_refused(monkeypatch):
         out = json.loads(await server.post_message("x", files=files))
         assert out["posted"] is False and why in out["refused"], out
     assert c.posted == [] and mine in attach._pending
+    for _ in range(attach.PENDING_MAX):  # pushed out by newer uploads: the refusal says so
+        await _upload(c)
+    out = json.loads(await server.post_message("x", files=[mine]))
+    assert out["posted"] is False and f"more than {attach.PENDING_MAX} uploads since" in out["refused"]
+    mine = await _upload(c)
     now = attach._pending[mine].at
     monkeypatch.setattr(attach.time, "time", lambda: now + attach.PENDING_SEC + 1)
     out = json.loads(await server.post_message("x", files=[mine]))
@@ -309,6 +319,12 @@ async def test_attach_uploads_a_small_text(monkeypatch):
     assert out["posted"] is False and 'unknown channel "guest-a"' in out["refused"]
     out = json.loads(await server.attach_text("t.md", "# x", channel=DM))
     assert out["channel"] == DM
+    out = json.loads(await server.attach_text("t.md", "# x", to="agent-peer"))  # as --to
+    assert out["channel"] == DM
+    for kw, why in (({"to": "dembaca"}, "is a person"), ({"to": "agent-peer", "channel": DM}, "one of them"),
+                    ({"channel": GONE}, "not a channel of the bot")):
+        out = json.loads(await server.attach_text("t.md", "# x", **kw))
+        assert out["posted"] is False and why in out["refused"], out
     for name, text, why in (("chart.png", "not a png", "named .png"),
                             ("x.svg", "<svg/>", "SVG is refused"),
                             ("big.txt", "x" * (attach.TEXT_MAX + 1), "over 100 KB")):
@@ -316,7 +332,7 @@ async def test_attach_uploads_a_small_text(monkeypatch):
         assert out["posted"] is False and why in out["refused"], out
     out = json.loads(await server.attach_text("a.txt", "x", channel=GROUP))
     assert out["posted"] is False and "only the home" in out["refused"]
-    assert len(c.uploads) == 2
+    assert len(c.uploads) == 3
 
 
 # --- the adapter (RT-6.33 step 4) ------------------------------------------------------

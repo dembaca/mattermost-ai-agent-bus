@@ -74,6 +74,12 @@ command -v jq >/dev/null 2>&1 || { echo "mm-agent-post.sh: jq is required" >&2; 
 for f in "${FILES[@]}"; do
   [[ -f "$f" && -r "$f" ]] || { echo "mm-agent-post.sh: --file $f: no readable file" >&2; exit 2; }
 done
+# Over the server's 10 MiB the server refuses before it reads (413), but curl may
+# see the closed connection instead: say it here, before anything is uploaded.
+for f in "${FILES[@]}"; do
+  size="$(wc -c <"$f" | tr -d ' ')"
+  (( size <= 10485760 )) || { echo "mm-agent-post.sh: --file $f: over 10 MiB" >&2; exit 1; }
+done
 
 # RT-6.33: each file to the server first, into the channel the post goes to.
 ids=()

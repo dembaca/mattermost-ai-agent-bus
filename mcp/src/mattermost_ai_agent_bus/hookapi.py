@@ -953,7 +953,15 @@ async def upload_channel(client: MattermostAdapter, cid: str) -> str:
     bus watches) or a DM of the bot; anything else, a group too, is Forbidden."""
     if cid in await watched(client):
         return cid
-    if dm_partner(await client.get_channel(mm_id(cid, "channel")), await _uid(client)):
+    try:
+        found = await client.get_channel(mm_id(cid, "channel"))
+    except InvalidId:
+        raise
+    except Exception as exc:  # noqa: BLE001 — not there, or not the bot's: refused, never a 502
+        if getattr(getattr(exc, "response", None), "status_code", 0) in (400, 401, 403, 404):
+            raise Forbidden(f"channel {cid}: not a channel of the bot") from exc
+        raise
+    if dm_partner(found, await _uid(client)):
         return cid
     raise Forbidden("channel: only the home, a guest channel, the lobby or a DM of the bot")
 

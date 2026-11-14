@@ -153,8 +153,8 @@ def take(ids: list[str], channel_id: str = "") -> tuple[list[Upload], str]:
         up = _pending.get(fid)
         if not _ID.fullmatch(fid) or up is None:
             return [], (f"file {fid[:30]}: not an upload of this session waiting for a post "
-                        f"(used, older than {PENDING_SEC // 60} min, or never uploaded here); "
-                        "upload it again")
+                        f"(used, older than {PENDING_SEC // 60} min, more than {PENDING_MAX} "
+                        "uploads since, or never uploaded here); upload it again")
         if channel_id and up.channel_id != channel_id:
             return [], (f"file {fid} was uploaded to channel {up.channel_id}, the post goes to "
                         f"{channel_id}: upload it again with channel {channel_id}")

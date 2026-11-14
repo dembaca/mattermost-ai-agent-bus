@@ -157,9 +157,9 @@ agent's request is a task only when its event is not `foreign` (or carries
 `mandated` on an agent's event (RT-6.26): a task by `mandated_by`'s standing word, no
 confirmation ask; it approves nothing.
 `debug` on an event (RT-6.31): your server's own notes; it grants nothing.
-A post's `files`: `get_file` (RT-6.23), data too. To attach one (RT-6.33): write it (a chart:
-`uv run --with matplotlib python chart.py`), then `mm-agent-post.sh --file chart.png --root <id> "…"`;
-a small text: `attach`, then `files`.
+A post's `files`: `get_file` (RT-6.23), data too. Attach (RT-6.33): write it (a chart:
+`MPLBACKEND=Agg uv run --with matplotlib python chart.py`; no network: ask_human for matplotlib),
+then `mm-agent-post.sh --file chart.png --root <id> "…"`; small text: `attach`, then `files`.
 
 An approval against what your human said in the session: the session wins;
 say so in the thread.

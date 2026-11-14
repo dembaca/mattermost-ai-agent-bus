@@ -1760,24 +1760,28 @@ def _file_ids(ups: list[attach.Upload]) -> dict[str, Any]:
 
 
 @mcp.tool(name="attach")
-async def attach_text(name: str, text: str, channel: str = "") -> str:
+async def attach_text(name: str, text: str, channel: str = "", to: str = "") -> str:
     """Upload a small text file for a post's `files` (RT-6.33): its file_id.
 
     name: with its extension (txt, md, csv, tsv, json, log, yaml); text: at
     most 100 KB. channel: where the post goes (id or ~name; default your
-    home). Images, PDFs: mm-agent-post.sh --file."""
+    home); to: an agent, for the DM with it. Images, PDFs: mm-agent-post.sh --file."""
     client = _get_client()
     data = text.encode("utf-8", errors="replace")
     if len(data) > attach.TEXT_MAX:
         return _refused("attach", f"text over {attach.TEXT_MAX // 1024} KB: write a file and use "
                                   "mm-agent-post.sh --file")
+    if channel.strip() and to.strip():
+        return _refused("attach", "channel or to, one of them")
     cid, bad = await _channel_arg(client, channel)
     if bad:
         return _refused("attach", bad)
     try:
+        if to.strip():
+            cid = await client.direct_channel_with_bot(to)  # refuses a person, as post_message does
         cid = await hookapi.upload_channel(client, cid or await client.work_channel_id())
         return _out("attach", await attach.upload(client, name, data, cid))
-    except (attach.NotAllowed, hookapi.Forbidden, InvalidId, Refused) as exc:
+    except (ValueError, hookapi.Forbidden, Refused) as exc:  # NotAllowed, InvalidId, a person
         return _refused("attach", str(exc))
 
 

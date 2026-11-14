@@ -105,6 +105,12 @@ def test_post_with_files(mm, run, tmp_path):
     r = run(POST, "--file", str(key), "look")
     assert r.code == 1 and "named .png but its bytes are a text file" in r.stderr
     assert run(POST, "--file", str(tmp_path / "missing.png"), "x").code == 2
+    big = tmp_path / "big.png"
+    with big.open("wb") as fh:
+        fh.write(png.read_bytes())
+        fh.truncate(10 * 2**20 + 1)
+    r = run(POST, "--file", str(png), "--file", str(big), "x")  # before any upload, not exit 3
+    assert r.code == 1 and "over 10 MiB" in r.stderr
     assert run(POST, *[a for _ in range(11) for a in ("--file", str(png))], "x").code == 2
     assert len(mm.uploads) == u and len([w for w in mm.writes[n:] if w[1] == "/api/v4/posts"]) == 0
 

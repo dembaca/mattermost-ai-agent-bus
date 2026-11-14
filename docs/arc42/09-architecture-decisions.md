@@ -2563,7 +2563,9 @@ open), and it must not learn the sandbox's view of the file system.
 5. **A text file's links are not rewritten** as a post's are (RT-6.15):
    Mattermost shows a text file's preview as plain text, never as rendered
    Markdown, so a link label cannot hide its target, and rewriting would
-   change the data of a CSV or JSON file.
+   change the data of a CSV or JSON file. Nor is it scanned for @-mentions
+   (RT-6.11): Mattermost notifies on a post's message, never on a file's
+   content, so a file is no way around the mention rules.
 6. **A post takes only this server's fresh uploads:** the server remembers
    each file it uploaded (in memory: id, channel, time) and a post's `files`
    may name only those, unused, within the hour, at most 10, in the post's
@@ -2586,8 +2588,9 @@ files; no host file can reach the chat through the bus; the bytes never pass
 through the model's context on the shell route. Minus: an agent without a
 shell (none of the supported runtimes) posts only small text files; an
 upload not posted within the hour, or across a server restart, is lost and
-an orphan in Mattermost until its own cleanup; the server holds a whole file
-(at most 10 MiB) in memory while it uploads it. OpenCode and pi use the same
+stays an orphan in Mattermost until an admin removes it (small and rare);
+the server holds a whole file (at most 10 MiB) in memory per request, up to
+MAX_CONNECTIONS requests at once. OpenCode and pi use the same
 shell route: their own code needs nothing.
 
 **Tests:** `mcp/tests/test_attach.py` (types, names, the route's limit before
