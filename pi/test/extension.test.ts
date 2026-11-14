@@ -17,7 +17,9 @@ import mattermostAgentBus, { busFile, busRoot, create, hookApi, MCP_TIMEOUT_SEC,
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = dirname(dirname(HERE))
-const KEY = "test-key"
+// A new key per test (beforeEach): a late call of an earlier test's instance gets a 401.
+let KEY = "test-key"
+let keys = 0
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), "mm-pi-")))
 const ws = join(tmp, "ws")
 const sha16 = (s: string) => createHash("sha1").update(s).digest("hex").slice(0, 16)
@@ -86,6 +88,8 @@ after(() => {
 })
 
 beforeEach(() => {
+  // A test must not end with a call of its instance in flight; the per-test key keeps a late one out of the next test's log.
+  KEY = "test-key-" + ++keys
   calls = []
   held = []
   dropped = 0
