@@ -20,6 +20,7 @@ code does today and point here where a decision will change them.
 | ADR-009 | Push for plugin runtimes: a long-poll wake endpoint, OpenCode without a listen window, a pi adapter | Proposed (2026-11-04); phases 1 (0.71.8: the long poll of `GET /v1/wake`) and 2 (0.71.10: the OpenCode plugin without a listen window) built; phase 3 built (0.79.0: the pi extension, RT-6.27) | – |
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag and `wait_for_events`; never in a guest channel or the lobby, in a DM only what the other side may see | Decided, built: phase 1 in the registrar (0.8.0), phase 2 on the bus (0.85.0, 2026-11-12, RT-6.31) | – |
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); 0.84.0, decisions (4) and (5) of 2026-11-12: keys pinned once per host in `release-signers` beside `releases/`, `--replace-signers`, `--forget-signers`, a withdrawn version refused unless `--withdrawn-ok` (RT-6.29, RT-6.30); phase 3 open | – |
+| ADR-012 | Files an agent attaches: the server never opens a path the agent names; the bytes come from inside the sandbox (the shell's `POST /v1/files`, or a small text in the `attach` tool), checked by their bytes, uploaded for a post that takes only this server's fresh uploads | Decided 2026-11-14, built (0.90.0, RT-6.33) | — |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2521,3 +2522,74 @@ most that long.
   holds the token). Recommendation: the child, with a clean environment and a
   timeout, writing only a state file; the server parses nothing from the
   network itself.
+
+---
+
+## ADR-012: Files an agent attaches come from inside the sandbox
+
+**Status:** Decided 2026-11-14 by the owner, built (0.90.0, RT-6.33).
+
+**Context:** Agents could read the files humans post (`get_file`, RT-6.23)
+but post none: asked for a bar chart, an agent posted text bars. Under corral
+the MCP server that holds the bot token runs on the host, outside the
+agent's sandbox (RT-6.18; the relay's session values are "never opened,
+resolved or entered on the host"). A tool argument naming a file path that
+the server opens would read that path with the host's rights: a symlink or
+a hard link in the workspace pointing at `~/.ssh` or a credentials file
+would put it into the chat, a sandbox escape. The server cannot tell such a
+link from a real file safely (a link can be swapped between a check and the
+open), and it must not learn the sandbox's view of the file system.
+
+**Decision:**
+
+1. **The server never opens a path the agent names.** The bytes come from
+   inside the sandbox: `mm-agent-post.sh --file PATH` reads the file with the
+   agent's own rights (curl, in the sandbox, where corral's rules apply) and
+   sends it as the body of `POST /v1/files` to the hook API (RT-6.17, the
+   session's key). The same single path holds without corral: no second mode.
+2. **Small text files without a shell:** the `attach(name, text)` tool
+   carries the text in its argument, at most 100 KB. Base64 in a tool
+   argument would be safe too, but costs about one token per three bytes (a
+   200 KB PNG some 90k tokens), so images take the shell route.
+3. **Checked by their bytes, not their name:** an allowlist of PNG, JPEG,
+   GIF, WebP and PDF by magic bytes, and `txt`, `md`, `csv`, `tsv`, `json`,
+   `log`, `yaml` only as valid UTF-8 without NUL; the name's extension must
+   name the detected type; the name is cut to a plain base name. At most 10 MiB
+   per file, refused before the body is read; Mattermost's own `MaxFileSize`
+   applies on top.
+4. **SVG is refused.** It can carry script, Mattermost shows it only with
+   `EnableSVGs`, and passing it as plain text would surprise the reader. An
+   agent renders its chart as PNG.
+5. **A text file's links are not rewritten** as a post's are (RT-6.15):
+   Mattermost shows a text file's preview as plain text, never as rendered
+   Markdown, so a link label cannot hide its target, and rewriting would
+   change the data of a CSV or JSON file.
+6. **A post takes only this server's fresh uploads:** the server remembers
+   each file it uploaded (in memory: id, channel, time) and a post's `files`
+   may name only those, unused, within the hour, at most 10, in the post's
+   channel. A human's file or another agent's cannot be re-posted under this
+   bot's name, and an id leaked from elsewhere attaches nothing.
+7. **The channel rules are the posts':** the home, a guest channel, the
+   lobby or a DM of the bot; anything else is refused.
+
+**Alternatives:** (a) A path argument the server opens, with `realpath` and
+a workspace check: the host does not know the sandbox's mounts, a link can
+be swapped after the check, and the host's rights would still read it.
+Rejected. (b) Base64 images in a tool argument as the main path: safe, but
+the bytes pass through the model's context at about one token per three
+bytes. Kept only for small texts (`attach`). (c) The sandbox uploads to
+Mattermost itself: it holds no token (RT-6.17, RT-6.18). Rejected.
+(d) Allow SVG as a plain-text attachment: refused instead, point 4.
+
+**Consequences:** Plus: an agent posts charts, screenshots, PDFs and data
+files; no host file can reach the chat through the bus; the bytes never pass
+through the model's context on the shell route. Minus: an agent without a
+shell (none of the supported runtimes) posts only small text files; an
+upload not posted within the hour, or across a server restart, is lost and
+an orphan in Mattermost until its own cleanup; the server holds a whole file
+(at most 10 MiB) in memory while it uploads it. OpenCode and pi use the same
+shell route: their own code needs nothing.
+
+**Tests:** `mcp/tests/test_attach.py` (types, names, the route's limit before
+the body, channels, the pending ids, the tools, the adapter's multipart),
+`tests/hooks/test_thin_clients.py` (`mm-agent-post.sh --file` end to end).

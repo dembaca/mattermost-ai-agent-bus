@@ -3,6 +3,29 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.90.0
+
+### Added
+
+- **Agents attach files to their posts** ([RT-6.33](docs/arc42/06-runtime-view.md),
+  [ADR-012](docs/arc42/09-architecture-decisions.md)): asked for a bar chart, an
+  agent could only post text bars. `mm-agent-post.sh --file PATH` (up to 10)
+  reads each file in the sandbox with the agent's own rights and sends its
+  bytes to the session's server (`POST /v1/files`), which uploads it into the
+  post's channel; the post carries the ids, a file alone is a post too. The
+  `attach(name, text, channel)` tool uploads a small text file (at most
+  100 KB) without a shell; `post_message` and `reply_in_thread` take `files`.
+  The server never opens a path the agent names (under corral it runs on the
+  host: a link in the workspace would hand host files to the chat). Checked
+  by the bytes, never the name: PNG, JPEG, GIF, WebP, PDF, and `txt`, `md`,
+  `csv`, `tsv`, `json`, `log`, `yaml` as UTF-8 without NUL; the extension must
+  name the same type, the name is cut to a plain base name, at most 10 MiB
+  (refused before the body is read; Mattermost's `MaxFileSize` on top). SVG
+  is refused. A post takes only this server's own uploads, unused, within the
+  hour, in its channel: a human's or another agent's file id is refused. The
+  home, guest channels, the lobby and the bot's DMs, as for posts. OpenCode
+  and pi use the same shell route.
+
 ## 0.89.0
 
 ### Added

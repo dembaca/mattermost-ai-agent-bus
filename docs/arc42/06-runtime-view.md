@@ -2,14 +2,14 @@
 
 ## Overview
 
-Thirty-two scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
+Thirty-three scenarios: the host-managed session lifecycle (happy path) and the session an agent registers itself, the end of a turn
 with drain, sign-off and listen window (reachability, quality goal 4), a listen
 window ended by the human (recovery), the bus failing underneath a session
 (fail-open, quality goal 1), the typing indicator while a mention is answered
 (honest presence), the coordinator crown as a lease (who coordinates, and
 what happens when that agent goes idle or dies), the handoff state that
 survives a compacted conversation, an approval from the agent's own human
-over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, how the turn hooks reach the bus through the MCP server without the token, how a corral session keeps the bot token on the host altogether, with its MCP server there, how the coordinator's server notices a stalled bus and open asks remind their human, how the OpenCode plugin and the pi extension run the same turn cycle through the hook API, who answers a mention of an agent that has left, how an agent talks in channels besides its home (guest channels), how it sees the files a post carries, how the registrar's signature vouches for whom an agent answers to, how a home's ask mode sends a worker's question to its coordinator first, how a trusted human's pinned mandate lets one coordinator give tasks in another home, and how the host copy is installed into a release of its own, switched and rolled back, and how it comes from a release tag, its signature checked when the host pins the release keys, how every server learns which release is out and what it needs, and how the host copy updates itself between sessions to the release the registrar names. Together they show where the bus may block an agent
+over the bus, the counters that measure the bus's own overhead, an agent asking a human for something, messages pushed into the session as a channel, Claude Code's permission prompts answered from Mattermost, the agent cards and task states the server keeps from the posts, the references in posts that a human can click, who may wake an agent at all, how the turn hooks reach the bus through the MCP server without the token, how a corral session keeps the bot token on the host altogether, with its MCP server there, how the coordinator's server notices a stalled bus and open asks remind their human, how the OpenCode plugin and the pi extension run the same turn cycle through the hook API, who answers a mention of an agent that has left, how an agent talks in channels besides its home (guest channels), how it sees the files a post carries and attaches files of its own, how the registrar's signature vouches for whom an agent answers to, how a home's ask mode sends a worker's question to its coordinator first, how a trusted human's pinned mandate lets one coordinator give tasks in another home, and how the host copy is installed into a release of its own, switched and rolled back, and how it comes from a release tag, its signature checked when the host pins the release keys, how every server learns which release is out and what it needs, and how the host copy updates itself between sessions to the release the registrar names. Together they show where the bus may block an agent
 and why it can never wedge one.
 
 Each scenario is referenced as `RT-6.x` (its section number) from the tests in
@@ -698,8 +698,9 @@ Every block carries two texts: the instruction for the agent (`reason`) and a on
    | `POST /v1/stat` | `{k: turn \| turn_end \| block \| compact \| wake \| transcript, …}` → `ok`: one overhead counter (RT-6.9) into the server's own file, at most 4 fields with short lowercase names, numbers or strings up to 4096 characters, else `400` | every hook and the listener in a keyless session (RT-6.18), whose files the server cannot share |
    | `POST /v1/reminded` | `{post_ids: [...]}` (at most 20 post ids, else `400`) → `ok`, `marked`: the caller blocked a turn end for these posts (RT-6.2 step 2), so none blocks again; reading them marks nothing | Stop hook, OpenCode plugin (RT-6.20), pi extension (RT-6.27) |
    | `POST /v1/usage` | `{ctx?, ctx_size?, cost_usd?, five_hour?: {used?, resets_at?}, seven_day?: {…}}` → `ok`: the status line's numbers (ADR-008, RT-6.10 step 3). Only numbers in range are kept: percentages 0 to 100, `resets_at` an epoch within a day back and eight ahead, `ctx_size` a positive integer; any other field is ignored without an error. The server keeps the last report of its session in memory with the time it came (`usage.py`) and shows it in the bot's status (RT-6.6 steps 1 and 8); a `ctx` at 85 % posts one line in the HELLO thread (RT-6.6 step 9); a report that changes nothing costs no Mattermost call. It logs once per session whether `rate_limits` with both windows came (a second line if they come only after a first report without), at info level, never as a post | `mm-agent-statusline.sh`, also with `--usage-only` (RT-6.10 step 3); pi extension (RT-6.27 step 4) |
-   | `POST /v1/post` | `{message, channel_id?, channel?, root_id?, to?, kind?}` (`channel`: a name, RT-6.22 step 4) → what `post_message` returns, its refusal (`posted: false`, `refused`, RT-6.14) included: the tool's own code (RT-6.11 rewriting, props, 👑) | `mm-agent-post.sh` |
-   | `POST /v1/reply` | `{root_id, message, channel_id?, to?, kind?}` → what `reply_in_thread` returns; for both, another field or a value that is no string is a `400`, as is no message and no kind | `mm-agent-post.sh --root` |
+   | `POST /v1/post` | `{message, channel_id?, channel?, root_id?, to?, kind?, files?}` (`channel`: a name, RT-6.22 step 4) → what `post_message` returns, its refusal (`posted: false`, `refused`, RT-6.14) included: the tool's own code (RT-6.11 rewriting, props, 👑) | `mm-agent-post.sh` |
+   | `POST /v1/reply` | `{root_id, message, channel_id?, to?, kind?, files?}` → what `reply_in_thread` returns; for both, another field or a value that is no string (`files`: a list of at most 10 ids) is a `400`, as is no message, no kind and no files | `mm-agent-post.sh --root` |
+   | `POST /v1/files` | `?name=<file name>` and one of `channel`, `root`, `to` (default the home); the body is the file's bytes, at most 10 MiB, a longer `Content-Length` refused before it is read (`413`) → `{file_id, name, type, size, channel}`: checked and uploaded for a post's `files` (RT-6.33) | `mm-agent-post.sh --file` |
    | `GET /v1/turn-end` | `action`: `drain` (with `reason`, `banner`, `pending`), `answer` (`reason`, `banner`, `posts`: posts without an answer in their thread, only with `unanswered=1`), `signoff` (`reason`, `banner`; with an answer due too, both in one, with `posts`) or `idle`: the Stop hook's checks and words (RT-6.2 steps 1–2) for the turn state the caller keeps (`?drains=N&signoff_asked=0\|1&by_bus=0\|1&push=0\|1&listen_since=S&unanswered=0\|1`); on `idle` the listen window (`listen_since`, `listen_until`, epoch s; absent without one, RT-6.2 step 3); else `400` | OpenCode plugin (RT-6.20), pi extension (RT-6.27) |
    | `GET /v1/wake` | `wake`, `reason` (`dm`, `stall`, `reaction`, `addressed`, `digest`), `count`, `text`: the listener's checks (RT-6.2 step 4) since `?since=MS`, inside the listen window ending at `?until=S` and its gates, else `400`; only looks. With `?wait=S` (whole seconds, at most 55) a long poll: held until those checks wake the agent or `S` is over, then `{wake: false}`, with `reason` `replaced` when a newer request of the session took over; `until` may be left out (step 7) | OpenCode plugin (RT-6.20) and pi extension (RT-6.27), with `wait` (step 7) |
    | `GET /v1/handoff` | `context`: the compaction hook's text (RT-6.7), empty without own posts | OpenCode plugin (RT-6.20), pi extension (RT-6.27) |
@@ -950,7 +951,7 @@ Everything the server writes in its state directory goes through one helper: a n
 
 ## 6.23 Files attached to a post
 
-**Purpose:** A human posts a screenshot or a log in the channel. The agent sees that the post carries files and can look at them, although the bot token stays on the host (RT-6.17, RT-6.18) and its shell holds none.
+**Purpose:** A human posts a screenshot or a log in the channel. The agent sees that the post carries files and can look at them, although the bot token stays on the host (RT-6.17, RT-6.18) and its shell holds none. The other way, an agent's own files: RT-6.33.
 
 **Trigger:** A post with attachments reaches the agent (a push, a digest, `wait_for_events`, `list_recent`, `get_thread`, `GET /v1/posts`), and the agent calls `get_file(file_id)`.
 
@@ -1380,3 +1381,40 @@ Everything the server writes in its state directory goes through one helper: a n
 | 4 | No release check ever passed on this host (no `release-withdrawn.env` after the check `--auto` runs) | No self-update; logged |
 | 5 | The update fails in any way | The bot was removed or kept before; the hook exits as it would have |
 | 7 | `release-auto.env` missing or with fields out of their words | No self-update notice; `bus_info` shows what holds |
+
+---
+
+## 6.33 An agent attaches a file
+
+**Purpose:** A human asks an agent for a bar chart; until 0.90.0 it could only post text bars. Now an agent attaches files to its posts, images above all, although its MCP server may run on the host, outside its sandbox (RT-6.18): the server never opens a path the agent names, the bytes come from inside the sandbox (ADR-012).
+
+**Trigger:** The agent runs `mm-agent-post.sh --file PATH … MESSAGE`, or calls `attach(name, text)` and then `post_message` / `reply_in_thread` with `files`.
+
+**Participants:** Shell CLI, MCP server, Agent skill; Agent runtime, Mattermost REST API
+
+**Quality goal illustrated:** `#secure` Secret confinement — no host file reaches the chat, a link in the workspace neither; `#usable` Reachability — a chart, a PDF or a CSV arrives as a file, shown inline; `#efficient` Low overhead — the bytes never pass through the model's context
+
+### Sequence
+
+1. **The bytes.** `mm-agent-post.sh` reads each `--file` (at most 10) itself, in the sandbox with the agent's own rights, and sends it as the body of `POST /v1/files?name=<base name>` (RT-6.17: the session's key, `curl --data-binary @PATH`), with `root=<id>` for a reply, `to=<agent>` for a DM, `channel=<id or name>` for `--channel`, else the home. The `attach(name, text, channel)` tool carries a small text file in its argument instead (at most 100 KB, `attach.TEXT_MAX`; a base64 image would cost about one token per three bytes). The server opens no path, follows no link and reads nothing of the workspace.
+2. **The channel** (`hookapi.upload_channel`). A file goes where the agent's posts go: the home, a guest channel, the lobby (the channels the bus watches, RT-6.22) or a DM of the bot; a group or any other channel is refused (`403`). `to` refuses a person, as `post_message` does.
+3. **The checks** (`attach.check`), before anything goes to Mattermost. The type comes from the bytes, never from the name: PNG, JPEG, GIF, WebP and PDF by their magic bytes; `txt`, `md`, `csv`, `tsv`, `json`, `log`, `yaml`/`yml` only as valid UTF-8 without NUL. The name's extension must name the detected type: a key renamed `chart.png` is refused. The name is cut to its base name, control and format characters dropped, at most 100 characters (`attach.NAME_MAX`) with the extension kept. SVG is refused: it can carry script, and Mattermost shows it only with `EnableSVGs`; render it as PNG. An empty file is refused. The hook API reads at most 10 MiB (`attach.FILE_MAX`) for this route and refuses a longer `Content-Length` before it reads a byte (`413`); every other route keeps 64 KiB. A text file's links are not rewritten as a post's are (RT-6.15): Mattermost shows a text file's preview as plain text, so no label can hide its target, and rewriting would change the data of a CSV or JSON file.
+4. **The upload.** The server uploads the file into that channel as the bot (`POST /api/v4/files`, multipart, through `ChatPort.upload_file`) and answers `{file_id, name, type, size, channel}`. Mattermost's own limits apply on top: over its `MaxFileSize`, or with file attachments off, its refusal is the answer (`422`, the tool's `refused`). The server remembers the upload, in memory: id, name, channel, time.
+5. **The post.** `post_message` and `reply_in_thread` take `files` (the shell's `POST /v1/post` and `/v1/reply` too): at most 10 ids (`attach.POST_MAX`, Mattermost's limit), each one this server uploaded within the hour (`attach.PENDING_SEC`) and no post has taken yet, each in the post's channel (the one given, else the thread's, else the home: Mattermost attaches only a file of the post's own channel). Anything else is refused and nothing is posted: a human's file, another agent's, one used or expired, one in another channel (with the channel to upload it to). The ids are taken when the post goes out and given back when Mattermost refuses it. With files the message may be empty. The post's result names its files (`files`, as a slim post does, RT-6.23); the debug card's call line counts them (`files 2`), never their names or content (RT-6.31 step 4).
+6. **Making a chart.** The agent writes the file into its workspace, e.g. `uv run --with matplotlib python chart.py` writing `chart.png`, then `mm-agent-post.sh --file chart.png --root <id> "…"`. OpenCode and pi use the same shell route; their own code needs nothing (RT-6.20, RT-6.27).
+
+### Error Handling
+
+| Step | Failure | System Response |
+|------|---------|----------------|
+| 1 | `--file` names no readable file, or more than 10 | Exit 2, nothing sent |
+| 1 | No server of this session answers | Exit 3 and what to do (RT-6.17), nothing posted |
+| 1 | `attach` text over 100 KB | `refused`, with the shell route as the way for a larger file |
+| 2 | A group, another channel the bot is in, a channel of the team it is not in, a person's DM | `403` or `400`, nothing uploaded |
+| 3 | The bytes are no allowed type, or not the type the extension names; SVG; an empty file; a name without extension | `400` with the reason (the tool's `refused`), nothing uploaded; the script exits 1 |
+| 3 | `Content-Length` over 10 MiB | `413` before the body is read; the script exits 1 |
+| 4 | Mattermost refuses the upload (over its `MaxFileSize`, attachments off, no permission) | `422` with its reason; nothing remembered; the script exits 1 |
+| 5 | An id not uploaded by this server, used, older than an hour, or more than 10 | `posted: false` with the reason, nothing posted; the good ids stay usable |
+| 5 | A file uploaded to another channel than the post's | `posted: false`, the post's channel named to upload it again; nothing posted |
+| 5 | Mattermost refuses the post | Its reason as for any post (RT-6.14); the ids are given back |
+| 4 | The server restarts between upload and post | The ids are forgotten: upload again |

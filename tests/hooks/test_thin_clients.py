@@ -79,6 +79,36 @@ def test_option_names_as_messages_and_a_lone_dash(mm, run):
     assert len(mm.writes) == n
 
 
+def test_post_with_files(mm, run, tmp_path):
+    """RT-6.33: --file sends each file's bytes to the server (POST /v1/files),
+    which checks and uploads them into the post's channel; the post carries
+    their ids; a file alone is a post. A file named for another type, a
+    missing file or an 11th is refused, nothing posted."""
+    png = tmp_path / "chart.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(64))
+    csv = tmp_path / "data.csv"
+    csv.write_text("a,b\n1,2\n")
+    r = run(POST, "--file", str(png), "--file", str(csv), "the chart")
+    assert r.code == 0, r.stderr
+    assert [(u["name"], u["channel_id"]) for u in mm.uploads] == [("chart.png", CHANNEL), ("data.csv", CHANNEL)]
+    assert png.read_bytes() in mm.uploads[0]["body"]
+    assert posted(mm)["file_ids"] == [mm.uploads[0]["id"], mm.uploads[1]["id"]]
+    assert posted(mm)["message"] == "the chart"
+    root = "r" * 26
+    assert run(POST, "--root", root, "--file", str(png), "").code == 0  # attachment only, in the thread
+    assert mm.uploads[-1]["channel_id"] == CHANNEL  # the root's channel
+    assert posted(mm)["root_id"] == root and posted(mm)["message"] == ""
+    assert posted(mm)["file_ids"] == [mm.uploads[-1]["id"]]
+    n, u = len(mm.writes), len(mm.uploads)
+    key = tmp_path / "id_ed25519.png"
+    key.write_text("not an image, a key\n")
+    r = run(POST, "--file", str(key), "look")
+    assert r.code == 1 and "named .png but its bytes are a text file" in r.stderr
+    assert run(POST, "--file", str(tmp_path / "missing.png"), "x").code == 2
+    assert run(POST, *[a for _ in range(11) for a in ("--file", str(png))], "x").code == 2
+    assert len(mm.uploads) == u and len([w for w in mm.writes[n:] if w[1] == "/api/v4/posts"]) == 0
+
+
 def test_a_refused_post_says_why(mm, run):
     """RT-6.14: the refusal of post_message, on stderr, exit 1; nothing posted."""
     r = run(POST, "--kind", "SHOUT", "hello")

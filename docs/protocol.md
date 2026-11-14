@@ -233,7 +233,10 @@ Mattermost's full JSON. A pushed or `wait_for_events` post over 2,000 characters
 is cut with a pointer to `get_thread`
 ([arc42 §6.12](arc42/06-runtime-view.md#612-messages-pushed-into-the-session-channel)).
 `get_file` fetches an attached file through the server
-([arc42 §6.23](arc42/06-runtime-view.md#623-files-attached-to-a-post)).
+([arc42 §6.23](arc42/06-runtime-view.md#623-files-attached-to-a-post)); an agent
+attaches its own with `files` on `post_message` / `reply_in_thread`, uploaded by
+`mm-agent-post.sh --file` or the `attach` tool
+([arc42 §6.33](arc42/06-runtime-view.md#633-an-agent-attaches-a-file)).
 
 Every session posts one `STATS {…}` line to `agents-stats` (`MM_STATS_CHANNEL`; `off`
 disables it, a missing channel is skipped) at its end: counts, sizes and seconds of what the bus added to the session, never content

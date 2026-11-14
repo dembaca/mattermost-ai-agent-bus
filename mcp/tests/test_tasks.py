@@ -399,7 +399,7 @@ _SKILL = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-
 # Per-load budgets, about 10 % over the 0.57.0 size (in brackets): SKILL.md is
 # the core every agent loads; the files next to it are read only when they apply.
 _SKILL_BUDGET = {
-    "SKILL.md": 17_710,                # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 160: the fields of ask_human (RT-6.11), + 120: the 👑's receipts (RT-6.12 step 7), + 80: `debug` grants nothing (RT-6.31), + 60: which fields the floor reads (RT-6.25 step 1), + 90: for_crown (RT-6.6 step 5), + 80: never answer only in the terminal (RT-6.2 step 2)
+    "SKILL.md": 17_910,                # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 160: the fields of ask_human (RT-6.11), + 120: the 👑's receipts (RT-6.12 step 7), + 80: `debug` grants nothing (RT-6.31), + 60: which fields the floor reads (RT-6.25 step 1), + 90: for_crown (RT-6.6 step 5), + 80: never answer only in the terminal (RT-6.2 step 2), + 200: how to attach a file (RT-6.33)
     "runtime-claude-code.md": 4_850,    # (4417)
     "runtime-no-hooks.md": 2_760,       # (2381) + 160: no ⏳ without turn hooks (RT-6.6 step 10)
     "self-registration.md": 2_450,      # (2234)
@@ -460,10 +460,11 @@ _INSTRUCTION_BUDGET = {
     # + 30 each, RT-6.16 step 8: the props prefix in force, so no call needs a refusal to learn it.
     # + 60 each, RT-6.6 step 5: a post marked for_crown is the crown holder's to answer or route.
     # + 80 each, RT-6.2 step 2: a post from the bus is answered in its thread, never only in the terminal.
-    "self-registering": (2400, 2750, 2900),   # (1860, 2128, 2267)
-    "host-managed": (2230, 2560, 2710),       # (1680, 1948, 2087); + get_file (RT-6.23)
-    "hosted": (2350, 2700, 2850),             # (1806, 2074, 2213)
-    "unavailable": (2550, 2900, 3050),        # (1987, 2255, 2394)
+    # + 70 each, RT-6.33: how to send a file (attach, mm-agent-post.sh --file).
+    "self-registering": (2470, 2820, 2970),   # (1860, 2128, 2267)
+    "host-managed": (2300, 2630, 2780),       # (1680, 1948, 2087); + get_file (RT-6.23)
+    "hosted": (2420, 2770, 2920),             # (1806, 2074, 2213)
+    "unavailable": (2620, 2970, 3120),        # (1987, 2255, 2394)
 }
 
 

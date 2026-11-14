@@ -481,6 +481,7 @@ mm_read_hook_input() {
 # Mattermost and hold no token.
 #   mm_bus GET /v1/me                       → MM_BUS_STATUS, MM_BUS_BODY
 #   mm_bus POST /v1/presence '{"state":"idle"}'
+#   MM_BUS_UPLOAD=chart.png mm_bus POST '/v1/files?name=chart.png'   # the file as the body
 # Endpoint and key come from MM_BUS_ENDPOINT / MM_BUS_KEY (a corral session),
 # else from the file the server writes (mm_bus_file), read on every call: a
 # restarted server has a new port and key. MM_BUS_FROM says which (env, the
@@ -509,7 +510,11 @@ mm_bus() {
     (( left < max )) && max="$left"
   fi
   local args=(-sS --max-time "$max" -w $'\n%{http_code}' -X "$method")
-  if [[ -n "$payload" ]]; then
+  if [[ -n "${MM_BUS_UPLOAD:-}" ]]; then
+    # A file's bytes as the body (POST /v1/files, RT-6.33): curl reads it here,
+    # in the sandbox, with the agent's own rights; the server opens no path.
+    args+=(-H "Content-Type: application/octet-stream" -H "Expect:" --data-binary "@${MM_BUS_UPLOAD}")
+  elif [[ -n "$payload" ]]; then
     args+=(-H "Content-Type: application/json" --data-raw "$payload")
   fi
   resp="$(mm_curl_auth "$key" "${args[@]}" "${ep%/}${path}" 2>/dev/null)" || return 1

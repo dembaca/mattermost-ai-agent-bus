@@ -10,7 +10,7 @@ import os
 import re
 import secrets
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -1497,16 +1497,36 @@ class MattermostAdapter:
         channel_id: str | None = None,
         root_id: str | None = None,
         props: dict[str, Any] | None = None,
+        file_ids: Sequence[str] = (),
     ) -> Post:
         """Post; Refused when Mattermost will not take it (a root it does not
-        find, no permission): the MCP SDK would hide the error's text."""
+        find, no permission): the MCP SDK would hide the error's text.
+        file_ids: files uploaded to the post's channel (RT-6.33)."""
         try:
-            return await self._post(message, channel_id=channel_id, root_id=root_id, props=props)
+            return await self._post(message, channel_id=channel_id, root_id=root_id, props=props,
+                                    file_ids=file_ids)
         except httpx.HTTPStatusError as exc:
             raise _refused(exc) from exc
 
+    async def upload_file(self, channel_id: str, name: str, data: bytes) -> FileInfo:
+        """POST /api/v4/files (multipart) into the channel, as the bot (RT-6.33);
+        Refused when Mattermost will not take it (over its MaxFileSize, file
+        attachments off, no permission)."""
+        try:
+            resp = await self._http().post(
+                f"{self.base_url}/api/v4/files", headers=self._auth_headers(),
+                data={"channel_id": mm_id(channel_id, "channel")},
+                files={"files": (name, data, "application/octet-stream")}, timeout=120.0)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise _refused(exc, "file") from exc
+        infos = resp.json().get("file_infos") or []
+        if not infos or not isinstance(infos[0], Mapping) or not infos[0].get("id"):
+            raise Refused("Mattermost answered the upload without a file id")
+        return file_of(infos[0])
+
     async def _post(self, message: str, *, channel_id: str | None, root_id: str | None,
-                    props: dict[str, Any] | None) -> Post:
+                    props: dict[str, Any] | None, file_ids: Sequence[str] = ()) -> Post:
         if root_id:
             # A reply belongs where its root is: a DM, or another channel. A
             # reply's id names its thread: Mattermost refuses it as root_id.
@@ -1534,6 +1554,8 @@ class MattermostAdapter:
         body: dict[str, Any] = {"channel_id": cid, "message": message}
         if root_id:
             body["root_id"] = root_id
+        if file_ids:
+            body["file_ids"] = [mm_id(f, "file") for f in file_ids]
         if props:
             body["props"] = attachment_texts(
                 props, lambda s: links.send(s, post_url=base, ask_title=ask_title))

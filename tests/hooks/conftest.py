@@ -78,6 +78,7 @@ class FakeMattermost:
     registrar_keys: dict | None = None  # GET /register/v1/keys (RT-6.24); None: 404
     # GET /register/v1/release (RT-6.32): (status, JSON body); None: no such route
     registrar_release: tuple[int, object] | None = None
+    uploads: list[dict] = field(default_factory=list)  # POST /api/v4/files (RT-6.33)
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -186,9 +187,17 @@ def _handler(fake: FakeMattermost):
 
         def _write(self):
             n = int(self.headers.get("Content-Length") or 0)
+            p = self.path.split("?")[0]
+            if p == "/api/v4/files" and self.command == "POST":  # multipart (RT-6.33)
+                data = self.rfile.read(n) if n else b""
+                cid = re.search(rb'name="channel_id"\r\n\r\n([a-z0-9]+)', data)
+                name = re.search(rb'filename="([^"]*)"', data)
+                info = {"id": f"{len(fake.uploads):0>26}", "name": name[1].decode() if name else "",
+                        "channel_id": cid[1].decode() if cid else "", "size": n}
+                fake.uploads.append(info | {"body": data})
+                return self._send({"file_infos": [info]}, 201)
             raw = self.rfile.read(n).decode() if n else ""
             body = json.loads(raw) if raw else {}
-            p = self.path.split("?")[0]
             fake.writes.append((self.command, p, body))
             auth = self.headers.get("Authorization") or ""
             if (p.startswith("/register/v1/agents/") and self.command == "DELETE"

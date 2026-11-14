@@ -13,6 +13,7 @@ bot account, a channel, a channel's accounts and reactions.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
@@ -166,8 +167,16 @@ class ChatPort(Protocol):
 
     # --- posting and replying ------------------------------------------------
     async def post(self, message: str, *, channel_id: str | None = None,
-                   root_id: str | None = None, props: dict[str, Any] | None = None) -> Post:
-        """Post, or reply with root_id."""
+                   root_id: str | None = None, props: dict[str, Any] | None = None,
+                   file_ids: Sequence[str] = ()) -> Post:
+        """Post, or reply with root_id; file_ids: files uploaded to its channel
+        (upload_file, RT-6.33)."""
+        ...
+
+    async def upload_file(self, channel_id: str, name: str, data: bytes) -> FileInfo:
+        """Upload a file to a channel as the bot, for a post there (RT-6.33):
+        what the chat keeps about it. Raises when the chat refuses it (too
+        large, no permission)."""
         ...
 
     def post_sync(self, message: str, *, channel_id: str, root_id: str = "",

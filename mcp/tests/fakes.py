@@ -10,7 +10,7 @@ own attributes) goes into a subclass in the test.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from mattermost_ai_agent_bus import owners
@@ -83,6 +83,9 @@ class FakeChat:
         # RT-6.23: file id -> its info, and its content and preview.
         self.files: dict[str, FileInfo] = {}
         self.contents: dict[tuple[str, bool], bytes] = {}
+        # RT-6.33: the files uploaded, and the ids the next uploads get.
+        self.uploads: list[dict[str, Any]] = []
+        self.upload_ids: list[str] = []
         # RT-6.25 step 8: the registrar's ask-mode record per home, and each read.
         self.mode_records: dict[str, str | BaseException] = {}
         self.fetched: list[str] = []
@@ -229,12 +232,21 @@ class FakeChat:
         self.status = None
 
     async def post(self, message: str, *, channel_id: str | None = None,
-                   root_id: str | None = None, props: dict[str, Any] | None = None) -> Post:
-        """Records the post; it comes back with the id post_id."""
+                   root_id: str | None = None, props: dict[str, Any] | None = None,
+                   file_ids: Sequence[str] = ()) -> Post:
+        """Records the post (file_ids only when given); it comes back with the id post_id."""
         self.posted.append({"message": message, "channel_id": channel_id,
-                            "root_id": root_id, "props": props})
+                            "root_id": root_id, "props": props}
+                           | ({"file_ids": list(file_ids)} if file_ids else {}))
         return post_of({"id": self.post_id, "message": message, "user_id": self.me.id,
-                        "channel_id": channel_id or WORK, "root_id": root_id or ""})
+                        "channel_id": channel_id or WORK, "root_id": root_id or "",
+                        "file_ids": list(file_ids)})
+
+    async def upload_file(self, channel_id: str, name: str, data: bytes) -> FileInfo:
+        """Records the upload in `uploads`; the file gets the next id of `upload_ids`."""
+        fid = self.upload_ids.pop(0) if self.upload_ids else f"{len(self.uploads):0>26}"
+        self.uploads.append({"channel_id": channel_id, "name": name, "size": len(data), "id": fid})
+        return FileInfo(id=fid, name=name, extension=name.rpartition(".")[2], size=len(data))
 
     async def thread(self, post_id: str) -> Thread:
         return Thread(post_id, posts=tuple(p for p in self._posts() if post_id in (p.id, p.root_id)))

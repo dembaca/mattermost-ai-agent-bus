@@ -32,11 +32,16 @@ instead, served next to the WebSocket inbox in the server's event loop:
     POST /v1/stat           {k: turn|turn_end|block|compact|wake|transcript, …} → {ok}
                             (one overhead counter, RT-6.9: the hooks of a keyless
                             session cannot reach the server's state dir, RT-6.18)
-    POST /v1/post           {message, channel_id?, channel?, root_id?, to?, kind?} →
+    POST /v1/files          ?name=N[&channel=ID|NAME | &root=ID | &to=AGENT], the raw bytes
+                            (at most attach.FILE_MAX, refused before they are read) →
+                            {file_id, name, type, size, channel}: checked and uploaded
+                            to the home, a guest channel, the lobby or a DM of the bot
+                            (else 403), for a post's `files` (RT-6.33, ADR-012)
+    POST /v1/post           {message, channel_id?, channel?, root_id?, to?, kind?, files?} →
                             what post_message returns, a refusal included;
                             channel: the home, a guest channel or the lobby by
                             name (RT-6.22), any other a 400, nothing joined
-    POST /v1/reply          {root_id, message, channel_id?, to?, kind?} → what
+    POST /v1/reply          {root_id, message, channel_id?, to?, kind?, files?} → what
                             reply_in_thread returns (mm-agent-post.sh): the tools'
                             own code (server.py), not a second implementation
     GET  /v1/turn-end       {action: drain|answer|signoff|idle, reason?, banner?, pending?,
@@ -91,11 +96,11 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import (
-    a2a, asks, channel, files, gate, lease, life, ownpost, release, session_file, stall, stats, tasks, turnend,
+    a2a, asks, attach, channel, files, gate, lease, life, ownpost, release, session_file, stall, stats, tasks, turnend,
     unanswered, unread, usage,
 )
-from .client import InvalidId, _pid_alive, guest_ids, mm_name, watched_channel_ids
-from .model import Post
+from .client import InvalidId, _pid_alive, dm_partner, guest_ids, mm_id, mm_name, watched_channel_ids
+from .model import Post, Refused
 
 if TYPE_CHECKING:
     from .client import MattermostAdapter
@@ -130,7 +135,8 @@ RECHECK_SEC = 15.0
 # The empty answer's reason for a long poll a newer one of the session replaced.
 REPLACED = "replaced"
 _REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
-            413: "Payload Too Large", 502: "Bad Gateway", 503: "Service Unavailable"}
+            413: "Payload Too Large", 422: "Unprocessable Entity", 502: "Bad Gateway",
+            503: "Service Unavailable"}
 
 Reply = tuple[int, dict[str, Any]]
 Route = Callable[[Any, Mapping[str, str], Mapping[str, Any]], Awaitable[Reply]]
@@ -381,15 +387,17 @@ class HookAPI:
         if not self._authorized(headers.get("authorization", "")):
             return 401, {"error": "unauthorized"}
         length = int(headers.get("content-length") or 0)
-        if length > MAX_BODY:
-            return 413, {"error": "body too large"}
-        raw = await asyncio.wait_for(reader.readexactly(length), READ_TIMEOUT_SEC) if length else b""
         url = urlsplit(target)
         route = _ROUTES.get((method, url.path))
+        # A file's bytes may be longer (RT-6.33); refused before they are read.
+        if length < 0 or length > (attach.FILE_MAX if route is files_route else MAX_BODY):
+            return 413, {"error": "body too large" if route is not files_route else
+                         f"file over {attach.FILE_MAX // 2**20} MB"}
+        raw = await asyncio.wait_for(reader.readexactly(length), READ_TIMEOUT_SEC) if length else b""
         if route is None:
             return 404, {"error": "no such route"}
         query = {k: v[-1] for k, v in parse_qs(url.query).items()}
-        payload = json.loads(raw) if raw else {}
+        payload: Any = {"data": raw} if route is files_route else json.loads(raw) if raw else {}
         if not isinstance(payload, dict):
             return 400, {"error": "body must be a JSON object"}
         try:
@@ -873,22 +881,26 @@ REPLY_FIELDS = ("message", "channel_id", "root_id", "to", "kind")
 
 
 def _fields(body: Mapping[str, Any], required: str,
-            allowed: tuple[str, ...] = REPLY_FIELDS) -> dict[str, str]:
-    """The post fields as strings: an unknown field or another type is a 400."""
-    unknown = sorted(set(body) - set(allowed))
+            allowed: tuple[str, ...] = REPLY_FIELDS) -> tuple[dict[str, str], list[str]]:
+    """The post fields as strings, and `files` (RT-6.33): a list of at most
+    attach.POST_MAX file ids; an unknown field or another type is a 400."""
+    unknown = sorted(set(body) - set(allowed) - {"files"})
     if unknown:
-        raise BadRequest(f"unknown field {unknown[0]}: {', '.join(allowed)}")
+        raise BadRequest(f"unknown field {unknown[0]}: {', '.join(allowed)}, files")
     out: dict[str, str] = {}
     for name in allowed:
         value = body.get(name, "")
         if not isinstance(value, str):
             raise BadRequest(f"{name}: a string")
         out[name] = value
-    if not out[required].strip():
+    ids = body.get("files", [])
+    if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids) or len(ids) > attach.POST_MAX:
+        raise BadRequest(f"files: a list of at most {attach.POST_MAX} file ids")
+    if required != "message" and not out[required].strip():
         raise BadRequest(f"{required}: required")
-    if not {n for n, v in out.items() if v.strip()} & {"message", "kind"}:
-        raise BadRequest("message: required (or a kind alone, e.g. IDLE)")
-    return out
+    if not ids and not {n for n, v in out.items() if v.strip()} & {"message", "kind"}:
+        raise BadRequest("message: required (or a kind alone, e.g. IDLE, or files)")
+    return out, ids
 
 
 def _tools() -> Any:
@@ -905,13 +917,13 @@ async def post_route(client: MattermostAdapter, query: Mapping[str, str],
     tools = _tools()
     if tools is None:
         return 503, {"error": "the MCP server is not loaded yet"}
-    fields = _fields(body, "message", POST_FIELDS)
+    fields, ids = _fields(body, "message", POST_FIELDS)
     name = fields.pop("channel").strip().lstrip("~")
     if name:
         if any(fields.pop(k).strip() for k in ("channel_id", "to")):
             raise BadRequest("channel: by name or channel_id or to, one of them")
         fields.update(channel_id=await _post_channel(client, name), to="")
-    return 200, await tools.post_as_bot(client, **fields)
+    return 200, await tools.post_as_bot(client, **fields, **({"files": ids} if ids else {}))
 
 
 async def _post_channel(client: MattermostAdapter, name: str) -> str:
@@ -931,7 +943,54 @@ async def reply_route(client: MattermostAdapter, query: Mapping[str, str],
     tools = _tools()
     if tools is None:
         return 503, {"error": "the MCP server is not loaded yet"}
-    return 200, await tools.reply_as_bot(client, **_fields(body, "root_id"))
+    fields, ids = _fields(body, "root_id")
+    return 200, await tools.reply_as_bot(client, **fields, **({"files": ids} if ids else {}))
+
+
+async def upload_channel(client: MattermostAdapter, cid: str) -> str:
+    """`cid` when a file may be uploaded there (RT-6.33 step 2): where the
+    bot's posts go, the home, a guest channel, the lobby (the channels the
+    bus watches) or a DM of the bot; anything else, a group too, is Forbidden."""
+    if cid in await watched(client):
+        return cid
+    if dm_partner(await client.get_channel(mm_id(cid, "channel")), await _uid(client)):
+        return cid
+    raise Forbidden("channel: only the home, a guest channel, the lobby or a DM of the bot")
+
+
+async def files_route(client: MattermostAdapter, query: Mapping[str, str],
+                      body: Mapping[str, Any]) -> Reply:
+    """POST /v1/files (RT-6.33, ADR-012): the bytes the shell read in the
+    sandbox, checked (attach.check) and uploaded to the channel the post will
+    go to: ?channel= (an id or the name of one of the bot's channels, default
+    the home), ?root= (the thread's channel) or ?to= (the DM with that agent).
+    The server opens no path: the body is the file."""
+    name = query.get("name", "")
+    if not name:
+        raise BadRequest("name: required, the file name with its extension")
+    where = {k: query.get(k, "").strip() for k in ("channel", "root", "to")}
+    if sum(bool(v) for v in where.values()) > 1:
+        raise BadRequest("channel, root, to: one of them")
+    if where["to"]:
+        try:
+            cid = await client.direct_channel_with_bot(where["to"])
+        except InvalidId:
+            raise
+        except ValueError as exc:  # a person, or no such user
+            raise BadRequest(str(exc)) from exc
+    elif where["root"]:
+        cid = await client.post_channel_id(mm_id(where["root"], "post"))
+    elif _UID.fullmatch(where["channel"]):
+        cid = where["channel"]
+    else:
+        cid = await _post_channel(client, where["channel"].lstrip("~"))
+    cid = await upload_channel(client, cid)
+    try:
+        return 200, await attach.upload(client, name, body.get("data", b""), cid)
+    except attach.NotAllowed as exc:
+        raise BadRequest(str(exc)) from exc
+    except Refused as exc:  # Mattermost's no: over its MaxFileSize, attachments off, no permission
+        return 422, {"error": str(exc)}
 
 
 def _flag(query: Mapping[str, str], name: str) -> bool:
@@ -1069,12 +1128,14 @@ _ROUTES: dict[tuple[str, str], Route] = {
     ("POST", "/v1/reminded"): reminded,
     ("POST", "/v1/post"): post_route,
     ("POST", "/v1/reply"): reply_route,
+    ("POST", "/v1/files"): files_route,
     ("GET", "/v1/turn-end"): turn_end,
     ("GET", "/v1/wake"): wake,
     ("GET", "/v1/handoff"): handoff,
 }
 # Routes that make several Mattermost calls: at most MAX_HEAVY_RUNS at once.
-_HEAVY_ROUTES = frozenset({pending, presence, post_route, reply_route, turn_end, wake, handoff})
+_HEAVY_ROUTES = frozenset({pending, presence, post_route, reply_route, files_route, turn_end, wake,
+                           handoff})
 # ADR-007 amendment step 1: the hooks' and the listener's reads are a sign of
 # the agent, its posts through the shell take up what was pushed; presence
 # begins or ends a turn (HookAPI._run). Not /v1/me, /v1/usage or
