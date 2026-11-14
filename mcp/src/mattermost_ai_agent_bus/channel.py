@@ -291,6 +291,9 @@ def digest(items: Sequence[Mapping[str, Any]], since: float) -> dict[str, Any]:
 # them, and nothing pushed shows them.
 CHANNEL_ID = "_channel_id"
 CREATE_AT = "_create_at"
+# Set on an item once it was pushed into the session (not held, not dropped):
+# it reached the agent, so it may wait for an answer (RT-6.2 step 2).
+PUSHED = "_pushed"
 
 
 def notification(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -376,11 +379,13 @@ class Pusher:
             await self.connection.notify(
                 permission.VERDICT, {"request_id": request_id, "behavior": behavior})
 
-    async def recheck(self, wakes: Callable[[dict[str, Any]], Awaitable[bool]]) -> int:
+    async def recheck(self, wakes: Callable[[dict[str, Any]], Awaitable[bool]],
+                      pushed: Callable[[dict[str, Any]], Awaitable[None]] | None = None) -> int:
         """RT-6.12 step 3: the crown came back (RT-6.6 step 6), so push at once,
         in their order, the held posts that `wakes` now says wake the agent;
         the rest stay for the digest. A gated item is never pushed. Each goes
-        out once: taken from the held list before it is sent. The number sent."""
+        out once: taken from the held list before it is sent, marked PUSHED and
+        handed to `pushed` once sent (RT-6.2 step 2). The number sent."""
         if not self.confirmed.is_set():
             return 0  # a reconnect not confirmed yet: the held posts stay, the digest sends them once it is
         sent = 0
@@ -400,6 +405,9 @@ class Pusher:
                 self.held.insert(at, item)
                 break
             sent += 1
+            item[PUSHED] = True
+            if pushed is not None:
+                await pushed(item)
         return sent
 
     def _timeout(self, cap: float) -> float:
@@ -483,6 +491,7 @@ class Pusher:
                     elif addressed is None or await addressed(item):
                         if not await self.send(notification(item)):
                             raise ConnectionError("push not sent")
+                        item[PUSHED] = True
                     elif item.get("guest") or item.get("lobby"):
                         pass  # RT-6.22: a guest channel and the lobby: no digest
                     else:

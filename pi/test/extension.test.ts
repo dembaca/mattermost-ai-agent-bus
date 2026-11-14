@@ -201,7 +201,7 @@ test("RT-6.27 step 5: a wake starts a run when idle, follows up while a human's 
   await f.emit("agent_start")
   await f.emit("agent_settled", { aborted: false })
   await until(() => held.length === 1, "polled again once that run settled")
-  assert.match(calls.find((c) => c.path.startsWith("/v1/turn-end"))!.path, /by_bus=1&push=1$/)
+  assert.match(calls.find((c) => c.path.startsWith("/v1/turn-end"))!.path, /by_bus=1&push=1&unanswered=1$/)
   // A human's run: the wake goes after its tools.
   await f.emit("input", { text: "go on", source: "interactive" })
   await f.emit("agent_start")
@@ -250,7 +250,7 @@ test("RT-6.27 step 4: the checks run at agent_settled, not at agent_end", async 
   await f.emit("agent_settled", { aborted: false })
   await until(() => f.sent.length === 1, "the drain round")
   assert.match(calls.find((c) => c.path.startsWith("/v1/turn-end"))!.path,
-               /^\/v1\/turn-end\?drains=0&signoff_asked=0&by_bus=0&push=1$/)
+               /^\/v1\/turn-end\?drains=0&signoff_asked=0&by_bus=0&push=1&unanswered=1$/)
   assert.deepEqual(f.sent[0], { text: "3 messages wait: collect them", opts: undefined })
   assert.deepEqual(f.box.notes, ["bus: drain"])
   assert.deepEqual(bodies("/v1/stat").at(-1), { k: "block", kind: "drain" })
@@ -268,6 +268,28 @@ test("RT-6.27 step 4: the checks run at agent_settled, not at agent_end", async 
   await f.emit("agent_settled", { aborted: false })
   await until(() => bodies("/v1/presence").length === 4, "idle")
   assert.deepEqual(bodies("/v1/presence").at(-1), { state: "idle", label: "ws" })
+})
+
+test("RT-6.27 step 4, RT-6.2 step 2: a bus post without an answer in its thread: one run, no sign-off counted", async () => {
+  const f = await started()
+  await f.emit("input", { text: "build it", source: "interactive" })
+  await f.emit("agent_start")
+  answers["/v1/turn-end"] = { action: "answer", reason: "A post that reached you …", banner: "bus: answer", posts: ["p1"] }
+  answers["/v1/reminded"] = { ok: true, marked: 1 }
+  f.box.idle = true
+  await f.emit("agent_settled", { aborted: false })
+  await until(() => f.sent.length === 1, "the answer round")
+  assert.deepEqual(f.sent[0], { text: "A post that reached you …", opts: undefined })
+  // Marked as the block goes out, not by the read.
+  assert.deepEqual(bodies("/v1/reminded"), [{ post_ids: ["p1"] }])
+  assert.deepEqual(f.box.notes, ["bus: answer"])
+  assert.deepEqual(bodies("/v1/stat").at(-1), { k: "block", kind: "answer" })
+  answers["/v1/turn-end"] = { action: "idle" }
+  await f.emit("agent_start")
+  await f.emit("agent_settled", { aborted: false })
+  await until(() => calls.filter((c) => c.path.startsWith("/v1/turn-end")).length === 2, "the next check")
+  // The sign-off was not asked yet: the server may still ask for it.
+  assert.match(calls.filter((c) => c.path.startsWith("/v1/turn-end"))[1].path, /signoff_asked=0&/)
 })
 
 test("RT-6.27 step 3: the human's interrupt: idle, no checks, no wake-up until the next prompt", async () => {
@@ -311,6 +333,31 @@ test("RT-6.27 step 4: a check the human overtook is dropped", async () => {
     .end(JSON.stringify({ action: "drain", reason: "collect", banner: "" }))
   await settle(100)
   assert.equal(f.sent.length, 0, "no drain into the human's new turn")
+  // RT-6.2 step 2: an answer dropped alike marks nothing, its posts stay due.
+  answers["/v1/turn-end"] = HOLD
+  await f.emit("agent_start")
+  await f.emit("agent_settled", { aborted: false })
+  await until(() => held.some((x) => x.path.startsWith("/v1/turn-end")), "the second check is out")
+  await f.emit("input", { text: "again", source: "interactive" })
+  const a = held.find((x) => x.path.startsWith("/v1/turn-end"))!
+  held = held.filter((x) => x !== a)
+  a.res.writeHead(200, { "Content-Type": "application/json" })
+    .end(JSON.stringify({ action: "answer", reason: "answer it", banner: "", posts: ["p1"] }))
+  await settle(100)
+  assert.equal(f.sent.length, 0)
+  assert.deepEqual(bodies("/v1/reminded"), [], "a dropped answer marks nothing")
+  // A prompt that comes while the mark is out takes over: the reason is not delivered.
+  answers["/v1/turn-end"] = { action: "answer", reason: "answer it", banner: "", posts: ["p1"] }
+  answers["/v1/reminded"] = HOLD
+  await f.emit("agent_start")
+  await f.emit("agent_settled", { aborted: false })
+  await until(() => held.some((x) => x.path === "/v1/reminded"), "the mark is out")
+  await f.emit("input", { text: "once more", source: "interactive" })
+  const m = held.find((x) => x.path === "/v1/reminded")!
+  held = held.filter((x) => x !== m)
+  m.res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true, marked: 1 }))
+  await settle(100)
+  assert.equal(f.sent.length, 0, "no answer round into the human's new turn")
 })
 
 test("RT-6.27 step 6: after a compaction the own posts as context that starts no run", async () => {

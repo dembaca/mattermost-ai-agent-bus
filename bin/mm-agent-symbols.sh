@@ -7,5 +7,6 @@
 MM_CROWN=$'\360\237\221\221'  # crown
 MM_INBOX=$'\360\237\223\250'  # incoming envelope
 MM_SIGNOFF=$'\342\234\213'  # raised hand
+MM_ANSWER=$'\360\237\222\254'  # speech balloon
 MM_LISTENING=$'\360\237\221\202'  # ear
 MM_UPDATE=$'\342\254\206'  # up arrow

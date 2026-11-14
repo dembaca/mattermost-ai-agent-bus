@@ -18,7 +18,7 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, stats, watermark
+from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, stats, unanswered, watermark
 from .model import (Channel, ChannelUser, FileInfo, Me, NoAttestationEndpoint, NoDebugEndpoint, NoMandateEndpoint,
                     Post,
                     Reaction, Refused, Thread, UnreadChannel)
@@ -1148,6 +1148,7 @@ class MattermostAdapter:
         self._me_gen += 1
         session_file.remove()
         ownpost.remove(uid)
+        unanswered.remove(uid)
         watermark.remove(uid)
         for key in (
             "MM_REG_BOT_NAME",
@@ -1246,6 +1247,7 @@ class MattermostAdapter:
         if ok:
             session_file.remove()
             ownpost.remove(uid)
+            unanswered.remove(uid)
             watermark.remove(uid)
             return f"unregistered {short}"
         return f"unregister failed: HTTP {resp.status_code}"
@@ -1590,8 +1592,14 @@ class MattermostAdapter:
 
     async def _remember(self, channel_id: str, post: Post) -> None:
         """Keep the bot's latest post in the work channel for the Stop hook and
-        the exit handler (ownpost.py). Bookkeeping: never fails the post."""
+        the exit handler (ownpost.py); a post in a thread (or DM) answers the
+        posts there that waited for it (unanswered.py, RT-6.2 step 2) — not a
+        line the server writes on its own (a reminder, a permission prompt or
+        verdict, a system reply), nor a pure status such as an IDLE
+        (`unanswered.answers`). Bookkeeping: never fails the post."""
         try:
+            if self.bot_id:
+                unanswered.answered(self.bot_id, channel_id, post)
             if self.bot_id and channel_id == await self.work_channel_id():
                 ownpost.record(self.bot_id, channel_id, post)
         except Exception as exc:  # noqa: BLE001

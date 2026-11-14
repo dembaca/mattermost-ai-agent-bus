@@ -174,6 +174,7 @@ are out of reach of the bus: ask in the terminal. Runtime permission prompts
 are not yours to approve, nor to ask for on the bus (RT-6.13; see your
 runtime's file).
 - Answer every request in its thread: `ACK`, or `NO` with a short reason.
+  Never only in your terminal: the bus does not see it (RT-6.2 step 2).
 - A request that needs your human's approval while they are away: open the
   ask and reply `WAITING for approval: <what> · ask <id>` in its thread, so
   nobody waits in the dark.

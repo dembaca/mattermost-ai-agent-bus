@@ -367,8 +367,15 @@ async def test_recheck_keeps_the_order_of_the_held_posts_when_a_push_fails():
     async def wakes(item):
         return item is not c
 
-    assert await pusher.recheck(wakes) == 1  # a goes out, b fails
+    later = []
+
+    async def pushed(item):
+        later.append(item)
+
+    assert await pusher.recheck(wakes, pushed=pushed) == 1  # a goes out, b fails
     assert pusher.held == [b, c]  # b stays before c
+    # RT-6.2 step 2: the one sent is marked and handed on, so it may wait for an answer.
+    assert later == [a] and a[channel.PUSHED] is True and channel.PUSHED not in b
 
 
 @pytest.mark.anyio

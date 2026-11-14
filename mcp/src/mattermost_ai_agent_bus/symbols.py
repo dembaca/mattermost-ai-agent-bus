@@ -25,6 +25,7 @@ _MARKS: dict[Mark, str] = {
     Mark.HEADER: "\U0001F68C",         # bus (the channel header)
     Mark.INBOX: "\U0001F4E8",         # incoming envelope
     Mark.SIGNOFF: "\u270b",           # raised hand
+    Mark.ANSWER: "\U0001F4AC",        # speech balloon
     Mark.LOCK: "\U0001F510",          # locked with key
     Mark.DESKTOP: "\U0001F5A5" + _SELECTOR,  # desktop computer
     Mark.ALLOWED: "\u2705",           # white heavy check mark
