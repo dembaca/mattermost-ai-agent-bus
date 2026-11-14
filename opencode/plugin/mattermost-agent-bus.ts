@@ -160,6 +160,22 @@ export function hookApi(env: Env, directory: string, missing: () => void = () =>
     }
   }
 }
+
+// The presence, one call at a time (RT-6.20 step 3, RT-6.27 step 3): nothing
+// waits for it unless it awaits the promise, and a state goes out only once the
+// call before it has settled, so the server never sees a `working` after the
+// `idle` that followed it. A state superseded while it waited is not sent.
+export function presenceQueue(send: (state: string) => Promise<unknown>): (state: string) => Promise<void> {
+  let chain: Promise<void> = Promise.resolve()
+  let wanted = ""
+  return (state: string) => {
+    wanted = state
+    chain = chain.then(async () => {
+      if (wanted === state) await send(state)
+    }).catch(() => {})
+    return chain
+  }
+}
 // keep-in-step: end
 
 // The long poll's wait in seconds: the option, else WAIT_SEC; 10 to 55 (a
@@ -338,9 +354,12 @@ export async function setup(ctx: Plugin.Context) {
   }
 
   const stat = (k: string, fields: Json = {}) => bus("POST", "/v1/stat", { k, ...fields })
-  const presence = (state: "working" | "idle") => bus("POST", "/v1/presence", { state, label })
+  // One call at a time: the prompt hook's `working` and an interrupt's `idle`
+  // (the event stream) never overtake each other.
+  const setPresence = presenceQueue((state) => bus("POST", "/v1/presence", { state, label }))
+  const presence = (state: "working" | "idle") => setPresence(state)
   // Reachable between turns, renewed by the server's heartbeat (RT-6.6 step 1).
-  const reachable = () => bus("POST", "/v1/presence", { state: "bus", label })
+  const reachable = () => setPresence("bus")
 
   // Synthetic input: the plugin's, not the human's. It starts a turn (resume),
   // except the context after a compaction, which waits for the next one.

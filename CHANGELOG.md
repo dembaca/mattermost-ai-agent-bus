@@ -3,6 +3,22 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.90.1
+
+### Fixed
+
+- **An aborted run no longer leaves the bot `working`**
+  ([RT-6.27](docs/arc42/06-runtime-view.md) step 3,
+  [RT-6.20](docs/arc42/06-runtime-view.md) step 3): the pi extension sent
+  `presence working` at a run's start without waiting for it, and an abort at
+  once sent `idle` beside it; the two could reach the server in either order,
+  which then showed `working` until the lease ran out. The OpenCode plugin
+  had the same race between its prompt hook's `working` and an interrupt's
+  `idle`. Both now send their presence calls one at a time
+  (`presenceQueue`, in the shared keep-in-step helpers): a state goes out only
+  once the call before it has settled, and one superseded while it waits is
+  not sent. A run still never waits for the bus.
+
 ## 0.90.0
 
 ### Added

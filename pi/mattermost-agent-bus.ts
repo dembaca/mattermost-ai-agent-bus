@@ -10,7 +10,8 @@
 //   resources_discover  the skill
 //   input               a human's prompt (any source but "extension") starts a
 //                       turn: the counter, drain rounds and backoff afresh
-//   agent_start         presence working (not awaited)
+//   agent_start         presence working (not awaited; the presence calls go
+//                       one at a time, presenceQueue)
 //   agent_settled       the final idle signal, not agent_end (which pi may
 //                       follow with a retry, a compaction or queued input):
 //                       GET /v1/turn-end → drain, answer (a bus post without
@@ -154,6 +155,22 @@ export function hookApi(env: Env, directory: string, missing: () => void = () =>
     }
   }
 }
+
+// The presence, one call at a time (RT-6.20 step 3, RT-6.27 step 3): nothing
+// waits for it unless it awaits the promise, and a state goes out only once the
+// call before it has settled, so the server never sees a `working` after the
+// `idle` that followed it. A state superseded while it waited is not sent.
+export function presenceQueue(send: (state: string) => Promise<unknown>): (state: string) => Promise<void> {
+  let chain: Promise<void> = Promise.resolve()
+  let wanted = ""
+  return (state: string) => {
+    wanted = state
+    chain = chain.then(async () => {
+      if (wanted === state) await send(state)
+    }).catch(() => {})
+    return chain
+  }
+}
 // keep-in-step: end
 
 // The long poll's wait in seconds, 10 to 55.
@@ -264,7 +281,9 @@ export function create(pi: ExtensionAPI, deps: Deps = {}) {
   let closed = true
 
   const stat = (k: string, fields: Json = {}) => bus("POST", "/v1/stat", { k, ...fields })
-  const presence = (state: "working" | "idle" | "bus") => bus("POST", "/v1/presence", { state, label })
+  // One call at a time: an abort's `idle` never overtakes the run's `working`.
+  const presence: (state: "working" | "idle" | "bus") => Promise<void> =
+    presenceQueue((state) => bus("POST", "/v1/presence", { state, label }))
   const notify = (text: string) => {
     try {
       if (text && ctx?.hasUI) ctx.ui.notify(text, "info")

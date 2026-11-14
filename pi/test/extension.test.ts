@@ -33,6 +33,10 @@ let endpoint = ""
 const HOLD = Symbol("hold")
 let held: Array<{ res: ServerResponse; path: string }> = []
 let dropped = 0
+// An answer of { [LATER]: ms, body } goes out after ms; `done` lists the calls
+// in the order their answers went out (a real server applies a state then).
+const LATER = Symbol("later")
+let done: Call[] = []
 
 const until = async (cond: () => boolean, what: string, ms = 3000) => {
   for (let i = 0; i < ms / 5 && !cond(); i++) await new Promise((r) => setTimeout(r, 5))
@@ -60,9 +64,19 @@ before(async () => {
         return
       }
       const path = req.url || ""
-      calls.push({ method: req.method || "", path, body: raw ? JSON.parse(raw) : null })
+      const call = { method: req.method || "", path, body: raw ? JSON.parse(raw) : null }
+      calls.push(call)
       const route = path.split("?")[0]
-      const answer = typeof answers[route] === "function" ? answers[route](path) : answers[route]
+      const answer = typeof answers[route] === "function" ? answers[route](path, call.body) : answers[route]
+      if (answer?.[LATER]) {
+        const { [LATER]: ms, body } = answer
+        setTimeout(() => {
+          done.push(call)
+          res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body))
+        }, ms)
+        return
+      }
+      if (answer !== HOLD) done.push(call)
       if (answer === HOLD) {
         const h = { res, path }
         held.push(h)
@@ -91,6 +105,7 @@ beforeEach(() => {
   // A test must not end with a call of its instance in flight; the per-test key keeps a late one out of the next test's log.
   KEY = "test-key-" + ++keys
   calls = []
+  done = []
   held = []
   dropped = 0
   answers = { "/v1/presence": { ok: true }, "/v1/stat": { ok: true }, "/v1/usage": { ok: true },
@@ -316,6 +331,35 @@ test("RT-6.27 step 3: the human's interrupt: idle, no checks, no wake-up until t
   await until(() => held.length === 1, "the human's prompt opens it again")
   answerWake({ wake: true, reason: "mentions", count: 1, text: "collect" })
   await until(() => f.sent.length === 1, "woken again")
+})
+
+test("RT-6.27 step 3: an abort's idle never overtakes the run's working (0.90.1)", async () => {
+  const f = await started()
+  // The server is slow to take `working`: an `idle` sent beside it would be applied first.
+  answers["/v1/presence"] = (_path: string, body: any) => (body?.state === "working" ? { [LATER]: 150, body: { ok: true } }
+                                                                                    : { ok: true })
+  await f.emit("input", { text: "do it", source: "interactive" })
+  await f.emit("agent_start")
+  await f.emit("agent_settled", { aborted: true })
+  const applied = () => done.filter((c) => c.path === "/v1/presence").map((c) => c.body.state)
+  await until(() => applied().length === 2, "both states applied")
+  assert.deepEqual(applied(), ["working", "idle"])
+  // A state superseded while it waits is not sent: while a slow idle is out,
+  // the next run's working and its abort's idle queue up; only the idle goes.
+  answers["/v1/presence"] = (_path: string, body: any) => (body?.state === "idle" ? { [LATER]: 100, body: { ok: true } }
+                                                                                 : { ok: true })
+  done = []
+  calls = []
+  await f.emit("input", { text: "again", source: "interactive" })
+  await f.emit("agent_start")
+  await f.emit("agent_settled", { aborted: true })
+  await f.emit("input", { text: "and again", source: "interactive" })
+  await f.emit("agent_start")
+  await f.emit("agent_settled", { aborted: true })
+  await until(() => applied().length === 3, "the states applied")
+  await settle(150)
+  assert.deepEqual(applied(), ["working", "idle", "idle"])
+  assert.deepEqual(bodies("/v1/presence").map((b) => b.state), ["working", "idle", "idle"], "the superseded working is not sent")
 })
 
 test("RT-6.27 step 3: input from an extension (ours included) is no human's prompt", async () => {

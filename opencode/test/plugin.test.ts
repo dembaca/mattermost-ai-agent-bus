@@ -46,6 +46,10 @@ const HOLD = Symbol("hold")
 const OLD = Symbol("old")
 let held: Array<{ res: ServerResponse; path: string }> = []
 let dropped = 0 // held requests the client aborted
+// An answer of { [LATER]: ms, body } goes out after ms; `done` lists the calls
+// in the order their answers went out (a real server applies a state then).
+const LATER = Symbol("later")
+let done: Call[] = []
 const answerWake = (body: any) => {
   const h = held.shift()
   assert.ok(h, "no request is held")
@@ -72,9 +76,19 @@ before(async () => {
         return
       }
       const path = req.url || ""
-      calls.push({ method: req.method || "", path, body: raw ? JSON.parse(raw) : null })
+      const call = { method: req.method || "", path, body: raw ? JSON.parse(raw) : null }
+      calls.push(call)
       const route = path.split("?")[0]
-      const answer = typeof answers[route] === "function" ? answers[route](path) : answers[route]
+      const answer = typeof answers[route] === "function" ? answers[route](path, call.body) : answers[route]
+      if (answer?.[LATER]) {
+        const { [LATER]: ms, body } = answer
+        setTimeout(() => {
+          done.push(call)
+          res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body))
+        }, ms)
+        return
+      }
+      if (answer !== HOLD) done.push(call)
       if (answer === HOLD) {
         const h = { res, path }
         held.push(h)
@@ -107,6 +121,7 @@ after(() => {
 
 beforeEach(() => {
   calls = []
+  done = []
   held = []
   dropped = 0
   answers = { "/v1/presence": { ok: true }, "/v1/stat": { ok: true }, "/v1/turn-end": idleIn(),
@@ -377,6 +392,21 @@ test("RT-6.20, RT-6.2 step 2: a bus post without an answer in its thread: one ro
   h.res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(answer))
   await ending
   assert.deepEqual(calls.filter((c) => c.path === "/v1/reminded"), [])
+  await fx.cleanup()
+})
+
+test("RT-6.20 step 3: an interrupt's idle never overtakes the prompt's working (0.90.1)", async () => {
+  const fx = await start()
+  // The server is slow to take `working`: an `idle` sent beside it would be applied first.
+  answers["/v1/presence"] = (_path: string, body: any) => (body?.state === "working" ? { [LATER]: 150, body: { ok: true } }
+                                                                                    : { ok: true })
+  const prompting = fx.hooks.prompt({ sessionID: "s1", messageID: "m", prompt: { text: "hi" }, delivery: "steer" })
+  await until(() => calls.some((c) => c.path === "/v1/presence" && c.body?.state === "working"), "working is out")
+  await fx.emit("session.execution.interrupted", { sessionID: "s1", reason: "user" })
+  await prompting
+  const applied = () => done.filter((c) => c.path === "/v1/presence").map((c) => c.body.state)
+  await until(() => applied().length === 2, "both states applied")
+  assert.deepEqual(applied(), ["working", "idle"])
   await fx.cleanup()
 })
 
