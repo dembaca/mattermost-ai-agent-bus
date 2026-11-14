@@ -225,6 +225,26 @@ def test_the_turn_end_banner_names_a_newer_release_once(mm, run):
     assert run(STOP).banner == ""
 
 
+def test_an_older_newest_names_the_check_and_no_install(mm, run):
+    """RT-6.30 step 6, RT-6.2 step 8: a newest older than this session (the
+    check not run since, or the repository frozen or rewound) names when the
+    check ran, the lib and the server alike, and the banner names no installer:
+    never a step back."""
+    run.state_dir.mkdir(parents=True, exist_ok=True)
+    (run.state_dir / "release.env").write_text("NEWEST=0.1.0\nVERIFIED=yes\nCHECKED_AT=1762950000\n")
+    have = release.VERSION
+    line = (f"the release check of 2025-11-12 12:20Z found v0.1.0 as newest, older than {have}: "
+            "not run since, or the repository is frozen or rewound")
+    assert bash_notice(run, have) == line == release.line(have, directory=run.state_dir)
+    newer = subprocess.run(
+        ["bash", "-c", f'source "{ROOT}/bin/mm-agent-lib.sh"; mm_release_newer "$1" "$2"', "_",
+         have, str(run.state_dir)], capture_output=True, text=True)
+    assert newer.returncode != 0
+    r = run(STOP)
+    assert r.passed and line in r.banner
+    assert "mm-agent-host-install.sh" not in r.banner and "installs it" not in r.banner
+
+
 def test_the_installer_waits_for_a_running_check(run, tmp_path, host):
     """RT-6.30: both fetch into src.git; a fresh check lock refuses the
     installer, one a killed check left ten minutes ago does not."""

@@ -63,6 +63,9 @@ _VER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 _TAG = re.compile(r"^v\d+\.\d+\.\d+$")
 # A TARGET when the registrar names `latest` (RT-6.32 step 4): the newest tag
 # the host's release check knows that is not withdrawn, once it knows one.
+# CHECKED_AT: epoch seconds, as the release check writes them; read as
+# mm_release_notice reads it (no leading zero, at most ten digits).
+_EPOCH = re.compile(r"^[1-9][0-9]{0,9}$")
 _LATEST = re.compile(r"^latest(?: \(v(\d+\.\d+\.\d+)\))?$")
 
 # The Needs: grammar (ADR-011 point 3, CLAUDE.md "Releasing"): `MM_*` names,
@@ -222,7 +225,7 @@ def read_state(directory: Path | None = None) -> State | None:
     withdrawn = {v for v in withdrawn if _key(v) < _key(newest)}
     at = fields.get("CHECKED_AT", "")
     return State(newest=newest, verified=verified == "yes",
-                 checked_at=int(at) if at.isdigit() else 0,
+                 checked_at=int(at) if _EPOCH.match(at) else 0,
                  breaking=breaking, needs=needs, withdrawn=withdrawn)
 
 
@@ -271,13 +274,20 @@ def notice(have: str | None = None, state: State | None = None,
             out["needs"] = needs
     if have in st.withdrawn:
         out["withdrawn"] = True
-    if _key(st.newest) < _key(have):
+    if older(st, have):
         out["older"] = True
     text = line(have, st)
     if text:
         out["notice"] = text
         out["note"] = NOTE
     return out
+
+
+def older(st: State, have: str | None = None) -> bool:
+    """The newest release the check found is older than this server's version
+    (RT-6.30 step 6): never one to install."""
+    have = VERSION if have is None else have
+    return bool(_VER.match(have)) and _key(st.newest) < _key(have)
 
 
 def line(have: str | None = None, state: State | None = None,
@@ -312,8 +322,10 @@ def _release_parts(st: State, have: str) -> list[str]:
         what += "; signature checked" if st.verified else "; signature not checked"
         parts.append(f"release v{st.newest} is out ({what})")
     elif _key(st.newest) < _key(have):
-        parts.append(f"the newest release that passes the check is v{st.newest}, older than "
-                     f"{have}: the repository may be frozen or rewound")
+        # Never a step back: the check may just not have run since this version.
+        when = f" of {time.strftime('%Y-%m-%d %H:%MZ', time.gmtime(st.checked_at))}" if st.checked_at else ""
+        parts.append(f"the release check{when} found v{st.newest} as newest, older than {have}: "
+                     "not run since, or the repository is frozen or rewound")
     return parts
 
 

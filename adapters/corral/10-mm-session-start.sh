@@ -253,8 +253,13 @@ mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 # The newest release the host's release check verified (RT-6.30), from its
 # state file in this directory; a notice only, nothing is installed.
+# The installer only for a newer release: an older newest is no step to take.
 if note="$(mm_release_notice "$(mm_tree_version "$ROOT")" "$STATE_DIR" 2>/dev/null)"; then
-  log "${note}; this host copy: $(mm_tree_version "$ROOT"), $(mm_release_kind "$ROOT") — a human installs it with the host copy's installer: $ROOT/bin/mm-agent-host-install.sh --release v<version> (RT-6.30)"
+  if mm_release_newer "$(mm_tree_version "$ROOT")" "$STATE_DIR"; then
+    log "${note}; this host copy: $(mm_tree_version "$ROOT"), $(mm_release_kind "$ROOT") — a human installs it with the host copy's installer: $ROOT/bin/mm-agent-host-install.sh --release v<version> (RT-6.30)"
+  else
+    log "${note}; this host copy: $(mm_tree_version "$ROOT"), $(mm_release_kind "$ROOT") (RT-6.30)"
+  fi
 fi
 # What self-update does when this session ends (RT-6.32): only for a release
 # of the host copy's layout, from release-auto.env and the hold beside releases/.

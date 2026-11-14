@@ -99,7 +99,21 @@ def test_an_unchecked_release_says_so_and_a_newer_host_is_told(tmp_path):
     assert release.line("1.4.0", directory=d) == "release v1.4.1 is out (patch; signature not checked)"
     assert release.notice("1.4.1", directory=d).get("notice") is None
     older = release.notice("1.5.0", directory=d)
-    assert older["older"] is True and "frozen or rewound" in older["notice"]
+    assert older["older"] is True and older["notice"] == (
+        "the release check found v1.4.1 as newest, older than 1.5.0: "
+        "not run since, or the repository is frozen or rewound")
+
+
+def test_an_older_newest_names_when_the_check_ran(tmp_path):
+    """RT-6.30 step 6: a newest older than this version names the check's time
+    (short UTC): it may just not have run since; never a step back."""
+    d = state(tmp_path, "NEWEST=0.86.0\nVERIFIED=yes\nCHECKED_AT=1762950000\n")
+    assert release.line("0.87.0", directory=d) == (
+        "the release check of 2025-11-12 12:20Z found v0.86.0 as newest, older than 0.87.0: "
+        "not run since, or the repository is frozen or rewound")
+    for bad in ("0", "0123", "12345678901", "soon"):
+        d = state(tmp_path, f"NEWEST=0.86.0\nVERIFIED=yes\nCHECKED_AT={bad}\n")
+        assert release.line("0.87.0", directory=d).startswith("the release check found v0.86.0 ")
 
 
 def test_no_check_and_a_broken_file_show_nothing(tmp_path):
@@ -195,6 +209,11 @@ def test_the_last_post_answer_carries_the_banner_line(tmp_path):
     out = hookapi._release()["release"]
     assert out["newest"] == "99.0.0"
     assert out["line"].startswith("release v99.0.0 is out (major; signature not checked)")
+    assert "older" not in out
+    # RT-6.30 step 6: older than this server, decided here: the hook names no installer.
+    state(tmp_path, "NEWEST=0.0.1\nVERIFIED=yes\n")
+    out = hookapi._release()["release"]
+    assert out["older"] is True and out["line"].startswith("the release check found v0.0.1 as newest")
 
 
 # --- the child -----------------------------------------------------------------------

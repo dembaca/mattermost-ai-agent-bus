@@ -185,9 +185,24 @@ def inert(text: str) -> str:
     return _TAG.sub("‹", text)
 
 
+# Why a post wakes the agent (wake_reason): it is for it (a mention, a DM, a
+# reaction, to all, its own thread…), or only because it holds the crown
+# (RT-6.6 step 5): a post that names no agent, its to answer or route.
+ADDRESSED = "addressed"
+CROWN = "crown"
+
+
 def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
           my_root: bool = False, routes: Collection[str] | None = None) -> bool:
-    """The listener's rules (RT-6.2): what is for this agent is pushed at once,
+    """Whether the post wakes the agent at once (wake_reason)."""
+    return bool(wake_reason(item, coordinator=coordinator, in_my_thread=in_my_thread,
+                            my_root=my_root, routes=routes))
+
+
+def wake_reason(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
+                my_root: bool = False, routes: Collection[str] | None = None) -> str:
+    """Why the post wakes the agent: ADDRESSED, CROWN, or "" (it does not).
+    The listener's rules (RT-6.2): what is for this agent is pushed at once,
     a stall the server noticed, too (RT-6.19).
     The coordinator wakes for a post that names no agent (RT-6.6 step 5),
     which it routes, and only in a channel of `routes` (its home: lease.routes,
@@ -203,17 +218,19 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
     reaction or a reply in its own thread wakes it: no broadcast, no
     coordinator, and what does not wake goes into no digest either. In the
     lobby while it is not the home (item lobby, RT-6.22 step 3) a broadcast
-    wakes it too (the gate held back an untrusted one), the crown never."""
+    wakes it too (the gate held back an untrusted one), the crown never.
+    CROWN: only the crown wakes it, not its own thread (RT-6.6 step 5,
+    RT-6.12 step 3): the push says so (for_crown="true")."""
     if item.get("gated"):
-        return False
+        return ""
     if item.get("guest"):
         if item.get("kind") in ("mention", "dm", "reaction", "stall"):
-            return True
-        return in_my_thread and (my_root or item.get("intent") != a2a.FYI)
+            return ADDRESSED
+        return ADDRESSED if in_my_thread and (my_root or item.get("intent") != a2a.FYI) else ""
     if (item.get("kind") in ("mention", "dm", "reaction", "stall") or item.get("to") == a2a.ALL
             or item.get("departed") or item.get("not_here")
             or broadcast(str((item.get("post") or {}).get("message", "")))):
-        return True
+        return ADDRESSED
     where = str(item.get(CHANNEL_ID) or "")
     if item.get("lobby"):
         coordinator = False  # RT-6.22 step 3: not the home, no routing here
@@ -221,9 +238,9 @@ def wakes(item: Mapping[str, Any], *, coordinator: bool, in_my_thread: bool,
         coordinator = False  # a guest here: this channel has its own crown
     if coordinator and tasks.mentions(str((item.get("post") or {}).get("message", ""))):
         coordinator = False  # RT-6.6 step 5: for the agent it names, not to route
-    if coordinator or in_my_thread:
-        return my_root or item.get("intent") != a2a.FYI
-    return False
+    if not (coordinator or in_my_thread) or (not my_root and item.get("intent") == a2a.FYI):
+        return ""
+    return ADDRESSED if in_my_thread else CROWN
 
 
 # A digest lists at most this many posts, the rest as one line (RT-6.12 step 3).
@@ -300,6 +317,8 @@ def notification(item: Mapping[str, Any]) -> dict[str, Any]:
         meta["foreign"] = "true"  # ADR-001: another owner's agent, a request
     if item.get("expired"):
         meta["expired"] = "true"  # RT-6.11: too late to approve
+    if item.get("for_crown"):
+        meta["for_crown"] = "true"  # RT-6.6 step 5: the crown holder's to answer or route
     if attached := files.attribute(post.get("files")):
         meta["files"] = attached  # RT-6.23: get_file(<id>) fetches one
     if post.get("edited"):

@@ -141,7 +141,11 @@ if [[ "$CHECK" -eq 1 ]]; then
   if [[ -z "${CORRAL_SANDBOX:-}" ]] && ! mm_sandbox_can_write "$SELF"; then
     bash "$SELF/bin/mm-agent-release-check.sh" || true
     if note="$(mm_release_notice "$have")"; then
-      printf 'release:    %s — to install it: %s/bin/mm-agent-host-install.sh --release v<version>\n' "$note" "$DEST"
+      if mm_release_newer "$have"; then  # an older newest is no step to take (RT-6.30)
+        printf 'release:    %s — to install it: %s/bin/mm-agent-host-install.sh --release v<version>\n' "$note" "$DEST"
+      else
+        printf 'release:    %s\n' "$note"
+      fi
     fi
     # Self-update (RT-6.32): what the registrar named, the keys, the hold.
     if note="$(mm_release_auto_notice "$have" "$(mm_state_dir)" "$(dirname "$DEST")")"; then

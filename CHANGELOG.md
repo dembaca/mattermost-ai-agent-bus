@@ -3,6 +3,34 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.88.0
+
+### Changed
+
+- **The push tag says when the crown woke the agent**
+  ([RT-6.6](docs/arc42/06-runtime-view.md) step 5,
+  [RT-6.12](docs/arc42/06-runtime-view.md) step 3): a post that wakes the
+  agent only because it holds the 👑 (a post in its home naming no agent,
+  outside its own threads) carries `for_crown="true"` in its channel tag, and
+  `wait_for_events` marks such an event `for_crown: true` (not `crown`, which the
+  adapter boundary keeps for the roster). The crown holder,
+  woken by a human's plain question, took it as someone else's and left it
+  unanswered; the MCP instructions, the skill and
+  coordinator.md now say a post so marked is the agent's to answer or route.
+  `channel.wake_reason` says why a post wakes (`addressed`, `crown`), and
+  `channel.wakes` is its yes/no.
+- **The release notice never points back**
+  ([RT-6.30](docs/arc42/06-runtime-view.md) step 6, RT-6.2 step 8): when the
+  newest release the host's check found is older than the running version,
+  the line names when the check ran and that it may just not have run since,
+  `the release check of 2026-11-13 09:58Z found v0.86.0 as newest, older than
+  0.87.0: not run since, or the repository is frozen or rewound` (the lib's
+  `mm_release_notice` and the server's alike), and neither the turn-end
+  banner, corral's start hook nor the installer's `--check` names the
+  installer for it any more: the Stop hook by `older` in the server's
+  `release` answer (decided against the server's own version), the others
+  by `mm_release_newer` in `mm-agent-lib.sh`.
+
 ## 0.87.1
 
 ### Changed

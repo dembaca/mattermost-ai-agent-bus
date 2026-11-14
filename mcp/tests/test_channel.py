@@ -452,6 +452,24 @@ def test_the_crown_leaves_a_post_to_another_agent_to_it():
     assert wakes(_post("mail the log to ops@agent-infra.example", trusted=True))
 
 
+def test_the_push_says_when_only_the_crown_woke_the_agent():
+    """RT-6.6 step 5, RT-6.12 step 3: a plain post wakes the crown holder to
+    answer or route it, and its tag says so (for_crown="true"); a mention, its own
+    thread or a post for all is addressed to it and carries no crown mark."""
+    def why(item, coordinator=True, in_my_thread=False):
+        return channel.wake_reason(item, coordinator=coordinator, in_my_thread=in_my_thread)
+
+    plain = _post("can someone look at the build?", trusted=True)
+    assert why(plain) == channel.CROWN
+    assert why(plain, coordinator=False) == ""
+    assert why(plain, in_my_thread=True) == channel.ADDRESSED
+    assert why(_post("hi", kind="mention")) == channel.ADDRESSED
+    assert why(_post("main is red") | {"to": "all"}) == channel.ADDRESSED
+    assert why(_post("DONE x") | {"intent": "fyi", "from_agent": True}) == ""
+    assert channel.notification(plain | {"for_crown": True})["meta"]["for_crown"] == "true"
+    assert "for_crown" not in channel.notification(plain)["meta"]
+
+
 def test_an_fyi_post_wakes_only_whom_it_names():
     """RT-6.14, RT-6.12 step 3: an agent's fyi post (DONE, RESULT, IDLE…) wakes
     no coordinator and no one who only posted in the thread; it does wake

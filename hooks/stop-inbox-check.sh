@@ -142,8 +142,10 @@ update_note() {
   newest="$RELEASE_NEWEST" rline="$RELEASE_LINE"
   if [[ "$newest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && -n "$rline" && "$rel_notified" != "$newest" ]]; then
     rel_notified="$newest"
-    # A host copy that updates itself between sessions says so (RT-6.32).
-    if [[ "$rline" == *"updates itself to v"* ]]; then
+    # A host copy that updates itself between sessions says so (RT-6.32); a
+    # newest older than the session's server is never one to install (RT-6.30
+    # step 6): `older` comes from the server, which decided the line.
+    if [[ "$rline" == *"updates itself to v"* || "$RELEASE_OLDER" == true ]]; then
       notes="${notes:+$notes$'\n'}$MM_UPDATE $rline"
     else
       notes="${notes:+$notes$'\n'}$MM_UPDATE $rline — a human installs it on the host: mm-agent-host-install.sh --release v$newest"
@@ -174,11 +176,12 @@ go_idle() {
 # server cannot tell; LAST_AT 0 when the agent never posted there.
 # LAST_HEAD: LAST_MSG without the 👑 and the backtick before its bus word
 # (`IDLE`, RT-6.14 step 2).
-LAST_MSG="" LAST_HEAD="" LAST_AT=0 SIGNED_OFF=0 RELEASE_NEWEST="" RELEASE_LINE=""
+LAST_MSG="" LAST_HEAD="" LAST_AT=0 SIGNED_OFF=0 RELEASE_NEWEST="" RELEASE_LINE="" RELEASE_OLDER=""
 my_last_post() {
   mm_bus GET /v1/last-post || return 1
   RELEASE_NEWEST="$(jq -r '.release.newest // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || RELEASE_NEWEST=""
   RELEASE_LINE="$(jq -r '.release.line // ""' <<<"$MM_BUS_BODY" 2>/dev/null | head -n1 | cut -c1-400)" || RELEASE_LINE=""
+  RELEASE_OLDER="$(jq -r '.release.older // false' <<<"$MM_BUS_BODY" 2>/dev/null)" || RELEASE_OLDER=""
   LAST_AT="$(jq -r '.at // 0' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
   LAST_MSG="$(jq -r '.message // ""' <<<"$MM_BUS_BODY" 2>/dev/null)" || return 1
   LAST_HEAD="${LAST_MSG#"$MM_CROWN"}"
