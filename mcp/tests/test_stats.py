@@ -19,9 +19,6 @@ def state(tmp_path, monkeypatch):
     monkeypatch.setenv("MM_BOT_USER_ID", UID)
     monkeypatch.delenv("MM_STATS_CHANNEL", raising=False)
     monkeypatch.setattr(stats, "_unposted", [])
-    monkeypatch.setattr(stats, "_waking", set())
-    monkeypatch.setattr(stats, "_woke", None)
-    monkeypatch.setattr(stats, "_running", False)
     return tmp_path
 
 
@@ -488,70 +485,94 @@ def test_the_report_counts_a_session_once_and_splits_by_role():
 def test_bus_turns_are_told_apart_by_who_woke_them():
     """RT-6.9: a turn the bus started is the agents' when only agents' posts
     woke it, a human's when a human's post was among them: what was handed
-    over while no turn ran (a push), else the turn's first hand-over (what
-    a listener woke it for). A human's turn and an interrupted one count nothing."""
-    stats.delivered({"agent"})                    # a push while idle
+    over since the turn before it ended (a push), else the turn's first
+    hand-over (what a listener woke it for). A human's turn counts nothing;
+    a bus turn nothing tells about counts in neither."""
+    heard = dict(agent=1, human=0, trusted=0, other=0)
+    stats.record("heard", **heard, pushed=1)                      # a push while idle
     stats.record("turn", by="bus")
-    stats.turn(True)
-    stats.delivered({"human"}, trusted=1)         # later in the turn: did not wake it
+    stats.record("heard", **heard | {"agent": 0, "human": 1, "trusted": 1})  # later: did not wake it
     stats.record("turn_end")
-    stats.turn(False)
-    stats.record("turn", by="bus")                # the listener's turn
-    stats.turn(True)
-    stats.delivered({"agent", "human"}, other=1)  # its first hand-over
-    stats.delivered({"agent"})
-    stats.turn(False)
-    stats.delivered({"agent"})
-    stats.record("turn", by="human")              # the human typed first
-    stats.turn(True)
-    stats.turn(False)
-    stats.record("turn", by="bus")
-    stats.turn(True)
-    stats.delivered({"agent"})
-    stats.turn(True)                              # interrupted: no end, nothing noted
+    stats.record("turn", by="bus")                                # the listener's turn
+    stats.record("heard", **heard | {"human": 1, "other": 1})     # its first hand-over
+    stats.record("heard", **heard)
+    stats.record("turn_end")
+    stats.record("heard", **heard, pushed=1)
+    stats.record("turn", by="human")                              # the human typed first
+    stats.record("turn_end")
+    stats.record("turn", by="bus")                                # a listen window that ran out
+    stats.record("turn_end")
     s = stats.summary("0.91.0")
     assert (s["bus_turns"], s["bus_turns_agent"], s["bus_turns_human"]) == (3, 1, 1)
     assert (s["human_posts_trusted"], s["human_posts_other"]) == (1, 1)
 
 
+def test_pi_and_opencode_end_their_turns_with_the_listen_window_too():
+    """RT-6.9, RT-6.20: pi and OpenCode go from working to `bus` (listening),
+    not idle; they note turn_end all the same, and nothing here reads the
+    presence: working, bus, working, bus classifies both turns."""
+    stats.record("heard", agent=1, human=0, trusted=0, other=0, pushed=1)
+    stats.record("turn", by="bus")      # working
+    stats.record("turn_end")            # bus
+    stats.record("heard", agent=0, human=1, trusted=1, other=0, pushed=1)
+    stats.record("turn", by="bus")      # working
+    stats.record("turn_end")            # bus
+    s = stats.summary("0.91.0")
+    assert (s["bus_turns_agent"], s["bus_turns_human"]) == (1, 1)
+
+
 def test_a_bus_turn_running_at_the_cut_is_told_apart_where_it_ends():
-    """RT-6.9 step 2: the running turn's start goes on into the next part;
-    what woke it is noted at its end and counts there, once."""
+    """RT-6.9 step 2: the running turn goes on into the next part with what
+    woke it as far as known at the cut, and counts where it ends, once; one
+    nothing told about yet is told by its first hand-over after the cut."""
     now = int(time.time())
-    _write_events({"k": "turn", "t": now - stats.PART_SEC - 10, "by": "bus"})
-    stats.turn(True)
-    stats.delivered({"agent"})
+    old = now - stats.PART_SEC - 10
+    _write_events({"k": "heard", "t": old - 5, "agent": 1, "human": 0, "pushed": 1},
+                  {"k": "turn", "t": old, "by": "bus"})
     one = stats.cut("0.91.0", now=now)
     assert (one["bus_turns"], one["bus_turns_agent"], one["bus_turns_human"]) == (0, 0, 0)
-    stats.turn(False)
+    assert {"k": "turn", "t": old, "by": "bus", "wk": 1, "wa": 1, "wh": 0} in _events()
+    stats.record("heard", agent=0, human=1, trusted=1, other=0)  # later in the turn: not what woke it
+    stats.record("turn_end")
     two = stats.summary("0.91.0")
     assert (two["bus_turns"], two["bus_turns_agent"], two["bus_turns_human"]) == (1, 1, 0)
+
+    _write_events({"k": "turn", "t": old, "by": "bus"})
+    stats.cut("0.91.0", now=now)
+    stats.record("heard", agent=0, human=1, trusted=1, other=0)
+    stats.record("turn_end")
+    three = stats.summary("0.91.0")
+    assert (three["bus_turns_agent"], three["bus_turns_human"]) == (0, 1)
 
 
 def test_a_runtime_without_turn_hooks_sends_no_woken_turns():
     """RT-6.9: without turn events what woke a turn is not told: absent, never
     zero; the questions, tasks and human posts are counted all the same."""
-    stats.delivered({"human"}, trusted=2)
+    stats.record("heard", agent=0, human=1, trusted=2, other=0)
     s = stats.summary("0.91.0")
     assert "bus_turns_agent" not in s and s["human_posts_trusted"] == 2 and s["asks_crown"] == 0
 
 
 def test_questions_settled_by_the_coordinator_count_on_the_asking_side():
     """RT-6.9, RT-6.25: questions to the 👑, those it answered (first advice
-    only), and asks that reached a human (one passed on to the human is the
-    new ask's); each where it closes, like `asks`."""
+    only), and asks that reached a human; the server's ask for a question the
+    👑 left open (`forwarded`) is not a second question. Questions to the 👑
+    stay out of the asks' waiting figures."""
     now = int(time.time())
     _write_events(
         {"k": "ask", "t": now - 900, "id": "q1", "coord": 1},
         {"k": "ask", "t": now - 800, "id": "q2", "coord": 1},
+        {"k": "ask", "t": now - 750, "id": "q5", "coord": 1},      # still open at the end
         {"k": "ask", "t": now - 700, "id": "q3"},
         {"k": "advice", "t": now - 600, "id": "q1"}, {"k": "advice", "t": now - 500, "id": "q1"},
-        {"k": "forwarded", "t": now - 400, "id": "q2"}, {"k": "ask", "t": now - 400, "id": "q4"},
+        {"k": "forwarded", "t": now - 400, "id": "q2"},
+        {"k": "ask", "t": now - 400, "id": "q4", "forwarded": 1},
         {"k": "answer", "t": now - 300, "id": "q4", "wait": 100},
     )
     s = stats.summary("0.91.0")
-    assert (s["asks_crown"], s["asks_crown_answered"], s["asks_human"]) == (2, 1, 2)
-    assert s["human_answers"] == 1
+    assert (s["asks_crown"], s["asks_crown_answered"], s["asks_human"]) == (3, 1, 1)
+    assert (s["asks"], s["asks_answered"], s["asks_open"]) == (2, 1, 1)   # q3 open, q4 answered
+    assert 695 <= s["ask_open_sec"] <= 705 and s["human_answers"] == 1
 
 
 def test_a_question_open_at_the_cut_counts_where_the_coordinator_answers():
@@ -565,7 +586,7 @@ def test_a_question_open_at_the_cut_counts_where_the_coordinator_answers():
                   {"k": "ask", "t": day + 20, "id": "q2", "coord": 1},
                   {"k": "advice", "t": day + 30, "id": "q2"})
     one = stats.cut("0.91.0", now=now)
-    assert (one["asks_crown"], one["asks_crown_answered"]) == (1, 1)
+    assert (one["asks_crown"], one["asks_crown_answered"], one["asks"]) == (1, 1, 0)
     assert [e.get("id") for e in _events() if e["k"] == "ask"] == ["q1"]
     stats.record("advice", id="q1")
     two = stats.summary("0.91.0")
@@ -575,62 +596,106 @@ def test_a_question_open_at_the_cut_counts_where_the_coordinator_answers():
 async def test_a_done_on_an_agents_task_counts_whether_a_human_was_in_the_thread(monkeypatch):
     """RT-6.9: DONE in a thread whose root is an agent's TASK; one read of the
     thread: closed between agents without a human's post there, else with one;
-    no TASK, a human's TASK or a read that fails: nothing."""
+    once per thread in a part; no TASK, a human's TASK, one this agent gave
+    itself or a read that fails: nothing."""
     from mattermost_ai_agent_bus import gate
     from mattermost_ai_agent_bus.model import Post, Thread
-    cls = {"a1": gate.AGENT, "a2": gate.FOREIGN, "h1": gate.TRUSTED, "h2": gate.OTHER}
+    cls = {"a1": gate.AGENT, "a2": gate.FOREIGN, "h1": gate.TRUSTED, "h2": gate.OTHER, UID: gate.AGENT}
 
     async def classes(client, posts):
         return [cls[p.user_id] for p in posts]
 
     monkeypatch.setattr(gate, "author_classes", classes)
 
-    def thread(*posts):
-        return Thread(root_id=posts[0].id, order=tuple(p.id for p in posts), posts=posts)
+    owner = {"agents": "a1", "human": "a1", "webhook": "a1", "not a task": "a1", "humans task": "h1",
+             "own": UID}
 
-    task = Post(id="r", user_id="a1", kind="TASK")
+    def thread(root, *posts):
+        first = Post(id=root, user_id=owner[root], kind="RESULT" if root == "not a task" else "TASK")
+        return Thread(root_id=root, order=(root, *(p.id for p in posts)), posts=(first, *posts))
     threads = {
-        "agents": thread(task, Post(id="x", user_id="a2", root_id="r"), Post(id="y", user_id="a1", root_id="r")),
-        "human": thread(Post(id="r", user_id="a1", kind="TASK"), Post(id="x", user_id="h2", root_id="r")),
-        "webhook": thread(Post(id="r", user_id="a1", kind="TASK"),
-                          Post(id="x", user_id="h2", root_id="r", from_webhook=True)),
-        "not a task": thread(Post(id="r", user_id="a1", kind="RESULT"), Post(id="x", user_id="h1")),
-        "humans task": thread(Post(id="r", user_id="h1", kind="TASK")),
+        "agents": thread("agents", Post(id="x", user_id="a2", root_id="agents")),
+        "human": thread("human", Post(id="x", user_id="h2", root_id="human")),
+        "webhook": thread("webhook", Post(id="x", user_id="h2", root_id="webhook", from_webhook=True)),
+        "not a task": thread("not a task", Post(id="x", user_id="h1")),
+        "humans task": thread("humans task"),
+        "own": thread("own", Post(id="x", user_id="a2", root_id="own")),
     }
 
     class Client:
+        session = None  # the bot's id from MM_BOT_USER_ID
+
         async def thread(self, root_id):
             if root_id == "gone":
                 raise OSError("unreadable")
             return threads[root_id]
 
-    for root in (*threads, "gone"):
+    for root in (*threads, "agents", "gone"):                         # DONE twice in one thread
         await server._task_closed(Client(), root)
     s = stats.summary("0.91.0")
     assert (s["tasks_agent_only"], s["tasks_with_human"]) == (2, 1)
 
 
-def test_human_posts_that_reached_the_agent_are_counted_by_the_server():
-    """RT-6.9: posts by humans handed to the agent, trusted and not apart; a
-    reaction, an agent's post, a webhook and the server's own event are no
-    human post; what woke a turn sees agents and humans."""
+def _ev(kind, gated="", **post):
     from types import SimpleNamespace
 
     from mattermost_ai_agent_bus.model import Post
+    return SimpleNamespace(kind=kind, gated=gated, post=Post(id="p", **post))
 
-    def ev(kind, **post):
-        return SimpleNamespace(kind=kind, post=Post(id="p", **post))
 
-    events = [ev("mention", user_id="h"), ev("reaction", user_id="h"), ev("thread", user_id="o"),
-              ev("watched_channel", user_id="w", from_webhook=True), ev("dm", user_id="a"),
-              ev("stall")]
-    items = [{"from_trusted_human": True, "from_agent": False}, {"from_trusted_human": True, "from_agent": False},
-             {"from_trusted_human": False, "from_agent": False}, {"from_trusted_human": False, "from_agent": False},
-             {"from_trusted_human": False, "from_agent": True}, {"from_trusted_human": False, "from_agent": False}]
-    server._note_heard(events, items)
-    assert stats._waking == {"agent", "human"}
-    s = stats.summary("0.91.0")
-    assert (s["human_posts_trusted"], s["human_posts_other"]) == (1, 1)
+def _heard():
+    return [e for e in _events() if e["k"] == "heard"] if stats._path().exists() else []
+
+
+def test_human_posts_that_reached_the_agent_are_counted_by_the_server():
+    """RT-6.9: one hand-over as `heard`: posts by humans, trusted and not
+    apart; a reaction, an agent's post, a webhook and the server's own event
+    are no human post; a gated post and a quiet context line count nothing."""
+    trusted, other, agent = ({"from_trusted_human": True, "from_agent": False},
+                             {"from_trusted_human": False, "from_agent": False},
+                             {"from_trusted_human": False, "from_agent": True})
+    events = [_ev("mention", user_id="h"), _ev("reaction", user_id="h"), _ev("thread", user_id="o"),
+              _ev("watched_channel", user_id="w", from_webhook=True), _ev("dm", user_id="a"), _ev("stall"),
+              _ev("watched_channel", gated="untrusted", user_id="o")]
+    server._note_heard(events, [trusted, trusted, other, other, agent, other, other])
+    assert _heard()[-1] | {"t": 0} == {"k": "heard", "t": 0, "agent": 1, "human": 1, "trusted": 1, "other": 1}
+    server._note_heard([_ev("watched_channel", gated="untrusted", user_id="o"), _ev("dm", user_id="a")],
+                       [other | {"gated": "untrusted"}, agent | {"quiet": True}])
+    assert len(_heard()) == 1                                         # data only: no hand-over noted
+
+
+async def test_only_a_push_that_went_out_is_a_hand_over(monkeypatch):
+    """RT-6.9: the pusher deals with every item, but only one it pushed reached
+    the agent: held for the digest, quiet or dropped count nothing."""
+    from mattermost_ai_agent_bus import channel
+
+    class Inbox:
+        async def ack(self, events, typing=False):
+            pass
+
+        def start_typing(self, *a):
+            pass
+
+    async def nothing(*a, **kw):
+        return None
+
+    monkeypatch.setattr(server, "_get_inbox", lambda: Inbox())
+    for name in ("_note_delivered", "_note_unanswered", "_typing_for_task"):
+        monkeypatch.setattr(server, name, nothing)
+
+    def item(pushed, **extra):
+        it = server._PushItem({"kind": "mention", "from_trusted_human": True, "from_agent": False, **extra})
+        it.event = _ev("mention", user_id="h")
+        it.batch = server._Batch([it.event])
+        if pushed:
+            it[channel.PUSHED] = True
+        return it
+
+    for it in (item(False), item(False, quiet=True), item(False, gated="untrusted")):  # held, quiet, dropped
+        await server._push_delivered(it)
+    assert _heard() == []
+    await server._push_delivered(item(True))
+    assert [(h["human"], h["trusted"], h.get("pushed")) for h in _heard()] == [(1, 1, 1)]
 
 
 def test_the_settled_report_counts_old_lines_as_unknown():
@@ -651,7 +716,7 @@ def test_the_settled_report_counts_old_lines_as_unknown():
     assert old["settled"] is None and old["roles"][0]["settled"] is None
     s = new["roles"][0]["settled"]
     assert (new["roles"][0]["role"], s["parts"], s["days"]) == ("worker", 2, 2.0)
-    assert (s["agent_turns_pct"], s["crown_settled_pct"], s["tasks_agent_pct"]) == (75, 50, 75)
+    assert (s["agent_turns_pct"], s["crown_answered_pct"], s["tasks_agent_pct"]) == (75, 50, 75)
     assert (s["human_posts_per_day"], s["human_answers_per_day"]) == (5.0, 1.0)
     cursor_only = stats.report([lines[2]])[0]["settled"]
     assert cursor_only["agent_turns_pct"] is None and cursor_only["bus_turns_agent"] is None

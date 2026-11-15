@@ -186,11 +186,13 @@ def _turns(events: list[dict[str, Any]]) -> tuple[list[tuple[bool, int]], dict[s
 
 def _asks(events: list[dict[str, Any]], now: float) -> dict[str, int]:
     """Asks posted, answered (waits), still unanswered at session end (RT-6.9),
-    and the reminders sent (RT-6.19)."""
-    posted = {e["id"]: _t(e) for e in events if e.get("k") == "ask" and e.get("id")}
+    and the reminders sent (RT-6.19). A question to the 👑 (`coord`) is no
+    wait for a human: it counts in _settled only."""
+    coord = {e["id"] for e in events if e.get("k") == "ask" and e.get("id") and e.get("coord")}
+    posted = {e["id"]: _t(e) for e in events if e.get("k") == "ask" and e.get("id") and e["id"] not in coord}
     waits: dict[str, int] = {}
     for e in events:
-        if e.get("k") == "answer" and e.get("id") and e["id"] not in waits:
+        if e.get("k") == "answer" and e.get("id") and e["id"] not in waits and e["id"] not in coord:
             waits[e["id"]] = int(e.get("wait", 0))
     open_at = [t for pid, t in posted.items() if pid not in waits]
     return {
@@ -235,7 +237,8 @@ def _saved(events: list[dict[str, Any]]) -> tuple[dict[str, int], list[int]]:
             continue
         seen.add(e["id"])
         ask, at = asked.get(e["id"]), _answered_at(e)
-        if ask is None or ask.get("busy") or any(_t(ask) < h < at for h in human):
+        if (ask is None or ask.get("coord") or ask.get("busy")
+                or any(_t(ask) < h < at for h in human)):
             continue
         idle.append(at)
     waiting = idle + [_answered_at(e) for e in events if e.get("k") == "saving"]
@@ -289,85 +292,76 @@ def crown_open() -> bool:
 
 
 # --- what woke a turn (RT-6.9 step 1, settled without a human) ----------------
-# The server sees each turn's start and end (the hooks' presence, RT-6.17) and
-# everything it hands the agent (pushed or returned by wait_for_events), with
-# the server-verified author class (RT-6.8). What woke a turn: what it handed
-# over while no turn ran (a push the turn takes up, RT-6.12 step 4), else the
-# first hand-over inside the turn (what a listener that ended woke it for,
-# collected with wait_for_events, RT-6.2). Noted at the turn's end as `woke`;
-# the summary pairs it with the turn the bus started.
-_waking: set[str] = set()       # classes handed over while no turn ran
-_woke: set[str] | None = None   # the running turn's; None while unknown
-_running = False
+# The server notes each real hand-over to the agent (a push that went out, what
+# wait_for_events returned) as `heard`, with the server-verified classes of its
+# authors (RT-6.8). The summary decides, from the file alone, what woke a turn
+# the bus started: the hand-overs since the turn before it ended, else the
+# turn's first hand-over (what a listener that ended woke it for). Nothing is
+# kept in the server: a restart loses nothing.
 
 
-def delivered(classes: set[str], trusted: int = 0, other: int = 0) -> None:
-    """The agent got posts or reactions (RT-6.9): their authors' classes
-    ("agent", "human"), and how many were posts by a trusted human and by one
-    not trusted. Never raises."""
-    global _woke
-    classes = classes & {"agent", "human"}
-    if not _running:
-        _waking.update(classes)
-    elif _woke is None and classes:
-        _woke = set(classes)
-    if trusted or other:
-        record("heard", trusted=trusted, other=other)
+def _wakes(e: dict[str, Any]) -> bool:
+    return e.get("k") == "heard" and bool(e.get("agent") or e.get("human"))
 
 
-def turn(running: bool) -> None:
-    """A turn begins or ends (the hooks' presence working / idle). A turn that
-    began again without an end (interrupted) notes nothing, like its duration."""
-    global _woke, _running
-    if running:
-        _woke = set(_waking) or None
-        _waking.clear()
-    elif _running and _woke:
-        record("woke", agent=int("agent" in _woke), human=int("human" in _woke))
-    if not running:
-        _woke = None
-    _running = running
+def _woke(events: list[dict[str, Any]], i: int) -> tuple[bool, bool] | None:
+    """(an agent's, a human's) among what woke the turn events[i], None when
+    nothing tells. A turn carried over a cut brings what was known then."""
+    e = events[i]
+    if e.get("wk"):
+        return bool(e.get("wa")), bool(e.get("wh"))
+    start = next((j for j in range(i - 1, -1, -1) if events[j].get("k") == "turn_end"), -1)
+    found = [h for h in events[start + 1:i] if _wakes(h)]
+    if not found:
+        end = next((j for j in range(i + 1, len(events)) if events[j].get("k") in ("turn", "turn_end")),
+                   len(events))
+        found = next(([h] for h in events[i + 1:end] if _wakes(h)), [])
+    if not found:
+        return None
+    return any(h.get("agent") for h in found), any(h.get("human") for h in found)
 
 
 def _woken(events: list[dict[str, Any]], out: set[int]) -> dict[str, int]:
-    """bus_turns_agent / bus_turns_human: the turns the bus started, by what
-    woke them: only agents' posts, or a human's among them. A `woke` belongs
-    to the turn last started before it; one the bus did not start counts
-    nothing, nor does a bus turn nothing classified (a listen window that ran
-    out, a stall event)."""
+    """bus_turns_agent / bus_turns_human: the turns the bus started (`by` bus),
+    by what woke them: a human's post or reaction among it, else only agents'.
+    A bus turn nothing tells about (a listen window that ran out, a stall
+    event) counts in neither; one carried on to the next part counts there."""
     agent = human = 0
-    last: dict[str, Any] | None = None
-    paired: set[int] = set()
-    for e in events:
-        if e.get("k") == "turn":
-            last = e
-        elif (e.get("k") == "woke" and last is not None and last.get("by") == "bus"
-              and id(last) not in paired and id(last) not in out):
-            paired.add(id(last))
-            if e.get("human"):
-                human += 1
-            elif e.get("agent"):
-                agent += 1
+    for i, e in enumerate(events):
+        if e.get("k") != "turn" or e.get("by") != "bus" or id(e) in out:
+            continue
+        woke = _woke(events, i)
+        if woke is None:
+            continue
+        if woke[1]:
+            human += 1
+        elif woke[0]:
+            agent += 1
     return {"bus_turns_agent": agent, "bus_turns_human": human}
 
 
 def _settled(counted: list[dict[str, Any]], events: list[dict[str, Any]]) -> dict[str, int]:
     """Questions to the 👑 and to humans (counted where they close, as `asks`),
     those the 👑 answered (advice, RT-6.25 step 4), tasks this agent closed
-    (DONE) with or without a human in the thread, and what humans did: posts
-    that reached the agent, trusted or not, and answers to its asks."""
+    (DONE) with or without a human in the thread, once per thread, and what
+    humans did: posts that reached the agent, trusted or not, and answers to
+    its asks. The server's ask to the human for a question the 👑 left open
+    (`forwarded`) is no question of its own: the question counts already."""
     advised = {e["id"] for e in events if e.get("k") == "advice" and e.get("id")}
     asks = {e["id"]: e for e in counted if e.get("k") == "ask" and e.get("id")}
     crown = [pid for pid, e in asks.items() if e.get("coord")]
-    done = [e for e in counted if e.get("k") == "task_done"]
+    done: dict[str, dict[str, Any]] = {}
+    for e in counted:
+        if e.get("k") == "task_done":
+            done.setdefault(str(e.get("id") or id(e)), e)
     heard = [e for e in counted if e.get("k") == "heard"]
     answers = {e["id"] for e in counted if e.get("k") == "answer" and e.get("id")}
     return {
         "asks_crown": len(crown),
         "asks_crown_answered": sum(1 for pid in crown if pid in advised),
-        "asks_human": len(asks) - len(crown),
-        "tasks_agent_only": sum(1 for e in done if not e.get("human")),
-        "tasks_with_human": sum(1 for e in done if e.get("human")),
+        "asks_human": sum(1 for e in asks.values() if not e.get("coord") and not e.get("forwarded")),
+        "tasks_agent_only": sum(1 for e in done.values() if not e.get("human")),
+        "tasks_with_human": sum(1 for e in done.values() if e.get("human")),
         "human_posts_trusted": sum(int(e.get("trusted", 0)) for e in heard),
         "human_posts_other": sum(int(e.get("other", 0)) for e in heard),
         "human_answers": len(answers),
@@ -389,7 +383,9 @@ def _summarize(events: list[dict[str, Any]], version: str, fixed: overhead.Fixed
     if not final:
         _, running = _turns(events)
         if running is not None:
-            carry.append(running)
+            # What woke it, as far as known now: the hand-overs before it are in this part.
+            woke = _woke(events, next(i for i, e in enumerate(events) if e is running))
+            carry.append(running | {"wk": 1, "wa": int(woke[0]), "wh": int(woke[1])} if woke else running)
             out.add(id(running))
         # Closed: answered by a trusted human; a question to the 👑 also by its
         # advice or when it was passed on to the human (RT-6.25).
@@ -821,7 +817,7 @@ def _settled_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return s | {
         "agent_turns_pct": (_pct(s["bus_turns_agent"], s["bus_turns_agent"] + s["bus_turns_human"])
                             if hooked else None),
-        "crown_settled_pct": _pct(s["asks_crown_answered"], s["asks_crown"] + s["asks_human"]),
+        "crown_answered_pct": _pct(s["asks_crown_answered"], s["asks_crown"] + s["asks_human"]),
         "tasks_agent_pct": _pct(s["tasks_agent_only"], s["tasks_agent_only"] + s["tasks_with_human"]),
         "human_posts_per_day": _tenth(s["human_posts_trusted"] + s["human_posts_other"], d),
         "human_answers_per_day": _tenth(s["human_answers"], d),

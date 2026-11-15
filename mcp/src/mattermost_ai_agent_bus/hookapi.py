@@ -430,7 +430,6 @@ class HookAPI:
             life.take_up()
         elif state in PRESENCE:
             life.turn(state == "working")  # before the slot: a turn begins or ends
-            stats.turn(state == "working")  # RT-6.9: what woke the turn, noted at its end
         if route not in _HEAVY_ROUTES:
             reply = await route(client, query, payload)
         else:

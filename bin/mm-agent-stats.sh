@@ -150,7 +150,7 @@ report="$(jq -c '
     } | . + {
       agent_turns_pct: (if .bus_turns_agent == null then null
                         else pct(.bus_turns_agent; .bus_turns_agent + .bus_turns_human) end),
-      crown_settled_pct: pct(.asks_crown_answered; .asks_crown + .asks_human),
+      crown_answered_pct: pct(.asks_crown_answered; .asks_crown + .asks_human),
       tasks_agent_pct: pct(.tasks_agent_only; .tasks_agent_only + .tasks_with_human),
       human_posts_per_day: tenth(.human_posts_trusted + .human_posts_other; .days),
       human_answers_per_day: tenth(.human_answers; .days)
@@ -233,10 +233,10 @@ fi
 if [[ "$(jq '[.[] | .roles[] | select(.settled)] | length' <<<"$report")" -gt 0 ]]; then
   echo
   {
-    printf 'version\trole\tparts\tagent days\tturns woken by agents\tquestions settled by coordinator\ttasks closed between agents\thuman posts/day\tanswers/day\n'
+    printf 'version\trole\tparts\tagent days\tturns woken by agents\tquestions answered by coordinator\ttasks closed between agents\thuman posts/day\tanswers/day\n'
     jq -r 'def pct(x): if x == null then "-" else "\(x)%" end; def dash(x): if x == null then "-" else x end;
       .[] | .version as $v | .roles[] | select(.settled) | .settled as $s
-      | [$v, .role, $s.parts, $s.days, pct($s.agent_turns_pct), pct($s.crown_settled_pct),
+      | [$v, .role, $s.parts, $s.days, pct($s.agent_turns_pct), pct($s.crown_answered_pct),
          pct($s.tasks_agent_pct), dash($s.human_posts_per_day), dash($s.human_answers_per_day)] | @tsv' <<<"$report"
   } | column -t -s $'\t'
 fi

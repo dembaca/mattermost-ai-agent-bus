@@ -19,7 +19,8 @@ before 0.5.0 are described in the git history.
   (`tasks_agent_only`, `tasks_with_human`), and what humans did
   (`human_posts_trusted`, `human_posts_other`, `human_answers`). The report's
   new Settled table shows the shares per version and role, and human posts and
-  answers per agent-day. Counts only.
+  answers per agent-day. Counts only. Questions to the 👑 no longer count in
+  the Asks waiting figures, which are about waiting for a human.
 - **Overhead stats for every day of a session**
   ([RT-6.9](docs/arc42/06-runtime-view.md) step 2): long sessions (days,
   resumed) rarely end, so 0.87–0.90 had almost no Claude Code numbers. The
