@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useState, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Theme } from './kit'
 import HeroChat from './illustrations/HeroChat'
-import { Files, Host, Release, Sessions } from './illustrations/Bento'
+import { Coordination, Crown, Delegation, Owner, Trust } from './illustrations/Bento'
 
 // The page is plain HTML (index.html): it reads fully without JS. This file
 // only mounts the illustrations into their empty slots (the page hides them
@@ -43,10 +43,11 @@ function Themed({ of: Picture }: { of: ComponentType<{ theme: Theme }> }) {
 }
 
 const PICTURES: Record<string, ComponentType<{ theme: Theme }>> = {
-  sessions: Sessions,
-  host: Host,
-  release: Release,
-  files: Files,
+  coordination: Coordination,
+  crown: Crown,
+  owner: Owner,
+  trust: Trust,
+  delegation: Delegation,
 }
 
 const hero = document.getElementById('hero-demo')

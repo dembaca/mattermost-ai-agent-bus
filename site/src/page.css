@@ -300,20 +300,20 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
   display: grid;
   gap: .875rem;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "sessions" "stat" "host" "release" "files";
+  grid-template-areas: "coord" "ask" "crown" "owner" "trust" "deleg";
 }
 
 @media (min-width: 40rem) {
   .features-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: "sessions sessions" "stat host" "release files";
+    grid-template-areas: "coord coord" "ask crown" "owner trust" "deleg deleg";
   }
 }
 
 @media (min-width: 60rem) {
   .features-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-areas: "sessions sessions stat" "host release files";
+    grid-template-areas: "coord coord ask" "crown owner trust" "deleg deleg deleg";
   }
 }
 
@@ -326,11 +326,12 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
   border-radius: 20px;
   background: var(--tile-bg);
 }
-.tile--sessions { grid-area: sessions; min-height: 23rem; }
-.tile--stat { grid-area: stat; }
-.tile--host { grid-area: host; }
-.tile--release { grid-area: release; }
-.tile--files { grid-area: files; }
+.tile--coord { grid-area: coord; min-height: 25rem; }
+.tile--ask { grid-area: ask; }
+.tile--crown { grid-area: crown; }
+.tile--owner { grid-area: owner; }
+.tile--trust { grid-area: trust; }
+.tile--deleg { grid-area: deleg; min-height: 17rem; }
 
 .tile-title {
   margin: 0;
@@ -400,20 +401,20 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
   display: grid;
   gap: .875rem;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "sessions" "stat" "host" "release" "files";
+  grid-template-areas: "coord" "ask" "crown" "owner" "trust" "deleg";
 }
 
 @media (min-width: 40rem) {
   .features-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: "sessions sessions" "stat host" "release files";
+    grid-template-areas: "coord coord" "ask crown" "owner trust" "deleg deleg";
   }
 }
 
 @media (min-width: 60rem) {
   .features-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-areas: "sessions sessions stat" "host release files";
+    grid-template-areas: "coord coord ask" "crown owner trust" "deleg deleg deleg";
   }
 }
 
@@ -427,36 +428,11 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
   background: var(--tile-bg);
 }
 .tile--sessions { grid-area: sessions; min-height: 23rem; }
-.tile--stat { grid-area: stat; }
-.tile--host { grid-area: host; }
-.tile--release { grid-area: release; }
-.tile--files { grid-area: files; }
-
-.tile-copy {
-  margin: 0;
-  padding: var(--tile-pad) var(--tile-pad) 0;
-  max-width: 26rem;
-  font-family: var(--sans);
-  font-size: 1.0625rem;
-  line-height: 1.45;
-  font-weight: 460;
-  letter-spacing: -.012em;
-  color: var(--muted);
-  text-wrap: pretty;
-}
-.tile-copy strong { color: var(--ink); font-weight: 600; }
-
-.tile-picture {
+.stat {
   margin-top: auto;
-  padding-top: 1rem;
+  padding: 1rem var(--tile-pad) var(--tile-pad);
 }
-
-.tile--stat {
-  justify-content: center;
-  padding: var(--tile-pad);
-}
-.tile--stat .tile-title { padding: 0; }
-.stat-label { margin: 0; color: var(--muted); font-size: 1.0625rem; line-height: 1.45; letter-spacing: -.012em; }
+.stat-label { margin: 0; color: var(--muted); font-size: .9375rem; line-height: 1.45; letter-spacing: -.012em; max-width: 18rem; }
 .stat-number {
   margin: .25rem 0 .5rem;
   font-family: var(--serif);
@@ -557,6 +533,11 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
   font-variant-numeric: tabular-nums;
 }
 .steps li p { margin: 0; }
+.steps--start li { padding: 1rem 0; border-top: 1px solid var(--hair); }
+.steps--start li::before { padding-top: .1rem; }
+.steps--start h3 { font-size: .9375rem; font-weight: 560; margin-bottom: .375rem; }
+.steps--start li > div > * + * { margin-top: .5rem; }
+.steps--start .code { margin: .75rem 0; }
 
 .code {
   margin: 1.25rem 0 1rem;

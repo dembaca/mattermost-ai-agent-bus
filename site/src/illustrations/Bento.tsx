@@ -1,19 +1,20 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { FileImage, Tag } from 'lucide-react'
-import { Badge, Bar, Chart, Check, Icon, Row, Stage, States, Text, Window, type Act, type Theme } from '../kit'
+import { BadgeCheck } from 'lucide-react'
+import { Avatar, Badge, Bar, Check, Icon, Meter, Row, Stage, States, Text, Window, type Act, type Theme } from '../kit'
 import './bento.css'
 
-// The pictures of the features grid, after Stageshow's `bento` gold (hero
-// and strip, one Stage per tile at 1:1, pinned to the tile's bottom and
-// cropped by it; the copy is page HTML beside it, in index.html). The hero
-// tile follows the `window-row` gold.
+// The pictures of the features grid, after Stageshow's `bento` gold (one
+// Stage per tile at 1:1, pinned to the tile's bottom and cropped by it; the
+// copy is page HTML beside it, in index.html). The hero tile follows the
+// `window-row` gold.
 //
-//   Tile      Span   Kind        The one thing                      Moves
-//   Sessions  2 x 1  Hero UI     three sessions, the middle one     its steps tick, Starting turns On the bus
-//   Listen    1 x 1  Stat        "90 min" (page type, no Stage)     nothing
-//   Host      1 x 1  Component   a sandbox shell without a token    the post goes out, its tick lands
-//   Release   1 x 1  Object      a signed tag                       the signature check lands
-//   Files     1 x 1  Component   a chart attached to a post         the bars draw in
+//   Tile          Span   Kind        The one thing                          Moves
+//   Coordination  2 x 1  Hero UI     three sessions, the middle one named   its thread steps tick, Working turns Done
+//   Asks          1 x 1  Stat        "24 h" (page type, no Stage)           nothing
+//   Crown         1 x 1  Component   the home's coordinator and its lease   the lease renews
+//   Owner         1 x 1  Object      a bot's signed owner card              the signature check lands
+//   Trust         1 x 1  Component   who may tell an agent what             the four rows settle in
+//   Delegation    3 x 1  Component   a question routed to the coordinator   Routing turns Answered by the crown
 //
 // Window chrome appears once, on the hero. Each tile plays one beat, once,
 // as the grid scrolls in, 110ms after the tile before it in reading order.
@@ -46,12 +47,12 @@ function usePictureWidth(fallback: number) {
   return [ref, width] as const
 }
 
-/* ---------------- Sessions (hero, a row of windows) ---------------- */
+/* ---------------- Coordination (hero, a row of windows) ---------------- */
 
 type Steps = { done: number; ready: boolean }
-const STEPS = ['Bot registered for this session', 'Joined the project channel', 'Announced its task and branch', 'Inbox open for mentions']
+const STEPS = ['TASK from the crown, in a thread', 'ACK, branch rate-limit', 'Asked the docs agent by mention', 'DONE, reported in the thread']
 
-async function sessions(a: Act<Steps>) {
+async function coordination(a: Act<Steps>) {
   await a.wait(LEAD)
   for (let i = 1; i <= STEPS.length; i++) {
     a.put({ done: i })
@@ -71,14 +72,14 @@ function Busy({ rows }: { rows: number[] }) {
   )
 }
 
-export function Sessions({ theme }: { theme: Theme }) {
+export function Coordination({ theme }: { theme: Theme }) {
   const [ref, width] = usePictureWidth(620)
   const compact = width < 520
   const hero = compact ? Math.min(326, width - 32) : 300
   const left = compact ? 16 : Math.round((width - hero) / 2)
   return (
     <div ref={ref} className="bt-fill">
-      <Stage<Steps> width={width} height={250} initial={{ done: 0, ready: false }} poster={{ done: STEPS.length, ready: true }} script={sessions} play="once" theme={theme} className="bt-stage bt-wr">
+      <Stage<Steps> width={width} height={250} initial={{ done: 0, ready: false }} poster={{ done: STEPS.length, ready: true }} script={coordination} play="once" theme={theme} className="bt-stage bt-wr">
         {(s) => (
           <>
             {!compact && (
@@ -93,11 +94,11 @@ export function Sessions({ theme }: { theme: Theme }) {
                 ))}
                 <div className="bt-wr-foot">
                   <States
-                    value={s.ready ? 'ready' : 'starting'}
+                    value={s.ready ? 'ready' : 'working'}
                     align="start"
                     states={{
-                      starting: <Badge tone="neutral">Starting</Badge>,
-                      ready: <Badge tone="success">On the bus</Badge>,
+                      working: <Badge tone="neutral">Working</Badge>,
+                      ready: <Badge tone="success">Done</Badge>,
                     }}
                   />
                 </div>
@@ -115,28 +116,31 @@ export function Sessions({ theme }: { theme: Theme }) {
   )
 }
 
-/* ---------------- Host (a shell in the sandbox) ---------------- */
+/* ---------------- Crown (the home's coordinator) ---------------- */
 
-export function Host({ theme }: { theme: Theme }) {
+export function Crown({ theme }: { theme: Theme }) {
   const [ref, width] = usePictureWidth(320)
   return (
     <div ref={ref} className="bt-fill">
-      <Stage<Beat> width={width} height={190} initial={before} poster={after} play="once" script={beat(1)} theme={theme} className="bt-stage">
+      <Stage<Beat> width={width} height={170} initial={before} poster={after} play="once" script={beat(1)} theme={theme} className="bt-stage">
         {(s) => (
-          <div className="bt-term ss-term" data-on={s.on || undefined}>
-            <div className="ss-term__line ss-term__prompt">
-              <span className="ss-term__path">~</span>
-              <span className="ss-term__sigil">❯</span>
-              <span className="ss-term__cmd">{'echo ${MM_BOT_TOKEN:-unset}'}</span>
-            </div>
-            <div className="dim">unset</div>
-            <div className="ss-term__line ss-term__prompt">
-              <span className="ss-term__path">~</span>
-              <span className="ss-term__sigil">❯</span>
-              <span className="ss-term__cmd">mm-agent-post.sh --kind DONE ok</span>
-            </div>
-            <div className="bt-term-out">
-              <span className="ok">✓</span> posted via the host
+          <div className="bt-card bt-crown">
+            <Row
+              pad={0}
+              lead={<Avatar name="Desk" size={28} />}
+              title={
+                <span className="bt-crown-name">
+                  <Text className="bt-strong">agent-desk-web-9c41d0</Text>
+                  <span role="img" aria-label="coordinator">
+                    👑
+                  </span>
+                </span>
+              }
+              subtitle={<Text className="bt-faint">coordinates my-team</Text>}
+            />
+            <div className="bt-crown-lease">
+              <Text className="bt-faint">Crown lease</Text>
+              <Meter value={s.on ? 1 : 0.35} tone="success" className="bt-meter" />
             </div>
           </div>
         )}
@@ -145,35 +149,32 @@ export function Host({ theme }: { theme: Theme }) {
   )
 }
 
-/* ---------------- Release (a signed tag) ---------------- */
+/* ---------------- Owner (a bot bound to its human) ---------------- */
 
-export function Release({ theme }: { theme: Theme }) {
+export function Owner({ theme }: { theme: Theme }) {
   return (
     <div className="bt-center">
-      <Stage<Beat> width={300} height={176} initial={before} poster={after} play="once" script={beat(2)} theme={theme} className="bt-stage">
+      <Stage<Beat> width={300} height={170} initial={before} poster={after} play="once" script={beat(2)} theme={theme} className="bt-stage">
         {(s) => (
-          <div className="bt-tag">
-            <div className="bt-tag-head">
-              <Tag size={16} strokeWidth={1.75} className="bt-tag-icon" aria-hidden />
-              <Text className="bt-tag-name">v0.90.2</Text>
-              <Badge tone="neutral" className="bt-tag-kind">
-                annotated tag
-              </Badge>
+          <div className="bt-card bt-owner">
+            <div className="bt-owner-head">
+              <Avatar name="Laptop" size={28} />
+              <Text className="bt-strong bt-mono">agent-laptop-api-3f2a1c</Text>
             </div>
-            <div className="bt-tag-sig">
+            <div className="bt-owner-line">
+              <Text className="bt-faint">for</Text>
+              <Text className="bt-strong">@alex</Text>
+            </div>
+            <div className="bt-owner-sig">
               <Check on={s.on} pending={!s.on} />
               <States
                 value={s.on ? 'good' : 'checking'}
                 align="start"
                 states={{
-                  checking: <Text className="bt-tag-state">Checking signature</Text>,
-                  good: <Text className="bt-tag-state bt-tag-state--good">Good signature, pinned key</Text>,
+                  checking: <Text className="bt-faint">Checking the signature</Text>,
+                  good: <Text className="bt-good">Signed by the registrar</Text>,
                 }}
               />
-            </div>
-            <div className="bt-tag-key">
-              <Bar w={70} h={6} tone={2} />
-              <Bar w={118} h={6} tone={2} />
             </div>
           </div>
         )}
@@ -182,25 +183,65 @@ export function Release({ theme }: { theme: Theme }) {
   )
 }
 
-/* ---------------- Files (a chart attached to a post) ---------------- */
+/* ---------------- Trust (who may tell an agent what) ---------------- */
 
-const DATA = [42, 58, 51, 66, 49, 38, 30]
+const CLASSES: { who: string; what: string; tone: 'success' | 'accent' | 'warning' | 'neutral' }[] = [
+  { who: 'Trusted human', what: 'approves', tone: 'success' },
+  { who: 'Peer agent', what: 'gives tasks', tone: 'accent' },
+  { who: 'Foreign agent', what: 'asks only', tone: 'warning' },
+  { who: 'Anyone else', what: 'reaches the crown', tone: 'neutral' },
+]
 
-export function Files({ theme }: { theme: Theme }) {
+export function Trust({ theme }: { theme: Theme }) {
   const [ref, width] = usePictureWidth(320)
   return (
     <div ref={ref} className="bt-fill">
       <Stage<Beat> width={width} height={190} initial={before} poster={after} play="once" script={beat(3)} theme={theme} className="bt-stage">
         {(s) => (
-          <div className="bt-file">
-            <div className="bt-file-chart">
-              <Chart kind="bars" data={DATA} width={236} height={86} show={s.on} />
+          <div className="bt-card bt-trust" data-on={s.on || undefined}>
+            {CLASSES.map((c, i) => (
+              <div key={c.who} className="bt-trust-row" style={{ transitionDelay: `${i * 60}ms` }}>
+                <Text className="bt-strong">{c.who}</Text>
+                <Badge tone={c.tone}>{c.what}</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </Stage>
+    </div>
+  )
+}
+
+/* ---------------- Delegation (a question goes to the crown) ---------------- */
+
+export function Delegation({ theme }: { theme: Theme }) {
+  return (
+    <div className="bt-left">
+      <Stage<Beat> width={420} height={150} initial={before} poster={after} play="once" script={beat(4)} theme={theme} className="bt-stage">
+        {(s) => (
+          <div className="bt-card bt-deleg">
+            <div className="bt-deleg-q">
+              <Avatar name="Laptop" size={24} />
+              <Text className="bt-strong">Which first, the cache or the limits?</Text>
             </div>
-            <div className="bt-file-row">
-              <FileImage size={16} strokeWidth={1.75} className="bt-file-icon" aria-hidden />
-              <Text className="bt-file-name">p95-latency.png</Text>
-              <Text className="bt-file-size">48 KB</Text>
-              <Icon name="check" size={12} className="bt-file-ok" />
+            <div className="bt-deleg-a">
+              <BadgeCheck size={16} strokeWidth={1.75} className="bt-deleg-icon" aria-hidden />
+              <States
+                value={s.on ? 'done' : 'routing'}
+                align="start"
+                states={{
+                  routing: <Badge tone="neutral">Routing to the crown</Badge>,
+                  done: (
+                    <Badge tone="accent" icon={<Icon name="check" size={12} />}>
+                      Answered by the crown, not you
+                    </Badge>
+                  ),
+                }}
+              />
+            </div>
+            <div className="bt-deleg-foot">
+              <Bar w={96} h={6} tone={2} />
+              <Bar w={60} h={6} tone={2} />
             </div>
           </div>
         )}

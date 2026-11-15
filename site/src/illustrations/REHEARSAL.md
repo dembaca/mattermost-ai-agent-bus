@@ -37,11 +37,12 @@ bottom, copy as page HTML, one beat per tile staggered 110 ms) and
 
 | Tile | Span | Kind | The one thing | Moves |
 |---|---|---|---|---|
-| Sessions | 2 x 1 | Hero UI | three sessions, the middle one named | steps tick, Starting turns On the bus |
-| Listen | 1 x 1 | Stat | 90 min (page type, no Stage) | nothing |
-| Host | 1 x 1 | Component | a sandbox shell without a token | the post's tick line arrives |
-| Release | 1 x 1 | Object | a signed tag | the signature check lands |
-| Files | 1 x 1 | Component | a chart attached to a post | the bars draw in |
+| Coordination | 2 x 1 | Hero UI | three sessions, the middle one's thread steps | steps tick, Working turns Done |
+| Asks | 1 x 1 | Stat | 24 h (page type, no Stage) | nothing |
+| Crown | 1 x 1 | Component | the home's coordinator and its lease | the lease meter renews |
+| Owner | 1 x 1 | Object | a bot's owner card, signed by the registrar | the signature check lands |
+| Trust | 1 x 1 | Component | who may tell an agent what (four classes) | the rows settle in |
+| Delegation | 3 x 1 | Component | a question answered by the crown, not the human | Routing turns Answered |
 
 ## Captured
 
@@ -55,9 +56,9 @@ filmed.
   tile (`--select '.bt-stage'`).
 - Hero: that the hover toolbar sits whole over the ask at both widths, the
   badge and reaction do not wrap, and the bot names fit the compact row.
-- Host tile: the longest command line stays inside the tile at the
-  three-column width (about 318 px).
-- Release tile: 300 px design canvas centred in tiles near 300 px wide.
+- Owner tile: 300 px design canvas centred in tiles near 300 px wide.
+- Trust tile: the badges stay whole at the three-column width (about 318 px).
+- Delegation tile: the 420 px canvas scales down in a phone column.
 - `scripts/layout.mjs` on the page at 390 for `nested-composition-crop`.
 - Fresh-eye review (`references/review.md`).
 
