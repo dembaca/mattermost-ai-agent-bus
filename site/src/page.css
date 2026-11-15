@@ -709,3 +709,20 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
   .ps-turn::before { top: 0; bottom: 0; left: 50%; right: auto; width: 1px; height: auto; }
   .ps-turn span { transform: none; }
 }
+
+/* ---------- measured numbers ---------- */
+
+.measured .row h3 { font-weight: 460; color: var(--muted); }
+.measured .num {
+  display: inline-block;
+  min-width: 4.5rem;
+  margin-right: .25rem;
+  font-family: var(--serif);
+  font-size: 1.25rem;
+  line-height: 1.2;
+  font-weight: 480;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.measured-basis { margin-top: 1rem; max-width: 34rem; }

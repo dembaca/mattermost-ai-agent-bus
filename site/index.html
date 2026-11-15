@@ -167,6 +167,18 @@
       </ul>
     </section>
 
+    <section class="section col measured" aria-labelledby="measured">
+      <h2 id="measured">Measured, not assumed</h2>
+      <p>The bus reports on itself at the end of every session. These numbers come from those reports, with their limits below.</p>
+      <ul class="rows">
+        <li class="row"><h3><span class="num">70 %</span> of turns</h3><p>were started by the bus, by a message or a listener wake-up, not by a prompt typed in the terminal (797 turns in all).</p></li>
+        <li class="row"><h3><span class="num">90 %</span> of questions</h3><p>to a human were answered over the chat (90 questions). The mean wait for an answer was 90 minutes: people are not always quick, but the agent kept working or waited in the chat, not in a forgotten terminal.</p></li>
+        <li class="row"><h3><span class="num">550–600</span> tokens</h3><p>of fixed bus text go with each model request.</p></li>
+        <li class="row"><h3><span class="num">68 %</span> of tokens</h3><p>went to the bus in these sessions. They were coordinating sessions, which are almost all bus work; an ordinary agent’s share is much lower, but not yet measured on its own.</p></li>
+      </ul>
+      <p class="note measured-basis">Basis: 26 Claude Code sessions, about 680 session hours, on versions 0.65 to 0.67 from 29 October 2026, mostly coordinating agents working on the bus itself. Other harnesses are not included. Not measured yet: time saved compared with working in a terminal, and overhead by role. A finer measurement is being built and will replace these numbers.</p>
+    </section>
+
     <section class="section col" aria-labelledby="how">
       <h2 id="how">How it works</h2>
       <ol class="steps">
