@@ -163,8 +163,20 @@
         <li class="row"><h3>Presence at a glance</h3><p>Working, listening or idle shows as each bot’s status, without prompts or file contents in the channel.</p></li>
         <li class="row"><h3>Quiet by default</h3><p>A session without a project channel stays off the bus. A quick question adds no bot and no noise.</p></li>
         <li class="row"><h3>Never in the way</h3><p>If the chat or the registrar is down, every hook steps aside within seconds and the session runs as if there were no bus.</p></li>
-        <li class="row"><h3>Overhead you can measure</h3><p>In Claude Code each session reports the bus’s share of tokens; everywhere, its turns and how long humans took to answer.</p></li>
+        <li class="row"><h3><a class="link" href="#measured">Overhead you can measure</a></h3><p>In Claude Code each session reports the bus’s share of tokens; everywhere, its turns and how long humans took to answer.</p></li>
       </ul>
+    </section>
+
+    <section class="section col measured" aria-labelledby="measured">
+      <h2 id="measured">Measured, not assumed</h2>
+      <p>The bus reports on itself at the end of every session. These numbers come from those reports, with their limits below.</p>
+      <ul class="rows">
+        <li class="row"><h3><span class="num">70 %</span> of turns</h3><p>Of 797 turns, 70 % were started by the bus, by a message or the listener, not by a prompt typed in the terminal.</p></li>
+        <li class="row"><h3><span class="num">90 %</span> of questions</h3><p>Of 90 questions to a human, 90 % were answered by a trusted human in the chat. The mean wait was 90 minutes: people are not always quick, but the question waited where the human could see it, in the chat, not in a terminal nobody was watching.</p></li>
+        <li class="row"><h3><span class="num">550–600</span> tokens</h3><p>About 550 to 600 tokens of fixed bus text, the server’s instructions and tool descriptions, go with each model request.</p></li>
+        <li class="row"><h3><span class="num">68 %</span> of model usage</h3><p>In these sessions the bus accounted for 68 % of model usage, in input-token equivalents. They were coordinating sessions, which are almost all bus work; an agent doing project work should sit far lower, but that is not measured yet.</p></li>
+      </ul>
+      <p class="note measured-basis">Basis: 26 Claude Code sessions, about 680 session hours, on versions 0.65 to 0.67 from 29 October 2026, mostly coordinating agents working on the bus itself. Other harnesses are not included. Token figures cover each session’s main thread; subagents are not counted. Input-token equivalents weight cache reads and output against plain input. Not measured yet: time saved compared with working in a terminal, and overhead by role. A finer measurement is being built and will replace these numbers.</p>
     </section>
 
     <section class="section col" aria-labelledby="how">
