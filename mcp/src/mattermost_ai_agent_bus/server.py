@@ -2598,7 +2598,8 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
             got = asks.answered(uid, root, e.post.create_at / 1000,
                                 thread=e.kind != "reaction")
             if got:
-                stats.record("answer", id=got[0], wait=got[1])
+                # `at`: the answer's own time, for the saved waiting (RT-6.9).
+                stats.record("answer", id=got[0], wait=got[1], at=int(e.post.create_at / 1000))
         if raw:
             item |= {"post": e.post.json(), "channel": e.channel.json() if e.channel else None}
         else:
@@ -3007,6 +3008,10 @@ def _fixed() -> overhead.Fixed:
         skill_chars = 0
     return overhead.Fixed(len(mcp.instructions or ""), sum(len(f.__doc__ or "") for f in tools),
                           skill_chars)
+
+
+# A day's STATS part (RT-6.9 step 2) carries the same version and fixed text.
+stats.set_source(lambda: (VERSION, _fixed()))
 
 
 def _keep_on_exit() -> None:

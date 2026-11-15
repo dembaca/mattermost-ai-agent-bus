@@ -4,22 +4,29 @@ What the bus adds to a session, not what the work costs: turns the plugin
 caused (listener wake-ups, rounds the Stop hook forced), bus data put into the
 context (tool results, the handoff after compaction), the agent's own posts,
 the fixed text every turn carries (instructions, tool docs) and the skill's
-size, in the context only once loaded, how long turns last, and how long
-humans take to answer the agent's asks. report() sums the STATS lines up per
+size, in the context only once loaded, how long turns last, how long humans
+take to answer the agent's asks, the waiting an answer on the bus saved, and
+how long the session held the crown. report() sums the STATS lines up per
 version, as bin/mm-agent-stats.sh does.
 
 Hooks, listener and MCP server append one JSON line per event to
-stats-<uid>.jsonl; at session end the MCP server posts one summary line to
-MM_STATS_CHANNEL. No model is involved anywhere, and no content is recorded:
-no names, no text; an ask's post id stays in the local counter file, never in
-the summary.
+stats-<uid>.jsonl; every PART_SEC of session time (tick) and at session end
+(summary, final) the MCP server posts one summary line to MM_STATS_CHANNEL.
+A day's part carries what is still open (a turn, an ask, an answer whose
+saving is not known yet, the crown) into the next one, so nothing counts
+twice. No model is involved anywhere, and no content is recorded: no names,
+no text; an ask's post id stays in the local counter file, never in the
+summary, whose `sid` is random.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
+import logging
 import math
 import os
+import secrets
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
@@ -31,9 +38,16 @@ from . import overhead, session_file
 if TYPE_CHECKING:
     from .port import ChatPort
 
+log = logging.getLogger(__name__)
+
 _uid = ""
 _client_name = ""
 DEFAULT_CHANNEL = "agents-stats"
+# RT-6.9 step 2: a session posts what it counted every day of session time, not
+# only at its end: long sessions (days, resumed) rarely end. A constant, no switch.
+PART_SEC = 24 * 3600
+# Version and fixed text for a day's part: the server's (set_source).
+_source: Callable[[], tuple[str, overhead.Fixed | None]] | None = None
 
 
 def channel() -> str:
@@ -53,6 +67,12 @@ def set_client(name: str) -> None:
     _client_name = name
 
 
+def set_source(fn: Callable[[], tuple[str, overhead.Fixed | None]]) -> None:
+    """Where tick() gets the version and the fixed text of a day's part."""
+    global _source
+    _source = fn
+
+
 def harness(name: str | None = None) -> str:
     """The coding harness as a short label (RT-6.9): claude-code, cursor,
     opencode, codex; any other client by its own name, lowercased; without a
@@ -66,8 +86,12 @@ def harness(name: str | None = None) -> str:
     return "claude-code" if os.environ.get("CLAUDECODE") else "other"
 
 
+def _me() -> str:
+    return os.environ.get("MM_BOT_USER_ID") or _uid
+
+
 def _path() -> Path | None:
-    uid = os.environ.get("MM_BOT_USER_ID") or _uid
+    uid = _me()
     if not uid:
         return None
     return session_file.state_dir() / f"stats-{uid}.jsonl"
@@ -103,25 +127,63 @@ def transcript(path: str) -> str | None:
     return real if real.startswith(root + os.sep) else None
 
 
-def _turns(events: list[dict[str, Any]]) -> list[tuple[bool, int]]:
+def _t(e: dict[str, Any]) -> int:
+    try:
+        return int(e.get("t", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _load(f: Path) -> list[dict[str, Any]]:
+    """The counter file's events in time order: a carried event keeps its time
+    and may land after newer ones (a hook appending during a cut). Stable, so
+    events of one second keep the file's order."""
+    try:
+        text = f.read_text()
+    except OSError:
+        return []
+    events = []
+    for line in text.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict):
+            events.append(e)
+    return sorted(events, key=_t)
+
+
+def _part(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """This part's record (RT-6.9): the session's random id, the part's number
+    and start, whether the runtime sends turn events. A file without one is
+    the first part; it starts with its first event."""
+    meta = next((e for e in reversed(events) if e.get("k") == "part"), None)
+    if meta is None:
+        return {"sid": "", "n": 1, "start": min(_t(e) for e in events), "hooks": False}
+    return {"sid": str(meta.get("sid") or ""), "n": int(meta.get("n") or 1), "start": _t(meta),
+            "hooks": bool(meta.get("hooks"))}
+
+
+def _turns(events: list[dict[str, Any]]) -> tuple[list[tuple[bool, int]], dict[str, Any] | None]:
     """(started by the bus, seconds) per turn that ran from its start to the
-    Stop hook that ended it. A start no end follows (interrupted, hook missing)
-    gets no duration rather than a wrong one (RT-6.9)."""
+    Stop hook that ended it, and the start still open at the end. A start no
+    end follows (interrupted, hook missing) gets no duration rather than a
+    wrong one (RT-6.9)."""
     out: list[tuple[bool, int]] = []
-    began: tuple[int, bool] | None = None
+    began: dict[str, Any] | None = None
     for e in events:
         if e.get("k") == "turn":
-            began = (int(e.get("t", 0)), e.get("by") == "bus")
-        elif e.get("k") == "turn_end" and began:
-            out.append((began[1], max(0, int(e.get("t", 0)) - began[0])))
+            began = e
+        elif e.get("k") == "turn_end" and began is not None:
+            out.append((began.get("by") == "bus", max(0, _t(e) - _t(began))))
             began = None
-    return out
+    return out, began
 
 
 def _asks(events: list[dict[str, Any]], now: float) -> dict[str, int]:
     """Asks posted, answered (waits), still unanswered at session end (RT-6.9),
     and the reminders sent (RT-6.19)."""
-    posted = {e["id"]: int(e.get("t", 0)) for e in events if e.get("k") == "ask" and e.get("id")}
+    posted = {e["id"]: _t(e) for e in events if e.get("k") == "ask" and e.get("id")}
     waits: dict[str, int] = {}
     for e in events:
         if e.get("k") == "answer" and e.get("id") and e["id"] not in waits:
@@ -140,42 +202,145 @@ def _asks(events: list[dict[str, Any]], now: float) -> dict[str, int]:
     }
 
 
-def summary(version: str, fixed: overhead.Fixed | None = None) -> dict[str, Any] | None:
-    f = _path()
-    if f is None or not f.exists():
-        return None
-    events = []
-    for line in f.read_text().splitlines():
-        try:
-            events.append(json.loads(line))
-        except ValueError:
-            continue
-    if not events:
-        return None
-    kinds = Counter(e.get("k") for e in events)
-    tools: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+def _human_turns(events: list[dict[str, Any]]) -> list[int]:
+    """When a turn started that the bus did not start: the human at the terminal."""
+    return sorted(_t(e) for e in events if e.get("k") == "turn" and e.get("by") != "bus")
+
+
+def _answered_at(e: dict[str, Any]) -> int:
+    """The answer's own time (its post's create_at); before 0.91.0 when counted."""
+    return int(e.get("at") or _t(e))
+
+
+def _saved(events: list[dict[str, Any]]) -> tuple[dict[str, int], list[int]]:
+    """Saved waiting (RT-6.9 step 1): of the asks a trusted human answered on
+    the bus, those answered while the terminal was idle (no turn a human
+    started between the ask and the answer; a carried ask's `busy` remembers
+    one before the cut), and for each the seconds from the answer to the next
+    turn a human started (`saved`). Also the answers no such turn followed
+    yet: the caller carries them on or counts them open."""
+    human = _human_turns(events)
+    asked: dict[str, dict[str, Any]] = {}
     for e in events:
+        if e.get("k") == "ask" and e.get("id") and e["id"] not in asked:
+            asked[e["id"]] = e
+    seen: set[str] = set()
+    idle: list[int] = []
+    for e in events:
+        if e.get("k") != "answer" or not e.get("id") or e["id"] in seen:
+            continue
+        seen.add(e["id"])
+        ask, at = asked.get(e["id"]), _answered_at(e)
+        if ask is None or ask.get("busy") or any(_t(ask) < h < at for h in human):
+            continue
+        idle.append(at)
+    waiting = idle + [_answered_at(e) for e in events if e.get("k") == "saving"]
+    saved: list[int] = []
+    pending: list[int] = []
+    for at in waiting:
+        back = next((h for h in human if h >= at), None)
+        if back is None:
+            pending.append(at)
+        else:
+            saved.append(back - at)
+    return {"asks_idle": len(idle), "saved_n": len(saved), "saved_sec": sum(saved),
+            "saved_max_sec": max(saved, default=0)}, pending
+
+
+def _crown_until() -> int:
+    from . import lease  # lease records the crown's changes here
+    return lease.crown_until(_me()) if _me() else 0
+
+
+def _crown(events: list[dict[str, Any]], start: int, now: float) -> tuple[int, bool]:
+    """Seconds this session held the crown in the part (RT-6.9, RT-6.6), and
+    whether it still holds it. The heartbeat notes each change; a crown still
+    on counts until now or, when it lapsed meanwhile (a server that was down),
+    until its lease ran out."""
+    total, on_at = 0, None
+    for e in events:
+        if e.get("k") != "crown":
+            continue
+        if e.get("on"):
+            if on_at is None:
+                on_at = max(_t(e), start)
+        elif on_at is not None:
+            total += max(0, _t(e) - on_at)
+            on_at = None
+    if on_at is None:
+        return total, False
+    until = _crown_until()
+    end = min(now, until) if until > 0 else now
+    return total + max(0, round(end - on_at)), until > now
+
+
+def crown_open() -> bool:
+    """Whether the counter file's last crown event says held: the heartbeat's
+    start, so a crown that lapsed while no server ran gets its end."""
+    f = _path()
+    if f is None:
+        return False
+    last = [e for e in _load(f) if e.get("k") == "crown"]
+    return bool(last and last[-1].get("on"))
+
+
+def _summarize(events: list[dict[str, Any]], version: str, fixed: overhead.Fixed | None,
+               now: float, final: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """One STATS line for the part in `events`, and, for a day's part (not
+    final), the events to carry into the next one (RT-6.9 step 2): the turn
+    still running, the asks still open (with `busy` once a human turn came
+    after them), the answers still waiting for the human's next turn, the
+    crown when held, the part's own record and the transcript's path. What is
+    carried counts in the part where it ends, or at the session's end."""
+    part = _part(events)
+    start = part["start"]
+    carry: list[dict[str, Any]] = []
+    out: set[int] = set()  # events carried on: not counted in this part
+    if not final:
+        _, running = _turns(events)
+        if running is not None:
+            carry.append(running)
+            out.add(id(running))
+        answered = {e["id"] for e in events if e.get("k") == "answer" and e.get("id")}
+        human = _human_turns(events)
+        for e in events:
+            if e.get("k") == "ask" and e.get("id") and e["id"] not in answered:
+                busy = bool(e.get("busy")) or any(h > _t(e) for h in human)
+                carry.append(e | {"busy": 1} if busy else e)
+                out.add(id(e))
+    counted = [e for e in events if id(e) not in out]
+    kinds = Counter(e.get("k") for e in counted)
+    hooked = part["hooks"] or any(e.get("k") in ("turn", "turn_end") for e in events)
+    tools: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for e in counted:
         if e.get("k") == "tool":
             tools[e.get("name", "?")][0] += 1
             tools[e.get("name", "?")][1] += int(e.get("chars", 0))
-    posts = [e for e in events if e.get("k") == "post"]
-    compacts = [e for e in events if e.get("k") == "compact"]
-    start = min(e.get("t", 0) for e in events)
-    paths = [e.get("path") for e in events if e.get("k") == "transcript" and e.get("path")]
+    posts = [e for e in counted if e.get("k") == "post"]
+    compacts = [e for e in counted if e.get("k") == "compact"]
+    paths = [e for e in events if e.get("k") == "transcript" and e.get("path")]
     tok = None
-    path = transcript(str(paths[-1])) if paths else None
+    path = transcript(str(paths[-1]["path"])) if paths else None
     if path and fixed is not None:
         try:
-            tok = overhead.measure(path, start, fixed)
+            tok = overhead.measure(path, start, fixed, None if final else now)
         except Exception:  # noqa: BLE001 — a transcript we cannot read costs only this field
             tok = None
-    turns = _turns(events)
+    turns, _ = _turns(counted)
     bus_turns = [sec for by_bus, sec in turns if by_bus]
-    return {
+    saved, pending = _saved(events)
+    crown_sec, crowned = _crown(events, start, now)
+    sid = part["sid"] or secrets.token_hex(6)
+    data = {
         "v": version,
+        # The session (random, RT-6.9) and which of its parts this is: the
+        # report counts a session once and sums its parts.
+        "sid": sid,
+        "part": part["n"],
+        **({"final": True} if final else {}),
         "rt": harness(),
         "kind": "autonomous" if os.environ.get("MM_AGENT_KIND") == "autonomous" else "session",
-        "min": max(0, round((time.time() - start) / 60)),
+        "min": max(0, round((now - start) / 60)),
         "turns": kinds["turn"],
         # Only a runtime with turn hooks (Claude Code) sends turn events; for
         # the others the fields stay absent, never zero (RT-6.9).
@@ -183,22 +348,140 @@ def summary(version: str, fixed: overhead.Fixed | None = None) -> dict[str, Any]
             "turns_timed": len(turns),
             "turn_sec": sum(sec for _, sec in turns),
             "turn_max_sec": max((sec for _, sec in turns), default=0),
-            "bus_turns": sum(1 for e in events if e.get("k") == "turn" and e.get("by") == "bus"),
+            "bus_turns": sum(1 for e in counted if e.get("k") == "turn" and e.get("by") == "bus"),
             "bus_turns_timed": len(bus_turns),
             "bus_turn_sec": sum(bus_turns),
             "bus_turn_max_sec": max(bus_turns, default=0),
-        } if kinds["turn"] else {}),
-        "wakes": dict(Counter(e.get("reason", "?") for e in events if e.get("k") == "wake")),
-        "blocks": dict(Counter(e.get("kind", "?") for e in events if e.get("k") == "block")),
+        } if hooked else {}),
+        "wakes": dict(Counter(e.get("reason", "?") for e in counted if e.get("k") == "wake")),
+        "blocks": dict(Counter(e.get("kind", "?") for e in counted if e.get("k") == "block")),
         "tools": dict(tools),
         "posts": [len(posts), sum(int(p.get("chars", 0)) for p in posts)],
         "compact": [len(compacts), sum(int(c.get("chars", 0)) for c in compacts)],
         # Per turn: instructions and tool docs. Per load: the skill, in the
         # context only when the agent loaded it; tok.skill says whether (RT-6.9).
         **({"static": fixed.instructions + fixed.tools, "skill": fixed.skill} if fixed else {}),
-        **_asks(events, time.time()),
+        **_asks(counted, now),
+        # Saved waiting needs the human's turns: only with turn hooks. Answers
+        # no human turn followed by the session's end are a lower bound.
+        **(saved | {
+            "saved_open_n": len(pending) if final else 0,
+            "saved_open_sec": sum(max(0, round(now - at)) for at in pending) if final else 0,
+        } if hooked else {}),
+        "crown_sec": crown_sec,
         **({"tok": tok} if tok else {}),
     }
+    if not final:
+        cut = int(now)
+        carry = [{"k": "part", "t": cut, "sid": sid, "n": part["n"] + 1, **({"hooks": 1} if hooked else {})},
+                 *carry,
+                 *([{"k": "crown", "t": cut, "on": 1}] if crowned else []),
+                 *([{"k": "saving", "t": at, "at": at} for at in pending] if hooked else []),
+                 *([paths[-1]] if paths else [])]
+    return data, carry
+
+
+def summary(version: str, fixed: overhead.Fixed | None = None) -> dict[str, Any] | None:
+    """The session's last part (`final`): what the counter file holds,
+    whatever is still open counted as open (RT-6.9 step 2)."""
+    f = _path()
+    if f is None or not f.exists():
+        return None
+    events = _load(f)
+    if not events:
+        return None
+    return _summarize(events, version, fixed, time.time(), final=True)[0]
+
+
+def due(now: float | None = None) -> float | None:
+    """Seconds until the current part is PART_SEC old (0 or less: due), None
+    without counters."""
+    f = _path()
+    if f is None or not f.exists():
+        return None
+    events = _load(f)
+    if not events:
+        return None
+    start: int = _part(events)["start"]
+    return start + PART_SEC - (time.time() if now is None else now)
+
+
+def cut(version: str, fixed: overhead.Fixed | None = None, now: float | None = None) -> dict[str, Any] | None:
+    """End a day's part (RT-6.9 step 2): the counter file is moved aside (a
+    hook appends to a new one from then on), summed up, and what is still
+    open goes into the new file with the next part's record. The STATS line
+    of the part, or None without counters."""
+    f = _path()
+    if f is None or not f.exists() or f.is_symlink():
+        return None
+    now = time.time() if now is None else now
+    snap = f.with_name(f.name + ".cut")
+    try:
+        os.replace(f, snap)
+        text = snap.read_text()
+    except OSError:
+        return None
+    try:
+        events = _load(snap)
+        if not events:
+            return None
+        data, carry = _summarize(events, version, fixed, now, final=False)
+        session_file.append_private(f, "".join(json.dumps(e) + "\n" for e in carry))
+        return data
+    except Exception:
+        session_file.append_private(f, text)  # counted at the next try or the end
+        raise
+    finally:
+        snap.unlink(missing_ok=True)
+
+
+def _lock(uid: str) -> int | None:
+    """stats-<uid>.lock, so two servers of one bot cut a part once."""
+    path = session_file.state_dir() / f"stats-{uid}.lock"
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    return fd
+
+
+async def tick(client: ChatPort, uid: str) -> float | None:
+    """The heartbeat's part check (stall.watch, RT-6.9 step 2): once the
+    current part is a day old, post its STATS line and start the next.
+    The channel is joined first, so a server that cannot reach it cuts
+    nothing and tries again at the next tick. Seconds until the next part is
+    due; never raises."""
+    name = channel()
+    if not name or _source is None or not client.token or not uid:
+        return None
+    set_user(uid)
+    left = due()
+    if left is None or left > 0:
+        return left
+    fd = _lock(uid)
+    if fd is None:
+        return None
+    try:
+        cid = await client.join_channel(name)
+        left = due()  # another server may have cut it meanwhile
+        if left is None or left > 0:
+            return left
+        version, fixed = _source()
+        data = cut(version, fixed)
+        if data:
+            await client.post("STATS " + json.dumps(data, separators=(",", ":")), channel_id=cid)
+            log.info("overhead stats: part %s posted", data["part"])
+        return PART_SEC
+    except Exception as exc:  # noqa: BLE001 — the heartbeat goes on
+        log.info("overhead stats part skipped: %s", exc)
+        return None
+    finally:
+        os.close(fd)
 
 
 def post_sync(client: ChatPort, data: dict[str, Any]) -> str:
@@ -263,12 +546,18 @@ def _vals(d: Any) -> int:
     return sum(d.values()) if isinstance(d, dict) and d else 0
 
 
+def _sessions(rows: list[dict[str, Any]]) -> int:
+    """Distinct sessions: a session's parts share its sid; a line without one
+    (before 0.91.0) is a session of its own (report sets _s)."""
+    return len({r["_s"] for r in rows})
+
+
 def _turns_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     rows = [r for r in rows if r.get("turns_timed") is not None]
     if not rows:
         return None
     t: dict[str, Any] = {
-        "sessions": len(rows),
+        "sessions": _sessions(rows),
         "turns": _sum(rows, lambda r: r.get("turns")),
         "human_prompts": _sum(rows, lambda r: (r.get("turns") or 0) - (r.get("bus_turns") or 0)),
         "timed": _sum(rows, lambda r: r.get("turns_timed")),
@@ -294,7 +583,7 @@ def _asks_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not rows:
         return None
     a: dict[str, Any] = {
-        "sessions": len(rows),
+        "sessions": _sessions(rows),
         "hours": _sum(rows, lambda r: r.get("min")) / 60,
         "asks": _sum(rows, lambda r: r.get("asks")),
         "answered": _sum(rows, lambda r: r.get("asks_answered")),
@@ -314,17 +603,41 @@ def _asks_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+def _saved_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Saved waiting (since 0.91.0, sessions with turn hooks): answers on the
+    bus, those while the terminal was idle, and the time to the human's next
+    turn there; `saved_open_*` a lower bound for answers no such turn followed."""
+    rows = [r for r in rows if r.get("asks_idle") is not None]
+    if not rows:
+        return None
+    s: dict[str, Any] = {
+        "sessions": _sessions(rows),
+        "answered": _sum(rows, lambda r: r.get("asks_answered")),
+        "idle": _sum(rows, lambda r: r.get("asks_idle")),
+        "saved_n": _sum(rows, lambda r: r.get("saved_n")),
+        "saved_sec": _sum(rows, lambda r: r.get("saved_sec")),
+        "saved_max_sec": max(r.get("saved_max_sec") or 0 for r in rows),
+        "saved_open_n": _sum(rows, lambda r: r.get("saved_open_n")),
+        "saved_open_sec": _sum(rows, lambda r: r.get("saved_open_sec")),
+    }
+    return s | {
+        "idle_pct": _pct(s["idle"], s["answered"]),
+        "mean_saved_sec": _per(s["saved_sec"], s["saved_n"]),
+    }
+
+
 def _tok_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     rows = [r for r in rows if r.get("tok")]
     if not rows:
         return None
     t: dict[str, Any] = {
-        "sessions": len(rows),
+        "sessions": _sessions(rows),
         "hours": _sum(rows, lambda r: r.get("min")) / 60,
         "req": _sum(rows, lambda r: r["tok"].get("req")),
         "bus_req": _sum(rows, lambda r: r["tok"].get("bus_req")),
         "fixed": _round(_sum(rows, lambda r: r["tok"].get("fixed")) / len(rows)),
-        "skill_loaded": _sum(rows, lambda r: r["tok"].get("skill")),
+        # A session that loaded the skill counts once, over all its parts.
+        "skill_loaded": len({r["_s"] for r in rows if (r["tok"].get("skill") or 0) > 0}),
         "all": _sum(rows, lambda r: _eq(r["tok"].get("all") or {})),
         "bus": _sum(rows, lambda r: _eq(r["tok"].get("bus") or {})),
     }
@@ -341,8 +654,30 @@ def _version_key(v: str) -> list[int]:
     return [int(p) if p.isdigit() else 0 for p in v.split(".")]
 
 
+def _roles(lines: list[dict[str, Any]]) -> dict[str, str]:
+    """A session's role over all its parts (RT-6.9 step 3): coordinator when it
+    held the crown more than half its time, else worker; unknown before 0.91.0
+    (no crown_sec)."""
+    by_session: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in lines:
+        by_session[r["_s"]].append(r)
+    roles = {}
+    for s, rs in by_session.items():
+        if all(r.get("crown_sec") is None for r in rs):
+            roles[s] = "unknown"
+        elif _sum(rs, lambda r: r.get("crown_sec")) * 2 > _sum(rs, lambda r: r.get("min")) * 60:
+            roles[s] = "coordinator"
+        else:
+            roles[s] = "worker"
+    return roles
+
+
 def report(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The STATS lines summed up per version, oldest first (RT-6.9 step 3)."""
+    """The STATS lines summed up per version, oldest first (RT-6.9 step 3).
+    A session's parts (one sid) count as one session."""
+    lines = [r | {"_s": r["sid"] if r.get("sid") not in (None, False) else f"#{i}"}
+             for i, r in enumerate(lines)]
+    roles = _roles(lines)
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for line in lines:
         groups[str(line.get("v"))].append(line)
@@ -350,8 +685,10 @@ def report(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for v in sorted(sorted(groups), key=_version_key):
         rows = groups[v]
         by_rt: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        by_role: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for r in rows:
             by_rt[str(r["rt"]) if r.get("rt") is not None else "other"].append(r)
+            by_role[roles[r["_s"]]].append(r)
         hours = _round(_sum(rows, lambda r: r.get("min")) / 60 * 10) / 10
         turns = _sum(rows, lambda r: r.get("turns"))
         forced = _sum(rows, lambda r: _vals(r.get("blocks")))
@@ -362,19 +699,26 @@ def report(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
                          + (r.get("compact") or [0, 0])[1])
         post_chars = _sum(rows, lambda r: (r.get("posts") or [0, 0])[1])
         everything = turns + forced
+        sessions = _sessions(rows)
         out.append({
-            "version": v, "sessions": len(rows), "hours": hours, "turns": turns, "forced": forced,
-            "plugin_turns": plugin, "bus_chars": bus_chars, "post_chars": post_chars,
+            "version": v, "sessions": sessions, "parts": len(rows), "hours": hours, "turns": turns,
+            "forced": forced, "plugin_turns": plugin, "bus_chars": bus_chars, "post_chars": post_chars,
             "static": _max(r.get("static") for r in rows),
             "skill": _max(r.get("skill") for r in rows),
             "tok": _tok_of(rows),
-            "harness": [{"harness": rt, "sessions": len(rs), "turns": _turns_of(rs), "asks": _asks_of(rs)}
+            "saved": _saved_of(rows),
+            "harness": [{"harness": rt, "sessions": _sessions(rs), "turns": _turns_of(rs),
+                         "asks": _asks_of(rs), "saved": _saved_of(rs)}
                         for rt, rs in sorted(by_rt.items())],
+            "roles": [{"role": role, "sessions": _sessions(rs),
+                       "hours": _round(_sum(rs, lambda r: r.get("min")) / 60 * 10) / 10,
+                       "tok": _tok_of(rs), "turns": _turns_of(rs), "asks": _asks_of(rs)}
+                      for role, rs in sorted(by_role.items())],
             "plugin_turns_per_h": _tenth(plugin, hours),
             "all_turns": everything,
             "plugin_share_pct": _pct(plugin, everything),
             "bus_chars_per_turn": _per(bus_chars, everything),
-            "post_chars_per_session": _round(post_chars / len(rows)),
+            "post_chars_per_session": _round(post_chars / sessions),
         })
     return out
 

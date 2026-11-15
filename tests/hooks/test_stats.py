@@ -175,15 +175,44 @@ def test_the_tool_reports_what_the_script_reports(mm, run):
          "skill": 22078, "blocks": {"drain": 2}, "tok": tok},
         {"v": "0.53.0", "rt": "claude-code", "min": 15, "turns": 2, "bus_turns": 0, "static": 4800,
          "skill": 22078, "tok": tok | {"skill": 0}},
+        # Since 0.91.0 (RT-6.9 step 2): a session's daily parts share a sid, the
+        # skill loaded in both counts once; crown_sec decides the role; saved waiting.
+        {"v": "0.91.0", "sid": "5e55", "part": 1, "rt": "claude-code", "min": 1440, "turns": 9,
+         "bus_turns": 3, "turns_timed": 8, "turn_sec": 4000, "turn_max_sec": 900, "bus_turns_timed": 3,
+         "bus_turn_sec": 300, "bus_turn_max_sec": 200, "asks": 2, "asks_answered": 2, "ask_wait_sec": 700,
+         "ask_wait_max_sec": 600, "asks_open": 0, "ask_open_sec": 0, "ask_open_max_sec": 0,
+         "asks_idle": 2, "saved_n": 1, "saved_sec": 1801, "saved_max_sec": 1801, "saved_open_n": 0,
+         "saved_open_sec": 0, "crown_sec": 80000, "posts": [3, 300], "tok": tok},
+        {"v": "0.91.0", "sid": "5e55", "part": 2, "final": True, "rt": "claude-code", "min": 61,
+         "turns": 1, "bus_turns": 1, "turns_timed": 1, "turn_sec": 30, "turn_max_sec": 30,
+         "bus_turns_timed": 1, "bus_turn_sec": 30, "bus_turn_max_sec": 30, "asks": 1, "asks_answered": 1,
+         "ask_wait_sec": 60, "ask_wait_max_sec": 60, "asks_open": 0, "ask_open_sec": 0,
+         "ask_open_max_sec": 0, "asks_idle": 1, "saved_n": 0, "saved_sec": 0, "saved_max_sec": 0,
+         "saved_open_n": 1, "saved_open_sec": 3600, "crown_sec": 0, "posts": [1, 1], "tok": tok},
+        {"v": "0.91.0", "sid": "a1b2", "part": 1, "final": True, "rt": "claude-code", "min": 90,
+         "turns": 4, "bus_turns": 0, "turns_timed": 4, "turn_sec": 400, "turn_max_sec": 200,
+         "bus_turns_timed": 0, "bus_turn_sec": 0, "bus_turn_max_sec": 0, "asks": 0, "asks_answered": 0,
+         "ask_wait_sec": 0, "ask_wait_max_sec": 0, "asks_open": 0, "ask_open_sec": 0,
+         "ask_open_max_sec": 0, "asks_idle": 0, "saved_n": 0, "saved_sec": 0, "saved_max_sec": 0,
+         "saved_open_n": 0, "saved_open_sec": 0, "crown_sec": 120, "posts": [0, 0]},
     ]
     mm.posts[:0] = [{"id": f"s{i}", "user_id": "x" * 26, "create_at": 1,
                      "message": "STATS " + json.dumps(line)} for i, line in enumerate(lines)]
     r = run(REPORT, "report", "agents-stats", "--json")
     assert r.code == 0, r.stderr
     assert json.loads(r.stdout) == stats.report(lines)
-    new = stats.report(lines)[-1]
+    new = stats.report(lines)[-2]
     assert (new["static"], new["skill"], new["tok"]["skill_loaded"]) == (4800, 22078, 1)
-    assert "1/2" in run(REPORT, "report", "agents-stats").stdout       # skill loaded in 1 of 2
+    parts = stats.report(lines)[-1]
+    assert (parts["sessions"], parts["parts"], parts["tok"]["skill_loaded"]) == (2, 3, 1)
+    assert [(r["role"], r["sessions"]) for r in parts["roles"]] == [("coordinator", 1), ("worker", 1)]
+    out = run(REPORT, "report", "agents-stats").stdout
+    assert "1/2" in out                                                # skill loaded in 1 of 2
+    cells = [line.split() for line in out.splitlines()]
+    # Saved waiting: 3 answered, all while idle; back once after 30 min, once still away (1 h at least).
+    assert ["0.91.0", "claude-code", "2", "3", "100%", "1", "30", "min", "30", "min", "1", "1:00", "h"] in cells
+    assert ["0.91.0", "coordinator", "1", "25", "10%", "8%", "1.7", "0.1", "1%"] in cells
+    assert ["0.91.0", "worker", "1", "1.5", "-", "0%", "1", "0", "0%"] in cells
 
 
 def test_off_counts_nothing(mm, run):

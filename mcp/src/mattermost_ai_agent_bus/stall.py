@@ -51,7 +51,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import a2a, asks, debug, gate, lease, mandate, owners, remind, session_file, tasks
+from . import a2a, asks, debug, gate, lease, mandate, owners, remind, session_file, stats, tasks
 from .model import Mark, Post
 
 if TYPE_CHECKING:
@@ -430,8 +430,8 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
 
 
 async def watch(client: ChatPort) -> float | None:
-    """The heartbeat's watch (lease.heartbeat): the own asks' reminders, and
-    with the crown the stall check. Seconds until one of them is due next;
+    """The heartbeat's watch (lease.heartbeat): the own asks' reminders, a
+    day's overhead stats (RT-6.9), and with the crown the stall check. Seconds until one of them is due next;
     never raises."""
     try:
         uid = await lease._user_id(client)
@@ -445,9 +445,9 @@ async def watch(client: ChatPort) -> float | None:
     _held = held
     waits: list[float] = []
     # RT-6.26 step 1: the home's pinned posts read again for a mandate; RT-6.31
-    # step 2: the home's debug record read again.
+    # step 2: the home's debug record read again; RT-6.9 step 2: a day's STATS part.
     for name, step in (("reminders", remind.tick), ("mandate", mandate.tick), ("debug", debug.tick),
-                       ("stall", check)):
+                       ("stats", stats.tick), ("stall", check)):
         if step is check and not held:
             continue
         try:

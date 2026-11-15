@@ -1180,6 +1180,20 @@ async def ctx_line(client: ChatPort) -> None:
         log.info("ctx line not posted: %s", exc)
 
 
+def _count_crown(uid: str, held: bool, counted: bool | None) -> bool:
+    """RT-6.9: each change of the crown into the overhead counters, for the
+    session's crown_sec. At the heartbeat's start the counters' last note
+    stands for the crown, so one that lapsed while no server ran ends at its
+    lease's end; a crown seen gone ends there too when that lies behind."""
+    if counted is None:
+        counted = stats.crown_open()
+    if held != counted:
+        now = int(time.time())
+        until = crown_until(uid)
+        stats.record("crown", on=int(held), t=until if not held and 0 < until < now else now)
+    return held
+
+
 async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
                     watch: Callable[[ChatPort], Awaitable[float | None]] | None = None) -> None:
     """Renew the lease until cancelled. Never raises: presence is cosmetic.
@@ -1201,6 +1215,7 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
     from . import receipt  # receipt.py claims through this module
 
     next_tick, held, seeded = 0.0, False, False
+    counted: bool | None = None  # the crown as the overhead counters last noted it
     while True:
         delay = heartbeat_sec()
         try:
@@ -1231,6 +1246,7 @@ async def heartbeat(get_client: Callable[[], Awaitable[ChatPort | None]],
                 elif await receipt.check(client) or await look(client):
                     next_tick = min(next_tick, time.time() + PENDING_POLL_SEC)
                 held = crown_held(uid)
+                counted = _count_crown(uid, held, counted)
                 now = time.time()
                 delay = next_tick - now
                 if _look_at and not held:

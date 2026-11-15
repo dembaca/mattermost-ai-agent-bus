@@ -77,15 +77,16 @@ def _ours(text: str) -> bool:
 
 
 class _Count:
-    def __init__(self, since: float) -> None:
-        self.since = since
+    def __init__(self, since: float, until: float | None = None) -> None:
+        self.since, self.until = since, until
         self.reqs = self.bus_reqs = 0
         self.all = dict.fromkeys(KEYS, 0)
         self.bus = dict.fromkeys(KEYS, 0.0)
 
     def add(self, r: dict[str, Any] | None) -> None:
         """One request: all of it if the bus caused it, else the bus's share."""
-        if r is None or r["ts"] < self.since or not r["usage"]:
+        if (r is None or r["ts"] < self.since or not r["usage"]
+                or (self.until is not None and r["ts"] >= self.until)):
             return
         u = _usage(r["usage"])
         self.reqs += 1
@@ -103,8 +104,10 @@ class _Count:
         self.bus["out"] += min(u["out"], r["out_bus"] / CHARS_PER_TOKEN)
 
 
-def measure(path: str | Path, since: float, fixed: Fixed) -> dict[str, Any] | None:
-    """Overhead and totals of the requests after `since`, or None without a transcript."""
+def measure(path: str | Path, since: float, fixed: Fixed,
+            until: float | None = None) -> dict[str, Any] | None:
+    """Overhead and totals of the requests after `since` (and before `until`,
+    a part's cut, RT-6.9), or None without a transcript."""
     # Never through a symlink, a FIFO or out of ~/.claude/projects (RT-6.18).
     text = session_file.read_transcript(path)
     if text is None:
@@ -114,7 +117,7 @@ def measure(path: str | Path, since: float, fixed: Fixed) -> dict[str, Any] | No
     deferred = skill = by_bus = False
     pending: list[bool] = []          # tool results since the last request: bus or not
     ids: dict[str, str] = {}          # tool_use id -> "bus" | "search" | "listener"
-    count = _Count(since)
+    count = _Count(since, until)
     req: dict[str, Any] | None = None
 
     def base() -> int:

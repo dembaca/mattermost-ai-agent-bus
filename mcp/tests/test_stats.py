@@ -157,17 +157,17 @@ def test_asks_are_counted_with_their_waits_and_what_stays_open():
     the asks still open at the end with their ages."""
     now = int(time.time())
     _write_events(
-        {"k": "ask", "t": now - 5000, "id": "a1"}, {"k": "ask", "t": now - 4000, "id": "a2"},
-        {"k": "ask", "t": now - 900, "id": "a3"},
-        {"k": "answer", "t": now - 4500, "id": "a1", "wait": 500},
-        {"k": "answer", "t": now - 4400, "id": "a1", "wait": 600},   # a second one: not counted
-        {"k": "answer", "t": now - 3000, "id": "a2", "wait": 1000},
+        {"k": "ask", "t": now - 5000, "id": "q1"}, {"k": "ask", "t": now - 4000, "id": "q2"},
+        {"k": "ask", "t": now - 900, "id": "q3"},
+        {"k": "answer", "t": now - 4500, "id": "q1", "wait": 500},
+        {"k": "answer", "t": now - 4400, "id": "q1", "wait": 600},   # a second one: not counted
+        {"k": "answer", "t": now - 3000, "id": "q2", "wait": 1000},
     )
     s = stats.summary("0.36.0")
     assert (s["asks"], s["asks_answered"], s["ask_wait_sec"], s["ask_wait_max_sec"]) == (3, 2, 1500, 1000)
     assert s["asks_open"] == 1 and s["ask_open_sec"] == s["ask_open_max_sec"]
     assert 895 <= s["ask_open_max_sec"] <= 905
-    assert "a1" not in json.dumps(s)  # counts and seconds only
+    assert "q1" not in json.dumps(s)  # counts and seconds only
 
 
 @pytest.mark.parametrize("client,label", [
@@ -206,3 +206,196 @@ async def test_the_initialize_handshake_names_the_harness(monkeypatch):
     stats.record("turn")
     assert stats.summary("0.36.0")["rt"] == "cursor"
     assert server._note_client in server.mcp._lowlevel_server.middleware
+
+
+# --- RT-6.9 step 2: a day's parts; step 1: saved waiting, the crown ----------
+
+def _events():
+    return [json.loads(line) for line in stats._path().read_text().splitlines()]
+
+
+def _append(*events):
+    with stats._path().open("a") as fh:
+        fh.write("".join(json.dumps(e) + "\n" for e in events))
+
+
+def test_a_day_part_carries_what_is_still_open():
+    """RT-6.9 step 2: a part counts what ended in it; a turn still running and
+    an ask still open go into the next part with its record and count there,
+    once, with their full durations."""
+    now = int(time.time())
+    day = now - stats.PART_SEC - 100
+    _write_events(
+        {"k": "turn", "t": day, "by": "human"}, {"k": "turn_end", "t": day + 60},
+        {"k": "ask", "t": day + 100, "id": "q1"},
+        {"k": "turn", "t": day + 200, "by": "human"}, {"k": "turn_end", "t": day + 260},
+        {"k": "turn", "t": now - 50, "by": "human"},           # still running at the cut
+        {"k": "transcript", "t": day, "path": "/nowhere/t.jsonl"},
+    )
+    assert stats.due(now) < 0
+    one = stats.cut("0.91.0", now=now)
+    assert (one["part"], "final" in one, len(one["sid"])) == (1, False, 12)
+    int(one["sid"], 16)                                         # random hex, no id of the bus
+    assert (one["turns"], one["turns_timed"], one["turn_sec"]) == (2, 2, 120)
+    assert (one["asks"], one["asks_open"], one["min"]) == (0, 0, round((stats.PART_SEC + 100) / 60))
+    kept = _events()
+    assert kept[0] == {"k": "part", "t": now, "sid": one["sid"], "n": 2, "hooks": 1}
+    assert {"k": "ask", "t": day + 100, "id": "q1", "busy": 1} in kept   # a human turn came after it
+    assert {"k": "turn", "t": now - 50, "by": "human"} in kept
+    assert {"k": "transcript", "t": day, "path": "/nowhere/t.jsonl"} in kept
+    assert stats.due(now) == stats.PART_SEC
+    stats.record("turn_end")
+    stats.record("answer", id="q1", wait=stats.PART_SEC, at=now + 5)
+    two = stats.summary("0.91.0")
+    assert (two["sid"], two["part"], two["final"]) == (one["sid"], 2, True)
+    assert (two["turns"], two["turns_timed"]) == (1, 1) and 50 <= two["turn_sec"] <= 60
+    assert (two["asks"], two["asks_answered"], two["ask_wait_sec"]) == (1, 1, stats.PART_SEC)
+    assert two["asks_idle"] == 0                                # the human was back before the cut
+
+
+def test_saved_waiting_counts_answers_while_the_terminal_was_idle():
+    """RT-6.9 step 1: an ask answered on the bus with no human prompt since the
+    ask saved the time until the human's next prompt; an answer no prompt
+    followed by the end is open, a lower bound; a prompt between ask and
+    answer means the human was at the terminal: nothing saved."""
+    now = int(time.time())
+    _write_events(
+        {"k": "turn", "t": now - 9000, "by": "human"},
+        {"k": "ask", "t": now - 8900, "id": "q1"},
+        {"k": "turn", "t": now - 8000, "by": "bus"},            # the answer's push: not the human
+        {"k": "answer", "t": now - 7990, "id": "q1", "wait": 900, "at": now - 8000},
+        {"k": "turn", "t": now - 7400, "by": "human"},          # back after 600 s
+        {"k": "ask", "t": now - 7000, "id": "q2"},
+        {"k": "turn", "t": now - 6500, "by": "human"},          # at the terminal meanwhile
+        {"k": "answer", "t": now - 6000, "id": "q2", "wait": 1000, "at": now - 6000},
+        {"k": "ask", "t": now - 5000, "id": "q3"},
+        {"k": "answer", "t": now - 1000, "id": "q3", "wait": 4000},   # no `at`: when counted
+    )
+    s = stats.summary("0.91.0")
+    assert (s["asks_answered"], s["asks_idle"]) == (3, 2)
+    assert (s["saved_n"], s["saved_sec"], s["saved_max_sec"]) == (1, 600, 600)
+    assert s["saved_open_n"] == 1 and 995 <= s["saved_open_sec"] <= 1005
+    assert "q1" not in json.dumps(s)
+
+
+def test_an_answer_waiting_for_the_human_counts_in_the_part_they_come_back():
+    """RT-6.9 step 2: an idle answer no human prompt followed by the cut is
+    carried, not counted open, and saves its time in the part the human is back."""
+    now = int(time.time())
+    day = now - stats.PART_SEC - 100
+    _write_events({"k": "turn", "t": day, "by": "human"}, {"k": "turn_end", "t": day + 10},
+                  {"k": "ask", "t": day + 20, "id": "q1"},
+                  {"k": "answer", "t": now - 300, "id": "q1", "wait": 1000, "at": now - 300})
+    one = stats.cut("0.91.0", now=now)
+    assert (one["asks_answered"], one["asks_idle"], one["saved_n"], one["saved_open_n"]) == (1, 1, 0, 0)
+    assert {"k": "saving", "t": now - 300, "at": now - 300} in _events()
+    _append({"k": "turn", "t": now + 900, "by": "human"})
+    two = stats.summary("0.91.0")
+    assert (two["asks_answered"], two["asks_idle"], two["saved_n"], two["saved_sec"]) == (0, 0, 1, 1200)
+    assert two["saved_open_n"] == 0
+
+
+def test_a_runtime_without_turn_hooks_sends_no_saved_waiting():
+    """RT-6.9: without the human's turns idle cannot be told: absent, not zero."""
+    now = int(time.time())
+    _write_events({"k": "ask", "t": now - 100, "id": "q1"},
+                  {"k": "answer", "t": now - 50, "id": "q1", "wait": 50, "at": now - 50})
+    s = stats.summary("0.91.0")
+    assert s["asks_answered"] == 1 and "asks_idle" not in s and "saved_n" not in s
+
+
+def test_crown_seconds_count_until_the_crown_ends_or_its_lease_ran_out(monkeypatch):
+    """RT-6.9 step 1: crown_sec from the heartbeat's notes; a crown still on
+    counts until now, or until its lease ran out while no server ran; at a cut
+    a crown still held goes on in the next part."""
+    now = int(time.time())
+    _write_events({"k": "post", "t": now - 5000, "chars": 1},
+                  {"k": "crown", "t": now - 4000, "on": 1}, {"k": "crown", "t": now - 3000, "on": 0},
+                  {"k": "crown", "t": now - 2000, "on": 1})
+    monkeypatch.setattr(stats, "_crown_until", lambda: now - 1500)
+    assert stats.summary("0.91.0")["crown_sec"] == 1500
+    monkeypatch.setattr(stats, "_crown_until", lambda: now + 60)
+    one = stats.cut("0.91.0", now=now)
+    assert one["crown_sec"] == 3000
+    assert {"k": "crown", "t": now, "on": 1} in _events()
+    assert stats.summary("0.91.0")["crown_sec"] <= 2
+
+
+def test_the_heartbeat_notes_each_change_of_the_crown(monkeypatch):
+    """RT-6.9, RT-6.6: on and off, the off at the lease's end when that lies
+    behind; a heartbeat that starts without the crown ends one the counters
+    still show on (it lapsed while no server ran)."""
+    from mattermost_ai_agent_bus import lease
+    now = int(time.time())
+    monkeypatch.setattr(lease, "crown_until", lambda uid: now + 60)
+    assert lease._count_crown(UID, True, None) is True
+    assert lease._count_crown(UID, True, True) is True          # no change: nothing noted
+    monkeypatch.setattr(lease, "crown_until", lambda uid: now - 30)
+    assert lease._count_crown(UID, False, True) is False
+    crowns = [e for e in _events() if e["k"] == "crown"]
+    assert [e["on"] for e in crowns] == [1, 0] and crowns[1]["t"] == now - 30
+    _write_events({"k": "crown", "t": now - 100, "on": 1})
+    assert stats.crown_open()
+    lease._count_crown(UID, False, None)
+    assert not stats.crown_open()
+
+
+async def test_a_day_old_part_is_posted_by_the_heartbeat(monkeypatch):
+    """RT-6.9 step 2: stall.watch's stats step joins the channel first (a
+    server that cannot reach it cuts nothing), posts the day's part once."""
+    import inspect
+
+    from mattermost_ai_agent_bus import stall
+    assert "stats.tick" in inspect.getsource(stall.watch)
+    now = int(time.time())
+    _write_events({"k": "turn", "t": now - stats.PART_SEC - 5, "by": "human"},
+                  {"k": "turn_end", "t": now - stats.PART_SEC})
+    posted = []
+
+    class Client:
+        token = "bot"
+
+        async def join_channel(self, name):
+            posted.append(name)
+            return "c" * 26
+
+        async def post(self, message, *, channel_id=None, **kw):
+            posted.append((channel_id, message))
+
+    class Down(Client):
+        async def join_channel(self, name):
+            raise OSError("offline")
+
+    monkeypatch.setattr(stats, "_source", lambda: ("0.91.0", None))
+    assert await stats.tick(Down(), UID) is None and stats.due() < 0
+    assert await stats.tick(Client(), UID) == stats.PART_SEC
+    assert posted[0] == "agents-stats" and posted[1][0] == "c" * 26
+    line = json.loads(posted[1][1].removeprefix("STATS "))
+    assert (line["v"], line["part"], line["turns"], line["turn_sec"]) == ("0.91.0", 1, 1, 5)
+    assert 0 < await stats.tick(Client(), UID) <= stats.PART_SEC and len(posted) == 2
+
+
+def test_the_report_counts_a_session_once_and_splits_by_role():
+    """RT-6.9 step 3: a session's parts (one sid) are one session; lines
+    without a sid (before 0.91.0) one each; a session holding the crown more
+    than half its time is the coordinator."""
+    saved = {"saved_n": 0, "saved_sec": 0, "saved_max_sec": 0, "saved_open_n": 0, "saved_open_sec": 0}
+    lines = [
+        {"v": "0.91.0", "sid": "5e55", "part": 1, "rt": "claude-code", "min": 1440, "turns": 10,
+         "crown_sec": 80000, "posts": [2, 100], "asks": 2, "asks_answered": 2, "asks_idle": 1,
+         **saved, "saved_n": 1, "saved_sec": 600, "saved_max_sec": 600},
+        {"v": "0.91.0", "sid": "5e55", "part": 2, "final": True, "rt": "claude-code", "min": 60, "turns": 2,
+         "crown_sec": 0, "posts": [1, 50], "asks": 1, "asks_answered": 1, "asks_idle": 1,
+         **saved, "saved_open_n": 1, "saved_open_sec": 300},
+        {"v": "0.91.0", "sid": "a1b2", "part": 1, "final": True, "rt": "claude-code", "min": 120,
+         "turns": 4, "crown_sec": 600, "posts": [0, 0]},
+        {"v": "0.91.0", "rt": "cursor", "min": 30, "turns": 0},
+    ]
+    r = stats.report(lines)[0]
+    assert (r["sessions"], r["parts"], r["post_chars_per_session"]) == (3, 4, 50)
+    roles = {x["role"]: x for x in r["roles"]}
+    assert (roles["coordinator"]["sessions"], roles["coordinator"]["hours"]) == (1, 25.0)
+    assert (roles["worker"]["sessions"], roles["unknown"]["sessions"]) == (1, 1)
+    s = r["saved"]
+    assert (s["sessions"], s["answered"], s["idle"], s["idle_pct"]) == (1, 3, 2, 67)
+    assert (s["saved_n"], s["mean_saved_sec"], s["saved_open_n"], s["saved_open_sec"]) == (1, 600, 1, 300)
