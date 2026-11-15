@@ -712,6 +712,7 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
 
 /* ---------- measured numbers ---------- */
 
+.measured .row { align-items: baseline; }
 .measured .row h3 { font-weight: 460; color: var(--muted); }
 .measured .num {
   display: inline-block;
