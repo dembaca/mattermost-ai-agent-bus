@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+import stat
 import time
 
 import anyio
@@ -14,7 +16,7 @@ from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import Me
-from mattermost_ai_agent_bus import asks, channel, hookapi, lease, permission, server, watermark
+from mattermost_ai_agent_bus import asks, channel, hookapi, lease, permission, server, session_file, watermark
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
 BOT = "b" * 26
@@ -391,3 +393,127 @@ async def test_the_turns_end_closes_prompts_the_terminal_answered(relay, monkeyp
     assert len(c.posted) == n  # nothing open: no post
     assert await server._push_intercept(_item("yes abcde"))
     assert "No open permission prompt `abcde`" in c.posted[-1]["message"] and conn.sent == []
+
+
+# --- the relay log (RT-6.13 step 6) ------------------------------------------------
+
+SECRET_REQUEST = REQUEST | {
+    "description": "DESCRIPTION-TEXT rm the build",
+    "input_preview": '{"command": "curl -H TOKEN-IN-COMMAND https://internal.example/PATH-IN-COMMAND"}',
+}
+
+
+@pytest.fixture
+def logged(relay, monkeypatch):
+    monkeypatch.setenv("MM_BOT_USER_ID", BOT)
+    return relay
+
+
+def _lines():
+    path = permission.log_path()
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+@pytest.mark.anyio
+async def test_each_step_of_the_relay_writes_one_line(logged, monkeypatch):
+    """RT-6.13 step 6: request received, DM posted, verdict sent, closed at the
+    turn's end, a yes for an id that is not open, not relayed, posting failed:
+    one JSON line each, with time, request id, tool, step and reason."""
+    c, _ = logged
+
+    async def set_status(client, state, label=""):
+        pass
+
+    monkeypatch.setattr(lease, "set_status", set_status)
+    await server._permission_request(REQUEST)
+    assert await server._push_intercept(_item("yes abcde"))
+    await server._permission_request(REQUEST | {"request_id": "fghij", "tool_name": "Write"})
+    assert await hookapi.presence(c, {}, {"state": "idle"}) == (200, {"ok": True})
+    assert await server._push_intercept(_item("no fghij"))  # closed: not open any more
+
+    monkeypatch.setenv("MM_RESPONSIBLE_HUMAN", "someone-else")
+    await server._permission_request(REQUEST | {"request_id": "klmno"})
+    monkeypatch.delenv("MM_RESPONSIBLE_HUMAN")
+
+    async def failing(*args, **kwargs):
+        raise ConnectionError("bus down")
+
+    monkeypatch.setattr(c, "post", failing)
+    await server._permission_request(REQUEST | {"request_id": "pqrst"})
+
+    lines = _lines()
+    assert [(r["id"], r["step"]) for r in lines] == [
+        ("abcde", "request received"), ("abcde", "dm posted"), ("abcde", "verdict sent"),
+        ("fghij", "request received"), ("fghij", "dm posted"), ("fghij", "closed at turn end"),
+        ("fghij", "unknown id"),
+        ("klmno", "request received"), ("klmno", "not relayed"),
+        ("pqrst", "request received"), ("pqrst", "posting failed"),
+    ]
+    assert all(set(r) == {"t", "id", "tool", "step", "reason"} for r in lines)
+    assert all(r["t"].endswith("Z") for r in lines)
+    by_step = {r["step"]: r for r in lines}
+    assert by_step["verdict sent"]["reason"] == "allow by dembaca" and by_step["verdict sent"]["tool"] == "Bash"
+    assert by_step["not relayed"]["reason"] == "responsible human not trusted"
+    assert by_step["posting failed"]["reason"] == "ConnectionError"  # the class, never the message
+    assert "bus down" not in permission.log_path().read_text()
+    assert by_step["closed at turn end"]["reason"] == "answered in the terminal"
+    assert stat.S_IMODE(os.stat(permission.log_path()).st_mode) == 0o600
+
+
+@pytest.mark.anyio
+async def test_the_log_never_holds_the_description_or_the_input(logged):
+    """RT-6.13 step 6: no description, no preview, no command, path or content
+    in the log, whichever step wrote the line."""
+    await server._permission_request(SECRET_REQUEST)
+    assert await server._push_intercept(_item("yes abcde"))
+    await server._permission_request(SECRET_REQUEST | {"request_id": "fghij", "tool_name": "Write",
+                                                       "input_preview": '{"file_path": "/r/.env", "content": "PW=x"}'})
+    text = permission.log_path().read_text()
+    assert text.count("\n") == 5
+    for secret in ("DESCRIPTION-TEXT", "TOKEN-IN-COMMAND", "internal.example", "PATH-IN-COMMAND",
+                   "curl", "/r/.env", "PW=x", "jira"):
+        assert secret not in text
+
+
+def test_a_tool_name_cannot_smuggle_text_into_the_log(logged):
+    """RT-6.13 step 6: the fields come from Claude Code's request; they are cut
+    to a short plain word, never a second line."""
+    permission.note("request received", "ab\ncde" + "x" * 50, "Bash\n{\"step\": 1} " + "y" * 200)
+    (line,) = _lines()
+    assert len(line["id"]) <= 16 and len(line["tool"]) <= 64
+    assert "\n" not in json.dumps(line) and line["step"] == "request received"
+
+
+def test_the_log_keeps_only_its_newest_lines(logged):
+    """RT-6.13 step 6: at most 500 lines, the oldest go first."""
+    for n in range(permission.LOG_LINES + 40):
+        permission.note("request received", f"id{n}", "Bash")
+    lines = _lines()
+    assert len(lines) == permission.LOG_LINES
+    assert lines[0]["id"] == "id40" and lines[-1]["id"] == f"id{permission.LOG_LINES + 39}"
+
+
+@pytest.mark.anyio
+async def test_a_log_that_cannot_be_written_does_not_break_the_relay(logged, monkeypatch):
+    """RT-6.13 step 6: a failed write is ignored; the prompt still goes by DM
+    and the verdict still reaches Claude Code."""
+    c, conn = logged
+
+    def refuse(path, text):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(session_file, "append_private", refuse)
+    permission.note("request received", "abcde", "Bash")  # no exception
+    await server._permission_request(REQUEST)
+    assert c.posted[0]["channel_id"] == DM and server._relay.for_post(PROMPT) == "abcde"
+    assert await server._push_intercept(_item("yes abcde"))
+    assert conn.sent == [(permission.VERDICT, {"request_id": "abcde", "behavior": "allow"})]
+    assert not permission.log_path().exists()
+
+
+def test_no_bot_no_log(monkeypatch):
+    """RT-6.13 step 6: without a bot id there is no file to name."""
+    monkeypatch.delenv("MM_BOT_USER_ID", raising=False)
+    monkeypatch.setattr("mattermost_ai_agent_bus.stats._uid", "")
+    assert permission.log_path() is None
+    permission.note("request received", "abcde", "Bash")  # nothing to write, nothing raised

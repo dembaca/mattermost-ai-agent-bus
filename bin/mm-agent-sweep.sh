@@ -27,7 +27,7 @@
 #      targeting another agent is answered 401.
 #
 # Per-bot state files next to them (asks-, coord-, gate-, last-, listen-, presence-, turn-, update-<uid>.env,
-# stats-<uid>.jsonl) hold no token and are not sessions. Last, the sweep removes
+# stats-<uid>.jsonl, permission-<uid>.log) hold no token and are not sessions. Last, the sweep removes
 # those whose bot has no session file left and that were untouched for a day: a
 # live session keeps writing them, and one whose token was exported by hand has
 # no session file but would lose its crown lease if they went sooner.
@@ -86,7 +86,7 @@ is_live() {
 }
 
 # Per-bot state, not a session: the uid in its name, never a token.
-STATE_RE='^(asks|coord|gate|last|listen|presence|turn|update)-[a-z0-9]{26}\.env$|^stats-[a-z0-9]{26}\.jsonl$'
+STATE_RE='^(asks|coord|gate|last|listen|presence|turn|update)-[a-z0-9]{26}\.env$|^stats-[a-z0-9]{26}\.jsonl$|^permission-[a-z0-9]{26}\.log$'
 # The MCP server's hook API endpoint (RT-6.17, endpoint-[sid-]<key>.env): no
 # session and no token. A server removes its own at exit; one left by a crash
 # names a port nobody listens on, and the hooks stay quiet. Section 4 removes
@@ -242,7 +242,7 @@ for f in "$STATE_DIR"/*.env; do
   not_a_session "$f" || KEEP_UIDS+="$(field "$f" MM_BOT_USER_ID) "
 done
 stale=0
-for f in "$STATE_DIR"/*-*.env "$STATE_DIR"/stats-*.jsonl; do
+for f in "$STATE_DIR"/*-*.env "$STATE_DIR"/stats-*.jsonl "$STATE_DIR"/permission-*.log; do
   is_state_file "$f" || continue
   uid="$(basename "$f")"; uid="${uid#*-}"; uid="${uid%%.*}"
   [[ "$KEEP_UIDS" == *" $uid "* ]] && continue

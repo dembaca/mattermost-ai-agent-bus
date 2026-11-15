@@ -569,6 +569,10 @@ async def serve_handshake_only(
                 if method == permission.REQUEST:
                     if on_permission is not None:
                         tg.start_soon(on_permission, dict(params or {}))
+                    else:  # RT-6.13 step 6: nobody to answer, the relay is off
+                        rid, tool = (params or {}).get("request_id", ""), (params or {}).get("tool_name", "")
+                        permission.note("request received", rid, tool)
+                        permission.note("not relayed", rid, tool, "relay off: nobody to answer")
                     return
                 await runner.on_notify(dctx, method, params)
 

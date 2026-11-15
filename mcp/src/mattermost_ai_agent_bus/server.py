@@ -2915,6 +2915,8 @@ _relay = permission.Relay()
 async def _permission_request(params: dict[str, Any]) -> None:
     """Claude Code opened a permission prompt: DM it to the responsible human (RT-6.13)."""
     rid = str(params.get("request_id", ""))
+    tool = str(params.get("tool_name", ""))
+    permission.note("request received", rid, tool)  # RT-6.13 step 6: the relay log
     try:
         client = _get_client()
         responsible, _ = await _responsible_and_trusted(client)
@@ -2924,6 +2926,8 @@ async def _permission_request(params: dict[str, Any]) -> None:
         if to is None:
             # Only a trusted human's verdict counts: nobody to ask, the terminal stays.
             log.info("permission prompt %s stays in the terminal: %s is not trusted", rid, responsible)
+            permission.note("not relayed", rid, tool,
+                            "responsible human not trusted" if responsible else "no responsible human")
             return
         text = permission.prompt(params)
         stats.record("post", chars=len(text))
@@ -2933,9 +2937,11 @@ async def _permission_request(params: dict[str, Any]) -> None:
         # An open ask, so a 👍/👎 on it reaches the inbox (RT-6.11); without a
         # human, so it does not hold up the agent's own asks to them.
         asks.add((await client.get_me()).id, post.id)
-        _relay.add(rid, post.id, str(params.get("tool_name", "")))
+        _relay.add(rid, post.id, tool)
+        permission.note("dm posted", rid, tool)
     except Exception as exc:  # noqa: BLE001 — the terminal dialog is still open
         log.warning("permission prompt %s not relayed: %s", rid, exc)
+        permission.note("posting failed", rid, tool, type(exc).__name__)
 
 
 async def _push_intercept(item: dict[str, Any]) -> bool:
@@ -2961,6 +2967,7 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
             if rid not in _relay:  # never sent, answered, or more than 24 h old
                 if item.get("kind") != "dm":
                     return False  # in a channel it may be another agent's prompt
+                permission.note("unknown id", rid, reason=f"{behavior} for an id that is not open")
                 with unanswered.server_line():  # RT-6.2 step 2: the server's line, no answer
                     await _posted(client, await client.post(
                         f"No open permission prompt `{rid}`: answered in the terminal, or more "
@@ -2971,6 +2978,8 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
             return True
         await _pusher.verdict(rid, behavior)
         who = item.get("trusted_human") or post.get("author") or "?"
+        permission.note("verdict sent", rid, pending.tool,
+                        f"{behavior} by {who}" + ("" if _pusher.connection is not None else ", no connection"))
         word = f"{a2a.symbol(Mark.ALLOWED)} allowed" if behavior == "allow" else f"{a2a.symbol(Mark.DENIED)} denied"
         with unanswered.server_line():  # RT-6.2 step 2: the server's line, no answer
             await _posted(client, await client.post(
@@ -2990,6 +2999,7 @@ async def permissions_obsolete(client: MattermostAdapter) -> None:
     under it and close it, so a late `yes <id>` gets the unknown-id reply."""
     uid = ""
     for rid, pending in _relay.take_all().items():
+        permission.note("closed at turn end", rid, pending.tool, "answered in the terminal")
         try:
             uid = uid or (await client.get_me()).id
             with unanswered.server_line():  # RT-6.2 step 2: the server's line, no answer

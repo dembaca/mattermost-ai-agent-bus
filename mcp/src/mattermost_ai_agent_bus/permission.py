@@ -19,20 +19,27 @@ A verdict counts only from a trusted human (server-verified author, RT-6.8):
 Claude Code says nothing when the terminal answers first. An open dialog lets
 no turn end, so the turn's end (the Stop hook's presence idle or listening)
 closes every prompt still open, with a note in the DM.
+
+Each step leaves one JSON line in the relay log (`note`), so a prompt that got
+no DM can be told from one Claude Code never sent.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from . import a2a, asks
+from . import a2a, asks, session_file, stats
 from .model import Answer, Mark
+
+log = logging.getLogger(__name__)
 
 CAPABILITY = "claude/channel/permission"
 REQUEST = "notifications/claude/channel/permission_request"
@@ -52,6 +59,46 @@ PATH_KEYS = frozenset({"file_path", "notebook_path", "path"})
 SHORT_CHARS = 200
 # Claude Code relays a longer value as its start and end around this marker.
 ELIDED = re.compile(r"\s*⋯ (\d+) code points elided ⋯\s*")
+
+
+# The relay log (RT-6.13 step 6): the newest lines only.
+LOG_LINES = 500
+
+
+def log_path() -> Path | None:
+    """`permission-<uid>.log` in the state directory, None without a bot id."""
+    uid = stats.bot_id()
+    return session_file.state_dir() / f"permission-{uid}.log" if uid else None
+
+
+def _clean(text: object, pattern: str, limit: int) -> str:
+    return re.sub(pattern, "", str(text))[:limit]
+
+
+def note(step: str, request_id: object, tool: object = "", reason: str = "") -> None:
+    """One line of the relay log: time, request id, tool name, step, reason
+    (RT-6.13 step 6). Never the prompt's description or preview, nor anything of
+    the tool's input: the log is for telling what the relay did, and nobody
+    keeps stderr. `reason` is a fixed word or a human's username, an error as
+    its class name only. Newest 500 lines kept. Never raises: a failed write
+    must not fail the relay."""
+    try:
+        path = log_path()
+        if path is None:
+            return
+        line = json.dumps({
+            "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "id": _clean(request_id, r"[^A-Za-z0-9]", 16),
+            "tool": _clean(tool, r"[^\w.:-]", 64),
+            "step": step,
+            "reason": _clean(reason, r"[^\w .:@,-]", 120),
+        }) + "\n"
+        session_file.append_private(path, line)
+        lines = path.read_text().splitlines(keepends=True)
+        if len(lines) > LOG_LINES:
+            session_file.write_private(path, "".join(lines[-LOG_LINES:]))
+    except Exception as exc:  # noqa: BLE001 — a diagnostic, never part of the relay
+        log.debug("permission relay log not written: %s", type(exc).__name__)
 
 
 def relayed() -> bool:

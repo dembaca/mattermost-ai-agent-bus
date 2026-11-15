@@ -90,6 +90,11 @@ def _me() -> str:
     return os.environ.get("MM_BOT_USER_ID") or _uid
 
 
+def bot_id() -> str:
+    """The bot's user id, '' when none is known yet."""
+    return _me()
+
+
 def _path() -> Path | None:
     uid = _me()
     if not uid:

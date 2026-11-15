@@ -3,6 +3,29 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.91.2
+
+### Added
+
+- **A relay log for permission prompts** ([RT-6.13](docs/arc42/06-runtime-view.md)
+  step 6): a background subagent's permission dialog was approved in the
+  terminal and no DM came, and nothing could tell whether Claude Code never
+  sent the request or the server failed (its log lines go to stderr, which
+  nobody keeps). Each step of the relay now leaves one JSON line in
+  `permission-<uid>.log` in the state directory (0600): request received, not
+  relayed (with the reason), DM posted, posting failed (the error's class), verdict
+  sent (allow or deny, by whom), closed at the turn's end, and a `yes`/`no` for
+  an id that is not open. A line holds a time, the request id, the tool name,
+  the step and a reason, never the prompt's description or input, nor any
+  command, path or file content. The newest 500 lines are kept; a failed
+  write never fails the relay. The sweep removes the file of a bot that is
+  gone. RT-6.13's error table says what a missing `request received` line
+  means for a subagent's prompt.
+- ADR-009 and ADR-011 in the decision table of
+  [Section 9](docs/arc42/09-architecture-decisions.md) say what is built:
+  ADR-009 all three phases, ADR-011 phase 3 (0.86.0) and `latest` (0.87.0).
+  No decision text changed.
+
 ## 0.91.1
 
 ### Fixed

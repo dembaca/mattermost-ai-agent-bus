@@ -96,13 +96,14 @@ def test_old_state_of_a_bot_without_session_is_removed(mm, run):
     old = [state_file(run, f"{k}-{GONE}.env", days_old=3)
            for k in ("coord", "listen", "presence", "turn")]
     old.append(state_file(run, f"stats-{GONE}.jsonl", days_old=3))
+    old.append(state_file(run, f"permission-{GONE}.log", days_old=3))  # the relay log (RT-6.13)
     fresh = state_file(run, f"coord-{'f' * 26}.env", days_old=0.1)  # touched today
     live = state_file(run, f"presence-{LIVE}.env", days_old=3)
     dry = run(SWEEP, MM_BOT_TOKEN=None, MM_BOT_USER_ID=None)
-    assert "would remove 5 state file(s)" in dry.stdout
+    assert "would remove 6 state file(s)" in dry.stdout
     assert all((run.state_dir / f).exists() for f in old)
     r = run(SWEEP, "--apply", MM_BOT_TOKEN=None, MM_BOT_USER_ID=None)
-    assert "removed 5 state file(s) of bots without a session" in r.stderr
+    assert "removed 6 state file(s) of bots without a session" in r.stderr
     assert not any((run.state_dir / f).exists() for f in old)
     assert (run.state_dir / fresh).exists() and (run.state_dir / live).exists()
 
