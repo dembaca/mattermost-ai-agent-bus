@@ -12,7 +12,7 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -2560,6 +2560,17 @@ async def _roots_from_trusted(client: MattermostAdapter, roots: set[str],
     return out
 
 
+def _note_answer(uid: str, root: str, create_at_ms: int, *, thread: bool, questions: Mapping[str, str]) -> None:
+    """RT-6.9: a trusted human's first answer to an ask, with its wait and its
+    own time (`at`, for the saved waiting); `coord` when it answers a question
+    to the 👑 (RT-6.25), which the asks' waits leave out, also in a later part
+    than the question's."""
+    got = asks.answered(uid, root, create_at_ms / 1000, thread=thread)
+    if got:
+        stats.record("answer", id=got[0], wait=got[1], at=int(create_at_ms / 1000),
+                     **({"coord": 1} if got[0] in questions else {}))
+
+
 async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, Any]]:
     client = _get_client()
     posts = [e.post for e in events if e.kind not in OWN_EVENTS]
@@ -2663,11 +2674,7 @@ async def _event_items(events: list[Any], raw: bool = False) -> list[dict[str, A
         # reaction or a restarted server counts nothing again.
         if uid and root and cls == gate.TRUSTED and (
                 e.kind != "reaction" or item.get("answer") or item.get("choice")):
-            got = asks.answered(uid, root, e.post.create_at / 1000,
-                                thread=e.kind != "reaction")
-            if got:
-                # `at`: the answer's own time, for the saved waiting (RT-6.9).
-                stats.record("answer", id=got[0], wait=got[1], at=int(e.post.create_at / 1000))
+            _note_answer(uid, root, e.post.create_at, thread=e.kind != "reaction", questions=questions)
         if raw:
             item |= {"post": e.post.json(), "channel": e.channel.json() if e.channel else None}
         else:

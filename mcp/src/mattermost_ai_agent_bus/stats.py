@@ -192,7 +192,10 @@ def _asks(events: list[dict[str, Any]], now: float) -> dict[str, int]:
     posted = {e["id"]: _t(e) for e in events if e.get("k") == "ask" and e.get("id") and e["id"] not in coord}
     waits: dict[str, int] = {}
     for e in events:
-        if e.get("k") == "answer" and e.get("id") and e["id"] not in waits and e["id"] not in coord:
+        # An answer to a question to the 👑 says so itself: its question may
+        # have closed in an earlier part, with the advice.
+        if (e.get("k") == "answer" and e.get("id") and e["id"] not in waits and e["id"] not in coord
+                and not e.get("coord")):
             waits[e["id"]] = int(e.get("wait", 0))
     open_at = [t for pid, t in posted.items() if pid not in waits]
     return {
@@ -310,8 +313,12 @@ def _woke(events: list[dict[str, Any]], i: int) -> tuple[bool, bool] | None:
     e = events[i]
     if e.get("wk"):
         return bool(e.get("wa")), bool(e.get("wh"))
-    start = next((j for j in range(i - 1, -1, -1) if events[j].get("k") == "turn_end"), -1)
-    found = [h for h in events[start + 1:i] if _wakes(h)]
+    # Back to the turn before it. One that never ended (interrupted) leaves no
+    # telling what came during it from what came after: none of it counts for
+    # this turn (RT-6.9), at the cost of a push that came after an Escape.
+    start = next((j for j in range(i - 1, -1, -1) if events[j].get("k") in ("turn", "turn_end")), -1)
+    found = [] if start >= 0 and events[start].get("k") == "turn" else [
+        h for h in events[start + 1:i] if _wakes(h)]
     if not found:
         end = next((j for j in range(i + 1, len(events)) if events[j].get("k") in ("turn", "turn_end")),
                    len(events))

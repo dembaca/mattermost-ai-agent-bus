@@ -3,6 +3,24 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.91.1
+
+### Fixed
+
+- **A bus turn after an interrupted turn is no longer woken by what came
+  during it** ([RT-6.9](docs/arc42/06-runtime-view.md) step 1): a trusted
+  human's reply handed over in a turn the human then interrupted made the next
+  agent-woken bus turn a human's, and one push before a bus turn that was
+  interrupted and started again woke both. The turn after an interrupted one
+  now takes nothing from before it; a push after an Escape is lost to it (an
+  undercount, never a wrong class).
+- **A human's answer to a question the 👑 had settled in an earlier part no
+  longer counts as an ask** (RT-6.9 step 2): the answer says it answers a
+  question to the 👑 (`coord`), and the Asks waiting figures leave it out.
+- RT-6.9 step 3 says that human posts per agent-day differ between channel
+  and listener sessions: a worker's unaddressed human post counts only where
+  `wait_for_events` returns it.
+
 ## 0.91.0
 
 ### Added

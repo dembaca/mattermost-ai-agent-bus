@@ -720,3 +720,62 @@ def test_the_settled_report_counts_old_lines_as_unknown():
     assert (s["human_posts_per_day"], s["human_answers_per_day"]) == (5.0, 1.0)
     cursor_only = stats.report([lines[2]])[0]["settled"]
     assert cursor_only["agent_turns_pct"] is None and cursor_only["bus_turns_agent"] is None
+
+
+def test_what_came_during_an_interrupted_human_turn_wakes_no_bus_turn():
+    """RT-6.9: after a turn that was interrupted (no turn_end), what was handed
+    over during it cannot be told from what came after: a trusted human's
+    reply then does not make the next bus turn a human's; the agent's push
+    after the Escape is lost to it too, so it counts in neither (an
+    undercount, never a wrong class)."""
+    stats.record("turn", by="human")
+    stats.record("heard", agent=0, human=1, trusted=1, other=0)   # during the interrupted turn
+    stats.record("heard", agent=1, human=0, trusted=0, other=0, pushed=1)
+    stats.record("turn", by="bus")
+    stats.record("turn_end")
+    s = stats.summary("0.91.1")
+    assert (s["bus_turns"], s["bus_turns_agent"], s["bus_turns_human"]) == (1, 0, 0)
+
+
+def test_one_push_wakes_one_turn_when_a_bus_turn_is_interrupted_and_restarted():
+    """RT-6.9: the push before an interrupted bus turn woke that turn only; the
+    turn started again after it has nothing of its own and counts in neither."""
+    stats.record("heard", agent=1, human=0, trusted=0, other=0, pushed=1)
+    stats.record("turn", by="bus")                                # interrupted
+    stats.record("turn", by="bus")
+    stats.record("turn_end")
+    s = stats.summary("0.91.1")
+    assert (s["bus_turns"], s["bus_turns_agent"], s["bus_turns_human"]) == (2, 1, 0)
+
+
+def test_a_human_answer_to_a_question_the_coordinator_settled_before_the_cut():
+    """RT-6.9 step 2: a question to the 👑 closed with its advice in one part; a
+    trusted human's answer in the next part has no ask there, and says by
+    `coord` that it answers a question to the 👑: no ask, no wait counted, a
+    human answer all the same."""
+    now = int(time.time())
+    day = now - stats.PART_SEC - 100
+    _write_events({"k": "ask", "t": day, "id": "q1", "coord": 1},
+                  {"k": "advice", "t": day + 30, "id": "q1"})
+    one = stats.cut("0.91.1", now=now)
+    assert (one["asks_crown"], one["asks_crown_answered"], one["asks"]) == (1, 1, 0)
+    stats.record("answer", id="q1", wait=stats.PART_SEC, at=now + 5, coord=1)
+    two = stats.summary("0.91.1")
+    assert (two["asks"], two["asks_answered"], two["ask_wait_sec"]) == (0, 0, 0)
+    assert (two["asks_crown"], two["human_answers"]) == (0, 1)
+
+
+def test_the_answer_to_a_question_to_the_coordinator_is_marked(monkeypatch):
+    """RT-6.9: a trusted human's answer to a question to the 👑 is noted with
+    `coord`, an answer to an ask to a human without; then the asks' waits
+    leave it out also where the question is not in the part."""
+    from mattermost_ai_agent_bus import asks
+    answered = iter([("q1", 60), ("a2", 30)])
+    monkeypatch.setattr(asks, "answered", lambda *a, **kw: next(answered))
+    questions = {"q1": "alice 0"}
+    server._note_answer(UID, "q1", 5_000_000, thread=True, questions=questions)
+    server._note_answer(UID, "a2", 6_000_000, thread=False, questions=questions)
+    assert [(e["id"], e.get("coord"), e["at"]) for e in _events() if e["k"] == "answer"] == [
+        ("q1", 1, 5000), ("a2", None, 6000)]
+    s = stats.summary("0.91.1")
+    assert (s["asks"], s["asks_answered"], s["ask_wait_sec"], s["human_answers"]) == (1, 1, 30, 2)
