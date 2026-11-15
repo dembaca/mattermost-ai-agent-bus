@@ -628,3 +628,37 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
 .qa[open] summary::after { transform: rotate(45deg); }
 .qa summary h3 { font-size: .875rem; font-weight: 540; line-height: 1.6; }
 .qa p { margin: 0 0 1rem; color: var(--muted); max-width: 34rem; }
+
+/* ---------- what works where ---------- */
+
+.sr {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.section h3.sub3 { font-size: 1rem; font-weight: 560; margin: 2.5rem 0 .75rem; }
+.matrix {
+  overflow-x: auto;
+  margin: 0 calc(-1 * var(--gutter));
+  padding: 0 var(--gutter);
+  -webkit-overflow-scrolling: touch;
+}
+.matrix:focus-visible { outline-offset: -2px; }
+.matrix table {
+  border-collapse: collapse;
+  min-width: 44rem;
+  font-size: .8125rem;
+  line-height: 1.4;
+}
+.matrix th, .matrix td {
+  padding: .5rem .625rem;
+  border-bottom: 1px solid var(--hair);
+  text-align: left;
+  vertical-align: top;
+}
+.matrix thead th { color: var(--ink); font-weight: 560; vertical-align: bottom; }
+.matrix tbody th { color: var(--ink); font-weight: 500; min-width: 10rem; }
+.matrix td { color: var(--muted); }
+.matrix .rec { display: block; color: var(--muted); font-weight: 460; }
+.matrix sup { font-size: .7em; }
+.footnotes { margin: .75rem 0 0; padding-left: 1.25rem; color: var(--muted); font-size: .8125rem; }
+.footnotes li { margin-bottom: .25rem; }
