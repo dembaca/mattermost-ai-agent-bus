@@ -615,7 +615,6 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
 .matrix sup, .matrix-list sup { font-size: .65rem; margin-left: 1px; }
 .matrix sup a, .matrix-list sup a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
 
-.matrix-list { display: none; }
 .matrix-after { margin: 1rem 0 0; }
 .footnotes { margin: .75rem 0 0; padding-left: 1.25rem; color: var(--muted); font-size: .8125rem; max-width: 40rem; }
 .footnotes li { margin-bottom: .25rem; }
@@ -625,29 +624,28 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --tint: rgba(90, 174, 255, .08); } }
 :root[data-theme="dark"] { --tint: rgba(90, 174, 255, .08); }
 
-/* Below 54rem the table would scroll sideways: one block per harness instead. */
+/* With JS the stage (src/illustrations/Matrix.tsx) shows the table; the
+   real <table> and the legend stay for screen readers. Without JS they are
+   the table, scrolling sideways on narrow screens. */
+.matrix-stage { display: none; }
+.js .matrix-stage {
+  display: block;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--tile-bg, #f4f4f2);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .matrix-stage { background: #1f1f1e; }
+}
+:root[data-theme="dark"] .matrix-stage { background: #1f1f1e; }
+.js .matrix,
+.js .legend {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.matrix { overflow-x: auto; }
+
 @media (max-width: 54rem) {
   .matrix-wrap { width: auto; margin-left: 0; }
-  .matrix { display: none; }
   .legend-rec { margin-left: 0; }
-  .matrix-list { display: grid; gap: 1.5rem; }
-  .matrix-list h4 {
-    margin: 0 0 .25rem;
-    font-size: .875rem;
-    font-weight: 560;
-    color: var(--ink);
-  }
-  .matrix-list .rec { margin-left: .375rem; font-size: .75rem; font-weight: 460; color: var(--muted); }
-  .matrix-list ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--hair); }
-  .matrix-list li {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 1rem;
-    min-height: 2.25rem;
-    border-bottom: 1px solid var(--hair);
-    font-size: .8125rem;
-  }
-  .matrix-list .ml-label { color: var(--text); }
-  .matrix-list .ml-mark { flex: none; white-space: nowrap; }
 }

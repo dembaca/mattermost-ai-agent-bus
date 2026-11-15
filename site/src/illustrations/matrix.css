@@ -1,0 +1,219 @@
+/* What works where, as a stage. Nested under .mx so nothing leaks out. */
+.mx {
+  & .ss-stage {
+    overflow: hidden;
+    background: transparent;
+    --ss-font: 'Inter', system-ui, -apple-system, sans-serif;
+    --mx-label: 200px;
+    --mx-pad: 24px;
+  }
+
+  /* Pinned bottom bleed: 24px in from the sides and the top, off the
+     bottom by the card's own padding, so every row stays whole */
+  & .mx-card {
+    position: absolute;
+    left: 24px;
+    right: 24px;
+    top: 24px;
+    bottom: -24px;
+    box-sizing: border-box;
+    padding: 4px var(--mx-pad) 0;
+    border-radius: 14px;
+    background: var(--ss-surface);
+    box-shadow: var(--ss-shadow-ground);
+    overflow: hidden;
+  }
+
+  /* The recommended column: a faint accent tint that settles in */
+  & .mx-tint {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--mx-pad) + var(--mx-label));
+    width: calc((100% - 2 * var(--mx-pad) - var(--mx-label)) / 7);
+    background: var(--ss-accent-soft);
+    opacity: 0;
+    transition: opacity 0.9s cubic-bezier(0.25, 0.8, 0.25, 1);
+  }
+
+  & .mx-tint[data-on] {
+    opacity: 0.7;
+  }
+
+  & .mx-row {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--mx-label) repeat(7, minmax(0, 1fr));
+    align-items: center;
+    height: 42px;
+    border-bottom: 1px solid var(--ss-line-faint);
+    font-size: 13px;
+    color: var(--ss-text-strong);
+    white-space: nowrap;
+  }
+
+  & .mx-row--head {
+    height: 52px;
+    border-bottom-color: var(--ss-line);
+  }
+
+  & .mx-head {
+    display: grid;
+    justify-items: center;
+    gap: 2px;
+  }
+
+  & .mx-name {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ss-text-strong);
+  }
+
+  & .mx-sub {
+    font-size: 11px;
+    color: var(--ss-text-faint);
+  }
+
+  & .mx-label {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+  }
+
+  & .mx-cell {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  & .mx-partly {
+    position: relative;
+    display: inline-flex;
+  }
+
+  & .mx-partly .mx-note {
+    position: absolute;
+    left: calc(100% + 2px);
+    top: -4px;
+  }
+
+  & .mx-note {
+    font-size: 9.5px;
+    line-height: 1;
+    color: var(--ss-text-faint);
+  }
+
+  & .mx-foot {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    height: 56px;
+  }
+
+  & .mx-legend {
+    display: flex;
+    gap: 18px;
+    font-size: 12px;
+    color: var(--ss-text);
+  }
+
+  & .mx-key {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  & .mx-rec {
+    opacity: 0;
+    transform: translateY(3px);
+    transition: opacity 0.5s ease 0.3s, transform 0.8s cubic-bezier(0.25, 0.8, 0.25, 1) 0.3s;
+  }
+
+  & .mx-rec[data-on] {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* ---- Compact (358): harnesses as rows, features as numbered columns ---- */
+
+  & .ss-stage[data-layout='compact'] {
+    --mx-pad: 12px;
+  }
+
+  & .mx-card--compact {
+    left: 16px;
+    right: 16px;
+    top: 16px;
+    padding-top: 0;
+  }
+
+  & .mx-tint--row {
+    top: 28px;
+    bottom: auto;
+    left: 0;
+    width: 100%;
+    height: 40px;
+  }
+
+  & .mx-crow {
+    position: relative;
+    display: grid;
+    grid-template-columns: 104px repeat(7, minmax(0, 1fr));
+    align-items: center;
+    height: 40px;
+    border-bottom: 1px solid var(--ss-line-faint);
+    white-space: nowrap;
+  }
+
+  & .mx-crow--head {
+    height: 28px;
+    border-bottom-color: var(--ss-line);
+  }
+
+  & .mx-crow--head .mx-num {
+    justify-self: center;
+  }
+
+  & .mx-cname {
+    display: grid;
+    gap: 1px;
+  }
+
+  & .mx-num {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--ss-text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  & .mx-keylist {
+    position: relative;
+    display: grid;
+    gap: 4px;
+    margin: 14px 0 12px;
+    padding: 0;
+    list-style: none;
+    font-size: 12px;
+    color: var(--ss-text);
+  }
+
+  & .mx-keylist li {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  & .mx-keylist .mx-num {
+    width: 10px;
+  }
+
+  & .mx-card--compact .mx-legend {
+    position: relative;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--ss-line-faint);
+  }
+}

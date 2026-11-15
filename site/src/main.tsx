@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import type { Theme } from './kit'
 import HeroChat from './illustrations/HeroChat'
 import { Coordination, Crown, Delegation, Owner, Trust } from './illustrations/Bento'
+import Matrix from './illustrations/Matrix'
 
 // The page is plain HTML (index.html): it reads fully without JS. This file
 // only mounts the illustrations into their empty slots (the page hides them
@@ -48,6 +49,7 @@ const PICTURES: Record<string, ComponentType<{ theme: Theme }>> = {
   owner: Owner,
   trust: Trust,
   delegation: Delegation,
+  matrix: Matrix,
 }
 
 const hero = document.getElementById('hero-demo')
