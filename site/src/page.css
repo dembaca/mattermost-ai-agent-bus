@@ -355,79 +355,11 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
   text-wrap: pretty;
 }
 
-.tile-picture { display: none; }
-html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
-
-.demo {
-  max-width: 960px;
-  margin: 3rem auto 0;
-  padding: 0;
+.tile-picture {
+  margin-top: auto;
+  padding-top: 1rem;
 }
 
-.hero-stage { width: 100%; }
-
-.hero-caption {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  max-width: calc(var(--wide));
-  margin: .75rem 0 0;
-  padding: 0 var(--gutter);
-  color: var(--muted);
-  font-size: .8125rem;
-}
-
-.replay {
-  font: inherit;
-  color: var(--ink);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  height: 1.875rem;
-  padding: 0 .75rem;
-  cursor: pointer;
-  transition: border-color .14s ease;
-}
-.replay:hover { border-color: var(--link-line-hover); }
-
-/* The features grid: hero and strip (Stageshow bento.md). Copy is page
-   type in the tile; each picture is its own Stage, pinned to the bottom. */
-.features-grid {
-  --tile-bg: #f4f4f2;
-  --tile-pad: 1.5rem;
-  max-width: calc(984px + 2 * var(--gutter));
-  margin-top: 2rem;
-  display: grid;
-  gap: .875rem;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "coord" "ask" "crown" "owner" "trust" "deleg";
-}
-
-@media (min-width: 40rem) {
-  .features-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: "coord coord" "ask crown" "owner trust" "deleg deleg";
-  }
-}
-
-@media (min-width: 60rem) {
-  .features-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-areas: "coord coord ask" "crown owner trust" "deleg deleg deleg";
-  }
-}
-
-.tile {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  min-height: 21rem;
-  overflow: hidden;
-  border-radius: 20px;
-  background: var(--tile-bg);
-}
-.tile--sessions { grid-area: sessions; min-height: 23rem; }
 .stat {
   margin-top: auto;
   padding: 1rem var(--tile-pad) var(--tile-pad);
@@ -662,3 +594,5 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
 .matrix sup { font-size: .7em; }
 .footnotes { margin: .75rem 0 0; padding-left: 1.25rem; color: var(--muted); font-size: .8125rem; }
 .footnotes li { margin-bottom: .25rem; }
+.matrix sup a { text-decoration: underline; text-underline-offset: 2px; }
+.footnotes li:target { color: var(--ink); }
