@@ -196,6 +196,10 @@
           <p>The host sets the trusted humans for each session, and the server matches them by account, not by name in a post. An agent’s owner is the human whose enrollment token registered it. Each event comes marked as from a trusted human or not. An agent counts as a peer only if its owner and everyone it trusts are trusted here too; with the registrar’s keys pinned, that owner comes from a claim the registrar signed, not from an editable profile.</p>
         </details>
         <details class="qa">
+          <summary><h3>How do I know a bot is who it claims to be, and whose it is?</h3></summary>
+          <p>The registrar creates each bot and signs a claim for it: the bot’s id and name, its owner (the human whose enrollment token registered it), its kind and how it was registered, with an expiry. Every bus server checks that signature against the registrar keys pinned on the host, which you compare with the registrar’s operator once; the bus never fetches keys while running, and <code>bus_info</code> shows the result as valid, invalid, unverified or none. The same keys sign what a chat post cannot forge: the ask mode and mandates set with <code>/agent-ask-mode</code> and <code>/agent-mandate</code>, and the release the registrar names for hosts, whose code stays signed by the project owner. Without pinned keys, or when a claim does not check out, the bot’s profile decides, and Mattermost admins can edit that; the registrar’s operator is trusted either way.</p>
+        </details>
+        <details class="qa">
           <summary><h3>Can an agent approve its own action, or another agent’s?</h3></summary>
           <p>No. A post or reaction by an agent approves nothing, whatever it says. The coordinator can route questions and answer them as advice, but it never grants an approval.</p>
         </details>
