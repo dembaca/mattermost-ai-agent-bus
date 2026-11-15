@@ -182,19 +182,27 @@ def test_the_tool_reports_what_the_script_reports(mm, run):
          "bus_turn_sec": 300, "bus_turn_max_sec": 200, "asks": 2, "asks_answered": 2, "ask_wait_sec": 700,
          "ask_wait_max_sec": 600, "asks_open": 0, "ask_open_sec": 0, "ask_open_max_sec": 0,
          "asks_idle": 2, "saved_n": 1, "saved_sec": 1801, "saved_max_sec": 1801, "saved_open_n": 0,
-         "saved_open_sec": 0, "crown_sec": 80000, "posts": [3, 300], "tok": tok},
+         "saved_open_sec": 0, "crown_sec": 80000, "posts": [3, 300], "tok": tok,
+         "bus_turns_agent": 2, "bus_turns_human": 1, "asks_crown": 0, "asks_crown_answered": 0,
+         "asks_human": 2, "tasks_agent_only": 3, "tasks_with_human": 1, "human_posts_trusted": 4,
+         "human_posts_other": 0, "human_answers": 2},
         {"v": "0.91.0", "sid": "5e55", "part": 2, "final": True, "rt": "claude-code", "min": 61,
          "turns": 1, "bus_turns": 1, "turns_timed": 1, "turn_sec": 30, "turn_max_sec": 30,
          "bus_turns_timed": 1, "bus_turn_sec": 30, "bus_turn_max_sec": 30, "asks": 1, "asks_answered": 1,
          "ask_wait_sec": 60, "ask_wait_max_sec": 60, "asks_open": 0, "ask_open_sec": 0,
          "ask_open_max_sec": 0, "asks_idle": 1, "saved_n": 0, "saved_sec": 0, "saved_max_sec": 0,
-         "saved_open_n": 1, "saved_open_sec": 3600, "crown_sec": 0, "posts": [1, 1], "tok": tok},
+         "saved_open_n": 1, "saved_open_sec": 3600, "crown_sec": 0, "posts": [1, 1], "tok": tok,
+         "bus_turns_agent": 1, "bus_turns_human": 0, "asks_crown": 1, "asks_crown_answered": 1,
+         "asks_human": 0, "tasks_agent_only": 0, "tasks_with_human": 0, "human_posts_trusted": 0,
+         "human_posts_other": 1, "human_answers": 1},
         {"v": "0.91.0", "sid": "a1b2", "part": 1, "final": True, "rt": "claude-code", "min": 90,
          "turns": 4, "bus_turns": 0, "turns_timed": 4, "turn_sec": 400, "turn_max_sec": 200,
          "bus_turns_timed": 0, "bus_turn_sec": 0, "bus_turn_max_sec": 0, "asks": 0, "asks_answered": 0,
          "ask_wait_sec": 0, "ask_wait_max_sec": 0, "asks_open": 0, "ask_open_sec": 0,
          "ask_open_max_sec": 0, "asks_idle": 0, "saved_n": 0, "saved_sec": 0, "saved_max_sec": 0,
-         "saved_open_n": 0, "saved_open_sec": 0, "crown_sec": 120, "posts": [0, 0]},
+         "saved_open_n": 0, "saved_open_sec": 0, "crown_sec": 120, "posts": [0, 0],
+         "asks_crown": 2, "asks_crown_answered": 1, "asks_human": 1, "tasks_agent_only": 1,
+         "tasks_with_human": 0, "human_posts_trusted": 1, "human_posts_other": 0, "human_answers": 0},
     ]
     mm.posts[:0] = [{"id": f"s{i}", "user_id": "x" * 26, "create_at": 1,
                      "message": "STATS " + json.dumps(line)} for i, line in enumerate(lines)]
@@ -212,6 +220,10 @@ def test_the_tool_reports_what_the_script_reports(mm, run):
     # Saved waiting: 3 answered, all while idle; back once after 30 min, once still away (1 h at least).
     assert ["0.91.0", "claude-code", "2", "3", "100%", "1", "30", "min", "30", "min", "1", "1:00", "h"] in cells
     assert ["0.91.0", "coordinator", "1", "1", "24", "10%", "8%", "1.5", "0.1", "1%"] in cells
+    # Settled without a human (RT-6.9 step 3), per role; the 0.20.0-0.53.0 lines have none.
+    assert ["0.91.0", "coordinator", "1", "1", "67%", "0%", "75%", "4", "2"] in cells
+    assert ["0.91.0", "worker", "2", "0.1", "100%", "50%", "100%", "19.1", "9.5"] in cells
+    assert all(r["settled"] is None for r in stats.report(lines)[:-1])
     assert ["0.91.0", "worker", "2", "2", "2.5", "10%", "7%", "1.3", "0.4", "1%"] in cells
 
 

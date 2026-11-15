@@ -239,7 +239,7 @@ attaches its own with `files` on `post_message` / `reply_in_thread`, uploaded by
 ([arc42 §6.33](arc42/06-runtime-view.md#633-an-agent-attaches-a-file)).
 
 Every session posts a `STATS {…}` line to `agents-stats` (`MM_STATS_CHANNEL`; `off`
-disables it, a missing channel is skipped) for each day of session time and at its end: counts, sizes and seconds of what the bus added to the session, never content
+disables it, a missing channel is skipped) for each day of session time and at its end: counts, sizes and seconds of what the bus added to the session and of what the agents settled without a human, never content
 ([arc42 §6.9](arc42/06-runtime-view.md#69-measuring-the-coordination-overhead)).
 `bin/mm-agent-stats.sh report` compares them by plugin version and coding harness.
 

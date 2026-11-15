@@ -7,6 +7,19 @@ before 0.5.0 are described in the git history.
 
 ### Added
 
+- **Settled without a human** ([RT-6.9](docs/arc42/06-runtime-view.md)
+  step 1): what the agents settled among themselves or through the
+  coordinating agent, so the human did not have to act. Every `STATS` line
+  counts the turns the bus started by who woke them (`bus_turns_agent`,
+  `bus_turns_human`, from the server-verified author of what it handed the
+  agent; only with turn hooks), the questions sent to the 👑 and those it
+  answered against the asks that reached a human (`asks_crown`,
+  `asks_crown_answered`, `asks_human`), the tasks this agent closed with `DONE`
+  on an agent's `TASK` with or without a human in the thread
+  (`tasks_agent_only`, `tasks_with_human`), and what humans did
+  (`human_posts_trusted`, `human_posts_other`, `human_answers`). The report's
+  new Settled table shows the shares per version and role, and human posts and
+  answers per agent-day. Counts only.
 - **Overhead stats for every day of a session**
   ([RT-6.9](docs/arc42/06-runtime-view.md) step 2): long sessions (days,
   resumed) rarely end, so 0.87–0.90 had almost no Claude Code numbers. The
@@ -15,7 +28,8 @@ before 0.5.0 are described in the git history.
   parts of a session), `part` and, on the end's line, `final: true`. What is
   open at a cut (a running turn, an open ask, an answer the human has not come
   back after, the crown) goes on in the next part and counts there, once.
-- **Saved waiting** (RT-6.9 step 1): per ask a trusted human answered on the
+- **Saved waiting**, a proxy for the human's reaction time, kept as a side
+  figure (RT-6.9 step 1): per ask a trusted human answered on the
   bus while the terminal was idle (no human prompt since the ask), the time
   from the answer to the human's next prompt: `asks_idle`, `saved_n`,
   `saved_sec`, `saved_max_sec`, and `saved_open_n`, `saved_open_sec` for
@@ -27,8 +41,8 @@ before 0.5.0 are described in the git history.
   else a worker's, so a session can count in both.
 - **The report** (`mm-agent-stats.sh report`, `stats_report`) counts a
   session once over its parts (`sessions` distinct, `parts` the lines) and adds
-  `saved` (per version and harness) and `roles` (per version: tokens, turns,
-  asks), with a table each. Lines from older versions count as before.
+  `settled` (per version and role), `saved` (per version and harness) and
+  `roles` (per version: tokens, turns, asks, settled), with a table each. Lines from older versions count as before.
 
 ## 0.90.2
 

@@ -288,6 +288,92 @@ def crown_open() -> bool:
     return bool(last and last[-1].get("on"))
 
 
+# --- what woke a turn (RT-6.9 step 1, settled without a human) ----------------
+# The server sees each turn's start and end (the hooks' presence, RT-6.17) and
+# everything it hands the agent (pushed or returned by wait_for_events), with
+# the server-verified author class (RT-6.8). What woke a turn: what it handed
+# over while no turn ran (a push the turn takes up, RT-6.12 step 4), else the
+# first hand-over inside the turn (what a listener that ended woke it for,
+# collected with wait_for_events, RT-6.2). Noted at the turn's end as `woke`;
+# the summary pairs it with the turn the bus started.
+_waking: set[str] = set()       # classes handed over while no turn ran
+_woke: set[str] | None = None   # the running turn's; None while unknown
+_running = False
+
+
+def delivered(classes: set[str], trusted: int = 0, other: int = 0) -> None:
+    """The agent got posts or reactions (RT-6.9): their authors' classes
+    ("agent", "human"), and how many were posts by a trusted human and by one
+    not trusted. Never raises."""
+    global _woke
+    classes = classes & {"agent", "human"}
+    if not _running:
+        _waking.update(classes)
+    elif _woke is None and classes:
+        _woke = set(classes)
+    if trusted or other:
+        record("heard", trusted=trusted, other=other)
+
+
+def turn(running: bool) -> None:
+    """A turn begins or ends (the hooks' presence working / idle). A turn that
+    began again without an end (interrupted) notes nothing, like its duration."""
+    global _woke, _running
+    if running:
+        _woke = set(_waking) or None
+        _waking.clear()
+    elif _running and _woke:
+        record("woke", agent=int("agent" in _woke), human=int("human" in _woke))
+    if not running:
+        _woke = None
+    _running = running
+
+
+def _woken(events: list[dict[str, Any]], out: set[int]) -> dict[str, int]:
+    """bus_turns_agent / bus_turns_human: the turns the bus started, by what
+    woke them: only agents' posts, or a human's among them. A `woke` belongs
+    to the turn last started before it; one the bus did not start counts
+    nothing, nor does a bus turn nothing classified (a listen window that ran
+    out, a stall event)."""
+    agent = human = 0
+    last: dict[str, Any] | None = None
+    paired: set[int] = set()
+    for e in events:
+        if e.get("k") == "turn":
+            last = e
+        elif (e.get("k") == "woke" and last is not None and last.get("by") == "bus"
+              and id(last) not in paired and id(last) not in out):
+            paired.add(id(last))
+            if e.get("human"):
+                human += 1
+            elif e.get("agent"):
+                agent += 1
+    return {"bus_turns_agent": agent, "bus_turns_human": human}
+
+
+def _settled(counted: list[dict[str, Any]], events: list[dict[str, Any]]) -> dict[str, int]:
+    """Questions to the 👑 and to humans (counted where they close, as `asks`),
+    those the 👑 answered (advice, RT-6.25 step 4), tasks this agent closed
+    (DONE) with or without a human in the thread, and what humans did: posts
+    that reached the agent, trusted or not, and answers to its asks."""
+    advised = {e["id"] for e in events if e.get("k") == "advice" and e.get("id")}
+    asks = {e["id"]: e for e in counted if e.get("k") == "ask" and e.get("id")}
+    crown = [pid for pid, e in asks.items() if e.get("coord")]
+    done = [e for e in counted if e.get("k") == "task_done"]
+    heard = [e for e in counted if e.get("k") == "heard"]
+    answers = {e["id"] for e in counted if e.get("k") == "answer" and e.get("id")}
+    return {
+        "asks_crown": len(crown),
+        "asks_crown_answered": sum(1 for pid in crown if pid in advised),
+        "asks_human": len(asks) - len(crown),
+        "tasks_agent_only": sum(1 for e in done if not e.get("human")),
+        "tasks_with_human": sum(1 for e in done if e.get("human")),
+        "human_posts_trusted": sum(int(e.get("trusted", 0)) for e in heard),
+        "human_posts_other": sum(int(e.get("other", 0)) for e in heard),
+        "human_answers": len(answers),
+    }
+
+
 def _summarize(events: list[dict[str, Any]], version: str, fixed: overhead.Fixed | None,
                now: float, final: bool) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """One STATS line for the part in `events`, and, for a day's part (not
@@ -305,10 +391,12 @@ def _summarize(events: list[dict[str, Any]], version: str, fixed: overhead.Fixed
         if running is not None:
             carry.append(running)
             out.add(id(running))
-        answered = {e["id"] for e in events if e.get("k") == "answer" and e.get("id")}
+        # Closed: answered by a trusted human; a question to the 👑 also by its
+        # advice or when it was passed on to the human (RT-6.25).
+        closed = {e["id"] for e in events if e.get("k") in ("answer", "advice", "forwarded") and e.get("id")}
         human = _human_turns(events)
         for e in events:
-            if e.get("k") == "ask" and e.get("id") and e["id"] not in answered:
+            if e.get("k") == "ask" and e.get("id") and e["id"] not in closed:
                 busy = bool(e.get("busy")) or any(h > _t(e) for h in human)
                 carry.append(e | {"busy": 1} if busy else e)
                 out.add(id(e))
@@ -373,6 +461,11 @@ def _summarize(events: list[dict[str, Any]], version: str, fixed: overhead.Fixed
             "saved_open_sec": sum(max(0, round(now - at)) for at in pending) if final else 0,
         } if hooked else {}),
         "crown_sec": crown_sec,
+        # Settled without a human (RT-6.9 step 1): who woke the bus's turns
+        # (only with turn hooks), questions the 👑 settled, tasks closed
+        # between agents, and how often humans stepped in.
+        **(_woken(events, out) if hooked else {}),
+        **_settled(counted, events),
         **({"tok": tok} if tok else {}),
     }
     if not final:
@@ -700,6 +793,42 @@ def _saved_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     }
 
 
+def _settled_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Settled without a human (since 0.91.0): the share of the bus's turns
+    only agents woke (with turn hooks), of the questions the 👑 answered, of
+    the tasks closed with no human in the thread, and human posts and answers
+    per agent-day (the parts' minutes / 1440). None without the fields."""
+    rows = [r for r in rows if r.get("asks_crown") is not None]
+    if not rows:
+        return None
+    hooked = [r for r in rows if r.get("bus_turns_agent") is not None]
+    s: dict[str, Any] = {
+        "sessions": _sessions(rows),
+        "parts": len(rows),
+        "days": _sum(rows, lambda r: r.get("min")) / 1440,
+        "bus_turns_agent": _sum(hooked, lambda r: r.get("bus_turns_agent")) if hooked else None,
+        "bus_turns_human": _sum(hooked, lambda r: r.get("bus_turns_human")) if hooked else None,
+        "asks_crown": _sum(rows, lambda r: r.get("asks_crown")),
+        "asks_crown_answered": _sum(rows, lambda r: r.get("asks_crown_answered")),
+        "asks_human": _sum(rows, lambda r: r.get("asks_human")),
+        "tasks_agent_only": _sum(rows, lambda r: r.get("tasks_agent_only")),
+        "tasks_with_human": _sum(rows, lambda r: r.get("tasks_with_human")),
+        "human_posts_trusted": _sum(rows, lambda r: r.get("human_posts_trusted")),
+        "human_posts_other": _sum(rows, lambda r: r.get("human_posts_other")),
+        "human_answers": _sum(rows, lambda r: r.get("human_answers")),
+    }
+    d = s["days"]
+    return s | {
+        "agent_turns_pct": (_pct(s["bus_turns_agent"], s["bus_turns_agent"] + s["bus_turns_human"])
+                            if hooked else None),
+        "crown_settled_pct": _pct(s["asks_crown_answered"], s["asks_crown"] + s["asks_human"]),
+        "tasks_agent_pct": _pct(s["tasks_agent_only"], s["tasks_agent_only"] + s["tasks_with_human"]),
+        "human_posts_per_day": _tenth(s["human_posts_trusted"] + s["human_posts_other"], d),
+        "human_answers_per_day": _tenth(s["human_answers"], d),
+        "days": _round(d * 10) / 10,
+    }
+
+
 def _tok_of(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     rows = [r for r in rows if r.get("tok")]
     if not rows:
@@ -771,13 +900,15 @@ def report(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "static": _max(r.get("static") for r in rows),
             "skill": _max(r.get("skill") for r in rows),
             "tok": _tok_of(rows),
+            "settled": _settled_of(rows),
             "saved": _saved_of(rows),
             "harness": [{"harness": rt, "sessions": _sessions(rs), "turns": _turns_of(rs),
                          "asks": _asks_of(rs), "saved": _saved_of(rs)}
                         for rt, rs in sorted(by_rt.items())],
             "roles": [{"role": role, "parts": len(rs), "sessions": _sessions(rs),
                        "hours": _round(_sum(rs, lambda r: r.get("min")) / 60 * 10) / 10,
-                       "tok": _tok_of(rs), "turns": _turns_of(rs), "asks": _asks_of(rs)}
+                       "tok": _tok_of(rs), "turns": _turns_of(rs), "asks": _asks_of(rs),
+                       "settled": _settled_of(rs)}
                       for role, rs in sorted(by_role.items())],
             "plugin_turns_per_h": _tenth(plugin, hours),
             "all_turns": everything,

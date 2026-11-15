@@ -19,6 +19,9 @@ def state(tmp_path, monkeypatch):
     monkeypatch.setenv("MM_BOT_USER_ID", UID)
     monkeypatch.delenv("MM_STATS_CHANNEL", raising=False)
     monkeypatch.setattr(stats, "_unposted", [])
+    monkeypatch.setattr(stats, "_waking", set())
+    monkeypatch.setattr(stats, "_woke", None)
+    monkeypatch.setattr(stats, "_running", False)
     return tmp_path
 
 
@@ -478,3 +481,177 @@ def test_the_report_counts_a_session_once_and_splits_by_role():
     s = r["saved"]
     assert (s["sessions"], s["answered"], s["idle"], s["idle_pct"]) == (1, 3, 2, 67)
     assert (s["saved_n"], s["mean_saved_sec"], s["saved_open_n"], s["saved_open_sec"]) == (1, 600, 1, 300)
+
+
+# --- RT-6.9 step 1: settled without a human -----------------------------------
+
+def test_bus_turns_are_told_apart_by_who_woke_them():
+    """RT-6.9: a turn the bus started is the agents' when only agents' posts
+    woke it, a human's when a human's post was among them: what was handed
+    over while no turn ran (a push), else the turn's first hand-over (what
+    a listener woke it for). A human's turn and an interrupted one count nothing."""
+    stats.delivered({"agent"})                    # a push while idle
+    stats.record("turn", by="bus")
+    stats.turn(True)
+    stats.delivered({"human"}, trusted=1)         # later in the turn: did not wake it
+    stats.record("turn_end")
+    stats.turn(False)
+    stats.record("turn", by="bus")                # the listener's turn
+    stats.turn(True)
+    stats.delivered({"agent", "human"}, other=1)  # its first hand-over
+    stats.delivered({"agent"})
+    stats.turn(False)
+    stats.delivered({"agent"})
+    stats.record("turn", by="human")              # the human typed first
+    stats.turn(True)
+    stats.turn(False)
+    stats.record("turn", by="bus")
+    stats.turn(True)
+    stats.delivered({"agent"})
+    stats.turn(True)                              # interrupted: no end, nothing noted
+    s = stats.summary("0.91.0")
+    assert (s["bus_turns"], s["bus_turns_agent"], s["bus_turns_human"]) == (3, 1, 1)
+    assert (s["human_posts_trusted"], s["human_posts_other"]) == (1, 1)
+
+
+def test_a_bus_turn_running_at_the_cut_is_told_apart_where_it_ends():
+    """RT-6.9 step 2: the running turn's start goes on into the next part;
+    what woke it is noted at its end and counts there, once."""
+    now = int(time.time())
+    _write_events({"k": "turn", "t": now - stats.PART_SEC - 10, "by": "bus"})
+    stats.turn(True)
+    stats.delivered({"agent"})
+    one = stats.cut("0.91.0", now=now)
+    assert (one["bus_turns"], one["bus_turns_agent"], one["bus_turns_human"]) == (0, 0, 0)
+    stats.turn(False)
+    two = stats.summary("0.91.0")
+    assert (two["bus_turns"], two["bus_turns_agent"], two["bus_turns_human"]) == (1, 1, 0)
+
+
+def test_a_runtime_without_turn_hooks_sends_no_woken_turns():
+    """RT-6.9: without turn events what woke a turn is not told: absent, never
+    zero; the questions, tasks and human posts are counted all the same."""
+    stats.delivered({"human"}, trusted=2)
+    s = stats.summary("0.91.0")
+    assert "bus_turns_agent" not in s and s["human_posts_trusted"] == 2 and s["asks_crown"] == 0
+
+
+def test_questions_settled_by_the_coordinator_count_on_the_asking_side():
+    """RT-6.9, RT-6.25: questions to the 👑, those it answered (first advice
+    only), and asks that reached a human (one passed on to the human is the
+    new ask's); each where it closes, like `asks`."""
+    now = int(time.time())
+    _write_events(
+        {"k": "ask", "t": now - 900, "id": "q1", "coord": 1},
+        {"k": "ask", "t": now - 800, "id": "q2", "coord": 1},
+        {"k": "ask", "t": now - 700, "id": "q3"},
+        {"k": "advice", "t": now - 600, "id": "q1"}, {"k": "advice", "t": now - 500, "id": "q1"},
+        {"k": "forwarded", "t": now - 400, "id": "q2"}, {"k": "ask", "t": now - 400, "id": "q4"},
+        {"k": "answer", "t": now - 300, "id": "q4", "wait": 100},
+    )
+    s = stats.summary("0.91.0")
+    assert (s["asks_crown"], s["asks_crown_answered"], s["asks_human"]) == (2, 1, 2)
+    assert s["human_answers"] == 1
+
+
+def test_a_question_open_at_the_cut_counts_where_the_coordinator_answers():
+    """RT-6.9 step 2: a question to the 👑 open at the cut goes on, and counts
+    in the part of its advice, once; one it advised before the cut does not
+    go on."""
+    now = int(time.time())
+    day = now - stats.PART_SEC - 100
+    _write_events({"k": "post", "t": day, "chars": 1},
+                  {"k": "ask", "t": day + 10, "id": "q1", "coord": 1},
+                  {"k": "ask", "t": day + 20, "id": "q2", "coord": 1},
+                  {"k": "advice", "t": day + 30, "id": "q2"})
+    one = stats.cut("0.91.0", now=now)
+    assert (one["asks_crown"], one["asks_crown_answered"]) == (1, 1)
+    assert [e.get("id") for e in _events() if e["k"] == "ask"] == ["q1"]
+    stats.record("advice", id="q1")
+    two = stats.summary("0.91.0")
+    assert (two["asks_crown"], two["asks_crown_answered"], two["asks_human"]) == (1, 1, 0)
+
+
+async def test_a_done_on_an_agents_task_counts_whether_a_human_was_in_the_thread(monkeypatch):
+    """RT-6.9: DONE in a thread whose root is an agent's TASK; one read of the
+    thread: closed between agents without a human's post there, else with one;
+    no TASK, a human's TASK or a read that fails: nothing."""
+    from mattermost_ai_agent_bus import gate
+    from mattermost_ai_agent_bus.model import Post, Thread
+    cls = {"a1": gate.AGENT, "a2": gate.FOREIGN, "h1": gate.TRUSTED, "h2": gate.OTHER}
+
+    async def classes(client, posts):
+        return [cls[p.user_id] for p in posts]
+
+    monkeypatch.setattr(gate, "author_classes", classes)
+
+    def thread(*posts):
+        return Thread(root_id=posts[0].id, order=tuple(p.id for p in posts), posts=posts)
+
+    task = Post(id="r", user_id="a1", kind="TASK")
+    threads = {
+        "agents": thread(task, Post(id="x", user_id="a2", root_id="r"), Post(id="y", user_id="a1", root_id="r")),
+        "human": thread(Post(id="r", user_id="a1", kind="TASK"), Post(id="x", user_id="h2", root_id="r")),
+        "webhook": thread(Post(id="r", user_id="a1", kind="TASK"),
+                          Post(id="x", user_id="h2", root_id="r", from_webhook=True)),
+        "not a task": thread(Post(id="r", user_id="a1", kind="RESULT"), Post(id="x", user_id="h1")),
+        "humans task": thread(Post(id="r", user_id="h1", kind="TASK")),
+    }
+
+    class Client:
+        async def thread(self, root_id):
+            if root_id == "gone":
+                raise OSError("unreadable")
+            return threads[root_id]
+
+    for root in (*threads, "gone"):
+        await server._task_closed(Client(), root)
+    s = stats.summary("0.91.0")
+    assert (s["tasks_agent_only"], s["tasks_with_human"]) == (2, 1)
+
+
+def test_human_posts_that_reached_the_agent_are_counted_by_the_server():
+    """RT-6.9: posts by humans handed to the agent, trusted and not apart; a
+    reaction, an agent's post, a webhook and the server's own event are no
+    human post; what woke a turn sees agents and humans."""
+    from types import SimpleNamespace
+
+    from mattermost_ai_agent_bus.model import Post
+
+    def ev(kind, **post):
+        return SimpleNamespace(kind=kind, post=Post(id="p", **post))
+
+    events = [ev("mention", user_id="h"), ev("reaction", user_id="h"), ev("thread", user_id="o"),
+              ev("watched_channel", user_id="w", from_webhook=True), ev("dm", user_id="a"),
+              ev("stall")]
+    items = [{"from_trusted_human": True, "from_agent": False}, {"from_trusted_human": True, "from_agent": False},
+             {"from_trusted_human": False, "from_agent": False}, {"from_trusted_human": False, "from_agent": False},
+             {"from_trusted_human": False, "from_agent": True}, {"from_trusted_human": False, "from_agent": False}]
+    server._note_heard(events, items)
+    assert stats._waking == {"agent", "human"}
+    s = stats.summary("0.91.0")
+    assert (s["human_posts_trusted"], s["human_posts_other"]) == (1, 1)
+
+
+def test_the_settled_report_counts_old_lines_as_unknown():
+    """RT-6.9 step 3: the settled shares per version and role; lines before
+    0.91.0 have no fields: no settled numbers (unknown), never zeros; turns
+    woken only with turn hooks."""
+    base = {"asks_crown": 0, "asks_crown_answered": 0, "asks_human": 0, "tasks_agent_only": 0,
+            "tasks_with_human": 0, "human_posts_trusted": 0, "human_posts_other": 0, "human_answers": 0}
+    lines = [
+        {"v": "0.90.0", "rt": "claude-code", "min": 600, "turns": 3},
+        {"v": "0.91.0", "sid": "5e55", "rt": "claude-code", "min": 1440, "crown_sec": 0, **base,
+         "bus_turns_agent": 6, "bus_turns_human": 2, "asks_crown": 3, "asks_crown_answered": 2,
+         "asks_human": 1, "tasks_agent_only": 3, "tasks_with_human": 1, "human_posts_trusted": 4,
+         "human_posts_other": 1, "human_answers": 2},
+        {"v": "0.91.0", "sid": "c0de", "rt": "cursor", "min": 1440, "crown_sec": 0, **base, "human_posts_trusted": 5},
+    ]
+    old, new = stats.report(lines)
+    assert old["settled"] is None and old["roles"][0]["settled"] is None
+    s = new["roles"][0]["settled"]
+    assert (new["roles"][0]["role"], s["parts"], s["days"]) == ("worker", 2, 2.0)
+    assert (s["agent_turns_pct"], s["crown_settled_pct"], s["tasks_agent_pct"]) == (75, 50, 75)
+    assert (s["human_posts_per_day"], s["human_answers_per_day"]) == (5.0, 1.0)
+    cursor_only = stats.report([lines[2]])[0]["settled"]
+    assert cursor_only["agent_turns_pct"] is None and cursor_only["bus_turns_agent"] is None

@@ -23,10 +23,13 @@
 # longest turn, the share of turn time the bus started on its own, turn time per
 # human input) and an Asks table (asks per hour, share answered by a trusted
 # human, mean and longest wait, asks open at the session's end, the share of
-# time spent waiting for answers). Since 0.91.0 a Saved waiting table (answers
-# on the bus while the terminal was idle, the time until the human was back
-# there) and a Roles table per part (coordinator: the crown more than half of it).
-# Missing data shows "-".
+# time spent waiting for answers). Since 0.91.0 a Settled table per version and
+# role (what agents settled without a human: bus turns only agents woke,
+# questions the coordinator answered, tasks closed between agents, human posts
+# and answers per agent-day), a Saved waiting table (answers on the bus while
+# the terminal was idle, the time until the human was back there: a proxy for
+# reaction time) and a Roles table per part (coordinator: the crown more than
+# half of it). Missing data shows "-".
 # Read-only; needs a bot token and reads at most the last 2000 posts.
 set -euo pipefail
 
@@ -35,7 +38,7 @@ LIB="$(cd "$(dirname "$0")" && pwd)/mm-agent-lib.sh"
 source "$LIB"
 
 CMD="${1:-}" CHANNEL="" JSON=0
-[[ "$CMD" == report ]] || { sed -n '2,29p' "$0"; exit 2; }
+[[ "$CMD" == report ]] || { sed -n '2,32p' "$0"; exit 2; }
 shift
 for a in "$@"; do
   case "$a" in
@@ -125,6 +128,33 @@ report="$(jq -c '
       idle_pct: pct(.idle; .answered),
       mean_saved_sec: (if .saved_n > 0 then (.saved_sec / .saved_n | round) else null end)
     } end;
+  # Settled without a human (since 0.91.0): the bus'"'"'s turns only agents woke
+  # (with turn hooks), questions the coordinator answered, tasks closed with no
+  # human in the thread, human posts and answers per agent-day (minutes / 1440).
+  def tenth(a; b): if b > 0 then (a / b * 10 | round / 10) else null end;
+  def settled_of: map(select(.asks_crown != null)) | if length == 0 then null else
+    (map(select(.bus_turns_agent != null))) as $hooked | {
+      sessions: sessions,
+      parts: length,
+      days: (sum(.min) / 1440),
+      bus_turns_agent: (if ($hooked | length) > 0 then ($hooked | sum(.bus_turns_agent)) else null end),
+      bus_turns_human: (if ($hooked | length) > 0 then ($hooked | sum(.bus_turns_human)) else null end),
+      asks_crown: sum(.asks_crown // 0),
+      asks_crown_answered: sum(.asks_crown_answered // 0),
+      asks_human: sum(.asks_human // 0),
+      tasks_agent_only: sum(.tasks_agent_only // 0),
+      tasks_with_human: sum(.tasks_with_human // 0),
+      human_posts_trusted: sum(.human_posts_trusted // 0),
+      human_posts_other: sum(.human_posts_other // 0),
+      human_answers: sum(.human_answers // 0)
+    } | . + {
+      agent_turns_pct: (if .bus_turns_agent == null then null
+                        else pct(.bus_turns_agent; .bus_turns_agent + .bus_turns_human) end),
+      crown_settled_pct: pct(.asks_crown_answered; .asks_crown + .asks_human),
+      tasks_agent_pct: pct(.tasks_agent_only; .tasks_agent_only + .tasks_with_human),
+      human_posts_per_day: tenth(.human_posts_trusted + .human_posts_other; .days),
+      human_answers_per_day: tenth(.human_answers; .days)
+    } | .days |= (. * 10 | round / 10) end;
   def per_h(x; h): if h > 0 then (x / h | round) else null end;
   def tok_of: map(select(.tok)) | if length == 0 then null else {
       sessions: sessions,
@@ -166,13 +196,14 @@ report="$(jq -c '
     static: (map(.static) | max),
     skill: (map(.skill) | max),
     tok: $tok,
+    settled: settled_of,
     saved: saved_of,
     harness: (group_by(.rt // "other") | map({
       harness: (.[0].rt // "other"), sessions: sessions, turns: turns_of, asks: asks_of, saved: saved_of
     })),
     roles: (group_by(role) | map({
       role: (.[0] | role), parts: length, sessions: sessions, hours: hours,
-      tok: tok_of, turns: turns_of, asks: asks_of
+      tok: tok_of, turns: turns_of, asks: asks_of, settled: settled_of
     }))
   } | . + {
     plugin_turns_per_h: (if .hours > 0 then (.plugin_turns / .hours * 10 | round / 10) else null end),
@@ -194,6 +225,21 @@ fi
                 ((.plugin_share_pct // "-") | tostring + "%"), (.bus_chars_per_turn // "-"),
                 .post_chars_per_session, (.static // "-"), (.skill // "-")] | @tsv' <<<"$report"
 } | column -t -s $'\t'
+# Settled without a human (since 0.91.0), per version and role (per part): of
+# the turns the bus started, the share only agents' posts woke; of all
+# questions (to the coordinator and to humans), the share the coordinator
+# answered; of the tasks this agent closed (DONE on an agent's TASK), the share
+# with no human post in the thread; human posts and answers per agent-day.
+if [[ "$(jq '[.[] | .roles[] | select(.settled)] | length' <<<"$report")" -gt 0 ]]; then
+  echo
+  {
+    printf 'version\trole\tparts\tagent days\tturns woken by agents\tquestions settled by coordinator\ttasks closed between agents\thuman posts/day\tanswers/day\n'
+    jq -r 'def pct(x): if x == null then "-" else "\(x)%" end; def dash(x): if x == null then "-" else x end;
+      .[] | .version as $v | .roles[] | select(.settled) | .settled as $s
+      | [$v, .role, $s.parts, $s.days, pct($s.agent_turns_pct), pct($s.crown_settled_pct),
+         pct($s.tasks_agent_pct), dash($s.human_posts_per_day), dash($s.human_answers_per_day)] | @tsv' <<<"$report"
+  } | column -t -s $'\t'
+fi
 # Tokens from the transcript (Claude Code sessions since 0.32.0), in input-token
 # equivalents: cache read 0.1, cache write 1.25 (5 min) / 2 (1 h), output 5.
 if [[ "$(jq '[.[] | select(.tok)] | length' <<<"$report")" -gt 0 ]]; then
