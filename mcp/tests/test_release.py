@@ -347,6 +347,31 @@ async def test_a_failure_is_retried_hourly_at_most_three_times_a_day(tmp_path):
     assert not release.due(d, now + 3600) and release.due(d, now + release.CHECK_EVERY + 10)
 
 
+def test_a_newest_older_than_this_version_is_checked_again_after_an_hour(monkeypatch, tmp_path):
+    """RT-6.30 step 5: a version installed after a check finds the newest
+    older than itself: the catch-up is due an hour after the last success,
+    else a day."""
+    monkeypatch.setattr(release, "VERSION", "1.5.0")
+    d = state(tmp_path, GOOD)  # newest 1.4.0: older than 1.5.0
+    now = time.time()
+    (d / release.STAMP_FILE).write_text(f"{int(now)}\n")
+    assert not release.due(d, now + 3500) and release.due(d, now + 3700)
+    monkeypatch.setattr(release, "VERSION", "1.4.0")  # not older: a day
+    assert not release.due(d, now + 3700) and release.due(d, now + release.CHECK_EVERY + 10)
+
+
+async def test_the_catch_up_passes_the_hour_to_if_due(monkeypatch, tmp_path):
+    """RT-6.30 step 5: `--if-due` carries the period due() used."""
+    monkeypatch.setattr(release, "VERSION", "1.5.0")
+    d = state(tmp_path, GOOD)
+    script = fake_check(tmp_path, 'echo "$@" > "$2/args.txt"\n')
+    assert await release.run_check(script, directory=d) == 0
+    assert f"--if-due {int(release.POLL)}" in (d / "args.txt").read_text()
+    monkeypatch.setattr(release, "VERSION", "1.4.0")
+    assert await release.run_check(script, directory=d) == 0
+    assert f"--if-due {release.CHECK_EVERY}" in (d / "args.txt").read_text()
+
+
 async def test_a_failed_check_changes_nothing(tmp_path):
     """RT-6.30: a child that fails leaves the notice as it was."""
     d = state(tmp_path, GOOD)

@@ -3,6 +3,18 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.90.2
+
+### Fixed
+
+- **The release notice no longer goes stale for a day after an update**
+  ([RT-6.30](docs/arc42/06-runtime-view.md) step 5): a version installed right
+  after a release check found the newest older than itself, and every session
+  start said so ("not run since, or the repository is frozen or rewound") until
+  the daily check came due. When the newest found is older than the running
+  version, the MCP server now checks again once the last success is an hour
+  old, and passes that hour to `--if-due`. Failures still count as before.
+
 ## 0.90.1
 
 ### Fixed

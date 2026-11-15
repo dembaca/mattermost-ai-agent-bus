@@ -506,14 +506,22 @@ def _record_failure(directory: Path, now: float) -> None:
         log.debug("release check: %s", exc)
 
 
+def _period(directory: Path) -> int:
+    """How old the last success may be: a day, an hour when the newest found
+    is older than this server's version (a version installed since: catch up)."""
+    st = read_state(directory)
+    return int(POLL) if st is not None and older(st) else CHECK_EVERY
+
+
 def due(directory: Path | None = None, now: float | None = None) -> bool:
-    """The last check that succeeded (release-check.at) is a day old, or there
+    """The last check that succeeded (release-check.at) is a day old (an hour
+    when the newest found is older than this version, see _period), or there
     was none, and fewer than TRIES tries failed in the last day: a failure is
     tried again at the next hourly look, at most TRIES times a day."""
     d = directory or state_dir()
     now = time.time() if now is None else now
     text = (_read(d / STAMP_FILE, 64) or "").strip()
-    if now - (int(text) if text.isdigit() else 0) < CHECK_EVERY:
+    if now - (int(text) if text.isdigit() else 0) < _period(d):
         return False
     return len(_failures(d, now)) < TRIES
 
@@ -522,7 +530,7 @@ async def run_check(script: Path | None = None, *, directory: Path | None = None
                     timeout: float = CHECK_TIMEOUT) -> int | None:
     """Run the check once as a child (ADR-011 point 3): the script of
     check_script() unless one is given, its own process group, stdin closed,
-    the environment of child_env() only, from /, `--if-due` a day; after
+    the environment of child_env() only, from /, `--if-due` _period() (a day); after
     `timeout` seconds its group gets TERM (git removes its lock files on it),
     KILL_GRACE later KILL. A failure or a stop counts in release-check.failed;
     the script stamps a success. Its exit code; None when it did not run or
@@ -541,7 +549,7 @@ async def run_check(script: Path | None = None, *, directory: Path | None = None
     bash = "/bin/bash" if Path("/bin/bash").exists() else "bash"
     proc = await asyncio.create_subprocess_exec(
         bash, str(script), "--state-dir", str(d),
-        "--if-due", str(CHECK_EVERY), env=child_env(host_dir), cwd="/",
+        "--if-due", str(_period(d)), env=child_env(host_dir), cwd="/",
         stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT, start_new_session=True)
     try:
