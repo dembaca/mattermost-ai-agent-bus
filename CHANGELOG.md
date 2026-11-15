@@ -22,8 +22,9 @@ before 0.5.0 are described in the git history.
   answers the human had not come back after by the end, a lower bound. A
   proxy, not a counterfactual; counts and seconds only.
 - **Overhead by role** (RT-6.9 step 3): `crown_sec`, the seconds a session
-  held the crown, from the heartbeat's own crown state. A session holding it
-  more than half its time is the coordinator, else a worker.
+  held the crown, from the heartbeat's own crown state. A part (a day, or the
+  rest at the end) holding it more than half its time is the coordinator's,
+  else a worker's, so a session can count in both.
 - **The report** (`mm-agent-stats.sh report`, `stats_report`) counts a
   session once over its parts (`sessions` distinct, `parts` the lines) and adds
   `saved` (per version and harness) and `roles` (per version: tokens, turns,

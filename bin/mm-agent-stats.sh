@@ -25,7 +25,7 @@
 # human, mean and longest wait, asks open at the session's end, the share of
 # time spent waiting for answers). Since 0.91.0 a Saved waiting table (answers
 # on the bus while the terminal was idle, the time until the human was back
-# there) and a Roles table (coordinator: the crown more than half the session).
+# there) and a Roles table per part (coordinator: the crown more than half of it).
 # Missing data shows "-".
 # Read-only; needs a bot token and reads at most the last 2000 posts.
 set -euo pipefail
@@ -142,13 +142,11 @@ report="$(jq -c '
       all_per_h: per_h(.all; .hours),
       bus_share_pct: (if .all > 0 then (.bus * 1000 / .all | round / 10) else null end)
     } end;
+  # A part is the coordinator'"'"'s when it held the crown more than half its time,
+  # else a worker'"'"'s; unknown before 0.91.0 (no crown_sec).
+  def role: if .crown_sec == null then "unknown"
+    elif .crown_sec * 2 > (.min // 0) * 60 then "coordinator" else "worker" end;
   to_entries | map(.value + {_s: (.value.sid // "#\(.key)")})
-  # A session is the coordinator when it held the crown more than half its time
-  # (all its parts); unknown before 0.91.0 (no crown_sec).
-  | (group_by(._s) | map({key: .[0]._s, value:
-      (if all(.[]; .crown_sec == null) then "unknown"
-       elif sum(.crown_sec // 0) * 2 > sum(.min) * 60 then "coordinator" else "worker" end)})
-     | from_entries) as $roles
   | group_by(.v) | map(tok_of as $tok
 | {
     version: .[0].v,
@@ -172,8 +170,9 @@ report="$(jq -c '
     harness: (group_by(.rt // "other") | map({
       harness: (.[0].rt // "other"), sessions: sessions, turns: turns_of, asks: asks_of, saved: saved_of
     })),
-    roles: (group_by($roles[._s]) | map({
-      role: $roles[.[0]._s], sessions: sessions, hours: hours, tok: tok_of, turns: turns_of, asks: asks_of
+    roles: (group_by(role) | map({
+      role: (.[0] | role), parts: length, sessions: sessions, hours: hours,
+      tok: tok_of, turns: turns_of, asks: asks_of
     }))
   } | . + {
     plugin_turns_per_h: (if .hours > 0 then (.plugin_turns / .hours * 10 | round / 10) else null end),
@@ -252,14 +251,15 @@ if [[ "$(jq '[.[] | .harness[] | select(.saved)] | length' <<<"$report")" -gt 0 
          fmt(if $s.saved_open_n > 0 then $s.saved_open_sec else null end)] | @tsv' <<<"$report"
   } | column -t -s $'\t'
 fi
-# Overhead by role (since 0.91.0): a session that held the crown more than half
-# its time is the coordinator, else a worker; older sessions are unknown.
+# Overhead by role (since 0.91.0), per part (a day or the rest at the end): one
+# that held the crown more than half its time is the coordinator's, else a
+# worker's; older lines are unknown. Sessions: distinct ones with such parts.
 if [[ "$(jq '[.[] | .roles[] | select(.role != "unknown")] | length' <<<"$report")" -gt 0 ]]; then
   echo
   {
-    printf 'version\trole\tsessions\thours\tbus tok share\tbus time\tturns/prompt\tasks/h\twaiting\n'
+    printf 'version\trole\tparts\tsessions\thours\tbus tok share\tbus time\tturns/prompt\tasks/h\twaiting\n'
     jq -r "$FMT"'.[] | .version as $v | .roles[]
-      | [$v, .role, .sessions, .hours, pct(.tok.bus_share_pct), pct(.turns.bus_share_pct),
+      | [$v, .role, .parts, .sessions, .hours, pct(.tok.bus_share_pct), pct(.turns.bus_share_pct),
          dash(.turns.turns_per_prompt), dash(.asks.asks_per_h), pct(.asks.waiting_pct)] | @tsv' <<<"$report"
   } | column -t -s $'\t'
 fi

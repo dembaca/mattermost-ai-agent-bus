@@ -142,6 +142,10 @@ def _load(f: Path) -> list[dict[str, Any]]:
         text = f.read_text()
     except OSError:
         return []
+    return _parse(text)
+
+
+def _parse(text: str) -> list[dict[str, Any]]:
     events = []
     for line in text.splitlines():
         try:
@@ -385,7 +389,10 @@ def summary(version: str, fixed: overhead.Fixed | None = None) -> dict[str, Any]
     """The session's last part (`final`): what the counter file holds,
     whatever is still open counted as open (RT-6.9 step 2)."""
     f = _path()
-    if f is None or not f.exists():
+    if f is None:
+        return None
+    _recover(f)
+    if not f.exists():
         return None
     events = _load(f)
     if not events:
@@ -395,44 +402,93 @@ def summary(version: str, fixed: overhead.Fixed | None = None) -> dict[str, Any]
 
 def due(now: float | None = None) -> float | None:
     """Seconds until the current part is PART_SEC old (0 or less: due), None
-    without counters."""
+    without counters. Reads only the part records and the first event: before
+    the first cut the file is in the order the events came."""
     f = _path()
-    if f is None or not f.exists():
+    if f is None:
         return None
-    events = _load(f)
-    if not events:
+    try:
+        text = f.read_text()
+    except OSError:
         return None
-    start: int = _part(events)["start"]
+    first: int | None = None
+    part: int | None = None
+    for line in text.splitlines():
+        if first is not None and '"part"' not in line:
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(e, dict):
+            continue
+        if first is None:
+            first = _t(e)
+        if e.get("k") == "part":
+            part = _t(e)
+    start = part if part is not None else first
+    if start is None:
+        return None
     return start + PART_SEC - (time.time() if now is None else now)
+
+
+def _snap(f: Path) -> Path:
+    return f.with_name(f.name + ".cut")
+
+
+def _recover(f: Path) -> None:
+    """A cut that died before it wrote the next part (a crash, a full disk)
+    left its counters beside the file: they go back into it, to be counted at
+    the next cut or the end (RT-6.9 step 2). Nothing of that cut was carried
+    yet, so nothing counts twice."""
+    snap = _snap(f)
+    if not snap.exists() or snap.is_symlink():
+        return
+    try:
+        session_file.append_private(f, snap.read_text())
+        snap.unlink()
+    except OSError as exc:
+        log.info("overhead stats: %s not recovered: %s", snap.name, exc)
 
 
 def cut(version: str, fixed: overhead.Fixed | None = None, now: float | None = None) -> dict[str, Any] | None:
     """End a day's part (RT-6.9 step 2): the counter file is moved aside (a
     hook appends to a new one from then on), summed up, and what is still
-    open goes into the new file with the next part's record. The STATS line
-    of the part, or None without counters."""
+    open goes into the new file with the next part's record, in one write
+    (a new file renamed in) together with what hooks appended meanwhile, to
+    either file. The STATS line of the part, or None without counters."""
     f = _path()
-    if f is None or not f.exists() or f.is_symlink():
+    if f is None:
+        return None
+    _recover(f)
+    if not f.exists() or f.is_symlink():
         return None
     now = time.time() if now is None else now
-    snap = f.with_name(f.name + ".cut")
+    snap = _snap(f)
     try:
         os.replace(f, snap)
         text = snap.read_text()
     except OSError:
         return None
     try:
-        events = _load(snap)
-        if not events:
-            return None
-        data, carry = _summarize(events, version, fixed, now, final=False)
-        session_file.append_private(f, "".join(json.dumps(e) + "\n" for e in carry))
-        return data
+        events = _parse(text)
+        data, carry = _summarize(events, version, fixed, now, final=False) if events else (None, [])
     except Exception:
-        session_file.append_private(f, text)  # counted at the next try or the end
+        _recover(f)  # counted at the next try or the end
         raise
-    finally:
-        snap.unlink(missing_ok=True)
+    if data is None:
+        _recover(f)
+        return None
+    # A hook that opened the old file before the move appends there: those
+    # lines go on with the next part, as do those already in the new file.
+    late = snap.read_text()[len(text):]
+    try:
+        fresh = f.read_text()
+    except FileNotFoundError:
+        fresh = ""
+    session_file.write_private(f, "".join(json.dumps(e) + "\n" for e in carry) + late + fresh)
+    snap.unlink(missing_ok=True)
+    return data
 
 
 def _lock(uid: str) -> int | None:
@@ -450,31 +506,45 @@ def _lock(uid: str) -> int | None:
     return fd
 
 
+# Day's parts cut but not posted yet (the post failed): posted before the next
+# part and before the session's last line, so no day is lost to a blip.
+_unposted: list[str] = []
+
+
+def _line(data: dict[str, Any]) -> str:
+    return "STATS " + json.dumps(data, separators=(",", ":"))
+
+
 async def tick(client: ChatPort, uid: str) -> float | None:
     """The heartbeat's part check (stall.watch, RT-6.9 step 2): once the
     current part is a day old, post its STATS line and start the next.
     The channel is joined first, so a server that cannot reach it cuts
-    nothing and tries again at the next tick. Seconds until the next part is
-    due; never raises."""
+    nothing and tries again at the next tick; a part whose post failed is
+    posted first then. Seconds until the next part is due; never raises."""
     name = channel()
     if not name or _source is None or not client.token or not uid:
         return None
     set_user(uid)
     left = due()
-    if left is None or left > 0:
+    if (left is None or left > 0) and not _unposted:
         return left
     fd = _lock(uid)
     if fd is None:
         return None
     try:
         cid = await client.join_channel(name)
+        while _unposted:
+            await client.post(_unposted[0], channel_id=cid)
+            _unposted.pop(0)
         left = due()  # another server may have cut it meanwhile
         if left is None or left > 0:
             return left
         version, fixed = _source()
         data = cut(version, fixed)
         if data:
-            await client.post("STATS " + json.dumps(data, separators=(",", ":")), channel_id=cid)
+            _unposted.append(_line(data))
+            await client.post(_unposted[-1], channel_id=cid)
+            _unposted.pop()
             log.info("overhead stats: part %s posted", data["part"])
         return PART_SEC
     except Exception as exc:  # noqa: BLE001 — the heartbeat goes on
@@ -485,18 +555,21 @@ async def tick(client: ChatPort, uid: str) -> float | None:
 
 
 def post_sync(client: ChatPort, data: dict[str, Any]) -> str:
-    """Post the summary to the stats channel, synchronously (exit handler).
+    """Post the summary to the stats channel, synchronously (exit handler),
+    after any day's part whose post had failed.
 
-    The counter file goes either way: on a server without the channel the
-    counts would only pile up.
+    The counter file and its lock go either way: on a server without the
+    channel the counts would only pile up.
     """
     name = channel()
     if not name or not client.token:
         return "off"
-    msg = "STATS " + json.dumps(data, separators=(",", ":"))
+    lines = [*_unposted, _line(data)]
+    _unposted.clear()
     try:
-        if not client.post_by_name_sync(name, msg, join=os.environ.get("MM_BOT_USER_ID") or _uid):
-            return f"no channel ~{name}; nothing posted"
+        for msg in lines:
+            if not client.post_by_name_sync(name, msg, join=_me()):
+                return f"no channel ~{name}; nothing posted"
         return "posted"
     except Exception as exc:  # noqa: BLE001 — exit handler: fail open
         return f"failed: {type(exc).__name__}"
@@ -504,6 +577,7 @@ def post_sync(client: ChatPort, data: dict[str, Any]) -> str:
         f = _path()
         if f is not None:
             f.unlink(missing_ok=True)
+            (f.parent / f"stats-{_me()}.lock").unlink(missing_ok=True)
 
 
 # --- the report: what bin/mm-agent-stats.sh report --json computes in jq -----
@@ -654,22 +728,14 @@ def _version_key(v: str) -> list[int]:
     return [int(p) if p.isdigit() else 0 for p in v.split(".")]
 
 
-def _roles(lines: list[dict[str, Any]]) -> dict[str, str]:
-    """A session's role over all its parts (RT-6.9 step 3): coordinator when it
-    held the crown more than half its time, else worker; unknown before 0.91.0
-    (no crown_sec)."""
-    by_session: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for r in lines:
-        by_session[r["_s"]].append(r)
-    roles = {}
-    for s, rs in by_session.items():
-        if all(r.get("crown_sec") is None for r in rs):
-            roles[s] = "unknown"
-        elif _sum(rs, lambda r: r.get("crown_sec")) * 2 > _sum(rs, lambda r: r.get("min")) * 60:
-            roles[s] = "coordinator"
-        else:
-            roles[s] = "worker"
-    return roles
+def _role(r: dict[str, Any]) -> str:
+    """A part's role (RT-6.9 step 3): coordinator when it held the crown more
+    than half its time, else worker; unknown before 0.91.0 (no crown_sec). Per
+    part, so a session that coordinates one day and works the next counts as
+    both."""
+    if r.get("crown_sec") is None:
+        return "unknown"
+    return "coordinator" if r["crown_sec"] * 2 > (r.get("min") or 0) * 60 else "worker"
 
 
 def report(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -677,7 +743,6 @@ def report(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     A session's parts (one sid) count as one session."""
     lines = [r | {"_s": r["sid"] if r.get("sid") not in (None, False) else f"#{i}"}
              for i, r in enumerate(lines)]
-    roles = _roles(lines)
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for line in lines:
         groups[str(line.get("v"))].append(line)
@@ -688,7 +753,7 @@ def report(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         by_role: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for r in rows:
             by_rt[str(r["rt"]) if r.get("rt") is not None else "other"].append(r)
-            by_role[roles[r["_s"]]].append(r)
+            by_role[_role(r)].append(r)
         hours = _round(_sum(rows, lambda r: r.get("min")) / 60 * 10) / 10
         turns = _sum(rows, lambda r: r.get("turns"))
         forced = _sum(rows, lambda r: _vals(r.get("blocks")))
@@ -710,7 +775,7 @@ def report(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "harness": [{"harness": rt, "sessions": _sessions(rs), "turns": _turns_of(rs),
                          "asks": _asks_of(rs), "saved": _saved_of(rs)}
                         for rt, rs in sorted(by_rt.items())],
-            "roles": [{"role": role, "sessions": _sessions(rs),
+            "roles": [{"role": role, "parts": len(rs), "sessions": _sessions(rs),
                        "hours": _round(_sum(rs, lambda r: r.get("min")) / 60 * 10) / 10,
                        "tok": _tok_of(rs), "turns": _turns_of(rs), "asks": _asks_of(rs)}
                       for role, rs in sorted(by_role.items())],

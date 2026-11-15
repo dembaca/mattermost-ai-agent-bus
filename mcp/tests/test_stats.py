@@ -18,6 +18,7 @@ def state(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     monkeypatch.setenv("MM_BOT_USER_ID", UID)
     monkeypatch.delenv("MM_STATS_CHANNEL", raising=False)
+    monkeypatch.setattr(stats, "_unposted", [])
     return tmp_path
 
 
@@ -343,10 +344,7 @@ def test_the_heartbeat_notes_each_change_of_the_crown(monkeypatch):
 async def test_a_day_old_part_is_posted_by_the_heartbeat(monkeypatch):
     """RT-6.9 step 2: stall.watch's stats step joins the channel first (a
     server that cannot reach it cuts nothing), posts the day's part once."""
-    import inspect
-
     from mattermost_ai_agent_bus import stall
-    assert "stats.tick" in inspect.getsource(stall.watch)
     now = int(time.time())
     _write_events({"k": "turn", "t": now - stats.PART_SEC - 5, "by": "human"},
                   {"k": "turn_end", "t": now - stats.PART_SEC})
@@ -354,31 +352,113 @@ async def test_a_day_old_part_is_posted_by_the_heartbeat(monkeypatch):
 
     class Client:
         token = "bot"
+        session = None  # the bot's id from MM_BOT_USER_ID
 
         async def join_channel(self, name):
             posted.append(name)
             return "c" * 26
 
         async def post(self, message, *, channel_id=None, **kw):
-            posted.append((channel_id, message))
+            if message.startswith("STATS "):
+                posted.append((channel_id, message))
 
     class Down(Client):
         async def join_channel(self, name):
             raise OSError("offline")
 
     monkeypatch.setattr(stats, "_source", lambda: ("0.91.0", None))
-    assert await stats.tick(Down(), UID) is None and stats.due() < 0
-    assert await stats.tick(Client(), UID) == stats.PART_SEC
-    assert posted[0] == "agents-stats" and posted[1][0] == "c" * 26
-    line = json.loads(posted[1][1].removeprefix("STATS "))
+    await stall.watch(Down())
+    assert stats.due() < 0                                      # nothing cut
+    await stall.watch(Client())                                 # the heartbeat's watch posts it
+    stat_posts = [p for p in posted if isinstance(p, tuple)]
+    assert len(stat_posts) == 1 and stat_posts[0][0] == "c" * 26
+    line = json.loads(stat_posts[0][1].removeprefix("STATS "))
     assert (line["v"], line["part"], line["turns"], line["turn_sec"]) == ("0.91.0", 1, 1, 5)
-    assert 0 < await stats.tick(Client(), UID) <= stats.PART_SEC and len(posted) == 2
+    assert 0 < await stats.tick(Client(), UID) <= stats.PART_SEC
+    assert len([p for p in posted if isinstance(p, tuple)]) == 1
+
+
+async def test_a_part_whose_post_failed_is_posted_before_the_next(monkeypatch):
+    """RT-6.9 step 2: a post that fails after the cut keeps its line; the next
+    tick posts it before anything else, and the session's end before its own."""
+    now = int(time.time())
+    _write_events({"k": "turn", "t": now - stats.PART_SEC - 5, "by": "human"})
+    posted = []
+
+    class Flaky:
+        token = "bot"
+        fail = True
+
+        async def join_channel(self, name):
+            return "c" * 26
+
+        async def post(self, message, *, channel_id=None, **kw):
+            if self.fail:
+                raise OSError("blip")
+            posted.append(message)
+
+    monkeypatch.setattr(stats, "_source", lambda: ("0.91.0", None))
+    client = Flaky()
+    assert await stats.tick(client, UID) is None
+    assert len(stats._unposted) == 1 and stats.due() > 0       # cut, kept, not cut again
+    client.fail = False
+    assert await stats.tick(client, UID) > 0
+    assert [json.loads(m.removeprefix("STATS "))["part"] for m in posted] == [1]
+    assert stats._unposted == []
+    stats._unposted.append("STATS {\"part\":7}")
+    sent = []
+
+    class Sync:
+        token = "bot"
+
+        def post_by_name_sync(self, name, message, *, join=""):
+            sent.append(message)
+            return True
+
+    stats.record("turn")
+    assert stats.post_sync(Sync(), stats.summary("0.91.0")) == "posted"
+    assert sent[0] == "STATS {\"part\":7}" and json.loads(sent[1].removeprefix("STATS "))["final"]
+    assert not stats._path().exists() and not (stats._path().parent / f"stats-{UID}.lock").exists()
+
+
+def test_a_cut_that_died_is_recovered_and_late_lines_go_on():
+    """RT-6.9 step 2: counters a crashed cut left beside the file go back into
+    it (nothing of that cut was carried, so nothing counts twice); a line a
+    hook appended to the moved file after it was read goes on with the next part."""
+    now = int(time.time())
+    f = stats._path()
+    _write_events({"k": "turn", "t": now - stats.PART_SEC - 50, "by": "human"},
+                  {"k": "turn_end", "t": now - stats.PART_SEC - 40},
+                  {"k": "turn", "t": now - 10, "by": "human"})        # running
+    f.rename(f.with_name(f.name + ".cut"))                          # a cut that died here
+    _write_events({"k": "post", "t": now - 5, "chars": 7})            # a hook since
+    s = stats.summary("0.91.0")
+    assert (s["turns"], s["posts"]) == (2, [1, 7]) and not f.with_name(f.name + ".cut").exists()
+
+    real = stats._summarize
+
+    def with_a_late_line(*a, **kw):
+        with f.with_name(f.name + ".cut").open("a") as fh:          # a hook still writing to it
+            fh.write(json.dumps({"k": "turn_end", "t": now - 1}) + "\n")
+        return real(*a, **kw)
+
+    stats._summarize = with_a_late_line
+    try:
+        one = stats.cut("0.91.0", now=now)
+    finally:
+        stats._summarize = real
+    assert (one["turns"], one["turns_timed"], one["posts"]) == (1, 1, [1, 7])   # recovered: counted
+    kept = _events()
+    assert [e["k"] for e in kept].count("turn") == 1                 # carried once
+    assert {"k": "turn_end", "t": now - 1} in kept                   # the late line goes on
+    two = stats.summary("0.91.0")
+    assert (two["turns"], two["turns_timed"], two["turn_sec"], two["posts"]) == (1, 1, 9, [0, 0])
 
 
 def test_the_report_counts_a_session_once_and_splits_by_role():
     """RT-6.9 step 3: a session's parts (one sid) are one session; lines
-    without a sid (before 0.91.0) one each; a session holding the crown more
-    than half its time is the coordinator."""
+    without a sid (before 0.91.0) one each; a part holding the crown more
+    than half its time is the coordinator's, so one session can be both."""
     saved = {"saved_n": 0, "saved_sec": 0, "saved_max_sec": 0, "saved_open_n": 0, "saved_open_sec": 0}
     lines = [
         {"v": "0.91.0", "sid": "5e55", "part": 1, "rt": "claude-code", "min": 1440, "turns": 10,
@@ -393,9 +473,8 @@ def test_the_report_counts_a_session_once_and_splits_by_role():
     ]
     r = stats.report(lines)[0]
     assert (r["sessions"], r["parts"], r["post_chars_per_session"]) == (3, 4, 50)
-    roles = {x["role"]: x for x in r["roles"]}
-    assert (roles["coordinator"]["sessions"], roles["coordinator"]["hours"]) == (1, 25.0)
-    assert (roles["worker"]["sessions"], roles["unknown"]["sessions"]) == (1, 1)
+    assert [(x["role"], x["parts"], x["sessions"], x["hours"]) for x in r["roles"]] == [
+        ("coordinator", 1, 1, 24.0), ("unknown", 1, 1, 0.5), ("worker", 2, 2, 3.0)]
     s = r["saved"]
     assert (s["sessions"], s["answered"], s["idle"], s["idle_pct"]) == (1, 3, 2, 67)
     assert (s["saved_n"], s["mean_saved_sec"], s["saved_open_n"], s["saved_open_sec"]) == (1, 600, 1, 300)

@@ -205,14 +205,14 @@ def test_the_tool_reports_what_the_script_reports(mm, run):
     assert (new["static"], new["skill"], new["tok"]["skill_loaded"]) == (4800, 22078, 1)
     parts = stats.report(lines)[-1]
     assert (parts["sessions"], parts["parts"], parts["tok"]["skill_loaded"]) == (2, 3, 1)
-    assert [(r["role"], r["sessions"]) for r in parts["roles"]] == [("coordinator", 1), ("worker", 1)]
+    assert [(r["role"], r["parts"], r["sessions"]) for r in parts["roles"]] == [("coordinator", 1, 1), ("worker", 2, 2)]
     out = run(REPORT, "report", "agents-stats").stdout
     assert "1/2" in out                                                # skill loaded in 1 of 2
     cells = [line.split() for line in out.splitlines()]
     # Saved waiting: 3 answered, all while idle; back once after 30 min, once still away (1 h at least).
     assert ["0.91.0", "claude-code", "2", "3", "100%", "1", "30", "min", "30", "min", "1", "1:00", "h"] in cells
-    assert ["0.91.0", "coordinator", "1", "25", "10%", "8%", "1.7", "0.1", "1%"] in cells
-    assert ["0.91.0", "worker", "1", "1.5", "-", "0%", "1", "0", "0%"] in cells
+    assert ["0.91.0", "coordinator", "1", "1", "24", "10%", "8%", "1.5", "0.1", "1%"] in cells
+    assert ["0.91.0", "worker", "2", "2", "2.5", "10%", "7%", "1.3", "0.4", "1%"] in cells
 
 
 def test_off_counts_nothing(mm, run):
