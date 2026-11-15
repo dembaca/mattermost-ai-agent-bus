@@ -604,3 +604,27 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
   .row { grid-template-columns: 1fr; gap: .125rem; }
   .section { padding-top: 3.75rem; }
 }
+
+/* ---------- security questions ---------- */
+
+.faq { margin-top: 1.5rem; border-top: 1px solid var(--hair); }
+.qa { border-bottom: 1px solid var(--hair); }
+.qa summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .875rem 0;
+  cursor: pointer;
+  list-style: none;
+}
+.qa summary::-webkit-details-marker { display: none; }
+.qa summary::after {
+  content: "+";
+  flex: none;
+  color: var(--muted);
+  transition: transform .3s var(--snappy);
+}
+.qa[open] summary::after { transform: rotate(45deg); }
+.qa summary h3 { font-size: .875rem; font-weight: 540; line-height: 1.6; }
+.qa p { margin: 0 0 1rem; color: var(--muted); max-width: 34rem; }
