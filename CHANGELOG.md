@@ -12,8 +12,10 @@ before 0.5.0 are described in the git history.
   human's reply handed over in a turn the human then interrupted made the next
   agent-woken bus turn a human's, and one push before a bus turn that was
   interrupted and started again woke both. The turn after an interrupted one
-  now takes nothing from before it; a push after an Escape is lost to it (an
-  undercount, never a wrong class).
+  now takes nothing from before it and goes by its own first hand-over, which
+  may be one it collected rather than the one that woke it (a drain that
+  returns a human's later reply), so it can now and then count as a human's:
+  rare, and biased against the bus. A push after an Escape is lost to it.
 - **A human's answer to a question the 👑 had settled in an earlier part no
   longer counts as an ask** (RT-6.9 step 2): the answer says it answers a
   question to the 👑 (`coord`), and the Asks waiting figures leave it out.
