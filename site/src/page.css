@@ -655,9 +655,10 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
 
 .ps .ps-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 3rem minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   margin-top: 1.5rem;
 }
+.ps .ps-side p { text-wrap: pretty; }
 .ps h3 { font-size: .875rem; font-weight: 560; color: var(--muted); margin-bottom: .5rem; }
 .ps .ps-solution h3 { color: var(--ink); }
 .ps .ps-lead {
@@ -676,14 +677,15 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
   display: flex;
   justify-content: center;
   align-items: center;
+  height: 3rem;
 }
 .ps-turn::before {
   content: "";
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 50%;
-  width: 1px;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
   background: var(--hair);
 }
 .ps-turn span {
@@ -697,11 +699,13 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
   background: var(--bg);
   color: var(--muted);
   font-size: .8125rem;
+  transform: rotate(90deg);
 }
 
-@media (max-width: 40rem) {
-  .ps .ps-grid { grid-template-columns: minmax(0, 1fr); }
-  .ps-turn { height: 3rem; }
-  .ps-turn::before { top: 50%; bottom: auto; left: 0; right: 0; width: auto; height: 1px; }
-  .ps-turn span { transform: rotate(90deg); }
+/* From 48rem: side by side, problem left, solution right, the arrow between. */
+@media (min-width: 48rem) {
+  .ps .ps-grid { grid-template-columns: minmax(0, 1fr) 3rem minmax(0, 1fr); }
+  .ps-turn { height: auto; }
+  .ps-turn::before { top: 0; bottom: 0; left: 50%; right: auto; width: 1px; height: auto; }
+  .ps-turn span { transform: none; }
 }
