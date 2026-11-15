@@ -649,3 +649,4 @@ a.row:hover .arrow, a.row:focus-visible .arrow { transform: translateX(3px); col
   .matrix-wrap { width: auto; margin-left: 0; }
   .legend-rec { margin-left: 0; }
 }
+.matrix .soon { font-size: .6875rem; font-weight: 460; color: var(--muted); margin-left: .25rem; }

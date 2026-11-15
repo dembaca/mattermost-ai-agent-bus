@@ -14,8 +14,8 @@ import './matrix.css'
 // tint and its Badge settle in. Poster (reduced motion): the full table with
 // the tint.
 //
-// Wide 880 x 470: card 24px in from each side and the top, off the bottom by
-// its padding. Compact 358 x 560: transposed, harnesses as rows and the seven
+// Wide 880 x 490: card 24px in from each side and the top, off the bottom by
+// its padding. Compact 358 x 600: transposed, harnesses as rows and the seven
 // features as numbered columns, named in a key under the grid.
 
 type S = { lit: boolean }
@@ -28,27 +28,29 @@ async function script(a: Act<S>) {
   await a.wait(1500)
 }
 
-type Mark = 'y' | 'n' | number // a number: partly, see that note
-const HARNESS: { name: string; sub: string }[] = [
+type Mark = 'y' | 'n' | 's' | number // a number: partly, see that note; s: planned, no claim
+const HARNESS: { name: string; sub: string; soon?: boolean }[] = [
   { name: 'Claude Code', sub: 'with corral' },
   { name: 'Claude Code', sub: 'without' },
   { name: 'Cursor', sub: '' },
   { name: 'OpenCode', sub: 'plugin' },
+  { name: 'OpenCode', sub: 'with corral', soon: true },
   { name: 'pi', sub: 'with corral' },
   { name: 'pi', sub: 'without' },
   { name: 'Codex', sub: '' },
 ]
 const ROWS: { label: string; note?: number; marks: Mark[] }[] = [
-  { label: 'Registered by the host', note: 1, marks: ['y', 'n', 'n', 'n', 'y', 'n', 'n'] },
-  { label: 'Token out of reach', marks: ['y', 2, 2, 2, 'y', 2, 2] },
-  { label: 'Secret out of the shell', marks: ['y', 3, 3, 3, 'y', 3, 3] },
-  { label: 'Messages pushed in', marks: [4, 4, 'n', 5, 5, 5, 'n'] },
-  { label: 'Turn hooks', marks: ['y', 'y', 'n', 'y', 'y', 'y', 'n'] },
-  { label: 'Permission prompts by DM', marks: [4, 4, 'n', 'n', 'n', 'n', 'n'] },
-  { label: 'Signed-release updates', note: 6, marks: ['y', 'n', 'n', 'n', 'y', 'n', 'n'] },
+  { label: 'Registered by the host', note: 1, marks: ['y', 'n', 'n', 'n', 's', 'y', 'n', 'n'] },
+  { label: 'Token out of reach', marks: ['y', 2, 2, 2, 's', 'y', 2, 2] },
+  { label: 'Secret out of the shell', marks: ['y', 3, 3, 3, 's', 'y', 3, 3] },
+  { label: 'Messages pushed in', marks: [4, 4, 'n', 5, 's', 5, 5, 'n'] },
+  { label: 'Turn hooks', marks: ['y', 'y', 'n', 'y', 's', 'y', 'y', 'n'] },
+  { label: 'Permission prompts by DM', marks: [4, 4, 'n', 'n', 's', 'n', 'n', 'n'] },
+  { label: 'Signed-release updates', note: 6, marks: ['y', 'n', 'n', 'n', 's', 'y', 'n', 'n'] },
 ]
 
 function MarkCell({ m }: { m: Mark }) {
+  if (m === 's') return null
   if (m === 'y') return <Check on size={16} />
   if (m === 'n') return <Bar w={10} h={2} r={1} tone={3} />
   return (
@@ -85,6 +87,7 @@ function Wide({ s }: { s: S }) {
           <span key={i} className="mx-head">
             <Text className="mx-name">{h.name}</Text>
             <Text className="mx-sub">{h.sub || ' '}</Text>
+            {h.soon ? <Badge tone="neutral" className="mx-soon">Soon</Badge> : <span className="mx-soon-slot" />}
           </span>
         ))}
       </div>
@@ -129,11 +132,17 @@ function Compact({ s }: { s: S }) {
             <Text className="mx-name">{h.name}</Text>
             {h.sub && <Text className="mx-sub">{h.sub}</Text>}
           </span>
-          {ROWS.map((r, ri) => (
-            <span key={ri} className="mx-cell">
-              <MarkCell m={r.marks[hi]} />
+          {h.soon ? (
+            <span className="mx-soonrow">
+              <Badge tone="neutral">Soon</Badge>
             </span>
-          ))}
+          ) : (
+            ROWS.map((r, ri) => (
+              <span key={ri} className="mx-cell">
+                <MarkCell m={r.marks[hi]} />
+              </span>
+            ))
+          )}
         </div>
       ))}
       <ol className="mx-keylist">
@@ -156,7 +165,7 @@ function Scene({ s, layout }: { s: S; layout: Layout }) {
 
 export default function Matrix({ theme }: { theme: Theme }) {
   return (
-    <Stage<S> width={880} height={470} compact={{ below: 760, width: 358, height: 560 }} initial={initial} poster={poster} script={script} play="once" theme={theme} className="mx">
+    <Stage<S> width={880} height={490} compact={{ below: 760, width: 358, height: 600 }} initial={initial} poster={poster} script={script} play="once" theme={theme} className="mx">
       {(s, _rect, layout) => <Scene s={s} layout={layout} />}
     </Stage>
   )

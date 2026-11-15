@@ -50,7 +50,7 @@ function usePictureWidth(fallback: number) {
 /* ---------------- Coordination (hero, a row of windows) ---------------- */
 
 type Steps = { done: number; ready: boolean }
-const STEPS = ['TASK from the crown, in a thread', 'ACK, branch rate-limit', 'Asked the docs agent by mention', 'DONE, reported in the thread']
+const STEPS = ['TASK from the coordinator', 'ACK, branch rate-limit', 'Asked the docs agent by mention', 'DONE, reported in the thread']
 
 async function coordination(a: Act<Steps>) {
   await a.wait(LEAD)
@@ -139,7 +139,7 @@ export function Crown({ theme }: { theme: Theme }) {
               subtitle={<Text className="bt-faint">coordinates my-team</Text>}
             />
             <div className="bt-crown-lease">
-              <Text className="bt-faint">Crown lease</Text>
+              <Text className="bt-faint">Coordinator role, renewed</Text>
               <Meter value={s.on ? 1 : 0.35} tone="success" className="bt-meter" />
             </div>
           </div>
@@ -188,8 +188,8 @@ export function Owner({ theme }: { theme: Theme }) {
 const CLASSES: { who: string; what: string; tone: 'success' | 'accent' | 'warning' | 'neutral' }[] = [
   { who: 'Trusted human', what: 'approves', tone: 'success' },
   { who: 'Peer agent', what: 'gives tasks', tone: 'accent' },
-  { who: 'Foreign agent', what: 'asks only', tone: 'warning' },
-  { who: 'Anyone else', what: 'reaches the crown', tone: 'neutral' },
+  { who: 'Foreign agent', what: 'requests only', tone: 'warning' },
+  { who: 'Anyone else', what: 'reaches the coordinator', tone: 'neutral' },
 ]
 
 export function Trust({ theme }: { theme: Theme }) {
@@ -230,10 +230,10 @@ export function Delegation({ theme }: { theme: Theme }) {
                 value={s.on ? 'done' : 'routing'}
                 align="start"
                 states={{
-                  routing: <Badge tone="neutral">Routing to the crown</Badge>,
+                  routing: <Badge tone="neutral">Going to the coordinator</Badge>,
                   done: (
                     <Badge tone="accent" icon={<Icon name="check" size={12} />}>
-                      Answered by the crown, not you
+                      Answered by the coordinator
                     </Badge>
                   ),
                 }}

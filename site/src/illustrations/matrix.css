@@ -4,7 +4,7 @@
     overflow: hidden;
     background: transparent;
     --ss-font: 'Inter', system-ui, -apple-system, sans-serif;
-    --mx-label: 200px;
+    --mx-label: 180px;
     --mx-pad: 24px;
   }
 
@@ -30,7 +30,7 @@
     top: 0;
     bottom: 0;
     left: calc(var(--mx-pad) + var(--mx-label));
-    width: calc((100% - 2 * var(--mx-pad) - var(--mx-label)) / 7);
+    width: calc((100% - 2 * var(--mx-pad) - var(--mx-label)) / 8);
     background: var(--ss-accent-soft);
     opacity: 0;
     transition: opacity 0.9s cubic-bezier(0.25, 0.8, 0.25, 1);
@@ -43,7 +43,7 @@
   & .mx-row {
     position: relative;
     display: grid;
-    grid-template-columns: var(--mx-label) repeat(7, minmax(0, 1fr));
+    grid-template-columns: var(--mx-label) repeat(8, minmax(0, 1fr));
     align-items: center;
     height: 42px;
     border-bottom: 1px solid var(--ss-line-faint);
@@ -53,7 +53,7 @@
   }
 
   & .mx-row--head {
-    height: 52px;
+    height: 70px;
     border-bottom-color: var(--ss-line);
   }
 
@@ -64,7 +64,7 @@
   }
 
   & .mx-name {
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 600;
     color: var(--ss-text-strong);
   }
@@ -72,6 +72,20 @@
   & .mx-sub {
     font-size: 11px;
     color: var(--ss-text-faint);
+  }
+
+  & .mx-soon {
+    font-size: 10px;
+  }
+
+  & .mx-soon-slot {
+    height: 16px;
+  }
+
+  & .mx-soonrow {
+    grid-column: 2 / -1;
+    display: flex;
+    justify-content: center;
   }
 
   & .mx-label {

@@ -73,12 +73,12 @@ cells, a 12px header, hairlines), `bento` for the tile framing (pinned bottom
 bleed on the tile's ground). Marks are kit parts: a done `Check` (yes), the
 empty `Check` ring with its note number (partly), a short `Bar` (no).
 
-Sizes: wide 880 x 470 (card 24px in from the sides and top, 832 wide, label
-column 200px, seven columns of about 83px, header 52px, rows 42px, the card
-running 24px off the bottom); compact 358 x 560 below a 760px container
-(transposed: harnesses as 40px rows, the seven features as numbered 28px
+Sizes: wide 880 x 490 (card 24px in from the sides and top, 832 wide, label
+column 180px, eight columns of about 75px, header 70px with a Soon badge slot,
+rows 42px, the card running 24px off the bottom); compact 358 x 600 below a
+760px container (transposed: harnesses as 40px rows, OpenCode + corral a
+Soon row, the seven features as numbered 28px
 columns named in a key under the grid). One motion: the recommended column's
 tint and Badge settle in once; poster = the full table with the tint.
 
-Not checked: whether the two-line column headers and the note numbers fit at
-83px, the compact key and legend fit at 326px, and the dark look.
+Not checked: whether the column headers and the note numbers fit at 75px, the compact key and legend fit at 326px, and the dark look.
