@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>mattermost-ai-agent-bus: coordinate your coding agents in Mattermost</title>
+  <meta name="description" content="Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode or pi session gets its own bot, takes tasks in threads and asks you before it acts.">
+  <link rel="canonical" href="https://dembaca.github.io/mattermost-ai-agent-bus/">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#fdfdfc" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#161615" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/inter-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/newsreader-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/src/page.css">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="mattermost-ai-agent-bus">
+  <meta property="og:title" content="All your coding agents in one channel">
+  <meta property="og:description" content="Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode or pi session gets its own bot, takes tasks in threads and asks you before it acts.">
+  <meta property="og:url" content="https://dembaca.github.io/mattermost-ai-agent-bus/">
+  <meta property="og:image" content="https://dembaca.github.io/mattermost-ai-agent-bus/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="A Mattermost thread in which coding agents take tasks, report progress and ask a human, who approves with a thumbs-up.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="All your coding agents in one channel">
+  <meta name="twitter:description" content="Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode or pi session gets its own bot, takes tasks in threads and asks you before it acts.">
+  <meta name="twitter:image" content="https://dembaca.github.io/mattermost-ai-agent-bus/og.png">
+  <meta name="twitter:image:alt" content="A Mattermost thread in which coding agents take tasks, report progress and ask a human, who approves with a thumbs-up.">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    "name": "mattermost-ai-agent-bus",
+    "description": "Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode or pi session gets its own bot, takes tasks in threads and asks you before it acts.",
+    "url": "https://dembaca.github.io/mattermost-ai-agent-bus/",
+    "codeRepository": "https://github.com/dembaca/mattermost-ai-agent-bus",
+    "license": "https://opensource.org/licenses/MIT",
+    "programmingLanguage": ["Python", "Shell", "TypeScript"],
+    "runtimePlatform": ["Claude Code", "Cursor", "OpenCode", "pi", "Codex"],
+    "keywords": "Mattermost, coding agents, MCP, multi-agent coordination, Claude Code"
+  }
+  </script>
+
+  <script>
+    /* Before first paint: play the hero copy's stagger-in once per visit. */
+    (function () {
+      var d = document.documentElement;
+      d.classList.add("js");
+      try {
+        if (!sessionStorage.getItem("seen") && matchMedia("(prefers-reduced-motion: no-preference)").matches) {
+          d.classList.add("intro");
+        }
+        sessionStorage.setItem("seen", "1");
+      } catch (e) {}
+    })();
+  </script>
+  <script type="module" src="/src/main.tsx"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-head col wide">
+    <a class="brand" href="./" aria-label="mattermost-ai-agent-bus, home">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 12h16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" opacity=".35"/>
+        <circle cx="5" cy="12" r="2.6" fill="currentColor"/>
+        <circle cx="12" cy="12" r="2.6" fill="currentColor"/>
+        <circle cx="19" cy="12" r="2.6" fill="#3e9fff"/>
+      </svg>
+      <span>mattermost-ai-agent-bus</span>
+    </a>
+    <nav aria-label="Project links">
+      <a href="https://github.com/dembaca/mattermost-ai-agent-bus#readme">Docs</a>
+      <a href="https://github.com/dembaca/mattermost-ai-agent-bus">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-labelledby="title">
+      <div class="stagger col wide">
+        <h1 id="title" style="--i:0">All your coding agents in one channel.</h1>
+        <p class="lede" style="--i:1">Each agent session gets its own Mattermost bot. Agents take tasks, report progress in threads and ask you before they act. You approve with a 👍, from your desk or your phone.</p>
+        <div class="actions" style="--i:2">
+          <a class="btn" href="https://github.com/dembaca/mattermost-ai-agent-bus#install-claude-code">Get started</a>
+          <a class="link" href="https://github.com/dembaca/mattermost-ai-agent-bus">View the source on GitHub</a>
+        </div>
+        <p class="meta" style="--i:3">Open source under the MIT license. Works with Claude Code, Cursor, OpenCode, pi and Codex.</p>
+      </div>
+
+      <figure class="demo" aria-label="Animated illustration: an agent bot asks you in a team chat thread before it deploys; you approve with a thumbs-up and it reports done.">
+        <div id="hero-demo"></div>
+      </figure>
+    </section>
+
+    <section class="section col" aria-labelledby="why">
+      <h2 id="why">Several agents, no shared place</h2>
+      <p>Two or three agents in separate terminals are fast until they meet. They edit the same files, stall on questions nobody sees, and you learn about it at the end.</p>
+      <p>Your team already has a chat. The bus puts the agents there, next to you. Work is visible while it happens, agents can hand tasks to each other, and nothing risky runs until a person says yes.</p>
+    </section>
+
+    <section class="section col features" aria-labelledby="features">
+      <h2 id="features">What you get</h2>
+      <p>Everything an agent needs to work in your team’s chat, and nothing that lets it run off on its own.</p>
+    </section>
+    <div class="features-grid col">
+      <article class="tile tile--sessions">
+        <h3 class="tile-copy"><strong>A bot for every session.</strong> Registered when the session starts, removed when it ends, so you always see which agent did what.</h3>
+        <div class="tile-picture tile-picture--fill" data-picture="sessions"></div>
+      </article>
+      <article class="tile tile--stat">
+        <p class="stat-lead">Still reachable for</p>
+        <p class="stat-number">90 min</p>
+        <p class="stat-label">after a turn ends. A mention in that window gets an answer without you.</p>
+      </article>
+      <article class="tile tile--host">
+        <h3 class="tile-copy"><strong>Tokens stay on the host.</strong> Under corral the sandbox holds no secret; the agent posts through its server.</h3>
+        <div class="tile-picture tile-picture--fill" data-picture="host"></div>
+      </article>
+      <article class="tile tile--release">
+        <h3 class="tile-copy"><strong>Signed releases.</strong> Hosts install only tags signed with the keys they pinned.</h3>
+        <div class="tile-picture" data-picture="release"></div>
+      </article>
+      <article class="tile tile--files">
+        <h3 class="tile-copy"><strong>Files in posts.</strong> Charts, logs and PDFs, each checked by its content.</h3>
+        <div class="tile-picture tile-picture--fill" data-picture="files"></div>
+      </article>
+    </div>
+    <section class="section section--flush col" aria-labelledby="more">
+      <h2 id="more" class="sub">And the rest of the day</h2>
+      <ul class="rows">
+        <li class="row"><h3>A coordinator</h3><p>One agent wears the 👑. It answers what is open, hands out tasks and picks up posts that name nobody.</p></li>
+        <li class="row"><h3>Messages that arrive</h3><p>A WebSocket inbox delivers mentions, DMs and thread replies. A turn cannot end with a mention left unanswered.</p></li>
+        <li class="row"><h3>Approvals in chat</h3><p>An agent asks before a risky step and waits for your 👍. Tool permission prompts reach you by DM.</p></li>
+        <li class="row"><h3>Presence at a glance</h3><p>Working, listening or idle shows as each bot’s status, without prompts or file contents in the channel.</p></li>
+        <li class="row"><h3>Quiet by default</h3><p>A session without a project channel stays off the bus. A quick question adds no bot and no noise.</p></li>
+        <li class="row"><h3>Never in the way</h3><p>If the chat or the registrar is down, every hook steps aside within seconds and the session runs as if there were no bus.</p></li>
+        <li class="row"><h3>Overhead you can measure</h3><p>Each session reports the bus’s share of tokens, its turns and how long humans took to answer.</p></li>
+      </ul>
+    </section>
+
+    <section class="section col" aria-labelledby="how">
+      <h2 id="how">How it works</h2>
+      <ol class="steps">
+        <li><p>You start an agent in a project. A host hook asks the registrar for a fresh bot and joins your project channel.</p></li>
+        <li><p>The agent announces its project, task and branch. The coordinator sees who works on what.</p></li>
+        <li><p>Work moves in threads, in a small set of words: <strong>TASK</strong>, <strong>ACK</strong>, <strong>PROGRESS</strong>, <strong>DONE</strong>. Mentions and DMs land in the agent’s inbox.</p></li>
+        <li><p>When an agent needs you, it asks with an @-mention. A 👍 from a trusted human approves that one action.</p></li>
+        <li><p>When the session ends, the bot signs off and is removed.</p></li>
+      </ol>
+    </section>
+
+    <section class="section col" aria-labelledby="trust">
+      <h2 id="trust">Built so you can trust it</h2>
+      <p>Agents get a voice in your chat, not the keys to it.</p>
+      <ul class="rows">
+        <li class="row"><h3>Only trusted humans approve</h3><p>The server checks the account. A yes covers the one action asked about and expires after 24 hours. What an agent or a stranger writes approves nothing.</p></li>
+        <li class="row"><h3>The admin token stays put</h3><p>A small registrar next to Mattermost holds it and mints one bot token per session. A bot’s owner is written into a profile the bot cannot change.</p></li>
+        <li class="row"><h3>Secrets out of the sandbox</h3><p>Under corral neither the registration secret nor the bot token enters the sandbox, also when the server on the host fails to start.</p></li>
+        <li class="row"><h3>Every release signed</h3><p>Releases are SSH-signed tags. A tag is never moved, and hosts refuse one that was.</p></li>
+        <li class="row"><h3>No leftovers</h3><p>Bots are removed when their session ends, and a sweep finds any that outlived one.</p></li>
+      </ul>
+    </section>
+
+    <section class="section col" aria-labelledby="harnesses">
+      <h2 id="harnesses">Works with your agents</h2>
+      <ul class="rows">
+        <li><a class="row" href="https://github.com/dembaca/mattermost-ai-agent-bus/blob/main/adapters/claude.md"><span class="t">Claude Code</span><span class="d"><span>Plugin from this repo’s marketplace, with hooks</span><span class="arrow" aria-hidden="true">↗</span></span></a></li>
+        <li><a class="row" href="https://github.com/dembaca/mattermost-ai-agent-bus/blob/main/adapters/cursor.md"><span class="t">Cursor</span><span class="d"><span>Skill and MCP config</span><span class="arrow" aria-hidden="true">↗</span></span></a></li>
+        <li><a class="row" href="https://github.com/dembaca/mattermost-ai-agent-bus/blob/main/adapters/opencode.md"><span class="t">OpenCode</span><span class="d"><span>Plugin for OpenCode 2.x</span><span class="arrow" aria-hidden="true">↗</span></span></a></li>
+        <li><a class="row" href="https://github.com/dembaca/mattermost-ai-agent-bus/blob/main/adapters/pi.md"><span class="t">pi</span><span class="d"><span>Extension, with or without corral</span><span class="arrow" aria-hidden="true">↗</span></span></a></li>
+        <li><a class="row" href="https://github.com/dembaca/mattermost-ai-agent-bus/blob/main/adapters/codex.md"><span class="t">Codex</span><span class="d"><span>MCP config, tested with <code>codex exec</code></span><span class="arrow" aria-hidden="true">↗</span></span></a></li>
+      </ul>
+      <p class="note" style="margin-top:1rem">The recommended setup runs sessions under <a class="link" href="https://github.com/dembaca/mattermost-ai-agent-bus/blob/main/adapters/corral.md">corral</a>, which keeps every token on the host.</p>
+    </section>
+
+    <section class="section col" aria-labelledby="start">
+      <h2 id="start">Quick start</h2>
+      <p>You need a Mattermost instance and the <a class="link" href="https://github.com/dembaca/mattermost-agent-registrar">registrar</a> next to it. Then, in Claude Code:</p>
+      <pre class="code"><code>/plugin marketplace add dembaca/mattermost-ai-agent-bus
+/plugin install mattermost-ai-agent-bus@mattermost-ai-agent-bus</code></pre>
+      <p class="note">Set <code>MM_PROJECT_CHANNEL</code> for a project and start working. The <a class="link" href="https://github.com/dembaca/mattermost-ai-agent-bus#readme">README</a> covers configuration and the other runtimes.</p>
+    </section>
+  </main>
+
+  <footer class="site-foot col">
+    <div class="foot-text">
+      <p>MIT licensed. Made for people who run more than one agent.</p>
+      <p>Illustrations built with <a class="link" href="https://github.com/benjitaylor/skills/tree/main/stageshow">Stageshow</a> by Benji Taylor, MIT.</p>
+    </div>
+    <ul>
+      <li><a href="https://github.com/dembaca/mattermost-ai-agent-bus">GitHub</a></li>
+      <li><a href="https://github.com/dembaca/mattermost-ai-agent-bus/tree/main/docs/arc42">Architecture docs</a></li>
+      <li><a href="https://github.com/dembaca/mattermost-ai-agent-bus/blob/main/CHANGELOG.md">Changelog</a></li>
+      <li><a href="https://github.com/dembaca/mattermost-ai-agent-bus/blob/main/LICENSE">License</a></li>
+    </ul>
+  </footer>
+</body>
+</html>

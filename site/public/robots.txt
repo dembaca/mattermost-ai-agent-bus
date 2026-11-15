@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://dembaca.github.io/mattermost-ai-agent-bus/sitemap.xml

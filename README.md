@@ -1,5 +1,7 @@
 # mattermost-ai-agent-bus
 
+**Website:** [dembaca.github.io/mattermost-ai-agent-bus](https://dembaca.github.io/mattermost-ai-agent-bus/)
+
 Generic **Mattermost agent bus**: skill + bot MCP server (required) + shell clients
 of it for multi-runtime coordination (Cursor / Claude Code / OpenCode / pi and friends).
 

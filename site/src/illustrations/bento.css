@@ -1,0 +1,192 @@
+/* The features grid's pictures. The grid and tiles are page markup
+   (src/page.css, .features-grid); everything here sits inside a Stage. */
+
+.bt-fill {
+  width: 100%;
+}
+
+.bt-center {
+  display: flex;
+  justify-content: center;
+}
+
+.bt-stage .ss-stage {
+  overflow: hidden;
+  background: transparent;
+  --ss-font: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ---- Sessions: a row of windows (window-row) ---- */
+
+.bt-wr {
+  & .bt-wr-win {
+    position: absolute;
+    top: 24px;
+    width: 300px;
+    height: 300px;
+  }
+
+  & .bt-wr-win--hero {
+    z-index: 1;
+    box-shadow: var(--ss-shadow-hero);
+  }
+
+  & .bt-wr-body {
+    display: grid;
+    gap: 12px;
+    padding: 18px 20px 0;
+  }
+
+  & .bt-wr-label {
+    color: var(--ss-text);
+    font-size: 13px;
+    transition: color 0.3s ease;
+  }
+
+  & .bt-wr-step[data-on] .bt-wr-label {
+    color: var(--ss-text-strong);
+  }
+
+  & .bt-wr-foot {
+    margin-top: 4px;
+    padding-top: 14px;
+    border-top: 1px solid var(--ss-line);
+  }
+
+  & .ss-window__title {
+    font-family: var(--ss-mono);
+    font-size: 11.5px;
+  }
+}
+
+/* ---- Host: a dark shell fragment, no chrome ---- */
+
+.bt-term {
+  position: absolute;
+  left: 24px;
+  right: -24px;
+  top: 8px;
+  bottom: -24px;
+  padding: 16px 18px;
+  border-radius: 12px 0 0 0;
+  background: #17171a;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+.bt-term .bt-term-out {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.4s cubic-bezier(0.25, 0.8, 0.25, 1), transform 0.6s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.bt-term[data-on] .bt-term-out {
+  opacity: 1;
+  transform: none;
+}
+
+/* ---- Release: a signed tag, an object ---- */
+
+.bt-tag {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  top: 16px;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--ss-surface);
+  box-shadow: var(--ss-shadow-ground);
+}
+
+.bt-tag-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bt-tag-icon {
+  flex: none;
+  color: var(--ss-icon);
+}
+
+.bt-tag-name {
+  font-family: var(--ss-mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ss-text-strong);
+}
+
+.bt-tag-kind {
+  margin-left: auto;
+}
+
+.bt-tag-sig {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bt-tag-state {
+  font-size: 13px;
+  color: var(--ss-text);
+}
+
+.bt-tag-state--good {
+  color: var(--ss-success-text);
+  font-weight: 550;
+}
+
+.bt-tag-key {
+  display: flex;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ss-line);
+}
+
+/* ---- Files: a chart attached to a post ---- */
+
+.bt-file {
+  position: absolute;
+  left: 24px;
+  top: 8px;
+  width: 268px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--ss-surface);
+  box-shadow: var(--ss-shadow-ground);
+}
+
+.bt-file-chart {
+  padding: 16px 16px 12px;
+  --ss-accent: #3e9fff;
+}
+
+.bt-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--ss-line);
+}
+
+.bt-file-icon {
+  flex: none;
+  color: var(--ss-icon);
+}
+
+.bt-file-name {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ss-text-strong);
+}
+
+.bt-file-size {
+  font-size: 12px;
+  color: var(--ss-text-faint);
+}
+
+.bt-file-ok {
+  margin-left: auto;
+  color: var(--ss-success);
+}

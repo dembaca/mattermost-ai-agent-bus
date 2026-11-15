@@ -1,0 +1,307 @@
+/* The hero chat. Everything nests under .hc so the page can't restyle it.
+   Corner bleed (framing.md): the window sits one gutter in from the top and
+   left and runs off the right and bottom; the page is the ground, no plate. */
+.hc {
+  & .ss-stage {
+    overflow: hidden;
+    background: transparent;
+    --ss-font: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  & .hc-win {
+    position: absolute;
+    left: 40px;
+    top: 36px;
+    width: 1080px;
+    height: 520px;
+    box-shadow: var(--ss-shadow-hero);
+  }
+
+  & .hc-win--compact {
+    left: 16px;
+    top: 20px;
+    width: 400px;
+    height: 480px;
+  }
+
+  & .hc-i {
+    flex: none;
+    color: var(--ss-icon);
+  }
+
+  /* ---- Sidebar: the team's channels, one of them ours ---- */
+
+  & .hc-side {
+    display: grid;
+    align-content: start;
+    gap: 2px;
+    padding: 6px 10px;
+  }
+
+  & .hc-side__team {
+    display: flex;
+    align-items: center;
+    height: 30px;
+    padding: 0 10px;
+    margin-bottom: 6px;
+  }
+
+  & .hc-side__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 7px;
+  }
+
+  & .hc-side__row[data-active] {
+    background: var(--ss-fill);
+  }
+
+  & .hc-side__name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ss-text-strong);
+  }
+
+  /* ---- Channel ---- */
+
+  & .hc-channel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--ss-surface);
+  }
+
+  & .hc-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: none;
+    height: 48px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--ss-line);
+  }
+
+  & .hc-head__title {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 15px;
+    font-weight: 650;
+    color: var(--ss-text-strong);
+  }
+
+  /* A short history sits at the top of its pane, under the header */
+  & .hc-feed {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 0 0;
+  }
+
+  & .hc-row {
+    position: relative;
+  }
+
+  & .hc-msg {
+    display: grid;
+    grid-template-columns: 32px minmax(0, 1fr);
+    column-gap: 12px;
+    margin: 0 8px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    transition: background 0.14s ease;
+  }
+
+  & .hc-row[data-hover] .hc-msg--ask {
+    background: var(--ss-fill);
+  }
+
+  & .hc-body {
+    min-width: 0;
+  }
+
+  & .hc-meta {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 20px;
+  }
+
+  & .hc-meta--bars {
+    gap: 8px;
+  }
+
+  & .hc-lines {
+    display: grid;
+    gap: 9px;
+    padding: 8px 0 6px;
+  }
+
+  & .hc-name {
+    font-size: 14px;
+    font-weight: 650;
+    color: var(--ss-text-strong);
+  }
+
+  & .hc-status {
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  & .hc-bot {
+    font-size: 10px;
+    letter-spacing: 0.02em;
+  }
+
+  & .hc-time {
+    font-size: 12px;
+    color: var(--ss-text-faint);
+  }
+
+  & .hc-text {
+    margin: 3px 0 0;
+    font-size: 14px;
+    line-height: 21px;
+    color: var(--ss-text-strong);
+  }
+
+  & .hc-text code {
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: var(--ss-fill);
+    font-family: var(--ss-mono);
+    font-size: 12.5px;
+  }
+
+  & .hc-word {
+    font-weight: 700;
+    color: var(--ss-accent-text);
+  }
+
+  & .hc-word--done {
+    color: var(--ss-success-text);
+  }
+
+  & .hc-at {
+    font-weight: 550;
+    color: var(--ss-accent-text);
+  }
+
+  & .hc-at--you {
+    padding: 0 3px;
+    border-radius: 4px;
+    background: var(--ss-warning-soft);
+    color: var(--ss-warning-text);
+  }
+
+  /* The ask's reactions: the thumbs-up opens its own room beside the status */
+  & .hc-reacts {
+    display: flex;
+    align-items: center;
+    padding-top: 8px;
+  }
+
+  & .hc-react {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    box-sizing: border-box;
+    height: 24px;
+    max-width: 0;
+    margin-right: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    background: var(--ss-accent-soft);
+    opacity: 0;
+    transform: scale(0.82);
+    transition:
+      max-width 0.36s cubic-bezier(0.3, 0.75, 0.1, 1),
+      margin-right 0.36s cubic-bezier(0.3, 0.75, 0.1, 1),
+      padding 0.36s cubic-bezier(0.3, 0.75, 0.1, 1),
+      opacity 0.2s ease 0.08s,
+      transform 0.36s cubic-bezier(0.3, 0.75, 0.1, 1);
+  }
+
+  & .hc-react[data-on] {
+    max-width: 60px;
+    margin-right: 8px;
+    padding: 0 9px 0 7px;
+    border-color: color-mix(in srgb, var(--ss-accent) 45%, transparent);
+    opacity: 1;
+    transform: none;
+  }
+
+  & .hc-react__emoji {
+    font-size: 13px;
+    line-height: 1;
+  }
+
+  & .hc-react__count {
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--ss-accent-text);
+  }
+
+  /* The hover toolbar: quick reactions, then the actions */
+  & .hc-hover {
+    position: absolute;
+    top: -14px;
+    left: 380px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    padding: 2px;
+    border: 1px solid var(--ss-line);
+    border-radius: 8px;
+    background: var(--ss-surface);
+    box-shadow: var(--ss-shadow-float);
+    opacity: 0;
+    transform: translateY(3px);
+    transition: opacity 0.14s ease, transform 0.18s ease;
+    pointer-events: none;
+  }
+
+  & .hc-row[data-hover] .hc-hover {
+    opacity: 1;
+    transform: none;
+  }
+
+  & .hc-hover__btn {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    transition: background 0.1s ease;
+  }
+
+  & .hc-hover__btn[data-hover] {
+    background: var(--ss-fill);
+  }
+
+  & .hc-hover__emoji {
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  & .hc-hover__div {
+    width: 1px;
+    height: 18px;
+    margin: 0 3px;
+    background: var(--ss-line);
+  }
+
+  /* Narrow: the thread alone, and the toolbar hangs from the ask's right */
+  & .ss-stage[data-layout='compact'] .hc-hover {
+    left: auto;
+    right: 70px;
+  }
+
+  & .ss-stage[data-layout='compact'] .hc-head {
+    padding: 0 16px;
+  }
+}
