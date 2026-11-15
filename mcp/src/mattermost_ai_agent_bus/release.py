@@ -507,10 +507,14 @@ def _record_failure(directory: Path, now: float) -> None:
 
 
 def _period(directory: Path) -> int:
-    """How old the last success may be: a day, an hour when the newest found
-    is older than this server's version (a version installed since: catch up)."""
+    """How old the last success may be (RT-6.30 step 5): a day; an hour when
+    this is a host copy and the newest found is older than its version (just
+    installed since the check: catch up). A plugin tree or checkout ahead of
+    the tags is normal and keeps the day."""
     st = read_state(directory)
-    return int(POLL) if st is not None and older(st) else CHECK_EVERY
+    if st is None or running()[0] == "plugin" or not older(st):
+        return CHECK_EVERY
+    return int(POLL)
 
 
 def due(directory: Path | None = None, now: float | None = None) -> bool:

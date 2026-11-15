@@ -352,17 +352,23 @@ def test_a_newest_older_than_this_version_is_checked_again_after_an_hour(monkeyp
     older than itself: the catch-up is due an hour after the last success,
     else a day."""
     monkeypatch.setattr(release, "VERSION", "1.5.0")
+    monkeypatch.setattr(release, "running", lambda root=None: ("unsigned", ""))
     d = state(tmp_path, GOOD)  # newest 1.4.0: older than 1.5.0
     now = time.time()
     (d / release.STAMP_FILE).write_text(f"{int(now)}\n")
     assert not release.due(d, now + 3500) and release.due(d, now + 3700)
     monkeypatch.setattr(release, "VERSION", "1.4.0")  # not older: a day
     assert not release.due(d, now + 3700) and release.due(d, now + release.CHECK_EVERY + 10)
+    monkeypatch.setattr(release, "VERSION", "1.5.0")
+    monkeypatch.setattr(release, "running", lambda root=None: ("plugin", ""))
+    assert not release.due(d, now + 3700)  # a plugin tree ahead of the tags: a day
+    assert release.due(d, now + release.CHECK_EVERY + 10)
 
 
 async def test_the_catch_up_passes_the_hour_to_if_due(monkeypatch, tmp_path):
     """RT-6.30 step 5: `--if-due` carries the period due() used."""
     monkeypatch.setattr(release, "VERSION", "1.5.0")
+    monkeypatch.setattr(release, "running", lambda root=None: ("release", "v1.5.0"))
     d = state(tmp_path, GOOD)
     script = fake_check(tmp_path, 'echo "$@" > "$2/args.txt"\n')
     assert await release.run_check(script, directory=d) == 0
