@@ -485,12 +485,19 @@ def test_a_tool_name_cannot_smuggle_text_into_the_log(logged):
 
 
 def test_the_log_keeps_only_its_newest_lines(logged):
-    """RT-6.13 step 6: at most 500 lines, the oldest go first."""
-    for n in range(permission.LOG_LINES + 40):
+    """RT-6.13 step 6: never more than 500 lines; past that the oldest go and
+    the newest 400 stay, so a full log is not rewritten by every note."""
+    for n in range(permission.LOG_LINES):
+        permission.note("request received", f"id{n}", "Bash")
+    assert len(_lines()) == permission.LOG_LINES
+    permission.note("request received", f"id{permission.LOG_LINES}", "Bash")
+    lines = _lines()
+    assert len(lines) == permission.LOG_KEEP
+    assert lines[0]["id"] == f"id{permission.LOG_LINES - permission.LOG_KEEP + 1}"
+    for n in range(permission.LOG_LINES + 1, permission.LOG_LINES + 40):
         permission.note("request received", f"id{n}", "Bash")
     lines = _lines()
-    assert len(lines) == permission.LOG_LINES
-    assert lines[0]["id"] == "id40" and lines[-1]["id"] == f"id{permission.LOG_LINES + 39}"
+    assert len(lines) == permission.LOG_KEEP + 39 and lines[-1]["id"] == f"id{permission.LOG_LINES + 39}"
 
 
 @pytest.mark.anyio

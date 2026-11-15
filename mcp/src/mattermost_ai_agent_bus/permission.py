@@ -61,8 +61,10 @@ SHORT_CHARS = 200
 ELIDED = re.compile(r"\s*⋯ (\d+) code points elided ⋯\s*")
 
 
-# The relay log (RT-6.13 step 6): the newest lines only.
+# The relay log (RT-6.13 step 6): past LOG_LINES it is cut to the newest LOG_KEEP,
+# so a full log is not rewritten by every note.
 LOG_LINES = 500
+LOG_KEEP = 400
 
 
 def log_path() -> Path | None:
@@ -80,7 +82,7 @@ def note(step: str, request_id: object, tool: object = "", reason: str = "") -> 
     (RT-6.13 step 6). Never the prompt's description or preview, nor anything of
     the tool's input: the log is for telling what the relay did, and nobody
     keeps stderr. `reason` is a fixed word or a human's username, an error as
-    its class name only. Newest 500 lines kept. Never raises: a failed write
+    its class name only. Never more than 500 lines: past that the newest 400 stay. Never raises: a failed write
     must not fail the relay."""
     try:
         path = log_path()
@@ -96,9 +98,10 @@ def note(step: str, request_id: object, tool: object = "", reason: str = "") -> 
         session_file.append_private(path, line)
         lines = path.read_text().splitlines(keepends=True)
         if len(lines) > LOG_LINES:
-            session_file.write_private(path, "".join(lines[-LOG_LINES:]))
+            session_file.write_private(path, "".join(lines[-LOG_KEEP:]))
     except Exception as exc:  # noqa: BLE001 — a diagnostic, never part of the relay
-        log.debug("permission relay log not written: %s", type(exc).__name__)
+        # A warning: this is what makes a missing `request received` line ambiguous.
+        log.warning("permission relay log not written: %s", type(exc).__name__)
 
 
 def relayed() -> bool:

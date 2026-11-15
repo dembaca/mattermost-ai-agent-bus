@@ -17,8 +17,8 @@ before 0.5.0 are described in the git history.
   sent (allow or deny, by whom), closed at the turn's end, and a `yes`/`no` for
   an id that is not open. A line holds a time, the request id, the tool name,
   the step and a reason, never the prompt's description or input, nor any
-  command, path or file content. The newest 500 lines are kept; a failed
-  write never fails the relay. The sweep removes the file of a bot that is
+  command, path or file content. The log never passes 500 lines (then the newest 400 stay); a failed
+  write is logged as a warning and never fails the relay. The sweep removes the file of a bot that is
   gone. RT-6.13's error table says what a missing `request received` line
   means for a subagent's prompt.
 - ADR-009 and ADR-011 in the decision table of

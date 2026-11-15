@@ -1624,7 +1624,7 @@ description to decide.
 
 ## ADR-009: Push for plugin runtimes, OpenCode without a listen window, a pi adapter
 
-**Status:** Decided, built (proposed 2026-11-04; phases 1 to 3 built, 0.71.8, 0.71.10, 0.79.0); phase 1 built (0.71.8): the long poll of
+**Status:** Decided, built (proposed 2026-11-04; all three phases built); phase 1 built (0.71.8): the long poll of
 `GET /v1/wake` (RT-6.17 step 7). As built, a long poll may leave `until` out
 (no listen window ends it, the other gates of RT-6.2 step 3 hold); `wait` is
 a hard deadline; a replaced request answers with reason `replaced` and gives
