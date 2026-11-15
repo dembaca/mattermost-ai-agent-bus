@@ -332,6 +332,106 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
 .tile--release { grid-area: release; }
 .tile--files { grid-area: files; }
 
+.tile-title {
+  margin: 0;
+  padding: var(--tile-pad) var(--tile-pad) 0;
+  font-family: var(--sans);
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  font-weight: 600;
+  letter-spacing: -.012em;
+  color: var(--ink);
+}
+
+.tile-copy {
+  margin: .125rem 0 0;
+  padding: 0 var(--tile-pad);
+  max-width: 26rem;
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  letter-spacing: -.012em;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.tile-picture { display: none; }
+html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
+
+.demo {
+  max-width: 960px;
+  margin: 3rem auto 0;
+  padding: 0;
+}
+
+.hero-stage { width: 100%; }
+
+.hero-caption {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  max-width: calc(var(--wide));
+  margin: .75rem 0 0;
+  padding: 0 var(--gutter);
+  color: var(--muted);
+  font-size: .8125rem;
+}
+
+.replay {
+  font: inherit;
+  color: var(--ink);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  height: 1.875rem;
+  padding: 0 .75rem;
+  cursor: pointer;
+  transition: border-color .14s ease;
+}
+.replay:hover { border-color: var(--link-line-hover); }
+
+/* The features grid: hero and strip (Stageshow bento.md). Copy is page
+   type in the tile; each picture is its own Stage, pinned to the bottom. */
+.features-grid {
+  --tile-bg: #f4f4f2;
+  --tile-pad: 1.5rem;
+  max-width: calc(984px + 2 * var(--gutter));
+  margin-top: 2rem;
+  display: grid;
+  gap: .875rem;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "sessions" "stat" "host" "release" "files";
+}
+
+@media (min-width: 40rem) {
+  .features-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas: "sessions sessions" "stat host" "release files";
+  }
+}
+
+@media (min-width: 60rem) {
+  .features-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas: "sessions sessions stat" "host release files";
+  }
+}
+
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 21rem;
+  overflow: hidden;
+  border-radius: 20px;
+  background: var(--tile-bg);
+}
+.tile--sessions { grid-area: sessions; min-height: 23rem; }
+.tile--stat { grid-area: stat; }
+.tile--host { grid-area: host; }
+.tile--release { grid-area: release; }
+.tile--files { grid-area: files; }
+
 .tile-copy {
   margin: 0;
   padding: var(--tile-pad) var(--tile-pad) 0;
@@ -355,7 +455,8 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
   justify-content: center;
   padding: var(--tile-pad);
 }
-.stat-lead, .stat-label { margin: 0; color: var(--muted); font-size: 1.0625rem; line-height: 1.45; letter-spacing: -.012em; }
+.tile--stat .tile-title { padding: 0; }
+.stat-label { margin: 0; color: var(--muted); font-size: 1.0625rem; line-height: 1.45; letter-spacing: -.012em; }
 .stat-number {
   margin: .25rem 0 .5rem;
   font-family: var(--serif);
@@ -370,7 +471,6 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
 .section--flush { padding-top: 3.5rem; }
 .section--flush::before { display: none; }
 .section h2.sub { font-size: 1.125rem; }
-.features { padding-bottom: 0; }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .features-grid { --tile-bg: #1f1f1e; }

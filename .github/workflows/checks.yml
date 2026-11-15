@@ -66,6 +66,24 @@ jobs:
       - name: extension glue against a fake hook API
         run: node --test pi/test/extension.test.ts
 
+  site:
+    name: promo site builds (site/)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      # Same build as pages.yml, so a PR shows a broken site before main does.
+      - name: typecheck and build
+        working-directory: site
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
   lint:
     runs-on: ubuntu-latest
     steps:

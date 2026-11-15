@@ -5,8 +5,8 @@ import HeroChat from './illustrations/HeroChat'
 import { Files, Host, Release, Sessions } from './illustrations/Bento'
 
 // The page is plain HTML (index.html): it reads fully without JS. This file
-// only mounts the illustrations into their slots, replacing each slot's
-// poster image. Reduced motion shows each Stage's poster frame.
+// only mounts the illustrations into their empty slots (the page hides them
+// without JS). Reduced motion shows each Stage's poster frame.
 
 const dark = window.matchMedia('(prefers-color-scheme: dark)')
 

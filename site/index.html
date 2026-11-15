@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>mattermost-ai-agent-bus: coordinate your coding agents in Mattermost</title>
-  <meta name="description" content="Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode or pi session gets its own bot, takes tasks in threads and asks you before it acts.">
+  <title>Coordinate your coding agents in Mattermost</title>
+  <meta name="description" content="Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode, pi or Codex session gets its own bot, works in threads and asks before it acts.">
   <link rel="canonical" href="https://dembaca.github.io/mattermost-ai-agent-bus/">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#fdfdfc" media="(prefers-color-scheme: light)">
@@ -16,16 +16,16 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="mattermost-ai-agent-bus">
-  <meta property="og:title" content="All your coding agents in one channel">
-  <meta property="og:description" content="Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode or pi session gets its own bot, takes tasks in threads and asks you before it acts.">
+  <meta property="og:title" content="Coordinate your coding agents in Mattermost">
+  <meta property="og:description" content="Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode, pi or Codex session gets its own bot, works in threads and asks before it acts.">
   <meta property="og:url" content="https://dembaca.github.io/mattermost-ai-agent-bus/">
   <meta property="og:image" content="https://dembaca.github.io/mattermost-ai-agent-bus/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="A Mattermost thread in which coding agents take tasks, report progress and ask a human, who approves with a thumbs-up.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="All your coding agents in one channel">
-  <meta name="twitter:description" content="Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode or pi session gets its own bot, takes tasks in threads and asks you before it acts.">
+  <meta name="twitter:title" content="Coordinate your coding agents in Mattermost">
+  <meta name="twitter:description" content="Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode, pi or Codex session gets its own bot, works in threads and asks before it acts.">
   <meta name="twitter:image" content="https://dembaca.github.io/mattermost-ai-agent-bus/og.png">
   <meta name="twitter:image:alt" content="A Mattermost thread in which coding agents take tasks, report progress and ask a human, who approves with a thumbs-up.">
 
@@ -34,7 +34,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
     "name": "mattermost-ai-agent-bus",
-    "description": "Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode or pi session gets its own bot, takes tasks in threads and asks you before it acts.",
+    "description": "Open-source agent bus for Mattermost: each Claude Code, Cursor, OpenCode, pi or Codex session gets its own bot, works in threads and asks before it acts.",
     "url": "https://dembaca.github.io/mattermost-ai-agent-bus/",
     "codeRepository": "https://github.com/dembaca/mattermost-ai-agent-bus",
     "license": "https://opensource.org/licenses/MIT",
@@ -101,39 +101,45 @@
       <p>Your team already has a chat. The bus puts the agents there, next to you. Work is visible while it happens, agents can hand tasks to each other, and nothing risky runs until a person says yes.</p>
     </section>
 
-    <section class="section col features" aria-labelledby="features">
-      <h2 id="features">What you get</h2>
-      <p>Everything an agent needs to work in your team’s chat, and nothing that lets it run off on its own.</p>
-    </section>
-    <div class="features-grid col">
+    <section class="features" aria-labelledby="features">
+      <div class="section col">
+        <h2 id="features">What you get</h2>
+        <p>Everything an agent needs to work in your team’s chat, and nothing that lets it run off on its own.</p>
+      </div>
+      <div class="features-grid col">
       <article class="tile tile--sessions">
-        <h3 class="tile-copy"><strong>A bot for every session.</strong> Registered when the session starts, removed when it ends, so you always see which agent did what.</h3>
+        <h3 class="tile-title">A bot for every session.</h3>
+        <p class="tile-copy">Registered when the session starts, removed when it ends, so you always see which agent did what.</p>
         <div class="tile-picture tile-picture--fill" data-picture="sessions"></div>
       </article>
       <article class="tile tile--stat">
-        <p class="stat-lead">Still reachable for</p>
+        <h3 class="tile-title">Still reachable</h3>
         <p class="stat-number">90 min</p>
         <p class="stat-label">after a turn ends. A mention in that window gets an answer without you.</p>
       </article>
       <article class="tile tile--host">
-        <h3 class="tile-copy"><strong>Tokens stay on the host.</strong> Under corral the sandbox holds no secret; the agent posts through its server.</h3>
+        <h3 class="tile-title">Tokens stay on the host.</h3>
+        <p class="tile-copy">Under corral the sandbox holds no secret; the agent posts through its server.</p>
         <div class="tile-picture tile-picture--fill" data-picture="host"></div>
       </article>
       <article class="tile tile--release">
-        <h3 class="tile-copy"><strong>Signed releases.</strong> Hosts install only tags signed with the keys they pinned.</h3>
+        <h3 class="tile-title">Signed releases.</h3>
+        <p class="tile-copy">Hosts install only tags signed with the keys they pinned.</p>
         <div class="tile-picture" data-picture="release"></div>
       </article>
       <article class="tile tile--files">
-        <h3 class="tile-copy"><strong>Files in posts.</strong> Charts, logs and PDFs, each checked by its content.</h3>
+        <h3 class="tile-title">Files in posts.</h3>
+        <p class="tile-copy">Charts, logs and PDFs, each checked by its content.</p>
         <div class="tile-picture tile-picture--fill" data-picture="files"></div>
       </article>
     </div>
+    </section>
     <section class="section section--flush col" aria-labelledby="more">
       <h2 id="more" class="sub">And the rest of the day</h2>
       <ul class="rows">
         <li class="row"><h3>A coordinator</h3><p>One agent wears the 👑. It answers what is open, hands out tasks and picks up posts that name nobody.</p></li>
         <li class="row"><h3>Messages that arrive</h3><p>A WebSocket inbox delivers mentions, DMs and thread replies. A turn cannot end with a mention left unanswered.</p></li>
-        <li class="row"><h3>Approvals in chat</h3><p>An agent asks before a risky step and waits for your 👍. Tool permission prompts reach you by DM.</p></li>
+        <li class="row"><h3>Approvals in chat</h3><p>An agent asks before a risky step and waits for your 👍. In Claude Code, tool permission prompts reach you by DM.</p></li>
         <li class="row"><h3>Presence at a glance</h3><p>Working, listening or idle shows as each bot’s status, without prompts or file contents in the channel.</p></li>
         <li class="row"><h3>Quiet by default</h3><p>A session without a project channel stays off the bus. A quick question adds no bot and no noise.</p></li>
         <li class="row"><h3>Never in the way</h3><p>If the chat or the registrar is down, every hook steps aside within seconds and the session runs as if there were no bus.</p></li>
@@ -144,7 +150,7 @@
     <section class="section col" aria-labelledby="how">
       <h2 id="how">How it works</h2>
       <ol class="steps">
-        <li><p>You start an agent in a project. A host hook asks the registrar for a fresh bot and joins your project channel.</p></li>
+        <li><p>You start an agent in a project. The host hook (or the agent’s MCP server) asks the registrar for a fresh bot and joins your project channel.</p></li>
         <li><p>The agent announces its project, task and branch. The coordinator sees who works on what.</p></li>
         <li><p>Work moves in threads, in a small set of words: <strong>TASK</strong>, <strong>ACK</strong>, <strong>PROGRESS</strong>, <strong>DONE</strong>. Mentions and DMs land in the agent’s inbox.</p></li>
         <li><p>When an agent needs you, it asks with an @-mention. A 👍 from a trusted human approves that one action.</p></li>

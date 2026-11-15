@@ -205,7 +205,7 @@ function Feed({ s }: { s: S }) {
             <div className="hc-body">
               <Who name={AGENT} time="10:24" />
               <p className="hc-text">
-                <b className="hc-word hc-word--done">DONE</b> staging is up, merged as #42
+                <b className="hc-word hc-word--done">DONE</b> rate limiting is on staging, PR #42 open
               </p>
             </div>
           </div>

@@ -35,4 +35,4 @@ htmlcov/
 scratchpad/
 
 # Screenshots dropped in the repo root
-*.png
+/*.png

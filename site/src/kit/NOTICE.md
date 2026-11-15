@@ -1,3 +1,5 @@
+Only `kit/` is vendored here; brand artwork and app icons were left out.
+
 # Notices
 
 Stageshow source is MIT licensed; see `LICENSE`.
