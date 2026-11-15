@@ -15,6 +15,12 @@ is not done until the docs say what the code now does:
   Reference the id from the code that implements a scenario, from `SKILL.md`,
   and from at least one test in `tests/hooks/` (hook behaviour) or `mcp/tests/`
   (MCP server behaviour). A new scenario needs a test.
+- **The website is product copy too.** [`site/`](site) (published at
+  https://dembaca.github.io/mattermost-ai-agent-bus/) promises features, what
+  works in which harness, security answers and a quick start. A PR that adds or
+  changes a feature, a harness's support, a security property or an install
+  step checks `site/index.html` and its illustrations and updates them in the
+  same PR, or says in its body why the site needs no change.
 - **Describe once, link elsewhere.** README, adapter docs and `docs/protocol.md`
   link to the arc42 section instead of restating behaviour.
 - **Version bump → CHANGELOG.md entry** for that version, and the same version in
@@ -26,6 +32,10 @@ is not done until the docs say what the code now does:
   behaviour, docs, tests.
 
 ## Releasing
+
+Before a version is tagged, the website says what that version does: check
+the features, the harness matrix, the Security Q&A and the quick start in
+`site/` against the release's CHANGELOG entries, and fix what is off first.
 
 A version reaches hosts as a release tag (ADR-011, RT-6.29); every tag is signed,
 since hosts that pin the release keys install nothing else. After the
