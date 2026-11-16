@@ -17,7 +17,8 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from .model import Channel, ChannelUser, FileInfo, Me, Post, Reaction, Thread, UnreadChannel
+    from .model import (Banner, BannerState, Channel, ChannelUser, FileInfo, Me, Post, Reaction, Thread,
+                        UnreadChannel)
 
 
 class BotSession(Protocol):
@@ -85,6 +86,20 @@ class ChatPort(Protocol):
         ...
 
     async def set_channel_header(self, channel_id: str, header: str) -> None: ...
+
+    async def channel_banner(self, channel_id: str) -> Banner:
+        """The channel's banner as it is now, never cached (RT-6.6 step 11)."""
+        ...
+
+    async def set_channel_banner(self, channel_id: str, state: BannerState) -> str:
+        """Show the state as the channel's banner, rendered by the adapter
+        (RT-6.6 step 11): the text written. Raises Refused (status 403: no
+        licence or permission) or a transport error when it fails."""
+        ...
+
+    def set_channel_banner_sync(self, channel_id: str, state: BannerState, timeout: float = 0.75) -> str:
+        """set_channel_banner without an event loop, for the exit handler."""
+        ...
 
     # --- people --------------------------------------------------------------
     async def usernames(self, user_ids: set[str]) -> dict[str, str]: ...

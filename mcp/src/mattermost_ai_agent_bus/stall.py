@@ -45,14 +45,15 @@ between other agents are theirs: the coordinator sees the work channel only.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from . import a2a, asks, debug, gate, lease, mandate, owners, remind, session_file, stats, tasks
-from .model import Mark, Post
+from . import a2a, askroute, asks, banner, debug, gate, lease, mandate, owners, remind, session_file, stats, tasks
+from .model import Mark, Post, RosterEntry
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -176,7 +177,9 @@ def items(posts: Sequence[Post], names: Mapping[str, str], classes: list[str],
         else:
             what, nxt = "ask", f"{a.get('human', '–')} (human; {by or 'its agent'} left: not reminded)"
         item = {"what": what, "id": a["ask"], "title": a.get("need", ""),
-                "next": nxt, "last": last, "at": at}
+                "next": nxt, "last": last, "at": at,
+                # For the banner (RT-6.6 step 11): whom it waits on, by whom, since when.
+                "human": a.get("human", ""), "by": by, "asked": asked}
         if what == "ask" and reminded:
             item["reminded"] = True
             on_human.setdefault(by, a)
@@ -321,9 +324,11 @@ class _Look:
     the quiet period (RT-6.19 steps 2 to 4)."""
 
     def __init__(self, uid: str, chan: str, name: str, found: list[dict[str, Any]],
-                 quiet: int, wakes: int, nxt: float, frm: float) -> None:
+                 quiet: int, wakes: int, nxt: float, frm: float,
+                 roster: Sequence[RosterEntry] = (), me: str = "") -> None:
         self.uid, self.chan, self.name, self.found = uid, chan, name, found
         self.quiet, self.wakes, self.nxt, self.frm = quiet, wakes, nxt, frm
+        self.roster, self.me = roster, me
 
     def save(self) -> None:
         _save(self.uid, self.quiet, self.wakes, self.nxt, self.frm, self.chan)
@@ -375,7 +380,7 @@ async def _look(client: ChatPort, uid: str, now: float, chan: str = "", name: st
         quiet = int(st["QUIET"])
     # Own posts and a fresh crown only push the next wake out; the backoff goes on.
     nxt = max(nxt, own / 1000 + stall_sec() if own else 0.0, frm)
-    return _Look(uid, chan, name, found, quiet, wakes, nxt, frm)
+    return _Look(uid, chan, name, found, quiet, wakes, nxt, frm, roster, names.get(uid, ""))
 
 
 async def check(client: ChatPort, uid: str, now: float | None = None) -> float | None:
@@ -387,6 +392,8 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
     now = now or time.time()
     frm = _read(uid)["FROM"]
     looks = [lk for lk in [await _look(client, uid, now, frm=frm)] if lk is not None]
+    if looks:
+        await _banner(client, uid, looks[0], now)  # RT-6.6 step 11: what the home shows
     try:
         guests, unsure = await mandate.held(client, now)
         # Only a guest whose mandate is known to be gone loses its state: one
@@ -427,6 +434,42 @@ async def check(client: ChatPort, uid: str, now: float | None = None) -> float |
         _save(uid, lk.quiet, lk.wakes, now + gap, lk.frm, lk.chan)
         waits.append(gap)
     return min(waits)
+
+
+async def _banner(client: ChatPort, uid: str, lk: _Look, now: float) -> None:
+    """The home's look as its banner's state (RT-6.6 step 11): the stall the
+    check finds, the asks waiting on a human, else the crown and the counts,
+    with the ask mode and an active mandate. Never raises."""
+    try:
+        mode, _ = await askroute.mode(client, uid)
+        m, _ = await mandate.current(client, now)
+        state = banner.state_of(lk.found, lk.quiet, lk.roster, lk.me, now, stall_sec(), mode,
+                                m.home if m is not None else "")
+        await banner.show(client, uid, state, client.work_channel_name)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — display only
+        log.debug("banner: %s", exc)
+
+
+async def refresh_banner(client: ChatPort | None) -> None:
+    """The holder's own ask opened or answered, or the crown came (RT-6.6 step
+    11): the home is looked at now for its banner, not at the next tick. The
+    gap still holds the write. Never raises."""
+    try:
+        if client is None or not client.token:
+            return
+        uid = await lease._user_id(client)
+        if not lease.crown_held(uid):
+            return
+        now = time.time()
+        lk = await _look(client, uid, now, frm=_read(uid)["FROM"])
+        if lk is not None:
+            await _banner(client, uid, lk, now)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — the next tick looks again
+        log.debug("banner refresh: %s", exc)
 
 
 async def watch(client: ChatPort) -> float | None:

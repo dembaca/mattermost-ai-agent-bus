@@ -18,10 +18,9 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
-from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, stats, unanswered, watermark
-from .model import (Channel, ChannelUser, FileInfo, Me, NoAttestationEndpoint, NoDebugEndpoint, NoMandateEndpoint,
-                    Post,
-                    Reaction, Refused, Thread, UnreadChannel)
+from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, stats, symbols, unanswered, watermark
+from .model import (Banner, BannerKind, BannerState, Channel, ChannelUser, FileInfo, Mark, Me, NoAttestationEndpoint,
+                    NoDebugEndpoint, NoMandateEndpoint, Post, Reaction, Refused, Thread, UnreadChannel)
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -119,6 +118,123 @@ def channel_of(raw: Mapping[str, Any]) -> Channel:
     """The bus's Channel from Mattermost's channel JSON."""
     return Channel(id=str(raw.get("id") or ""), name=str(raw.get("name") or ""),
                    type=str(raw.get("type") or ""), raw=MappingProxyType(dict(raw)))
+
+
+# --- the channel banner (RT-6.6 step 11, ADR-013) ------------------------------------
+
+# The bus's banner starts with the marker, the words the header's bus line
+# starts with; an enabled banner without it is a human's (ADR-013 point 4).
+BANNER_MARK = f"{symbols.symbol(Mark.HEADER)} agent bus \u00b7"
+_SEP = " \u00b7 "
+# Background colours by state (ADR-013 point 2): red, amber, neutral.
+BANNER_RED, BANNER_AMBER, BANNER_NEUTRAL = "#D24B4E", "#FFBC1F", "#DDE3EA"
+BANNER_COLOURS = {BannerKind.STALL: BANNER_RED, BannerKind.ASKS: BANNER_AMBER,
+                  BannerKind.CROWN: BANNER_NEUTRAL, BannerKind.ENDED: BANNER_NEUTRAL}
+BANNER_MAX_BYTES = 1024  # Mattermost's limit, in bytes
+BANNER_TITLE_MAX = 80    # a task title's characters
+BANNER_NAME_MAX = 64     # Mattermost's username limit; no registrar prefix assumed
+BANNER_HUMANS_MAX = 3    # humans named in the asks' line
+# One link to the oldest ask; without Markdown the text would say `ask <id>`.
+BANNER_LINKS = True
+_NAMEISH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def _hhmm(ms: int) -> str:
+    """HH:MM in the server's local time, the stall digest's format (stall._hhmm)."""
+    return time.strftime("%H:%M", time.localtime(ms / 1000)) if ms else "\u2013"
+
+
+def _at(name: str) -> str:
+    return "@" + name.lstrip("@")[:BANNER_NAME_MAX]
+
+
+def _capped(text: str, room: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= room else text[:room - 1].rstrip() + "\u2026"
+
+
+def _next(who: str) -> str:
+    """`waits on @name` for a stall item's next one, else its words."""
+    bare = who.split(" (", 1)[0].strip()
+    return f"waits on {_at(bare)}" if _NAMEISH.fullmatch(bare) else f"next: {_capped(who, BANNER_TITLE_MAX)}"
+
+
+def _ask_part(state: BannerState, permalink_base: str) -> str:
+    n = state.asks
+    humans = ", ".join(_at(h) for h in state.humans[:BANNER_HUMANS_MAX])
+    if len(state.humans) > BANNER_HUMANS_MAX:
+        humans += ", \u2026"
+    head = f"{n} ask waits" if n == 1 else f"{n} asks wait"
+    text = f"{head} on {humans}" if humans else head
+    text += f", {'since' if n == 1 else 'oldest since'} {_hhmm(state.since_ms)}"
+    if state.asked_by:
+        text += f" by {_at(state.asked_by)}"
+    if state.ask_id:
+        text += (f": [open it]({permalink_base}{state.ask_id})" if BANNER_LINKS and permalink_base
+                 else f": ask {state.ask_id}")
+    return text
+
+
+def render_banner(state: BannerState, permalink_base: str = "") -> str:
+    """The banner's text for a port-level state (RT-6.6 step 11, ADR-013 point 2):
+    the marker, the state's head, the crown holder, the time it is written. At
+    most BANNER_MAX_BYTES bytes: the optional parts give way from the end (the
+    mandate, the mode, the counts; a stall's asks), the head, the crown and the
+    time stay. Names nothing a member of the home could not read there."""
+    now = _hhmm(state.at_ms or int(time.time() * 1000))
+    crown = f"{symbols.symbol(Mark.CROWN)} {_at(state.holder)}" if state.holder else ""
+    # (text, drop order: 0 stays, higher numbers go first)
+    parts: list[tuple[str, int]]
+    if state.kind is BannerKind.ENDED:
+        parts = [(f"no coordinator since {_hhmm(state.since_ms or state.at_ms)}", 0)]
+        now = ""
+    elif state.kind is BannerKind.STALL:
+        head = f"stalled since {_hhmm(state.since_ms)}{_SEP}{state.open} open"
+        if state.first:
+            title = f' "{_capped(state.title, BANNER_TITLE_MAX)}"' if state.title else ""
+            head += f", first: {state.first}{title}" + (f" {_next(state.next)}" if state.next else "")
+        parts = [(head, 0)]
+        if state.asks:
+            parts.append((f"{state.asks} ask waits" if state.asks == 1 else f"{state.asks} asks wait", 1))
+        parts.append((crown, 0))
+    elif state.kind is BannerKind.ASKS:
+        parts = [(_ask_part(state, permalink_base), 0), (crown, 0)]
+    else:
+        counts = _SEP.join(f"{n} {word}" for word, n in state.counts)
+        mode = (f"asks via {symbols.symbol(Mark.CROWN)}" if state.mode == "coordinator"
+                else f"asks: {state.mode}") if state.mode else ""
+        parts = [(crown, 0), (counts, 3), (mode, 2),
+                 (f"mandate ~{_capped(state.mandate, BANNER_NAME_MAX)}" if state.mandate else "", 1)]
+    parts = [(t, d) for t, d in parts if t]
+
+    def text_of(kept: list[tuple[str, int]]) -> str:
+        return BANNER_MARK + "".join(f" {t}" if i == 0 else f"{_SEP}{t}" for i, (t, _) in enumerate(kept)) \
+            + (f"{_SEP}{now}" if now else "")
+
+    for drop in (1, 2, 3):
+        if len(text_of(parts).encode()) <= BANNER_MAX_BYTES:
+            break
+        parts = [(t, d) for t, d in parts if d != drop]
+    text = text_of(parts)
+    while len(text.encode()) > BANNER_MAX_BYTES:  # a head still too long: cut it, keep the end
+        head, rest = parts[0][0], parts[1:]
+        parts = [(_capped(head, max(1, len(head) - 16)), 0), *rest]
+        text = text_of(parts)
+    return text
+
+
+def banner_of(raw: Mapping[str, Any]) -> Banner:
+    """The bus's Banner from Mattermost's channel JSON (`banner_info`)."""
+    info = raw.get("banner_info")
+    info = info if isinstance(info, Mapping) else {}
+    text = str(info.get("text") or "")
+    return Banner(enabled=bool(info.get("enabled")), text=text, marked=text.startswith(BANNER_MARK))
+
+
+def _banner_body(state: BannerState, permalink_base: str) -> tuple[str, dict[str, Any]]:
+    text = render_banner(state, permalink_base)
+    return text, {"banner_info": {"enabled": True, "text": text,
+                                  "background_color": BANNER_COLOURS[state.kind]}}
 
 
 def _custom_status(user: Mapping[str, Any]) -> dict[str, Any]:
@@ -1359,6 +1475,39 @@ class MattermostAdapter:
                               json={"header": header})
         if isinstance(raw, Mapping) and raw.get("id"):
             self._channels[channel_id] = channel_of(raw)
+
+    async def channel_banner(self, channel_id: str) -> Banner:
+        """The channel's banner as it is now, read fresh (RT-6.6 step 11)."""
+        try:
+            raw = await self._api("GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}")
+        except httpx.HTTPStatusError as exc:
+            raise _refused(exc, "channel read") from exc
+        self._channels[channel_id] = channel_of(raw)
+        return banner_of(raw)
+
+    async def set_channel_banner(self, channel_id: str, state: BannerState) -> str:
+        """Render the state and write it as the channel's banner, its colour by
+        the state (RT-6.6 step 11): the text written. No system message. A 403
+        (no Enterprise Advanced licence, or no banner permission) is a Refused
+        with that status."""
+        text, body = _banner_body(state, self.permalink_base)
+        try:
+            raw = await self._api("PUT", f"/api/v4/channels/{mm_id(channel_id, 'channel')}/patch", json=body)
+        except httpx.HTTPStatusError as exc:
+            raise _refused(exc, "banner") from exc
+        if isinstance(raw, Mapping) and raw.get("id"):
+            self._channels[channel_id] = channel_of(raw)
+        return text
+
+    def set_channel_banner_sync(self, channel_id: str, state: BannerState, timeout: float = 0.75) -> str:
+        """set_channel_banner without an event loop, for the exit handler: one
+        bounded request, raises when it fails."""
+        text, body = _banner_body(state, self.permalink_base)
+        with httpx.Client(timeout=timeout) as http:
+            resp = http.put(f"{self.base_url}/api/v4/channels/{mm_id(channel_id, 'channel')}/patch",
+                            json=body, headers=self._auth_headers())
+            resp.raise_for_status()
+        return text
 
     async def usernames(self, user_ids: set[str]) -> dict[str, str]:
         """{user_id: username}, cached; one request for all unknown ids."""

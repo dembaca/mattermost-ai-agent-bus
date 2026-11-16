@@ -615,6 +615,32 @@ def on_crown(fn: Callable[[], Awaitable[None]]) -> None:
         _on_crown.append(fn)
 
 
+# Called when two crowns settle and this agent keeps its own (RT-6.6 step 2):
+# for the one that keeps it that counts as the crown passing (the banner, step 11).
+_on_kept: list[Callable[[], None]] = []
+
+
+def on_kept(fn: Callable[[], None]) -> None:
+    """Call fn once each time this agent keeps its crown over a second one."""
+    if fn not in _on_kept:
+        _on_kept.append(fn)
+
+
+_kept_over = ""  # the other holder this agent last kept its crown over
+
+
+def _kept(other: str) -> None:
+    global _kept_over
+    if other == _kept_over:
+        return
+    _kept_over = other
+    for fn in list(_on_kept):
+        try:
+            fn()
+        except Exception as exc:  # noqa: BLE001 — the crown is kept all the same
+            log.info("crown kept, not told: %s", exc)
+
+
 async def _crown_came() -> None:
     for fn in list(_on_crown):
         try:
@@ -697,9 +723,9 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
     # A crown per home (ADR-002): only the agents whose home this is count.
     rows = _at_home(await _rows(client, cid), client.work_channel_name)
     others = [r for r in rows if r["crown"] and r["id"] != uid]  # oldest first
-    global _took_from, _crown_since, _ousted
+    global _took_from, _crown_since, _ousted, _kept_over
     if crown <= now:
-        _took_from, _crown_since, _ousted = "", 0.0, None
+        _took_from, _crown_since, _ousted, _kept_over = "", 0.0, None, ""
     elif _took_from and now < _crown_since + heartbeat_sec() + crown_lease_sec():
         # ADR-007 step 4: the holder this agent took the crown over from does
         # not get it back by being older; it yields when it sees crown_taken.
@@ -771,6 +797,8 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
         if yields:
             _save_coord(uid, 0, pending, yield_until)
             await _render(client)
+        else:
+            _kept(other)
     elif not holding and not others and yield_until <= now:
         me_reachable = any(r["id"] == uid and r["reachable"] for r in rows) and not _silent(uid)
         # An explicit take (pending) is allowed; the election only among peers.

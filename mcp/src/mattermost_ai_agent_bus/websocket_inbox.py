@@ -55,6 +55,7 @@ class ClassifiedEvent:
 # WebSocket events that change the bot's channels (RT-6.22): the watched and
 # guest channels are read again when they name the bot.
 MEMBERSHIP = ("user_added", "user_removed")
+CHANNEL_UPDATED = "channel_updated"
 
 # RT-6.12 step 3: Mattermost sends an edit as post_edited (same id, edit_at
 # set). It wakes the bot only when it made the post a mention or DM to it,
@@ -165,6 +166,9 @@ class WebSocketInbox:
     # Called whenever an event is queued, gated or not: the hook API's long
     # poll checks again at once (hookapi.ring, ADR-009 phase 1); None: nothing.
     on_queue: Callable[[], None] | None = None
+    # A channel changed (`channel_updated`): its id and the channel's JSON as
+    # the event carries it, for the banner's drift rule (RT-6.6 step 11); None: nothing.
+    on_channel: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
     _gate_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False, init=False)
 
     async def ensure_identity(self) -> None:
@@ -200,6 +204,26 @@ class WebSocketInbox:
             await self.refresh_channels()
         except Exception as exc:  # noqa: BLE001 — the old lists stay
             log.warning("channels not read again after %s: %s", msg.get("event"), exc)
+
+    async def _on_channel_updated(self, msg: dict[str, Any]) -> None:
+        """`channel_updated`: a channel's header, banner or name changed; the
+        server's banner looks for drift in its home (RT-6.6 step 11)."""
+        if self.on_channel is None:
+            return
+        data, where = msg.get("data") or {}, msg.get("broadcast") or {}
+        raw = data.get("channel")
+        try:
+            channel = json.loads(raw) if isinstance(raw, str) else raw
+        except json.JSONDecodeError:
+            return
+        if not isinstance(channel, dict):
+            return
+        cid = str(channel.get("id") or where.get("channel_id") or "")
+        if cid:
+            try:
+                await self.on_channel(cid, channel)
+            except Exception as exc:  # noqa: BLE001 — display only
+                log.debug("channel_updated: %s", exc)
 
     def _guest_drop(self, post: Post, kind: str) -> bool:
         """RT-6.22: a post in a guest channel that neither names this agent nor
@@ -424,6 +448,9 @@ class WebSocketInbox:
                     continue
                 if msg.get("event") in MEMBERSHIP:
                     await self._on_membership(msg)
+                    continue
+                if msg.get("event") == CHANNEL_UPDATED:
+                    await self._on_channel_updated(msg)
                     continue
                 if msg.get("event") in ("posted", EDITED):
                     await self._on_post(msg)

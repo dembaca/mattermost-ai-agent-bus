@@ -49,6 +49,22 @@ it is set in a corral session in the host's environment (the host process gets i
 start line, RT-6.18), elsewhere in the MCP server's environment. A program that reads the
 props (a bridge) is configured with the same prefix.
 
+**Channel banner (RT-6.6 step 11, since 0.92.0).** The home's 👑 server writes the
+home's channel banner with the bot's own token. Mattermost offers banners only with an
+Enterprise Advanced licence, and a bot that is a plain channel member may not write
+them by default. To turn the banner on, the operator grants
+`manage_public_channel_banner` and `manage_private_channel_banner` to the channel
+member role (System Console → User Management → Permissions): in a team override
+scheme for the teams that hold homes where the licence offers one, else in the System
+Scheme ("All Members"), which applies installation-wide. The cost: every member of
+those channels, bot or human, may then set any of their banners, and a banner shows
+no author; for the bus's own banner the drift rule bounds that (a changed one is
+rewritten within a minute, any other text stops the bus's and is told to its human).
+Without the licence or the permission nothing changes: the bus logs one warning, tries
+again after 6 h, and keeps the header line, the 👑 status and the 👑 prefix. No bus
+setting turns it on or off; a human's own banner (one not starting with `🚌 agent bus ·`)
+is left alone.
+
 **Registrar keys (RT-6.24).** `MM_REGISTRAR_KEYS` pins the registrar's public
 keys: base64url raw Ed25519 keys, comma-separated, each one's kid derived from it.
 It is a setting like `MM_TRUSTED_HUMANS`: in a corral session in the host's

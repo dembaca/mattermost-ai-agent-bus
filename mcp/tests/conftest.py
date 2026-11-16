@@ -46,9 +46,10 @@ def _isolate_bus_env(monkeypatch, tmp_path, request):
 
     monkeypatch.setattr(session_file, "_hosted_dir", None)
     # What the attestation code remembers per process (RT-6.24).
-    from mattermost_ai_agent_bus import askroute, attest, debug, lease, life, mandate, owners, receipt, usage
+    from mattermost_ai_agent_bus import askroute, attest, banner, debug, lease, life, mandate, owners, receipt, usage
 
     attest._started.clear()
+    banner.reset()  # the home's banner as this server wrote it (RT-6.6 step 11)
     debug.reset()  # the debug record read and the events seen (RT-6.31)
     usage.reset()  # the last usage report of the session (ADR-008)
     life.reset()  # the agent's last sign (ADR-007 amendment step 1)
@@ -57,7 +58,8 @@ def _isolate_bus_env(monkeypatch, tmp_path, request):
     monkeypatch.setattr(receipt, "pushes", lambda: False)
     askroute._receipt_looked.clear()
     for name, value in (("_holder_id", ""), ("_holder_name", ""), ("_holder_marked", False),
-                        ("_took_from", ""), ("_crown_since", 0.0), ("_ousted", None)):
+                        ("_took_from", ""), ("_crown_since", 0.0), ("_ousted", None),
+                        ("_kept_over", "")):
         monkeypatch.setattr(lease, name, value)
     owners._noted.clear()
     # What the mandate reader keeps per process (RT-6.26).

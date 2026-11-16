@@ -23,11 +23,11 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from pydantic import ValidationError
 
 from . import (
-    __version__, a2a, askroute, asks, attach, attest, channel, debug, departed, files, gate, hookapi, lease, life, mandate, overhead,
+    __version__, a2a, askroute, asks, attach, attest, banner, channel, debug, departed, files, gate, hookapi, lease, life, mandate, overhead,
     owners, ownpost, permission,
     profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unanswered, unread, usage,
 )
-from .client import (InvalidId, MattermostAdapter, attachment_props, dm_partner, guest_ids, mm_id, mm_name,
+from .client import (InvalidId, MattermostAdapter, attachment_props, banner_of, dm_partner, guest_ids, mm_id, mm_name,
                      props_view, with_debug)
 from .model import Answer, Mark, Post, Refused
 from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox, channel_type
@@ -446,7 +446,8 @@ def _get_inbox() -> WebSocketInbox:
     if _inbox is None or _inbox.client is not client:
         _inbox = WebSocketInbox(client=client, typing_sec=_typing_sec(), in_my_thread=_in_my_thread,
                                 before_backfill=_crown_before_backfill,
-                                on_queue=hookapi.ring)  # the wake long poll (ADR-009)
+                                on_queue=hookapi.ring,  # the wake long poll (ADR-009)
+                                on_channel=_channel_updated)  # the banner's drift (RT-6.6 step 11)
     return _inbox
 
 
@@ -456,6 +457,37 @@ async def _crown_before_backfill() -> None:
     in the past until the next tick; the tick renews it, or claims it by the
     rules of step 2, never from another agent that holds one."""
     await lease.command(_get_client(), "tick")
+
+
+async def _channel_updated(channel_id: str, raw: dict[str, Any]) -> None:
+    """RT-6.6 step 11: a channel changed; for the home, the banner's drift rule."""
+    await banner.observed(channel_id, banner_of(raw))
+
+
+async def _tell_responsible(text: str) -> None:
+    """A plain DM to the responsible human (ADR-013 point 4: a human's own banner)."""
+    client = _get_client()
+    responsible, _ = await _responsible_and_trusted(client)
+    trusted = await client.trusted_humans()
+    to = next((i for i, n in trusted.items() if n and n.lower() == (responsible or "").lower()), None)
+    if to is None:
+        log.info("banner: no trusted responsible human to tell")
+        return
+    stats.record("post", chars=len(text))
+    await client.post(text, channel_id=await client.direct_channel_with(to))
+
+
+async def _banner_crown() -> None:
+    """RT-6.6 step 11: the crown came; the banner is the new holder's at once."""
+    banner.crown_came()
+    try:
+        await stall.refresh_banner(_get_client())
+    except RuntimeError:
+        pass  # no bus yet: the next tick writes
+
+
+banner.tell = _tell_responsible
+lease.on_kept(banner.crown_kept)
 
 
 def _stall_event(text: str) -> bool:
@@ -921,6 +953,8 @@ async def bus_info() -> str:
         # RT-6.26 step 9: the guest channels this coordinator watches under a mandate.
         **({"mandate_holds": holds} if (holds := await mandate.holds(client, me.id)) else {}),
         "permission_relay": RELAY,
+        # RT-6.6 step 11: a human's own banner in the home, or the banner's back-off.
+        **({"banner": line} if (line := banner.info()) else {}),
         **({"update": {"installed": newer, "how": _restart_how()}}
            if (newer := _newer_installed()) else {}),
         # RT-6.30: this version and its source, the newest release the host's check passed.
@@ -2130,6 +2164,8 @@ async def _post_ask(client: MattermostAdapter, me: Any, *, to: str, head: str, n
     post = await client.post(text, props=shown)
     asks.add(me.id, post.id, to, post.id, title=head, question=human, blocking=blocking,
              answers=answers or None)
+    if not human:
+        _in_background(stall.refresh_banner(client))  # RT-6.6 step 11: an ask opened
     # RT-6.9: coord marks a question to the 👑 (RT-6.25), else it reached a human.
     # forwarded: the server's ask for a question the 👑 left open, which counts already.
     stats.record("ask", id=post.id, **({"coord": 1} if human else {}), **({"forwarded": 1} if forwarded else {}))
@@ -2205,6 +2241,8 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
     target = asks.whom_of(me.id, post_id)[0]
     was_open = asks.resolve(me.id, post_id)
     unanswered.resolved(me.id, post_id)  # RT-6.2 step 2: a text answer in its thread is settled
+    if was_open:
+        _in_background(stall.refresh_banner(client))  # RT-6.6 step 11: an ask answered
     if was_open and target and asks.queued(me.id, target):
         try:  # RT-6.11 step 2: the next queued ask goes out at once
             await _post_queued(client, me, target)
@@ -2812,6 +2850,7 @@ async def _pushed_later(item: dict[str, Any]) -> None:
 
 
 lease.on_crown(_crown_returned)
+lease.on_crown(_banner_crown)
 
 
 async def _compact_bystander(payload: list[dict[str, Any]]) -> None:
@@ -3136,6 +3175,10 @@ def _cleanup_on_exit() -> None:
         log.info("BYE: %s", ownpost.bye_sync(_client, _client.bot_id))
     except Exception as exc:  # noqa: BLE001 — never block teardown
         log.info("BYE skipped: %s", exc)
+    try:  # RT-6.6 step 11: the holder's clean end, `no coordinator since HH:MM`
+        log.info("banner: %s", banner.end_sync(_client, _client.bot_id))
+    except Exception as exc:  # noqa: BLE001 — never block teardown
+        log.info("banner end skipped: %s", exc)
     try:
         data = stats.summary(VERSION, _fixed())
         if data:

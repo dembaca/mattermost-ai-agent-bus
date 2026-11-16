@@ -14,9 +14,9 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from mattermost_ai_agent_bus import owners
-from mattermost_ai_agent_bus.client import post_of, reaction_of
-from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, Post, Reaction,
-                                           Thread, UnreadChannel)
+from mattermost_ai_agent_bus.client import post_of, reaction_of, render_banner
+from mattermost_ai_agent_bus.model import (Banner, BannerState, Channel, ChannelUser, FileInfo, Me, Post,
+                                           Reaction, Thread, UnreadChannel)
 
 if TYPE_CHECKING:
     from mattermost_ai_agent_bus.port import ChatPort
@@ -40,7 +40,9 @@ class FakeChat:
     members, presence: the accounts in every channel with their custom
     status, and who is online (the lease's roster); status: the own custom
     status written last; header: the channel header. bots: the bot accounts
-    by lower-case username (RT-6.21), in the channel or not.
+    by lower-case username (RT-6.21), in the channel or not. banner: the
+    home's banner (RT-6.6 step 11); banners: each state written, rendered;
+    banner_error: what a banner write raises.
     """
 
     token: str | None = "t"
@@ -77,6 +79,10 @@ class FakeChat:
         self.bots: dict[str, ChannelUser] = {}
         self.status: dict[str, str] | None = None
         self.header = ""
+        self.banner = Banner()
+        self.banners: list[tuple[BannerState, str]] = []
+        self.banner_reads = 0
+        self.banner_error: BaseException | None = None
         self.dms: set[str] = set()
         self.posted: list[dict[str, Any]] = []
         self.calls: list[tuple[str, int | None, int | None]] = []
@@ -174,6 +180,27 @@ class FakeChat:
 
     async def set_channel_header(self, channel_id: str, header: str) -> None:
         self.header = header
+
+    async def channel_banner(self, channel_id: str) -> Banner:
+        self.banner_reads += 1
+        return self.banner
+
+    async def set_channel_banner(self, channel_id: str, state: BannerState) -> str:
+        """Rendered as the adapter renders it; raises banner_error when set."""
+        if self.banner_error is not None:
+            raise self.banner_error
+        text = render_banner(state, "https://mm/team/pl/")
+        self.banners.append((state, text))
+        self.banner = Banner(enabled=True, text=text, marked=True)
+        return text
+
+    def set_channel_banner_sync(self, channel_id: str, state: BannerState, timeout: float = 0.75) -> str:
+        if self.banner_error is not None:
+            raise self.banner_error
+        text = render_banner(state, "https://mm/team/pl/")
+        self.banners.append((state, text))
+        self.banner = Banner(enabled=True, text=text, marked=True)
+        return text
 
     async def channel_users(self, channel_id: str) -> list[ChannelUser]:
         return list(self.members)

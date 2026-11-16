@@ -21,7 +21,7 @@ code does today and point here where a decision will change them.
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag and `wait_for_events`; never in a guest channel or the lobby, in a DM only what the other side may see | Decided, built: phase 1 in the registrar (0.8.0), phase 2 on the bus (0.85.0, 2026-11-12, RT-6.31) | – |
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day (hourly while the newest found is older than the running host copy) as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); 0.84.0, decisions (4) and (5) of 2026-11-12: keys pinned once per host in `release-signers` beside `releases/`, `--replace-signers`, `--forget-signers`, a withdrawn version refused unless `--withdrawn-ok` (RT-6.29, RT-6.30); phase 3 built (0.86.0: the registrar distributes the release keys once and names the version, and corral's host copy updates itself to it between sessions, RT-6.32), `latest` built (0.87.0) | – |
 | ADR-012 | Files an agent attaches: the server never opens a path the agent names; the bytes come from inside the sandbox (the shell's `POST /v1/files`, or a small text in the `attach` tool), checked by their bytes, uploaded for a post that takes only this server's fresh uploads | Decided 2026-11-14, built (0.90.0, RT-6.33) | — |
-| ADR-013 | The channel banner shows what waits: the home's 👑 server writes it on a change only, at most once a minute; a stall in red, asks waiting on a human in amber, else the crown and the agents by status; display only, never input; a human's banner is left alone and told to its human; without the licence or the permission everything stays as today; later the 👑 prefix only on asks and routings | Accepted (2026-11-16), not built | — |
+| ADR-013 | The channel banner shows what waits: the home's 👑 server writes it on a change only, at most once a minute; a stall in red, asks waiting on a human in amber, else the crown and the agents by status; display only, never input; a human's banner is left alone and told to its human; without the licence or the permission everything stays as today; later the 👑 prefix only on asks and routings | Accepted (2026-11-16), phase 1 built (0.92.0, RT-6.6) | — |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2604,10 +2604,10 @@ the body, channels, the pending ids, the tools, the adapter's multipart),
 
 ## ADR-013: The channel banner shows what waits
 
-**Status:** Accepted (2026-11-16) by the owner as written, not built. The owner
+**Status:** Accepted (2026-11-16), phase 1 built (0.92.0, RT-6.6). The owner
 proposed the banner on 2026-11-16 and accepted the recommendations the same day
-(Decisions of 2026-11-16 below). Section 6 stays as it is until a
-phase is built (Phases). Builds on ADR-002 (a crown per (agent, home)),
+(Decisions of 2026-11-16 below). Phase 1 is RT-6.6 step 11; phase 2 (the 👑
+prefix) waits (Phases). Builds on ADR-002 (a crown per (agent, home)),
 ADR-005 (the ask mode; the header is no source of truth), ADR-006 (the
 mandate) and ADR-007 (the crown passes in seconds).
 
@@ -2797,11 +2797,15 @@ server:
    - How the bot gets the permission:
      - (a) The operator grants `manage_public_channel_banner` and
        `manage_private_channel_banner` to the channel member role, in a
-       team override scheme for the teams that hold homes (System Console,
-       Permission Schemes). The bot writes with its own token through the
+       team override scheme for the teams that hold homes where the licence
+       offers one, or else in the System Scheme (System Console, Permission
+       Schemes, "All Members"). The bot writes with its own token through the
        chat port, as it writes the header. Cost: every member of those
        teams' channels, bot or human, may then write any banner there, and a
-       banner shows no author.
+       banner shows no author. In the System Scheme that is installation-wide:
+       every member may set any channel's banner, which the drift rule
+       bounds for the bus's banners (point 1). Seen on 2026-11-16: a licence
+       can offer banners without team override schemes.
      - (b) The registrar makes each bot channel admin of its home. Too
        broad: a channel admin also adds and removes members and edits the
        channel, and an injected agent would hold that. Rejected.
@@ -2864,8 +2868,15 @@ server:
    "after a leading 👑") stays for older servers. The site's crown tile
    ("marked 👑 in the chat") changes with it.
 
-No scenario points here yet: a decision not yet built changes
-Section 6 only once a phase is built.
+Not checked in the build (no server with the licence at hand): whether
+Markdown renders in a banner, and the colours' contrast on a light and a dark
+theme. The banner links the oldest ask; `ask <id>` instead is one constant
+(`client.BANNER_LINKS`).
+
+Phase 1 is built (0.92.0): RT-6.6 step 11 with its error rows, the
+cross-references in RT-6.1 step 7, RT-6.11 step 2, RT-6.18 step 7 and RT-6.19
+step 3, and Section 7.1's channel banner note. Phase 2 changes Section 6 once
+it is built.
 
 **Tests (when built, `mcp/tests/`, naming RT-6.6):** the text per state from
 the port-level state, its cut at 1024 bytes counted as bytes, the 80-character
@@ -2929,7 +2940,8 @@ passes, and with it the banner's writer.
 
 **Decisions of 2026-11-16 (the owner accepted the recommendations as written):**
 
-1. Who writes: (a), a scheme the operator sets, with the drift rule of point 1.
+1. Who writes: (a), a scheme the operator sets (a team override scheme, or
+   the System Scheme where the licence has none), with the drift rule of point 1.
 2. The end of the holder's session: write `no coordinator since HH:MM`.
 3. The banner names the human the asks wait on, as the ask card does.
 4. The prefix: (b), only on asks and routings, in phase 2 after phase 1 has

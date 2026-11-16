@@ -245,6 +245,67 @@ class RosterEntry:
     release: dict[str, str] = field(default_factory=dict, compare=False)
 
 
+class BannerKind(Enum):
+    """What a home's banner shows, the first that applies (RT-6.6 step 11):
+    a stall, asks waiting on a human, else the crown and the agents; ENDED
+    the holder's clean end."""
+
+    STALL = "stall"
+    ASKS = "asks"
+    CROWN = "crown"
+    ENDED = "ended"
+
+
+@dataclass(frozen=True)
+class BannerState:
+    """The port-level state of a home's banner (RT-6.6 step 11, ADR-013): what
+    the 👑 server knows, never a text. The adapter renders it (client.py), with
+    the marker, the symbols and the colours. Two states that compare equal
+    render the same text but for the time it was written (at_ms, left out of
+    the comparison), so a write follows a change, never the clock.
+
+    holder: the crown holder's username. since_ms: a stall's quiet start, the
+    oldest ask's time, the clean end's time. stall: the open items (`open`),
+    the first one's what, title and who is next, and `asks` the asks among
+    them. asks: their count, the humans asked (the oldest's first), the
+    oldest's agent and id. counts: (status word, agents) of the home's
+    roster. mode: the ask mode when not direct; mandate: the home named by an
+    active mandate."""
+
+    kind: BannerKind
+    holder: str = ""
+    since_ms: int = 0
+    open: int = 0
+    first: str = ""
+    title: str = ""
+    next: str = ""
+    asks: int = 0
+    humans: tuple[str, ...] = ()
+    asked_by: str = ""
+    ask_id: str = ""
+    counts: tuple[tuple[str, int], ...] = ()
+    mode: str = ""
+    mandate: str = ""
+    at_ms: int = field(default=0, compare=False)
+
+
+@dataclass(frozen=True)
+class Banner:
+    """A channel's banner as port.channel_banner gives it (RT-6.6 step 11):
+    whether it is on, its text, and whether the text starts with the bus's
+    marker (the adapter knows the marker). Display only: read to tell the
+    bus's own from a human's and to notice drift, never for a decision."""
+
+    enabled: bool = False
+    text: str = ""
+    marked: bool = False
+
+    @property
+    def free(self) -> bool:
+        """Turned off or empty: the bus may write it."""
+        return not self.enabled or not self.text.strip()
+
+
 @dataclass(frozen=True)
 class UnreadChannel:
     """A channel of this bot, with when its newest post came (ms; 0 when

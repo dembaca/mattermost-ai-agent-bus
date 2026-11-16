@@ -3,6 +3,39 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.92.0
+
+### Added
+
+- **The channel banner shows what waits** ([RT-6.6](docs/arc42/06-runtime-view.md)
+  step 11, ADR-013 phase 1). With Mattermost Enterprise Advanced, the server of
+  the home's 👑 writes the home's channel banner, the coloured line above its
+  posts: red with the head of the stall digest while the bus stalls (RT-6.19),
+  amber while asks wait on a human (their count, the human, the oldest's time
+  and agent, a link to it; RT-6.11), else neutral with the holder, the agents
+  counted working, listening and idle, and the ask mode and mandate when set.
+  Every banner names the holder and ends with the time it was written; at most
+  1024 bytes. It is written only when the state changes, at least 60 s apart
+  (coalesced), never shows a permission prompt or a question to the 👑, and is
+  display only: nothing reads it as input. A banner a human set (one that does
+  not start with `🚌 agent bus ·`) is left alone, named in `bus_info` and told
+  once by DM to the responsible human; a changed or cleared bus banner is
+  written again at the gap's end. At a clean end the holder writes
+  `🚌 agent bus · no coordinator since HH:MM`. Without the licence or the
+  permission Mattermost answers 403: logged once, tried again after 6 h or the
+  next crown, and everything stays as before. A banner write posts no system
+  message and starts no quiet period of the stall check. New on the chat port:
+  `channel_banner`, `set_channel_banner` (the adapter renders the text and the
+  colour from a `BannerState`), and the inbox hands `channel_updated` to the
+  banner's drift rule.
+- **For operators** ([Section 7.1](docs/arc42/07-deployment-view.md)): to turn
+  the banner on, grant `manage_public_channel_banner` and
+  `manage_private_channel_banner` to the channel member role, in a team
+  override scheme where the licence offers one, else in the System Scheme
+  ("All Members", installation-wide). Without it nothing changes.
+- ADR-013 says phase 1 is built, and point 5 (a) names the System Scheme
+  beside the team override scheme.
+
 ## 0.91.2
 
 ### Added
