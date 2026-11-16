@@ -21,7 +21,7 @@ code does today and point here where a decision will change them.
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag and `wait_for_events`; never in a guest channel or the lobby, in a DM only what the other side may see | Decided, built: phase 1 in the registrar (0.8.0), phase 2 on the bus (0.85.0, 2026-11-12, RT-6.31) | – |
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day (hourly while the newest found is older than the running host copy) as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); 0.84.0, decisions (4) and (5) of 2026-11-12: keys pinned once per host in `release-signers` beside `releases/`, `--replace-signers`, `--forget-signers`, a withdrawn version refused unless `--withdrawn-ok` (RT-6.29, RT-6.30); phase 3 built (0.86.0: the registrar distributes the release keys once and names the version, and corral's host copy updates itself to it between sessions, RT-6.32), `latest` built (0.87.0) | – |
 | ADR-012 | Files an agent attaches: the server never opens a path the agent names; the bytes come from inside the sandbox (the shell's `POST /v1/files`, or a small text in the `attach` tool), checked by their bytes, uploaded for a post that takes only this server's fresh uploads | Decided 2026-11-14, built (0.90.0, RT-6.33) | — |
-| ADR-013 | The channel banner shows what waits: the home's 👑 server writes it on a change only, at most once a minute; a stall in red, asks waiting on a human in amber, else the crown and the agents by status; display only, never input; a human's banner is left alone and told to its human; without the licence or the permission everything stays as today; later the 👑 prefix only on asks and routings | Proposed (2026-11-16), not built | — |
+| ADR-013 | The channel banner shows what waits: the home's 👑 server writes it on a change only, at most once a minute; a stall in red, asks waiting on a human in amber, else the crown and the agents by status; display only, never input; a human's banner is left alone and told to its human; without the licence or the permission everything stays as today; later the 👑 prefix only on asks and routings | Accepted (2026-11-16), not built | — |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2604,8 +2604,9 @@ the body, channels, the pending ids, the tools, the adapter's multipart),
 
 ## ADR-013: The channel banner shows what waits
 
-**Status:** Proposed (2026-11-16), not built. The owner proposed the banner on
-2026-11-16. The numbers below are proposals. Section 6 stays as it is until a
+**Status:** Accepted (2026-11-16) by the owner as written, not built. The owner
+proposed the banner on 2026-11-16 and accepted the recommendations the same day
+(Decisions of 2026-11-16 below). Section 6 stays as it is until a
 phase is built (Phases). Builds on ADR-002 (a crown per (agent, home)),
 ADR-005 (the ask mode; the header is no source of truth), ADR-006 (the
 mandate) and ADR-007 (the crown passes in seconds).
@@ -2647,7 +2648,7 @@ server:
 - The banner is **one** text field. The header holds people's text and the
   bus part side by side (RT-6.6 step 7); the banner cannot.
 
-**Decision (proposed):**
+**Decision:**
 
 1. **The writer is the home's 👑 server, on a change only.**
    - Only the server whose agent holds the home's crown writes the home's
@@ -2863,7 +2864,7 @@ server:
    "after a leading 👑") stays for older servers. The site's crown tile
    ("marked 👑 in the chat") changes with it.
 
-No scenario points here yet: like ADR-004, a proposed decision changes
+No scenario points here yet: a decision not yet built changes
 Section 6 only once a phase is built.
 
 **Tests (when built, `mcp/tests/`, naming RT-6.6):** the text per state from
@@ -2926,23 +2927,21 @@ without the marker stops the bus's and is told to the responsible human
 truth; the same holds for the banner. ADR-007 decides how fast the crown
 passes, and with it the banner's writer.
 
-**Open questions (for the owner):**
+**Decisions of 2026-11-16 (the owner accepted the recommendations as written):**
 
-1. Who writes: (a), a scheme the operator sets, or (c), the registrar? The
-   drift rule of point 1 holds either way.
-2. The end of the holder's session: write `no coordinator since HH:MM`
-   (proposed), or turn the banner off?
-3. Name the human the asks wait on: yes (proposed), as the ask card does, or
-   only the count?
-4. Check channel bookmarks as a licence-free fallback, or Enterprise Advanced
-   only?
-5. The prefix: (b) or (c)? This can wait for phase 1.
+1. Who writes: (a), a scheme the operator sets, with the drift rule of point 1.
+2. The end of the holder's session: write `no coordinator since HH:MM`.
+3. The banner names the human the asks wait on, as the ask card does.
+4. The prefix: (b), only on asks and routings, in phase 2 after phase 1 has
+   been in use.
+5. As proposed:
+   - the gap of 60 s between two writes of one home;
+   - the marker `🚌 agent bus ·`;
+   - no `/agent-banner off` until a team needs one;
+   - a banner a human turned off is free for the bus;
+   - the home only in phase 1, no banner in the guest channels a mandate
+     covers (RT-6.19 step 6).
 
-Proposed as written, no decision needed now:
-
-6. The gap: 60 s between two writes of one home.
-7. The marker: `🚌 agent bus ·`.
-8. No `/agent-banner off` until a team needs one.
-9. A banner a human turned off is free for the bus.
-10. The home only, no banner in the guest channels a mandate covers
-    (RT-6.19 step 6), in phase 1.
+**Open question:** channel bookmarks as a licence-free fallback. Whether a
+bookmark edit posts a system message is to be checked before a phase uses them;
+until then installations without Enterprise Advanced keep the header line only.
