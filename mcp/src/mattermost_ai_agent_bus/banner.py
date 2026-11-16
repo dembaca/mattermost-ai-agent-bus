@@ -62,6 +62,7 @@ class _Home:
     text: str = ""                       # the text written last ('' none, or after a restart)
     at: float = 0.0                      # when the last write was tried, epoch s
     human: str = ""                      # a human's banner text that stops the writing
+    drift: bool = False                  # a channel_updated to look at, at the gap's end
     told: set[str] = field(default_factory=set)
     off_until: float = 0.0               # a 403's back-off
     refused_logged: bool = False
@@ -149,7 +150,7 @@ async def show(client: ChatPort, uid: str, state: BannerState, home: str = "") -
 
 async def _due() -> None:
     """Write now, or at the gap's end (one timer, the latest state then)."""
-    if _h.want is None or _h.want == _h.written or time.time() < _h.off_until:
+    if _h.want is None or (_h.want == _h.written and not _h.drift) or time.time() < _h.off_until:
         return
     wait = _h.at + BANNER_GAP_SEC - time.time()
     if wait > 0:
@@ -174,7 +175,7 @@ async def _fire() -> None:
     """The write itself: the crown checked, the banner read (a human's stops
     it), the state rendered and written by the adapter."""
     client, state = _h.client, _h.want
-    if client is None or state is None or state == _h.written:
+    if client is None or state is None or (state == _h.written and not _h.drift):
         return
     if not lease.crown_held(_h.uid):
         log.debug("banner: the crown is gone, the pending write is dropped")
@@ -185,10 +186,13 @@ async def _fire() -> None:
     _h.at = now
     try:
         current = await client.channel_banner(_h.cid)
+        drift, _h.drift = _h.drift, False
         if not current.free and not current.marked:
             _h.written = state
             _human(current.text)
             return
+        if drift and state == _h.written and current.enabled and current.text == _h.text:
+            return  # the event was its own write after all: nothing changed
         _h.human = ""
         _h.text = await client.set_channel_banner(_h.cid, replace(state, at_ms=int(now * 1000)))
         _h.written = state
@@ -196,7 +200,7 @@ async def _fire() -> None:
     except asyncio.CancelledError:
         raise
     except Refused as exc:
-        _h.written = state
+        _h.written, _h.drift = state, False
         if exc.status == 403:
             _h.off_until = now + BACKOFF_SEC
             if not _h.refused_logged:
@@ -208,7 +212,7 @@ async def _fire() -> None:
         else:
             _failed(exc)
     except Exception as exc:  # noqa: BLE001 — a 5xx, a timeout: with the next change
-        _h.written = state
+        _h.written, _h.drift = state, False
         _failed(exc)
 
 
@@ -263,8 +267,10 @@ async def observed(channel_id: str, banner: Banner) -> None:
         if banner.enabled and _h.text and banner.text == _h.text:
             return  # its own write
         if banner.free or banner.marked:
+            # Looked at again at the gap's end: the banner is read then, so an
+            # event of its own write that came before the answer changes nothing.
             _h.human = ""
-            _h.written = None
+            _h.drift = True
             await _due()
         elif banner.text != _h.human:
             _human(banner.text)

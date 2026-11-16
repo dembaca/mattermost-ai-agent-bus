@@ -273,6 +273,10 @@ async def test_rt_6_6_drift_own_write_ignored_a_changed_marker_rewritten(clock):
     chat.banner = Banner()
     await banner.observed(WORK, Banner())  # cleared: written again
     assert len(chat.banners) == 3
+    # An event that came before the write's answer (its own text after all): read, nothing written.
+    clock.now[0] += 100
+    await banner.observed(WORK, Banner(enabled=True, text=f"{BANNER_MARK} older", marked=True))
+    assert len(chat.banners) == 3 and not banner._h.drift
 
 
 async def test_rt_6_6_after_a_restart_a_marker_banner_is_the_bus_own(clock):
