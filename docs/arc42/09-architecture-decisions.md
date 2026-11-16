@@ -21,7 +21,7 @@ code does today and point here where a decision will change them.
 | ADR-010 | MCP debug: a trusted human switches, per home, which categories of its own MCP server's decisions show (`/agent-debug`, additive, an hour by default, a signed record); the agent's own post carries them as a grey `debug` attachment, the agent gets them in its channel tag and `wait_for_events`; never in a guest channel or the lobby, in a DM only what the other side may see | Decided, built: phase 1 in the registrar (0.8.0), phase 2 on the bus (0.85.0, 2026-11-12, RT-6.31) | – |
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day (hourly while the newest found is older than the running host copy) as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); 0.84.0, decisions (4) and (5) of 2026-11-12: keys pinned once per host in `release-signers` beside `releases/`, `--replace-signers`, `--forget-signers`, a withdrawn version refused unless `--withdrawn-ok` (RT-6.29, RT-6.30); phase 3 built (0.86.0: the registrar distributes the release keys once and names the version, and corral's host copy updates itself to it between sessions, RT-6.32), `latest` built (0.87.0) | – |
 | ADR-012 | Files an agent attaches: the server never opens a path the agent names; the bytes come from inside the sandbox (the shell's `POST /v1/files`, or a small text in the `attach` tool), checked by their bytes, uploaded for a post that takes only this server's fresh uploads | Decided 2026-11-14, built (0.90.0, RT-6.33) | — |
-| ADR-013 | The channel banner shows what waits: the home's 👑 server writes it on a change only, at most once a minute; a stall in red, asks waiting on a human in amber, else the crown and the agents by status; display only, never input; a human's banner is left alone; without the licence or the permission everything stays as today; later the 👑 prefix only on asks and routings | Proposed (2026-11-16), not built | — |
+| ADR-013 | The channel banner shows what waits: the home's 👑 server writes it on a change only, at most once a minute; a stall in red, asks waiting on a human in amber, else the crown and the agents by status; display only, never input; a human's banner is left alone and told to its human; without the licence or the permission everything stays as today; later the 👑 prefix only on asks and routings | Proposed (2026-11-16), not built | — |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2640,42 +2640,59 @@ server:
   on that channel. By default channel admins and above hold it; a bot that is
   a plain member most likely does not.
 - A banner change posts **no system message** (seen on our server on
-  2026-11-16; `app/channel.go` writes none). A patch sends `channel_updated`
-  to the channel's members.
+  2026-11-16; `app/channel.go` writes none), and it shows no author. A patch
+  sends `channel_updated` to the channel's members.
 - Web, desktop and mobile (from 2.28) show it. Markdown is said to render
   (medium confidence, to be checked).
 - The banner is **one** text field. The header holds people's text and the
   bus part side by side (RT-6.6 step 7); the banner cannot.
 
-**Decision:**
+**Decision (proposed):**
 
 1. **The writer is the home's 👑 server, on a change only.**
    - Only the server whose agent holds the home's crown writes the home's
      banner. No other server writes it, and none writes a guest channel's
-     (open question 8).
+     (open question 10).
    - It writes when the text it would write differs from the text it wrote
      last: the crown passed, an ask opened or was answered, a stall began or
      ended, a status count changed, the ask mode or the mandate changed.
      Never on a timer for its own sake.
-   - The inputs come from what the holder reads anyway: the roster and the
-     task window at its heartbeat (RT-6.6 step 3, RT-6.19 step 2), and the
-     posts and reactions its WebSocket delivers. No new periodic read.
+   - The inputs come from what the holder reads anyway. Its own asks and its
+     own crown changes it knows at once. Another agent's ask opening or being
+     answered, and the status counts, reach it with the task window and the
+     roster it reads at its heartbeat (RT-6.19 step 2, RT-6.6 step 3): within
+     `MM_HEARTBEAT_SEC`, not from the WebSocket. No new periodic read.
    - Writes are coalesced: at least **60 s** between two writes of one home
      (a constant, `BANNER_GAP_SEC`; no env setting). A change inside the gap
      is written at its end, with the state of then. Only the latest state
      counts.
    - The text carries no running age. An ask shows when it was asked
-     (`since 13:40Z`), never "20 min ago": an age would change the text every
+     (`since 13:40`), never "20 min ago": an age would change the text every
      minute and make the banner a timer.
-   - It hands over with the crown. A new holder writes at its first
-     heartbeat with the crown (a claim or a `take`, RT-6.6 steps 2 and 4).
-     The old holder's server stops writing once it sees the crown lost or
-     released, and drops a write still pending. Two crowns for a moment
-     (RT-6.6, the rows of step 2) may mean one write each; the next change
-     written by the one that keeps the crown settles it.
-   - A holder whose session ends writes nothing more. The banner shows the
-     last state, with its time (point 2), until the next holder writes
-     (open question 7).
+   - A banner write is no post: it never starts a new quiet period of the
+     stall check (RT-6.19 step 2).
+   - **Drift.** The holder's server listens to `channel_updated` for its home
+     and looks at the banner again. Its own write comes back as such an event
+     with the text it wrote, and changes nothing. Otherwise:
+     - a marker banner (point 4) that differs from the text it wrote last is
+       rewritten at the gap's end, so a spoofed or edited one lives at most
+       `BANNER_GAP_SEC`;
+     - a free one (cleared or turned off) is written at the gap's end;
+     - a human's banner (point 4) stops the writing.
+     This covers a cleared or disabled banner at once, with no timer.
+   - **Handover.** The banner passes with the crown. A new holder writes at
+     its first heartbeat with the crown (a claim or a `take`, RT-6.6 steps 2
+     and 4); the settling of two crowns ("the older keeps it", RT-6.6 step 2)
+     counts as the crown passing for the one that keeps it, so it writes too.
+     The old holder stops writing once its server sees the crown lost or
+     released. A pending write checks `crown_held` when it fires and is
+     dropped if the crown is gone.
+   - **A clean end.** When the holder's session ends cleanly (its `BYE`,
+     RT-6.1 step 7; in a host-managed session RT-6.18 step 7), its server
+     writes one last neutral banner, `🚌 agent bus · no coordinator since
+     18:30` (open question 2). A release without an end writes nothing: the
+     next holder writes. So only a crash leaves a stale banner, and its time
+     (point 2) says how old it is.
 
 2. **Content and colour by priority, within 1024 bytes.** One state at a
    time, the first that applies:
@@ -2683,41 +2700,54 @@ server:
    | Priority | When | Colour | Text |
    |----------|------|--------|------|
    | 1 | The holder's stall check finds a stall (RT-6.19 step 2) | red | the head of the stall digest (RT-6.19 step 3): since when, how many items, the first item and who is next |
-   | 2 | Asks wait on a human: the open asks of RT-6.19 step 1, without the questions to the 👑 (RT-6.25) | amber | the count, the oldest's time and asking agent, a link to that ask |
+   | 2 | Asks wait on a human: the open asks of RT-6.19 step 1 | amber | the count, the human asked, the oldest's time and asking agent, a link to that ask |
    | 3 | Otherwise | neutral | who holds the crown, the agents by status, the ask mode and an active mandate as a short suffix |
 
-   Generic examples:
+   Examples:
 
-   - red: `🚌 agent bus · stalled since 14:05Z · 3 open, first: task "fix CI" waits on @agent-b · 2 asks wait · 👑 @agent-a · 14:16Z`
-   - amber: `🚌 agent bus · 2 asks wait on @human-a, oldest since 13:40Z by @agent-b: [open it](<permalink>) · 👑 @agent-a · 13:52Z`
-   - neutral: `🚌 agent bus · 👑 @agent-a · 2 working · 1 listening · 1 idle · asks via 👑 · mandate ~team-b · 12:30Z`
+   - red: `🚌 agent bus · stalled since 14:05 · 3 open, first: task "fix CI" waits on @agent-b · 2 asks wait · 👑 @agent-a · 14:16`
+   - amber: `🚌 agent bus · 2 asks wait on @human-a, oldest since 13:40 by @agent-b: [open it](<permalink>) · 👑 @agent-a · 13:52`
+   - neutral: `🚌 agent bus · 👑 @agent-a · 2 working · 1 listening · 1 idle · asks via 👑 · mandate ~team-b · 12:30`
 
    The rules:
    - Every banner names the crown holder and ends with the time it was
-     written, so a stale one shows its age.
+     written, so a stale one shows its age. Times are `HH:MM` in the
+     server's local time, the format of the stall digest (`stall._hhmm`).
    - A stall names the waiting asks in its line where there is room.
    - The counts come from the roster the holder reads (RT-6.6 step 3,
      RT-6.14): `working`, `listening`, `idle`, and `silent` only when an
      agent is. The holder counts itself.
    - The ask mode shows only when it is not `direct`; the mandate only while
      one is active (RT-6.26).
-   - One link only, a permalink to the oldest ask. If Markdown does not
-     render, the link shows as its URL (checked in phase 1).
-   - Past 1024 bytes the parts give way from the end: the mandate, the mode,
+   - **Never shown:** permission prompts (RT-6.13, they go by DM) and the
+     questions to the 👑 (RT-6.25; they wait on no human). Every member of
+     the home sees the banner, untrusted ones too, as they see its posts: it
+     shows nothing a member could not read in the channel.
+   - The human the asks wait on is named, as the ask card names them
+     (open question 3).
+   - **The byte budget.** The 1024 are bytes, not characters: 🚌 and 👑 are
+     4 bytes each, `·` is 2. Free text is capped: a task title at 80
+     characters, one link only. Usernames count at up to 64 characters
+     (Mattermost's limit); the registrar's prefix length is never assumed.
+     Past 1024 bytes the parts give way from the end: the mandate, the mode,
      the counts. The state's head, the crown and the time stay.
+   - One link, a permalink to the oldest ask. If Markdown does not render
+     (checked in phase 1), the text says `ask <id>` instead of a raw URL.
    - An @-name in a banner notifies nobody: a banner is no post.
-   - The colours and the marker are named constants in the Mattermost
-     adapter, never below the port. Proposed: red `#D24B4E`, amber
-     `#FFBC1F`, neutral `#DDE3EA`; their contrast is checked on a light and
-     a dark theme in phase 1.
+   - **Rendered in the adapter.** Below the port the server keeps only a
+     state: its kind, the counts, the holder, the times, the ask ids. The
+     Mattermost adapter renders the whole text from it, with the marker, the
+     emoji and the colours as its named constants. Proposed colours: red
+     `#D24B4E`, amber `#FFBC1F`, neutral `#DDE3EA`; their contrast is checked
+     on a light and a dark theme in phase 1.
 
-3. **Display only, never input.** The bus never reads the banner to decide
-   anything: not the crown, not the mode, not an ask, not a mandate. The
-   sources stay what they are: the statuses, the asks and posts, and the
-   registrar's signed records (ADR-005 step 3, ADR-006). The one read is the
-   check of point 4 before a write: whose banner it is, never what it says.
-   Any member with the permission can edit the banner (point 5), the reason
-   ADR-005 and ADR-006 rejected the header as a source.
+3. **Display only, never input.** The bus reads the banner only to tell its
+   own from a human's (point 4) and to notice drift (point 1). It never
+   reads it to decide a crown, a mode, an ask or a mandate. Those sources
+   stay what they are: the statuses, the asks and posts, and the registrar's
+   signed records (ADR-005 step 3, ADR-006). Any member with the permission
+   can edit the banner (point 5), the reason ADR-005 and ADR-006 rejected the
+   header as a source.
 
 4. **A human's own banner: the marker rule.**
    - The bus's banner starts with the marker `🚌 agent bus ·`, the words the
@@ -2725,9 +2755,20 @@ server:
    - Before a write the holder's server reads the channel's `banner_info`.
      It writes when the banner is off or empty, or when its text starts with
      the marker. An enabled banner without the marker is a human's: the bus
-     leaves it alone, writes nothing and logs that once. When the human
-     turns it off or clears it, the bus writes at its next change.
-   - A banner turned off counts as free, whatever its text (open question 6).
+     leaves it alone and writes nothing. When the human turns it off or
+     clears it, the drift rule (point 1) writes the bus's at the gap's end.
+   - A banner turned off counts as free, whatever its text (open question 9).
+   - **The edge case.** A banner that starts with the marker is the bus's,
+     whoever wrote it. A human's banner that starts with the marker is
+     overwritten at the gap's end (the drift rule). After a restart the
+     server has no last text in memory and treats any marker banner as its
+     own. To keep a banner of their own, people start it otherwise.
+   - **A human's banner wins, and says so.** `bus_info` gets a line
+     `banner: a human's own in ~<home>`, and the holder's server sends one DM
+     to its responsible human when it first sees that banner: the home has
+     its own banner, and the bus shows none there until it is cleared or
+     turned off. Once per banner text, not per write. A log line alone would
+     reach nobody (the bus is the single place).
    - Options:
      - (a) The marker rule alone, on by default, no command.
      - (b) A registrar command `/agent-banner on|off` per home, a signed
@@ -2739,8 +2780,9 @@ server:
        part: one line of 1024 bytes and one colour cannot carry both, and
        people's text would turn red with a stall. Rejected.
    - **Recommended: (a).** On by default, a human's banner wins without a
-     setting, and no new command. (b) can follow if a team wants no banner
-     at all and has none of its own (open question 5).
+     setting and is told to its human, and no new command. (b) can follow if
+     a team wants no banner at all and has none of its own (open
+     question 8).
 
 5. **Licence and permission.**
    - A missing licence or permission breaks nothing (`#reliable`). A 403 on
@@ -2756,10 +2798,9 @@ server:
        `manage_private_channel_banner` to the channel member role, in a
        team override scheme for the teams that hold homes (System Console,
        Permission Schemes). The bot writes with its own token through the
-       chat port, as it writes the header. One permission, set once. Cost:
-       every member of those teams' channels may then edit banners, humans
-       too; since the banner is display only, an edit misleads at most until
-       the next write.
+       chat port, as it writes the header. Cost: every member of those
+       teams' channels, bot or human, may then write any banner there, and a
+       banner shows no author.
      - (b) The registrar makes each bot channel admin of its home. Too
        broad: a channel admin also adds and removes members and edits the
        channel, and an injected agent would hold that. Rejected.
@@ -2768,11 +2809,15 @@ server:
        writes text a bot chose into a channel with admin rights; the
        registrar cannot check the crown (a status the bots write), only that
        the bot is a member, so any bot of a home could write its banner.
-   - **Recommended: (a).** Mattermost's own permission, the bot's own token,
-     no new privileged path. It is an installation-wide setting, the
-     operator's to make, as the registrar's own settings are. Section 7 names
-     it once built. (c) is the second choice where an operator cannot change
-     schemes.
+       Humans could not, unless they also hold the permission.
+   - **Recommended: (a).** Its advantage is not who can write: under (a)
+     more accounts can write a banner than under (c). It is that there is no
+     new privileged endpoint, and one setting, the operator's to make, as
+     the registrar's own settings are. The drift rule (point 1) bounds what
+     a write by someone else does: a changed marker banner is rewritten
+     within `BANNER_GAP_SEC`, any other text stops the bus's banner and its
+     human is told (point 4). Section 7 names the permission once built. (c)
+     is the second choice where an operator cannot change schemes.
    - The banner is the MCP server's, like the header: every harness that
      runs it gets the banner, corral or not.
 
@@ -2800,65 +2845,82 @@ server:
      these kinds from the tool and its inbox marks. (c) stays possible if
      (b) proves to add little.
 
-7. **Consequences.**
-   - Plus: what waits on a human is at the top of the home on every client,
-     so asks are seen sooner and agents wait less. A stall is visible to
-     humans, not only to the coordinator. Who coordinates shows without a
-     post. No system message.
-   - Minus: only installations with Enterprise Advanced get the banner;
-     every other one gets nothing, and nothing else depends on it.
-   - Minus: the operator grants a permission (point 5 (a)), which also lets
-     every member of those teams edit banners.
-   - Minus: each write sends `channel_updated` to every member's clients,
-     which then refetch the channel: with the gap at most one a minute per
-     home.
-   - Minus: after a crash the banner is stale until the next holder writes;
-     its time says how old it is.
-   - Minus: a human's banner turns the bus's off in that home, with only a
-     log line to say so.
-   - The header's bus line stays: it says how to address the agents, the
-     banner says what is going on. The 👑 custom status stays: the roster,
-     the election and the slots read it (RT-6.6 steps 1 and 2).
-   - No new authority (ADR-001): the banner says nothing a member could not
-     read from the asks and the roster.
-
 **Phases:**
 
 1. The banner, points 1 to 5: stall, asks, crown and status counts, the mode
-   and mandate suffix, the marker, the back-off; a chat port call
-   `set_channel_banner` and the adapter's constants. A minor version. Once
-   built: RT-6.6 gains a step for the banner beside the header (step 7) and
-   rows for the 403s, a human's banner and a failed write; RT-6.11 step 2
-   says an open ask shows in the home's banner; RT-6.19 step 3 says a stall
-   also turns the banner red; Section 7 names the scheme permission; the
-   site names the banner with its licence.
+   and mandate suffix, the marker, the drift rule, the clean end's line,
+   the `bus_info` line and the DM for a human's banner, the back-off; a chat
+   port call `set_channel_banner`, the port-level state and the adapter's
+   rendering. A minor version. Once built: RT-6.6 gains a step for the
+   banner beside the header (step 7) and rows for the 403s, a human's banner,
+   drift and a failed write; RT-6.1 step 7 and RT-6.18 step 7 write the
+   clean end's line; RT-6.11 step 2 says an open ask shows in the home's
+   banner; RT-6.19 step 3 says a stall also turns the banner red; Section 7
+   names the scheme permission; the site names the banner with its licence.
 2. The prefix, point 6 (b), once phase 1 has run in use for some weeks and
    with the owner's go. Once built: RT-6.6 step 3 and the coordinator's
    `HELLO` of RT-6.7 step 1. The hooks' fallback of RT-6.2 (an own post
-   "after a leading 👑") stays for older servers.
+   "after a leading 👑") stays for older servers. The site's crown tile
+   ("marked 👑 in the chat") changes with it.
 
 No scenario points here yet: like ADR-004, a proposed decision changes
 Section 6 only once a phase is built.
 
-**Tests (when built, `mcp/tests/`, naming RT-6.6):** the text per state and
-its cut at 1024 bytes; no write without a change; the gap coalesces; only
-the holder writes and stops when it loses the crown; a human's banner is left
-alone and an empty or disabled one is written; a 403 is logged once and backed
-off; a banner's text changes no crown, mode or ask; in phase 2, the 👑 only on
-the kinds of point 6 (b).
+**Tests (when built, `mcp/tests/`, naming RT-6.6):** the text per state from
+the port-level state, its cut at 1024 bytes counted as bytes, the 80-character
+title and 64-character names; no write without a change; the gap coalesces;
+only the holder writes, a pending write checks `crown_held`, the winner of
+two crowns writes; the drift rule (a changed marker banner rewritten, a free
+one written, a human's one left alone, its own write's event ignored); the
+`bus_info` line and one DM per human banner; the clean end's line; a 403 is
+logged once and backed off; no permission prompt and no question to the 👑 in
+the text; a banner write starts no quiet period; a banner's text changes no
+crown, mode or ask; in phase 2, the 👑 only on the kinds of point 6 (b).
 
 **Alternatives:** (a) The header: every change posts a system message
 (RT-6.6 step 7), so a state that changes cannot live there; 0.65.4 took the
-holder out of it for that reason. (b) A pinned post the bus edits: no system
-message, but hidden behind the pin list, on mobile further. (c) A summary
-post per change: noise (`#usable` Low noise), and it scrolls away like the
-asks. (d) The bot's custom status: per bot, not per home, at most 100
-characters, seen only in the roster. (e) A DM digest to each human: helps one
-human, not a shared home; possible later, beside the banner.
+holder out of it for that reason. (b) The channel purpose: it posts a system
+message too. Rejected like the header. (c) A pinned post the bus edits: no
+system message, but hidden behind the pin list, on mobile further.
+(d) A summary post per change: noise (`#usable` Low noise), and it scrolls
+away like the asks. (e) The bot's custom status: per bot, not per home, at
+most 100 characters, seen only in the roster. (f) A DM digest to each human:
+helps one human, not a shared home; possible later, beside the banner.
+(g) Channel bookmarks (Mattermost 10): no licence needed, and members can
+edit them; whether an edit posts a system message is not checked. A possible
+licence-free fallback (open question 4).
+
+**Consequences:**
+
+- Plus: what waits on a human is at the top of the home on every client, so
+  asks are seen sooner and agents wait less. A stall is visible to humans,
+  not only to the coordinator. Who coordinates shows without a post. No
+  system message.
+- Minus: only installations with Enterprise Advanced get the banner; every
+  other one gets nothing, and nothing else depends on it.
+- Minus: the operator grants a permission (point 5 (a)), which lets every
+  member of those teams write banners, with no author shown.
+- Minus: each write sends `channel_updated` to every member's clients, which
+  then refetch the channel: with the gap at most one a minute per home.
+- Minus: after a crash the banner is stale until the next holder writes; its
+  time says how old it is.
+- Minus: a human in the Threads view or in DMs never sees the banner.
+- The header's bus line stays: it says how to address the agents, the banner
+  says what is going on. The 👑 custom status stays: the roster, the election
+  and the slots read it (RT-6.6 steps 1 and 2).
+- No new authority (ADR-001): the banner says nothing a member could not read
+  from the asks and the roster.
+- **Measuring.** Whether it helps shows in RT-6.9's Asks figures:
+  `ask_wait_sec`, `ask_wait_max_sec` and `asks_open`, before and after phase
+  1. Banner writes are no hand-overs and do not touch the "settled without a
+  human" figures.
 
 **Risks created:** none new in Section 11. The banner is display only and
-grants nothing (point 3). The wider edit right of point 5 (a) lets a member
-mislead until the next write, no more than a member's post can.
+grants nothing (point 3). Under point 5 (a) any member, bot or human, can
+change it, and unlike a post a banner shows no author. The drift rule
+(point 1) rewrites a changed marker banner within `BANNER_GAP_SEC`; a banner
+without the marker stops the bus's and is told to the responsible human
+(point 4).
 
 **Related:** ADR-005 step 3 and ADR-006 rejected the header as a source of
 truth; the same holds for the banner. ADR-007 decides how fast the crown
@@ -2866,16 +2928,21 @@ passes, and with it the banner's writer.
 
 **Open questions (for the owner):**
 
-1. The gap: 60 s between two writes of one home?
-2. The marker: `🚌 agent bus ·`, or shorter?
-3. The permission: (a), a scheme the operator sets, or (c), the registrar
-   writes?
-4. The prefix: (b) after phase 1, or (c) at once?
-5. Is `/agent-banner off` needed for a team that wants no banner and has none
-   of its own?
-6. A banner a human turned off: free for the bus (proposed), or still theirs?
-7. When the holder's session ends: leave the last banner with its time
-   (proposed), or write "no coordinator", or turn it off?
-8. Guest channels a mandate covers (RT-6.19 step 6): a banner there too, or
-   the home only (proposed for phase 1)?
-9. Name the human the asks wait on (`wait on @human-a`), or only the count?
+1. Who writes: (a), a scheme the operator sets, or (c), the registrar? The
+   drift rule of point 1 holds either way.
+2. The end of the holder's session: write `no coordinator since HH:MM`
+   (proposed), or turn the banner off?
+3. Name the human the asks wait on: yes (proposed), as the ask card does, or
+   only the count?
+4. Check channel bookmarks as a licence-free fallback, or Enterprise Advanced
+   only?
+5. The prefix: (b) or (c)? This can wait for phase 1.
+
+Proposed as written, no decision needed now:
+
+6. The gap: 60 s between two writes of one home.
+7. The marker: `🚌 agent bus ·`.
+8. No `/agent-banner off` until a team needs one.
+9. A banner a human turned off is free for the bus.
+10. The home only, no banner in the guest channels a mandate covers
+    (RT-6.19 step 6), in phase 1.
