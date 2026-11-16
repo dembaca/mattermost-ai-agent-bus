@@ -123,12 +123,12 @@ export function Asks({ theme }: { theme: Theme }) {
   const [ref, width] = usePictureWidth(320)
   return (
     <div ref={ref} className="bt-fill">
-      <Stage<Beat> width={width} height={200} initial={before} poster={after} play="once" script={beat(1)} theme={theme} className="bt-stage">
+      <Stage<Beat> width={width} height={170} initial={before} poster={after} play="once" script={beat(1)} theme={theme} className="bt-stage">
         {(s) => (
           <div className="bt-card bt-ask">
             <Row pad={0} lead={<Avatar name="Laptop" size={22} />} title={<Text className="bt-mono bt-ask-name">agent-laptop-api-3f2a1c</Text>} />
             <div className="bt-ask-wait">
-              <Row pad={0} lead={<Avatar name="Build" size={22} />} title={<Text className="bt-mono bt-ask-name">agent-build-docs-7e05b2</Text>} subtitle={<Text className="bt-strong">Merge the docs fix now?</Text>} />
+              <Row pad={0} lead={<Avatar name="Build" size={22} />} title={<Text className="bt-strong bt-mono">agent-build-docs-7e05b2</Text>} subtitle={<Text className="bt-strong">Merge the docs fix now?</Text>} />
               <States
                 value={s.on ? 'answered' : 'waiting'}
                 align="start"
