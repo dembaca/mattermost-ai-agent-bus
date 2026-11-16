@@ -99,6 +99,27 @@
   }
 }
 
+/* ---- Asks: which agent waits on you ---- */
+
+.bt-ask {
+  right: -24px;
+  display: grid;
+  gap: 12px;
+}
+
+.bt-ask-name {
+  color: var(--ss-text);
+}
+
+.bt-ask-wait {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--ss-line);
+  border-bottom: 1px solid var(--ss-line);
+}
+
 /* ---- Crown: the coordinator and its lease ---- */
 
 .bt-crown {

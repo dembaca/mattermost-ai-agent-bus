@@ -10,11 +10,12 @@ import './bento.css'
 //
 //   Tile          Span   Kind        The one thing                          Moves
 //   Coordination  2 x 1  Hero UI     three sessions, the middle one named   its thread steps tick, Working turns Done
-//   Asks          1 x 1  Stat        "24 h" (page type, no Stage)           nothing
+//   Asks          1 x 1  Component   three agents, one waiting on you       its question turns Answered
 //   Crown         1 x 1  Component   the home's coordinator and its lease   the lease renews
 //   Owner         1 x 1  Object      a bot's signed owner card              the signature check lands
 //   Trust         1 x 1  Component   who may tell an agent what             the four rows settle in
-//   Delegation    3 x 1  Component   a question routed to the coordinator   Routing turns Answered by the crown
+//   Delegation    2 x 1  Component   a question routed to the coordinator   Routing turns Answered by the crown
+//   Security      1 x 1  Type        the model in two sentences (no Stage)  nothing
 //
 // Window chrome appears once, on the hero. Each tile plays one beat, once,
 // as the grid scrolls in, 110ms after the tile before it in reading order.
@@ -116,13 +117,46 @@ export function Coordination({ theme }: { theme: Theme }) {
   )
 }
 
+/* ---------------- Asks (which agent waits on you) ---------------- */
+
+export function Asks({ theme }: { theme: Theme }) {
+  const [ref, width] = usePictureWidth(320)
+  return (
+    <div ref={ref} className="bt-fill">
+      <Stage<Beat> width={width} height={200} initial={before} poster={after} play="once" script={beat(1)} theme={theme} className="bt-stage">
+        {(s) => (
+          <div className="bt-card bt-ask">
+            <Row pad={0} lead={<Avatar name="Laptop" size={22} />} title={<Text className="bt-mono bt-ask-name">agent-laptop-api-3f2a1c</Text>} />
+            <div className="bt-ask-wait">
+              <Row pad={0} lead={<Avatar name="Build" size={22} />} title={<Text className="bt-mono bt-ask-name">agent-build-docs-7e05b2</Text>} subtitle={<Text className="bt-strong">Merge the docs fix now?</Text>} />
+              <States
+                value={s.on ? 'answered' : 'waiting'}
+                align="start"
+                states={{
+                  waiting: <Badge tone="warning">Waits on you</Badge>,
+                  answered: (
+                    <Badge tone="success" icon={<Icon name="check" size={12} />}>
+                      Answered, back at work
+                    </Badge>
+                  ),
+                }}
+              />
+            </div>
+            <Row pad={0} lead={<Avatar name="Desk" size={22} />} title={<Text className="bt-mono bt-ask-name">agent-desk-web-9c41d0</Text>} />
+          </div>
+        )}
+      </Stage>
+    </div>
+  )
+}
+
 /* ---------------- Crown (the home's coordinator) ---------------- */
 
 export function Crown({ theme }: { theme: Theme }) {
   const [ref, width] = usePictureWidth(320)
   return (
     <div ref={ref} className="bt-fill">
-      <Stage<Beat> width={width} height={170} initial={before} poster={after} play="once" script={beat(1)} theme={theme} className="bt-stage">
+      <Stage<Beat> width={width} height={170} initial={before} poster={after} play="once" script={beat(2)} theme={theme} className="bt-stage">
         {(s) => (
           <div className="bt-card bt-crown">
             <Row
@@ -154,7 +188,7 @@ export function Crown({ theme }: { theme: Theme }) {
 export function Owner({ theme }: { theme: Theme }) {
   return (
     <div className="bt-center">
-      <Stage<Beat> width={300} height={170} initial={before} poster={after} play="once" script={beat(2)} theme={theme} className="bt-stage">
+      <Stage<Beat> width={300} height={170} initial={before} poster={after} play="once" script={beat(3)} theme={theme} className="bt-stage">
         {(s) => (
           <div className="bt-card bt-owner">
             <div className="bt-owner-head">
@@ -196,7 +230,7 @@ export function Trust({ theme }: { theme: Theme }) {
   const [ref, width] = usePictureWidth(320)
   return (
     <div ref={ref} className="bt-fill">
-      <Stage<Beat> width={width} height={190} initial={before} poster={after} play="once" script={beat(3)} theme={theme} className="bt-stage">
+      <Stage<Beat> width={width} height={190} initial={before} poster={after} play="once" script={beat(4)} theme={theme} className="bt-stage">
         {(s) => (
           <div className="bt-card bt-trust" data-on={s.on || undefined}>
             {CLASSES.map((c, i) => (
@@ -217,7 +251,7 @@ export function Trust({ theme }: { theme: Theme }) {
 export function Delegation({ theme }: { theme: Theme }) {
   return (
     <div className="bt-left">
-      <Stage<Beat> width={420} height={150} initial={before} poster={after} play="once" script={beat(4)} theme={theme} className="bt-stage">
+      <Stage<Beat> width={420} height={150} initial={before} poster={after} play="once" script={beat(5)} theme={theme} className="bt-stage">
         {(s) => (
           <div className="bt-card bt-deleg">
             <div className="bt-deleg-q">

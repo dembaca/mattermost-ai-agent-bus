@@ -300,20 +300,20 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
   display: grid;
   gap: .875rem;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "coord" "ask" "crown" "owner" "trust" "deleg";
+  grid-template-areas: "coord" "ask" "crown" "owner" "trust" "deleg" "sec";
 }
 
 @media (min-width: 40rem) {
   .features-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: "coord coord" "ask crown" "owner trust" "deleg deleg";
+    grid-template-areas: "coord coord" "ask crown" "owner trust" "deleg deleg" "sec sec";
   }
 }
 
 @media (min-width: 60rem) {
   .features-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    grid-template-areas: "coord coord ask" "crown owner trust" "deleg deleg deleg";
+    grid-template-areas: "coord coord ask" "crown owner trust" "deleg deleg sec";
   }
 }
 
@@ -332,6 +332,9 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
 .tile--owner { grid-area: owner; }
 .tile--trust { grid-area: trust; }
 .tile--deleg { grid-area: deleg; min-height: 17rem; }
+/* Type only: the copy is the picture, so it is set in ink, not muted */
+.tile--sec { grid-area: sec; min-height: 0; padding-bottom: var(--tile-pad); }
+.tile--sec .tile-copy { color: var(--ink); }
 
 .tile-title {
   margin: 0;
@@ -358,22 +361,6 @@ html:not(.js) .tile { min-height: 0; padding-bottom: 1.5rem; }
 .tile-picture {
   margin-top: auto;
   padding-top: 1rem;
-}
-
-.stat {
-  margin-top: auto;
-  padding: 1rem var(--tile-pad) var(--tile-pad);
-}
-.stat-label { margin: 0; color: var(--muted); font-size: .9375rem; line-height: 1.45; letter-spacing: -.012em; max-width: 18rem; }
-.stat-number {
-  margin: .25rem 0 .5rem;
-  font-family: var(--serif);
-  font-size: 4rem;
-  line-height: 1;
-  letter-spacing: -.03em;
-  font-weight: 460;
-  color: var(--ink);
-  white-space: nowrap;
 }
 
 .section--flush { padding-top: 3.5rem; }

@@ -2,7 +2,7 @@ import { StrictMode, useEffect, useState, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Theme } from './kit'
 import HeroChat from './illustrations/HeroChat'
-import { Coordination, Crown, Delegation, Owner, Trust } from './illustrations/Bento'
+import { Asks, Coordination, Crown, Delegation, Owner, Trust } from './illustrations/Bento'
 import Matrix from './illustrations/Matrix'
 
 // The page is plain HTML (index.html): it reads fully without JS. This file
@@ -45,6 +45,7 @@ function Themed({ of: Picture }: { of: ComponentType<{ theme: Theme }> }) {
 
 const PICTURES: Record<string, ComponentType<{ theme: Theme }>> = {
   coordination: Coordination,
+  asks: Asks,
   crown: Crown,
   owner: Owner,
   trust: Trust,
