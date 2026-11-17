@@ -12,8 +12,9 @@ before 0.5.0 are described in the git history.
   [RT-6.25](docs/arc42/06-runtime-view.md) steps 2 and 8,
   [RT-6.26](docs/arc42/06-runtime-view.md) step 6): the bus line in the home's
   header ends with `· asks → 👑 first` while the home's ask mode is
-  `coordinator`, and with `· tasks here from 👑 of ~<home> until <YYYY-MM-DD>`
-  while a mandate holds there (the end as RT-6.26 step 3 computes it). Every
+  `coordinator`, and with `· tasks here from 👑 of ~<home> ends <YYYY-MM-DD HH:MMZ>`
+  while a mandate holds there (the end as RT-6.26 step 3 computes it, in UTC
+  as `bus_info` shows it: `until 2026-12-01` ends `2026-12-01 00:00Z`). Every
   header change posts a system message in the channel, so only these rare
   facts go there, and the crown holder's server writes the line only when it
   differs: when the crown passes to it, once after it starts, and now also
@@ -23,7 +24,8 @@ before 0.5.0 are described in the git history.
   mandate the line is the one before, byte for byte: an upgrade writes
   nothing. Display only: the header is never read for the crown, the mode or
   a mandate; any member can edit it. A header the bot may not change is
-  logged once, as before. ADR-005 and ADR-006 note it.
+  logged once, as before, and tried again only on a change; any other
+  failure is tried again at the next heartbeat. ADR-005 and ADR-006 note it.
 - **ADR-013 (the channel banner) withdrawn** in
   [Section 9](docs/arc42/09-architecture-decisions.md): the banner depends on
   the Mattermost edition and a permission setting, and the bus builds no

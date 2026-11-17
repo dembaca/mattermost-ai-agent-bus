@@ -1354,9 +1354,13 @@ class MattermostAdapter:
         return str(raw.get("header") or "")
 
     async def set_channel_header(self, channel_id: str, header: str) -> None:
-        """Set the channel's header; Mattermost posts a system message for it."""
-        raw = await self._api("PUT", f"/api/v4/channels/{mm_id(channel_id, 'channel')}/patch",
-                              json={"header": header})
+        """Set the channel's header; Mattermost posts a system message for it.
+        Refused (with its status, 403 without permission) when Mattermost refuses."""
+        try:
+            raw = await self._api("PUT", f"/api/v4/channels/{mm_id(channel_id, 'channel')}/patch",
+                                  json={"header": header})
+        except httpx.HTTPStatusError as exc:
+            raise _refused(exc, "header change") from exc
         if isinstance(raw, Mapping) and raw.get("id"):
             self._channels[channel_id] = channel_of(raw)
 

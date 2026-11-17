@@ -1065,9 +1065,10 @@ BUS_HEADER = f"{HEADER_MARK} · {HEADER_RULE}"
 # time, the rule followed).
 _BUS_PART = re.compile(rf"\n*{re.escape(HEADER_MARK)}[^\n]*(?:\n{re.escape(HEADER_RULE[:12])}[^\n]*)?")
 _header_logged = False
-# home -> the bus line this process last put there or found there (or tried
-# to): the header is read again only when the line would change, or the crown
-# passes to this agent.
+# home -> the bus line this process last put there or found there, or was
+# refused (403): the header is read again only when the line would change, or
+# the crown passes to this agent. Any other failure leaves it, so the next
+# heartbeat tries again.
 _header_line: dict[str, str] = {}
 
 
@@ -1083,8 +1084,8 @@ def bus_line(asks_first: bool = False, mandate: tuple[str, int] | None = None) -
         parts.append(f"asks → {crown} first")
     if mandate is not None:
         home, end_ms = mandate
-        until = f" until {time.strftime('%Y-%m-%d', time.gmtime(end_ms / 1000))}" if end_ms else ""
-        parts.append(f"tasks here from {crown} of ~{home}{until}")
+        ends = f" ends {time.strftime('%Y-%m-%d %H:%MZ', time.gmtime(end_ms / 1000))}" if end_ms else ""
+        parts.append(f"tasks here from {crown} of ~{home}{ends}")
     return " · ".join(parts)
 
 
@@ -1123,16 +1124,23 @@ async def _header(client: ChatPort, cid: str, uid: str, line: str | None = None,
     every change, so a header that says it already gets no write; reading it
     to compare is the only read, nothing is decided from it. The crown holder
     checks when the crown passes to it, once per process, and when the line
-    changes (header_tick). Fails open: without permission it logs once, the
-    crown, the ask mode and the mandate work without it."""
+    changes (header_tick). Fails open: it logs once, the crown, the ask mode
+    and the mandate work without it. The line counts as done after a write, a
+    header that has it, or a refusal (403: no permission, tried again only on
+    a change); any other failure is tried again at the next heartbeat."""
     global _header_logged
     try:
         line = line if line is not None else await _bus_line(client, uid, now)
-        _header_line[cid] = line
         current = await client.channel_header(cid)
         new = with_bus_header(current, line)
         if new != current:
-            await client.set_channel_header(cid, new)
+            try:
+                await client.set_channel_header(cid, new)
+            except Refused as exc:
+                if exc.status == 403:
+                    _header_line[cid] = line
+                raise
+        _header_line[cid] = line
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 — cosmetic, like the status

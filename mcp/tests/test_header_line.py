@@ -9,6 +9,7 @@ import pytest
 
 from mattermost_ai_agent_bus import askroute, lease, mandate, stall
 from mattermost_ai_agent_bus.client import post_of
+from mattermost_ai_agent_bus.model import Refused
 
 from fakes import BOT, WORK, FakeChat
 
@@ -72,15 +73,15 @@ def test_the_line_per_mode_and_mandate():
     are added after it."""
     assert lease.bus_line() == lease.BUS_HEADER == TODAY
     assert lease.bus_line(True) == f"{TODAY} · asks → {CROWN} first"
-    assert lease.bus_line(mandate=("hub", END)) == f"{TODAY} · tasks here from {CROWN} of ~hub until 2026-12-01"
+    assert lease.bus_line(mandate=("hub", END)) == f"{TODAY} · tasks here from {CROWN} of ~hub ends 2026-12-01 00:00Z"
     assert lease.bus_line(mandate=("hub", 0)) == f"{TODAY} · tasks here from {CROWN} of ~hub"
     assert lease.bus_line(True, ("hub", END)) == (
-        f"{TODAY} · asks → {CROWN} first · tasks here from {CROWN} of ~hub until 2026-12-01")
+        f"{TODAY} · asks → {CROWN} first · tasks here from {CROWN} of ~hub ends 2026-12-01 00:00Z")
 
 
 @pytest.mark.parametrize("old", [TODAY, _old_bus(), f"{TODAY} · asks → {CROWN} first",
-                                 f"{TODAY} · tasks here from {CROWN} of ~hub until 2026-11-20",
-                                 f"{TODAY} · asks → {CROWN} first · tasks here from {CROWN} of ~x until 2026-01-01"])
+                                 f"{TODAY} · tasks here from {CROWN} of ~hub ends 2026-11-20 00:00Z",
+                                 f"{TODAY} · asks → {CROWN} first · tasks here from {CROWN} of ~x ends 2026-01-01 00:00Z"])
 def test_every_older_form_is_replaced_and_peoples_text_stays(old):
     """RT-6.6 step 7: today's line, the pre-0.65.4 form and a line with any
     suffix are replaced where they stand; what people wrote before and after stays."""
@@ -166,7 +167,7 @@ async def test_a_mandate_shows_and_its_expiry_rewrites(holder):
     c.header = f"Notes\n\n{TODAY}"
     _mandate(end_ms=END)
     await lease.header_tick(c, BOT, now=END / 1000 - 60)
-    assert c.header == f"Notes\n\n{TODAY} · tasks here from {CROWN} of ~hub until 2026-12-01"
+    assert c.header == f"Notes\n\n{TODAY} · tasks here from {CROWN} of ~hub ends 2026-12-01 00:00Z"
     await lease.header_tick(c, BOT, now=END / 1000 - 30)
     assert len(c.writes) == 1
     await lease.header_tick(c, BOT, now=END / 1000 + 1)   # expired
@@ -188,13 +189,13 @@ async def _uid() -> str:
     return BOT
 
 
-async def test_a_header_that_fails_is_logged_and_tried_again_only_on_a_change(holder, monkeypatch):
-    """RT-6.6 step 7: without permission the write fails open, and the next
-    heartbeats read nothing until the line changes."""
+async def test_a_refused_header_is_tried_again_only_on_a_change(holder, monkeypatch):
+    """RT-6.6 step 7: without permission (403) the write fails open, and the
+    next heartbeats read nothing until the line changes."""
     c = _Chat()
 
     async def refused(channel_id: str, header: str) -> None:
-        raise PermissionError("403")
+        raise Refused("Mattermost refused the header change (403)", status=403)
 
     monkeypatch.setattr(c, "set_channel_header", refused)
     _no_mandate()
@@ -204,3 +205,44 @@ async def test_a_header_that_fails_is_logged_and_tried_again_only_on_a_change(ho
     monkeypatch.setenv("MM_ASK_ROUTE", "coordinator")
     await lease.header_tick(c, BOT)
     assert c.reads == 2
+
+
+@pytest.mark.parametrize("failure", [Refused("Mattermost refused the header change (502)", status=502),
+                                     ConnectionError("reset")])
+async def test_a_transient_failure_is_tried_again_at_the_next_heartbeat(holder, monkeypatch, failure):
+    """RT-6.6 step 7: a 5xx or a network error is not remembered as done: the
+    next heartbeat writes the line."""
+    c = _Chat()
+    real = c.set_channel_header
+    fails = [failure]
+
+    async def flaky(channel_id: str, header: str) -> None:
+        if fails:
+            raise fails.pop()
+        await real(channel_id, header)
+
+    monkeypatch.setattr(c, "set_channel_header", flaky)
+    monkeypatch.setenv("MM_ASK_ROUTE", "coordinator")
+    _no_mandate()
+    await lease.header_tick(c, BOT)
+    assert c.writes == []
+    await lease.header_tick(c, BOT)
+    assert c.writes == [f"{TODAY} · asks → {CROWN} first"]
+    await lease.header_tick(c, BOT)
+    assert len(c.writes) == 1 and c.reads == 2  # done: no read again
+
+
+async def test_a_change_without_the_crown_is_written_when_it_is_regained(holder, monkeypatch):
+    """RT-6.6 step 7: the line changes while this server holds no crown; when
+    the crown passes to it again, it writes the new line (_header)."""
+    c = _Chat()
+    c.header = TODAY
+    _no_mandate()
+    await lease.header_tick(c, BOT)
+    holder["now"] = False
+    monkeypatch.setenv("MM_ASK_ROUTE", "coordinator")
+    await lease.header_tick(c, BOT)
+    assert c.writes == [] and c.reads == 1
+    holder["now"] = True
+    await lease._header(c, WORK, BOT)  # the crown passes to it (take_now)
+    assert c.writes == [f"{TODAY} · asks → {CROWN} first"]
