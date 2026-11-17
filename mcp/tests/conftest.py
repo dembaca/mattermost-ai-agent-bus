@@ -60,6 +60,11 @@ def _isolate_bus_env(monkeypatch, tmp_path, request):
                         ("_took_from", ""), ("_crown_since", 0.0), ("_ousted", None)):
         monkeypatch.setattr(lease, name, value)
     owners._noted.clear()
+    # The bus line each home's header was last checked for (RT-6.6 step 7), and
+    # what the ask-mode reader keeps per process (RT-6.25).
+    monkeypatch.setattr(lease, "_header_line", {})
+    askroute._looked.clear()
+    askroute._fetched.clear()
     # What the mandate reader keeps per process (RT-6.26).
     for kept in (mandate._reads, mandate._fetched, mandate._judged, mandate._noted):
         kept.clear()

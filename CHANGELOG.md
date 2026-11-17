@@ -3,6 +3,33 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.92.0
+
+### Changed
+
+- **The channel header shows the ask mode and a mandate**
+  ([RT-6.6](docs/arc42/06-runtime-view.md) step 7,
+  [RT-6.25](docs/arc42/06-runtime-view.md) steps 2 and 8,
+  [RT-6.26](docs/arc42/06-runtime-view.md) step 6): the bus line in the home's
+  header ends with `· asks → 👑 first` while the home's ask mode is
+  `coordinator`, and with `· tasks here from 👑 of ~<home> until <YYYY-MM-DD>`
+  while a mandate holds there (the end as RT-6.26 step 3 computes it). Every
+  header change posts a system message in the channel, so only these rare
+  facts go there, and the crown holder's server writes the line only when it
+  differs: when the crown passes to it, once after it starts, and now also
+  when the mode or the mandate it knows changes (a switch kept, a record read
+  on the heartbeat, a mandate's start, end or expiry), checked on the
+  heartbeat from the reads that happen anyway. With the default mode and no
+  mandate the line is the one before, byte for byte: an upgrade writes
+  nothing. Display only: the header is never read for the crown, the mode or
+  a mandate; any member can edit it. A header the bot may not change is
+  logged once, as before. ADR-005 and ADR-006 note it.
+- **ADR-013 (the channel banner) withdrawn** in
+  [Section 9](docs/arc42/09-architecture-decisions.md): the banner depends on
+  the Mattermost edition and a permission setting, and the bus builds no
+  feature that does. The header carries the rare facts instead. It was never
+  built.
+
 ## 0.91.2
 
 ### Added

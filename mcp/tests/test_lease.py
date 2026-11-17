@@ -793,7 +793,7 @@ def _old_bus(name: str, at: str) -> str:
 
 @pytest.fixture(autouse=True)
 def fresh_process(monkeypatch):
-    monkeypatch.setattr(lease, "_header_seen", set())
+    monkeypatch.setattr(lease, "_header_line", {})
     monkeypatch.setattr(lease, "_look_at", 0.0)
     monkeypatch.setattr(lease, "_vacant_at", 0.0)
     monkeypatch.setattr(lease, "_holder_id", "")
@@ -864,6 +864,6 @@ async def test_without_permission_the_crown_works_and_it_logs_once(mm, client, c
     with caplog.at_level("DEBUG", logger="mattermost_ai_agent_bus.lease"):
         await lease.command(client, "tick")
         assert holds()
-        await lease._header(client, CHANNEL)
+        await lease._header(client, CHANNEL, UID)
     assert mm.patches == []
     assert [r.levelname for r in caplog.records if "header" in r.getMessage()] == ["WARNING", "DEBUG"]

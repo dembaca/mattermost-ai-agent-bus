@@ -339,6 +339,7 @@ async def observe(client: ChatPort, post: Post, uid: str) -> bool:
             return True
         if _store(uid, home, post, mode, who) and lease.crown_held(uid):
             await _confirm(client, uid, home)
+            await lease.header_tick(client, uid)  # RT-6.6 step 7: the header shows it
         return True
     except Exception as exc:  # noqa: BLE001 — fail open
         log.info("ask mode post %s not read: %s", post.id or None, exc)

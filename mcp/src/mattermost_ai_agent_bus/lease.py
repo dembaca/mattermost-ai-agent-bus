@@ -716,7 +716,7 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
             # The crown passed to this agent: is the header's bus part there (step 7)?
             if passed is not None:
                 passed.append(True)
-            await _header(client, cid)
+            await _header(client, cid, uid)
 
     if action == "who":
         first = [r for r in rows if r["crown"]] + [r for r in rows if r["reachable"]]
@@ -776,9 +776,9 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
         # An explicit take (pending) is allowed; the election only among peers.
         if me_reachable and (pending == 1 or await _elected(client, uid, rows)):
             await take_now()
-    if cid not in _header_seen and _coord(uid).get("CROWN_UNTIL", 0) > now:
+    if cid not in _header_line and _coord(uid).get("CROWN_UNTIL", 0) > now:
         # Once per process while holding: an upgrade finds an older header (step 7).
-        await _header(client, cid)
+        await _header(client, cid, uid)
     _plan(uid, rows)
     return ""
 
@@ -937,7 +937,7 @@ async def look(client: ChatPort) -> bool:
                     _crown_since = now
                     old = next((r for r in rows if r["id"] == _holder_id), None)
                     silent = (old, m) if old and (m := _SILENT_SINCE.match(str(old["text"]))) else None
-                await _header(client, cid)
+                await _header(client, cid, uid)
             _plan(uid, rows)
             if free and not any(claimed):
                 _look_at = 0.0  # nothing to claim here now: the tick plans again
@@ -1005,7 +1005,7 @@ async def take_over(client: ChatPort, holder_id: str, post_id: str) -> bool:
                 return False
             _took_from, _took_why, _crown_since = holder_id, why, now
             log.info("crown taken over from %s: no receipt for %s (ADR-007 step 3)", held["username"], post_id)
-            await _header(client, cid)
+            await _header(client, cid, uid)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 — fail open, like the tick
@@ -1060,11 +1060,42 @@ HEADER_RULE = (f"plain post → {a2a.symbol(Mark.CROWN)} routes it · @agent →
 # The bus part: how to address the agents. It names no holder, so a crown
 # change leaves it alone (the 👑 shows on posts and in the custom status).
 BUS_HEADER = f"{HEADER_MARK} · {HEADER_RULE}"
-# The bus part as found: the mark's line, and a rule's line after it (before
-# 0.65.4 the mark's line named the holder and the time, the rule followed).
+# The bus part as found: the mark's line (with any suffix, bus_line), and a
+# rule's line after it (before 0.65.4 the mark's line named the holder and the
+# time, the rule followed).
 _BUS_PART = re.compile(rf"\n*{re.escape(HEADER_MARK)}[^\n]*(?:\n{re.escape(HEADER_RULE[:12])}[^\n]*)?")
 _header_logged = False
-_header_seen: set[str] = set()  # homes whose header this process has checked
+# home -> the bus line this process last put there or found there (or tried
+# to): the header is read again only when the line would change, or the crown
+# passes to this agent.
+_header_line: dict[str, str] = {}
+
+
+def bus_line(asks_first: bool = False, mandate: tuple[str, int] | None = None) -> str:
+    """The bus part (RT-6.6 step 7): BUS_HEADER, then the home's facts that
+    change rarely, as every header change posts a system message: the ask mode
+    when it is not `direct` (RT-6.25) and the mandate that holds here, as
+    (named home, end in epoch ms; RT-6.26 step 3). With neither it is
+    BUS_HEADER as it was. Display only: no server reads it for a decision."""
+    crown = a2a.symbol(Mark.CROWN)
+    parts = [BUS_HEADER]
+    if asks_first:
+        parts.append(f"asks → {crown} first")
+    if mandate is not None:
+        home, end_ms = mandate
+        until = f" until {time.strftime('%Y-%m-%d', time.gmtime(end_ms / 1000))}" if end_ms else ""
+        parts.append(f"tasks here from {crown} of ~{home}{until}")
+    return " · ".join(parts)
+
+
+async def _bus_line(client: ChatPort, uid: str, now: float | None = None) -> str:
+    """bus_line for the home as this server knows it now: the kept ask mode
+    and the mandate, from what askroute and mandate read anyway (RT-6.25 step
+    8, RT-6.26 step 1); an expired mandate is none."""
+    from . import askroute, mandate  # both import this module
+    found, _ = await askroute.mode(client, uid)
+    m, _ = await mandate.current(client, now)
+    return bus_line(found == askroute.COORDINATOR, (m.home, m.until_ms) if m else None)
 
 
 def _cut(text: str, room: int) -> str:
@@ -1085,17 +1116,21 @@ def with_bus_header(header: str, bus: str) -> str:
     return (before + sep + bus + after)[:HEADER_MAX]
 
 
-async def _header(client: ChatPort, cid: str) -> None:
-    """Put the static bus part into the work channel's header (RT-6.6 step 7)
-    when it is missing or differs. Mattermost posts a system message for every
-    change, so a header that says it already gets no write. The crown holder
-    checks when the crown passes to it and once per process. Fails open:
-    without permission it logs once, the crown works."""
+async def _header(client: ChatPort, cid: str, uid: str, line: str | None = None,
+                  now: float | None = None) -> None:
+    """Put the bus part (bus_line) into the work channel's header (RT-6.6 step
+    7) when it is missing or differs. Mattermost posts a system message for
+    every change, so a header that says it already gets no write; reading it
+    to compare is the only read, nothing is decided from it. The crown holder
+    checks when the crown passes to it, once per process, and when the line
+    changes (header_tick). Fails open: without permission it logs once, the
+    crown, the ask mode and the mandate work without it."""
     global _header_logged
-    _header_seen.add(cid)
     try:
+        line = line if line is not None else await _bus_line(client, uid, now)
+        _header_line[cid] = line
         current = await client.channel_header(cid)
-        new = with_bus_header(current, BUS_HEADER)
+        new = with_bus_header(current, line)
         if new != current:
             await client.set_channel_header(cid, new)
     except asyncio.CancelledError:
@@ -1106,6 +1141,28 @@ async def _header(client: ChatPort, cid: str) -> None:
             log.warning("channel header not set (the crown works without it): %s", exc)
         else:
             log.debug("channel header: %s", exc)
+
+
+async def header_tick(client: ChatPort, uid: str, now: float | None = None) -> float | None:
+    """RT-6.6 step 7, the new trigger: the holder's server re-checks the header
+    when the bus line it would write differs from the one it last put or found
+    there: a switch kept, a record read on the heartbeat, a mandate's start,
+    end or expiry. On the heartbeat (stall.watch) and after a kept switch
+    (askroute.observe); no read of its own beyond the header's, and that only
+    on a change. Without the crown nothing. Never raises; brings no beat
+    forward (None)."""
+    if not crown_held(uid):
+        return None
+    try:
+        cid = await client.work_channel_id()
+        line = await _bus_line(client, uid, now)
+        if _header_line.get(cid) != line:
+            await _header(client, cid, uid, line)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — the next heartbeat tries again
+        log.debug("channel header: %s", exc)
+    return None
 
 
 async def usage_crossed(client: ChatPort) -> None:

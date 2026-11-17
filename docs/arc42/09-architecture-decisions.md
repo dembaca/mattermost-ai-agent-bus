@@ -442,7 +442,8 @@ it does not reduce how many asks arrive.
 
    The channel header is **not** a source of truth: any channel member can
    edit it. The servers may *show* the mode in the header's bus part and in
-   `bus_info`, computed from the verified source. The default stays `direct`,
+   `bus_info`, computed from the verified source (the header shows it since
+   0.92.0, RT-6.6 step 7). The default stays `direct`,
    so nothing changes until a human switches.
 4. **Standing approvals are the main lever.** The coordinator never approves,
    so approvals stay the bottleneck. The answer is an approval a human sets
@@ -767,7 +768,9 @@ asks, not tasks, so workers would still confirm orders, now with a delegate;
 it also waits on ADR-004. (e) The coordinator's bot in `MM_TRUSTED_HUMANS`:
 an agent listed as trusted never counts as one (RT-6.25 step 2), and it would
 approve. (f) A mandate in the channel header: any member can edit it
-(ADR-005 alternative (c)). (g) The coordinator as a member of every home with
+(ADR-005 alternative (c)); showing it there is fine: since 0.92.0 the
+holder's server shows the mandate in the header's bus part, from the pin or
+the record, never read back (RT-6.6 step 7). (g) The coordinator as a member of every home with
 the crown in each: against ADR-002, one home per agent, and every plain post of
 every home would route through one agent.
 

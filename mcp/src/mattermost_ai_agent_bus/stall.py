@@ -445,8 +445,10 @@ async def watch(client: ChatPort) -> float | None:
     _held = held
     waits: list[float] = []
     # RT-6.26 step 1: the home's pinned posts read again for a mandate; RT-6.31
-    # step 2: the home's debug record read again; RT-6.9 step 2: a day's STATS part.
-    for name, step in (("reminders", remind.tick), ("mandate", mandate.tick), ("debug", debug.tick),
+    # step 2: the home's debug record read again; RT-6.9 step 2: a day's STATS part;
+    # RT-6.6 step 7: the holder's header once the mode or the mandate changed.
+    for name, step in (("reminders", remind.tick), ("mandate", mandate.tick),
+                       ("header", lease.header_tick), ("debug", debug.tick),
                        ("stats", stats.tick), ("stall", check)):
         if step is check and not held:
             continue
