@@ -36,6 +36,10 @@ if os.path.realpath(tempfile.gettempdir()).lower().startswith("/private/tmp/corr
     os.environ.setdefault("PYTEST_DEBUG_TEMPROOT", str(ROOT / ".pytest-tmp"))
     (ROOT / ".pytest-tmp").mkdir(exist_ok=True)
 sys.path.insert(0, str(ROOT / "mcp" / "src"))
+# A corral sandbox's markers would make the in-process server refuse
+# self-registration (RT-6.18), read when it is imported below.
+for _name in ("CORRAL_SANDBOX", "MM_BUS_MCP_ENDPOINT", "MM_BUS_ENDPOINT", "MM_BUS_KEY"):
+    os.environ.pop(_name, None)
 
 from mattermost_ai_agent_bus import hookapi, release, server  # noqa: E402,F401
 from mattermost_ai_agent_bus.client import MattermostAdapter  # noqa: E402

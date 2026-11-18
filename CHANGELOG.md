@@ -3,6 +3,59 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.93.0
+
+### Added
+
+- **The harness plugins come with the host copy**
+  ([RT-6.28](docs/arc42/06-runtime-view.md) step 2,
+  [RT-6.29](docs/arc42/06-runtime-view.md) step 5,
+  [RT-6.20](docs/arc42/06-runtime-view.md) step 1,
+  [RT-6.27](docs/arc42/06-runtime-view.md) step 1): the installer also copies
+  `opencode/` (the OpenCode plugin) and `pi/` (the pi extension) into each
+  release, what is committed only (`git archive`), optional as the skill is,
+  so a release before this one still installs. Under corral, OpenCode and pi
+  load the bus plugin read-only from `~/.local/share/mm-agent-bus/current`
+  instead of a checkout an agent can write. The OpenCode plugin's default
+  server gets `UV_PROJECT_ENVIRONMENT` in the user's cache
+  (`~/.cache/mm-agent-bus/venv-<hash of the tree>`), the mechanism the pi
+  extension has used since 0.86.3 (`venvDir`, now shared by both): nothing is
+  written into the host copy, whose `mcp/.venv` stays the host process's.
+  `node_modules/` is ignored, so an `npm install` in a clone does not block an
+  install from it.
+- **[adapters/opencode.md](adapters/opencode.md), *With corral***: the minimal
+  plugin entry pointing at the host copy, the read grant, why `command` with
+  `MM_REG_SECRET` and `environment` with `MM_CHAT_URL` … go under corral, which
+  config the sandboxed OpenCode reads (its private `$HOME`), how to check it
+  works, and the idle unload (`experimental.location_idle_timeout`).
+  [adapters/pi.md](adapters/pi.md) loads the extension from the host copy too.
+- **A warning when no relay connects**
+  ([RT-6.18](docs/arc42/06-runtime-view.md) step 11): a keyless session's
+  host process that has had no relay handshake 5 minutes after its start (the
+  harness does not load the bus plugin, so the agent has no bus tools and no
+  turn cycle, while the host kept its status alive) shows
+  `relay: none since HH:MM — is the bus plugin installed in the harness?
+  (adapters/opencode.md)` in `bus_info` and in the hook API's `/v1/me`
+  (`relay`), logs it once and sends the responsible human one plain DM with
+  the bot, the harness (`CORRAL_AGENT`, which preStart now passes to the host
+  process) and a link to its adapter doc. A later handshake clears it; the DM
+  never repeats in the session.
+
+### Changed
+
+- **No self-registration inside a corral sandbox**
+  ([RT-6.18](docs/arc42/06-runtime-view.md) error handling,
+  [RT-6.10](docs/arc42/06-runtime-view.md) error handling): with
+  `CORRAL_SANDBOX`, `MM_BUS_MCP_ENDPOINT` or `MM_BUS_ENDPOINT` set,
+  `session_start` (tool and client) and `bin/mm-agent-register.sh` refuse
+  before anything reaches the registrar, naming the relay and the adapter
+  docs; `bus_info` and the server's instructions say the same. A bot
+  registered from inside puts its token into the sandbox. Defense in depth
+  only: an agent that clears the variables gets past it; the boundary is a
+  sandbox that cannot read the registration secret.
+- **Site**: the harness matrix shows OpenCode + corral as supported, like
+  pi + corral.
+
 ## 0.92.0
 
 ### Changed

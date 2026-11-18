@@ -25,6 +25,8 @@ BUS="${CLAUDE_PLUGIN_ROOT:-$MM_AGENT_BUS_ROOT}"
   (and `MM_PROJECT_CHANNEL_ID`) are ready. With `MM_BUS_MCP_ENDPOINT` the token
   stays on the host.
 - **`MM_BUS_UNAVAILABLE` is set** → the host kept the bus off: tell your human why.
+- **`CORRAL_SANDBOX` set, no bus tools** → the harness lacks the bus plugin: never
+  register a bot yourself (its token would be in the sandbox, RT-6.18); tell your human.
 - **Neither, `MM_PROJECT_CHANNEL` unset** → not on the bus, by design (host
   hooks register without a project channel only with `MM_REGISTER=always`, so a
   quick question adds no bot to the default channel). Do not register on your

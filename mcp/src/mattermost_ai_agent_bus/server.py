@@ -23,12 +23,13 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from pydantic import ValidationError
 
 from . import (
-    __version__, a2a, askroute, asks, attach, attest, channel, debug, departed, files, gate, hookapi, lease, life, mandate, overhead,
+    __version__, a2a, askroute, asks, attach, attest, channel, debug, departed, files, gate, hookapi, hosted, lease, life,
+    mandate, overhead,
     owners, ownpost, permission,
     profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unanswered, unread, usage,
 )
-from .client import (InvalidId, MattermostAdapter, attachment_props, dm_partner, guest_ids, mm_id, mm_name,
-                     props_view, with_debug)
+from .client import (InvalidId, MattermostAdapter, attachment_props, corral_sandbox, dm_partner, guest_ids,
+                     mm_id, mm_name, props_view, sandbox_refusal, with_debug)
 from .model import Answer, Mark, Post, Refused
 from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox, channel_type
 
@@ -267,6 +268,8 @@ HOST_MANAGED = HOSTED or bool(os.environ.get("MM_BOT_TOKEN") or os.environ.get("
 # The corral host hooks could not bring the bus up for this session and kept
 # the token on the host (fail closed, RT-6.18): why, for the agent to pass on.
 UNAVAILABLE = " ".join(os.environ.get("MM_BUS_UNAVAILABLE", "").split())[:300]
+# A corral sandbox (RT-6.18): this server never self-registers there.
+SANDBOX = corral_sandbox()
 # The human started Claude Code with this server as a channel (RT-6.12): bus
 # events are pushed into the session instead of waited for.
 PUSH = channel.enabled()
@@ -288,6 +291,9 @@ def _instructions() -> str:
            + ("Its token stays on the host: these tools are your only way onto the bus; "
               "the shell CLI and curl have no token here (RT-6.18). " if HOSTED else "")
            if HOST_MANAGED else "" if UNAVAILABLE else
+           "No bot here: this is a corral sandbox, where the host registers the bot and "
+           "nothing registers one from inside (RT-6.18); session_start refuses. Tell your "
+           "human the harness lacks the bus plugin (adapters/opencode.md). " if SANDBOX else
            "No bot yet: with MM_PROJECT_CHANNEL set, register with session_start "
            "(MM_REG_SECRET in this server's environment) and session_end when done; "
            "without it, stay off the bus unless your human asks. After "
@@ -793,8 +799,10 @@ async def session_start(
     When this session already has a bot (taken over after `claude --continue`),
     returns that one with reused=true instead of registering another. Bots of
     sessions that ended over MM_SESSION_KEEP_SEC (24 h) ago are unregistered
-    first (reaped_stale_bots).
+    first (reaped_stale_bots). Refused inside a corral sandbox (RT-6.18).
     """
+    if marker := corral_sandbox():
+        return _out("session_start", {"registered": False, "refused": sandbox_refusal(marker)})
     for _ in range(110):  # the workspace first: its kept bot (RT-6.10 step 7)
         if not _roots_pending:
             break
@@ -867,7 +875,7 @@ async def bus_info() -> str:
             "version": VERSION,
             "on_bus": False,
             "reason": str(exc),
-            "how": STALE_HOW if STALE else (
+            "how": STALE_HOW if STALE else sandbox_refusal(marker) if (marker := corral_sandbox()) else (
                 "session_start when MM_REG_SECRET (in this server's environment) and "
                 "MM_PROJECT_CHANNEL are set; otherwise the host must pass the bus "
                 "settings into the session"),
@@ -890,7 +898,9 @@ async def bus_info() -> str:
     own = attest.check_own(os.environ.get(attest.ENV, ""), bot_id=me.id, username=me.username)
     unbound = (profile.unbound_warning(me.username) if own.status != attest.VALID
                and profile.unbound(await client.bot_description(me.id)) else "")
-    warnings = [w for w in (unbound, *own.warnings, _hook_warning().get("warning", "")) if w]
+    # RT-6.18: no relay reached the host process (none since its start).
+    warnings = [w for w in (unbound, *own.warnings, _hook_warning().get("warning", ""),
+                            hosted.relay_warning()) if w]
     return _out("bus_info", {
         "version": VERSION,
         "on_bus": True,

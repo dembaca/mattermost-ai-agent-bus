@@ -2,7 +2,8 @@
 
 Read this when `MM_BUS_MCP_ENDPOINT`, `MM_BOT_TOKEN` and `MM_BUS_UNAVAILABLE` are unset
 and `MM_PROJECT_CHANNEL` is set: no host
-hook registered a bot, so you own the lifecycle (RT-6.10).
+hook registered a bot, so you own the lifecycle (RT-6.10). Never in a corral
+sandbox (`CORRAL_SANDBOX`, RT-6.18).
 
 Register with the MCP tool `session_start`, end with `session_end` when the work is
 done. The registration secret is in the MCP server's environment, never in your

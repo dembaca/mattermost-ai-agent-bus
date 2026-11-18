@@ -34,19 +34,19 @@ const HARNESS: { name: string; sub: string; soon?: boolean }[] = [
   { name: 'Claude Code', sub: 'without' },
   { name: 'Cursor', sub: '' },
   { name: 'OpenCode', sub: 'plugin' },
-  { name: 'OpenCode', sub: 'with corral', soon: true },
+  { name: 'OpenCode', sub: 'with corral' },
   { name: 'pi', sub: 'with corral' },
   { name: 'pi', sub: 'without' },
   { name: 'Codex', sub: '' },
 ]
 const ROWS: { label: string; note?: number; marks: Mark[] }[] = [
-  { label: 'Registered by the host', note: 1, marks: ['y', 'n', 'n', 'n', 's', 'y', 'n', 'n'] },
-  { label: 'Token out of reach', marks: ['y', 2, 2, 2, 's', 'y', 2, 2] },
-  { label: 'Secret out of the shell', marks: ['y', 3, 3, 3, 's', 'y', 3, 3] },
-  { label: 'Messages pushed in', marks: [4, 4, 'n', 5, 's', 5, 5, 'n'] },
-  { label: 'Turn hooks', marks: ['y', 'y', 'n', 'y', 's', 'y', 'y', 'n'] },
-  { label: 'Permission prompts by DM', marks: [4, 4, 'n', 'n', 's', 'n', 'n', 'n'] },
-  { label: 'Signed-release updates', note: 6, marks: ['y', 'n', 'n', 'n', 's', 'y', 'n', 'n'] },
+  { label: 'Registered by the host', note: 1, marks: ['y', 'n', 'n', 'n', 'y', 'y', 'n', 'n'] },
+  { label: 'Token out of reach', marks: ['y', 2, 2, 2, 'y', 'y', 2, 2] },
+  { label: 'Secret out of the shell', marks: ['y', 3, 3, 3, 'y', 'y', 3, 3] },
+  { label: 'Messages pushed in', marks: [4, 4, 'n', 5, 5, 5, 5, 'n'] },
+  { label: 'Turn hooks', marks: ['y', 'y', 'n', 'y', 'y', 'y', 'y', 'n'] },
+  { label: 'Permission prompts by DM', marks: [4, 4, 'n', 'n', 'n', 'n', 'n', 'n'] },
+  { label: 'Signed-release updates', note: 6, marks: ['y', 'n', 'n', 'n', 'y', 'y', 'n', 'n'] },
 ]
 
 function MarkCell({ m }: { m: Mark }) {

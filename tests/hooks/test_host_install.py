@@ -52,7 +52,7 @@ def registry(home, install_path) -> None:
 
 # What the installer copies, and the ignore rules that keep caches out of git.
 PARTS = (".gitignore", "bin", "adapters", ".claude-plugin", "mcp/.gitignore", "mcp/pyproject.toml",
-         "mcp/uv.lock", "mcp/README.md", "mcp/src", "skills")
+         "mcp/uv.lock", "mcp/README.md", "mcp/src", "skills", "opencode", "pi")
 GIT = ["git", "-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
 
 
@@ -94,6 +94,24 @@ def test_installs_hooks_and_libs_out_of_the_sandbox(run, tmp_path):
     assert (dest / "mcp" / "uv.lock").is_file() and (dest / "skills" / "mattermost-ai-agent-bus").is_dir()
     assert not list((dest / "mcp" / "src").rglob("__pycache__"))
     assert "MCP server environment ready" in r.stdout or "WARNING: no Python environment" in r.stdout
+    # RT-6.28, RT-6.20, RT-6.27: the harness plugins go along, so a sandboxed
+    # OpenCode or pi loads them read-only from the host copy, not from a
+    # checkout an agent can write; what is committed only.
+    for f in ("opencode/package.json", "opencode/server.ts", "opencode/plugin/mattermost-agent-bus.ts",
+              "pi/package.json", "pi/mattermost-agent-bus.ts"):
+        assert (dest / f).is_file(), f
+    assert os.stat(dest / "opencode" / "plugin" / "mattermost-agent-bus.ts").st_mode & 0o022 == 0
+
+
+def test_a_tree_without_the_harness_plugins_still_installs(run, tmp_path):
+    """RT-6.28: opencode/ and pi/ are optional, as in a release before 0.93.0."""
+    c = clone(tmp_path)
+    git(c, "rm", "-rq", "opencode", "pi")
+    git(c, "commit", "-qm", "no plugins")
+    dest = tmp_path / "host" / "current"
+    r = run(INSTALL, "--from", str(c), **uv(tmp_path), MM_BUS_HOST_DIR=str(dest))
+    assert r.code == 0, r.stderr
+    assert not (dest / "opencode").exists() and not (dest / "pi").exists()
 
 
 def commit(c: Path, line: str = "x") -> str:

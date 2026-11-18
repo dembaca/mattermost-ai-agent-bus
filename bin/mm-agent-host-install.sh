@@ -50,8 +50,11 @@
 # same across releases; rerun this after a plugin update. corral asks again
 # only when the dispatcher itself changes: the check of a switch is you
 # running this from a clone you reviewed.
-# It also copies the MCP server (mcp/, without a checkout's .venv or caches)
-# and prepares its Python environment in the release (uv sync --locked) before
+# It also copies the MCP server (mcp/, without a checkout's .venv or caches),
+# the skill and the harness plugins (opencode/, pi/: loaded read-only by the
+# sandboxed OpenCode or pi, their relay's Python environment in the sandbox's
+# cache, never here) and prepares the server's Python environment in the
+# release (uv sync --locked) before
 # the switch; without uv, or when that fails, current stays as it was. The
 # start hook runs each session's MCP server on the host from this tree, so the
 # bot token never enters the sandbox (RT-6.18). A release goes when neither
@@ -638,9 +641,12 @@ unset "${!GIT_@}"
 REQUIRED=(adapters/corral/10-mm-session-start.sh adapters/corral/90-mm-session-stop.sh
           bin/mm-agent-lib.sh bin/mm-agent-symbols.sh .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock
           mcp/src/mattermost_ai_agent_bus/hosted.py)
-# What is installed; mcp/README.md and the skill when the source has them.
+# What is installed; mcp/README.md, the skill and the harness plugins when the
+# source has them: the OpenCode plugin (opencode/, RT-6.20) and the pi
+# extension (pi/, RT-6.27), which a sandbox loads read-only from here, so no
+# harness under corral needs a checkout an agent can write (RT-6.28).
 paths=(bin adapters/corral .claude-plugin/plugin.json mcp/pyproject.toml mcp/uv.lock mcp/src)
-OPTIONAL=(mcp/README.md skills/mattermost-ai-agent-bus)
+OPTIONAL=(mcp/README.md skills/mattermost-ai-agent-bus opencode pi)
 
 # --- a signed release (RT-6.29) -------------------------------------------------
 # The pinned keys come from the host only, never from the plugin or a session:

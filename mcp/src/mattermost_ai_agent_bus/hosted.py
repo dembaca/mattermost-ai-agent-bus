@@ -73,6 +73,22 @@ MAX_PENDING = 8
 WATCH_SEC = 5.0
 READY_SEC = 20.0
 
+# RT-6.18: a relay handshake normally arrives within seconds of the start (the
+# harness starts its MCP entry point); none this long after it means the
+# harness most likely does not load the bus plugin. Long enough for a slow
+# start (a first `uv` build in a fresh cache), short enough to be told while
+# the human still watches. A constant, not a setting.
+RELAY_WARN_SEC = 300.0
+# The adapter doc per harness (corral's CORRAL_AGENT); OpenCode's otherwise,
+# the harness whose plugin entry is set up by hand.
+ADAPTER_DOCS = {"claude": "adapters/claude.md", "pi": "adapters/pi.md", "opencode": "adapters/opencode.md"}
+ADAPTER_DOC = "adapters/opencode.md"
+DOCS_URL = "https://github.com/dembaca/mattermost-ai-agent-bus/blob/main/"
+_HARNESS = re.compile(r"[a-z0-9][a-z0-9._-]{0,31}")
+# Set once RELAY_WARN_SEC passed without a handshake: the host process's start
+# (epoch s); a later handshake clears it (relay_warning).
+_no_relay_since: float | None = None
+
 # What a relay may tell the host: names only, with their longest length.
 NAMING = {"CLAUDE_CODE_SESSION_ID": 256, "CLAUDE_PROJECT_DIR": 4096, "cwd": 4096,
           "MM_CHANNEL_PUSH": 1, "CLAUDECODE": 16}
@@ -83,7 +99,7 @@ _NAMING_PATHS = ("CLAUDE_PROJECT_DIR", "cwd")
 # settings that may carry credentials (proxies). Never the registration secret.
 _HOST_ENV = re.compile(r"(MM|MATTERMOST)_[A-Z0-9_]{1,64}")
 _HOST_ENV_EXTRA = frozenset({
-    "CORRAL_WORKDIR", "CORRAL_SESSION_ID", "TZ", "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "CORRAL_WORKDIR", "CORRAL_SESSION_ID", "CORRAL_AGENT", "TZ", "SSL_CERT_FILE", "SSL_CERT_DIR",
     "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "ALL_PROXY",
     "https_proxy", "http_proxy", "no_proxy", "all_proxy",
 })
@@ -224,6 +240,81 @@ def _pipe(sock: socket.socket, stdin_fd: int, stdout_fd: int, pending: bytes) ->
     except OSError as exc:
         return 0 if stdin_closed.is_set() else _fail(f"relay connection lost: {exc}")
     return 0 if stdin_closed.is_set() else _fail("the host closed the relay connection")
+
+
+# --- host process: no relay (RT-6.18) ---------------------------------------------
+
+def harness() -> str:
+    """The agent corral runs (CORRAL_AGENT, from preStart); '' when unknown."""
+    name = os.environ.get("CORRAL_AGENT", "").strip().lower()
+    return name if _HARNESS.fullmatch(name) else ""
+
+
+def adapter_doc() -> str:
+    return ADAPTER_DOCS.get(harness(), ADAPTER_DOC)
+
+
+def relay_warning() -> str:
+    """The line bus_info and the hook API's /v1/me show while no relay ever
+    connected RELAY_WARN_SEC after the start; '' otherwise."""
+    since = _no_relay_since
+    if since is None:
+        return ""
+    return (f"relay: none since {time.strftime('%H:%M', time.localtime(since))} — "
+            f"is the bus plugin installed in the harness? ({adapter_doc()})")
+
+
+def relay_connected() -> None:
+    """A handshake arrived: the warning goes (the DM, once sent, stays sent)."""
+    global _no_relay_since
+    _no_relay_since = None
+
+
+async def relay_watch(host: Host, started: float) -> None:
+    """RELAY_WARN_SEC after the start, still no relay: the warning in bus_info
+    and /v1/me, one log line and one DM to the responsible human. Runs once per
+    host process, so the DM never repeats in the session."""
+    global _no_relay_since
+    await anyio.sleep(RELAY_WARN_SEC)
+    if host.served:
+        return
+    _no_relay_since = started
+    line = relay_warning()
+    log.warning("%s", line)
+    if host.client is not None:
+        await _relay_dm(host.client, started)
+
+
+async def _relay_dm(client: Any, started: float) -> None:
+    """Plain text to the responsible human: bot, harness, what to check."""
+    from .client import responsible_human
+
+    who = responsible_human()
+    try:
+        if not who:
+            log.info("no relay: no responsible human to tell")
+            return
+        trusted = await client.trusted_humans()
+        uid = next((i for i, n in trusted.items() if n and n.lower() == who.lower()), None)
+        uid = uid or await client.human_id(who)
+        if not uid:
+            log.info("no relay: the responsible human %s is not found", who)
+            return
+        me = await client.get_me()
+        text = relay_dm_text(me.username, harness(), started)
+        await client.post(text, channel_id=await client.direct_channel_with(uid))
+        log.info("no relay: told %s by DM", who)
+    except Exception as exc:  # noqa: BLE001 — the warning in bus_info and /v1/me stays
+        log.warning("no relay: the DM to %s failed: %s", who, exc)
+
+
+def relay_dm_text(bot: str, agent: str, started: float) -> str:
+    since = time.strftime("%H:%M", time.localtime(started))
+    return (f"The bus session of {bot}" + (f" ({agent} under corral)" if agent else " (under corral)")
+            + f" has had no relay since {since}: its harness has not started the bus's MCP server, "
+            "so the agent has no bus tools and no turn cycle and hears nothing from the bus. "
+            "Is the bus plugin installed in the harness? See "
+            f"{DOCS_URL}{adapter_doc()} (RT-6.18). This message comes once per session.")
 
 
 # --- host process: the handshake --------------------------------------------------
@@ -422,6 +513,7 @@ class Host:
                 serve = self._load(session)
                 await _answer(stream, True)
                 self.served += 1
+                relay_connected()
                 log.info("relay %d connected", self.served)
                 async with byte_transport(buffered, stream) as (read_stream, write_stream):
                     await serve(read_stream, write_stream)
@@ -544,6 +636,8 @@ async def run_host(host: Host, *, ready_file: Path, key: str = "", with_services
                 tg.start_soon(on_signals)
             if watch is not None:
                 tg.start_soon(watchdog)
+            if with_services:
+                tg.start_soon(relay_watch, host, time.time())
             write_ready(ready_file, os.getpid(), port, hook)
             log.info("listening on %s:%d (MCP), %s (hook API)", LOOPBACK, port, hook or "-")
             await stop.wait()

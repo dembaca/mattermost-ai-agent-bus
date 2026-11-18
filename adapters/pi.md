@@ -104,17 +104,37 @@ sandbox ([RT-6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-ses
 Leave out the `mcp.json` entry above there. Taking over a kept bot (`--continue`,
 `--resume`) is Claude Code's only: a pi session under corral registers a new one.
 
-The sandbox must read the bus checkout: the extension loads its `pi/`, starts the
-relay from its `mcp/` and adds its `skills/`. Without that pi lists no extension in
-another project's sandbox. Grant it read-only, in the global corral config
-`~/.config/corral/config.yml`:
+Load the extension from the host copy: the installer (0.93.0 on) puts `pi/` into every
+release, from the signed tag or the clone you reviewed, where no agent can change it
+([RT-6.28](../docs/arc42/06-runtime-view.md#628-host-copy-install-switch-and-rollback)).
+In the corral home's `.pi/agent/extensions/` (the sandbox's `~`, not yours; `echo
+"$HOME"` in the agent's shell names it), a symlink with the host's absolute path:
+
+```bash
+ln -s /Users/you/.local/share/mm-agent-bus/current/pi/mattermost-agent-bus.ts \
+  <corral home>/.pi/agent/extensions/mattermost-agent-bus.ts
+```
+
+The sandbox must read it: the extension loads `pi/`, starts the relay from `mcp/` (its
+Python environment in the sandbox's cache, never in the host copy) and adds `skills/`.
+Without that pi lists no extension in another project's sandbox. Grant it read-only, in
+the global corral config `~/.config/corral/config.yml`:
 
 ```yaml
 providers:
   paths:
     ro:
-      - ~/path/to/mattermost-ai-agent-bus   # the checkout the extension lies in
+      - ~/.local/share/mm-agent-bus   # the host copy (or a checkout the extension lies in)
 ```
+
+A checkout works the same way, but one an agent can write is code the next session
+runs: prefer the host copy. No `MM_REG_SECRET_GOPASS` or `MM_REG_SECRET_CMD` for pi
+under corral: the extension ignores them there, and inside a corral sandbox the server
+refuses to register a bot
+([RT-6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session); a check
+of the environment, which an agent can clear: the boundary is a sandbox that cannot
+read the secret). With no relay 5 minutes after the start the host warns, as for
+OpenCode ([adapters/opencode.md](opencode.md#with-corral)).
 
 Start pi in the project's directory: the hooks read `MM_PROJECT_CHANNEL` from its
 environment (`.envrc`). `corral run pi` from `~` works in a scratch directory without

@@ -131,6 +131,8 @@ def test_release_installs_a_signed_tag_and_switches(run, tmp_path, keys):
     assert f"SIGNER={fpr(keys['owner'])}\n" in source
     assert f"signed release v{VERSION}" in r.stdout and "unsigned" not in r.stdout
     assert (dest.parent / "src.git").is_dir() and not (dest.parent / ".install.lock").exists()
+    # RT-6.29 step 5, RT-6.20: the signed tree carries the harness plugins too.
+    assert (dest / "opencode" / "server.ts").is_file() and (dest / "pi" / "mattermost-agent-bus.ts").is_file()
 
     nxt = bump(VERSION)
     set_version(origin, nxt)

@@ -566,3 +566,137 @@ def test_a_bad_props_prefix_fails_the_host_before_it_is_ready(monkeypatch, tmp_p
                              "--foreground"])
     assert code == 1 and not ready.exists()
     assert "MM_PROPS_PREFIX" in capsys.readouterr().err
+
+
+class _DMClient:
+    """The host process's client, as far as the no-relay DM needs it."""
+    token = "t"
+    project_channel_name = ""
+
+    def __init__(self) -> None:
+        self.posts: list[tuple[str, str | None]] = []
+
+    async def get_me(self):
+        return Me(id="a" * 26, username="agent-oc")
+
+    async def trusted_humans(self):
+        return {"h" * 26: "alice"}
+
+    async def human_id(self, name):
+        return None
+
+    async def direct_channel_with(self, uid):
+        return f"dm-{uid}"
+
+    async def post(self, text, channel_id=None, **kw):
+        self.posts.append((text, channel_id))
+
+
+async def test_no_relay_warns_once_by_dm_and_a_late_relay_clears_it(tmp_path, monkeypatch, caplog):
+    """RT-6.18: no relay handshake RELAY_WARN_SEC after the start (the harness
+    has no bus plugin): the warning in /v1/me and bus_info, one log line and
+    one plain DM to the responsible human with the bot, the harness and the
+    adapter doc; a later handshake clears the warning, the DM never repeats."""
+    session_file.use_hosted_dir(tmp_path / "hosted" / "s")
+    monkeypatch.setattr(hosted, "RELAY_WARN_SEC", 0.2)
+    monkeypatch.setattr(hosted, "_no_relay_since", None)
+    monkeypatch.setenv("MM_RESPONSIBLE_HUMAN", "alice")
+    monkeypatch.setenv("CORRAL_AGENT", "opencode")
+    client = _DMClient()
+    host = hosted.Host(KEY, client=client, serve=_echo)
+
+    async def body(ready):
+        assert hosted.relay_warning() == ""
+        await anyio.sleep(0.5)
+        line = hosted.relay_warning()
+        assert line.startswith("relay: none since ") and line.endswith(
+            " — is the bus plugin installed in the harness? (adapters/opencode.md)")
+        async with httpx.AsyncClient(base_url=ready["hook"]) as h:
+            me = (await h.get("/v1/me", headers={"Authorization": f"Bearer {KEY}"})).json()
+        assert me["relay"] == line
+        conn, answer = await _hello(ready["port"])
+        assert answer == {"ok": True}
+        assert hosted.relay_warning() == ""
+        async with httpx.AsyncClient(base_url=ready["hook"]) as h:
+            me = (await h.get("/v1/me", headers={"Authorization": f"Bearer {KEY}"})).json()
+        assert "relay" not in me
+        await conn.stream.aclose()
+        await anyio.sleep(0.3)
+
+    with caplog.at_level("WARNING", logger="mattermost_ai_agent_bus.hosted"):
+        await _with_host(host, tmp_path, body, key=KEY)
+    assert len(client.posts) == 1
+    text, channel_id = client.posts[0]
+    assert channel_id == "dm-" + "h" * 26
+    assert "agent-oc (opencode under corral)" in text and "no relay since" in text
+    assert text.endswith("blob/main/adapters/opencode.md (RT-6.18). This message comes once per session.")
+    assert sum("relay: none since" in r.getMessage() for r in caplog.records) == 1
+
+
+async def test_a_relay_within_the_time_raises_no_alarm(tmp_path, monkeypatch):
+    """RT-6.18: a harness that starts slowly (a first uv build) and connects
+    before RELAY_WARN_SEC gets no warning and its human no DM."""
+    session_file.use_hosted_dir(tmp_path / "hosted" / "s")
+    monkeypatch.setattr(hosted, "RELAY_WARN_SEC", 0.4)
+    monkeypatch.setattr(hosted, "_no_relay_since", None)
+    monkeypatch.setenv("MM_RESPONSIBLE_HUMAN", "alice")
+    client = _DMClient()
+    host = hosted.Host(KEY, client=client, serve=_echo)
+
+    async def body(ready):
+        await anyio.sleep(0.2)  # late, but within the time
+        conn, answer = await _hello(ready["port"])
+        assert answer == {"ok": True}
+        await conn.stream.aclose()  # disconnected again: no alarm either
+        await anyio.sleep(0.5)
+        assert hosted.relay_warning() == ""
+
+    await _with_host(host, tmp_path, body, key=KEY)
+    assert client.posts == []
+
+
+def test_the_harness_names_its_adapter_doc(monkeypatch):
+    """RT-6.18: the warning points at the harness's adapter doc (CORRAL_AGENT,
+    passed on by preStart), OpenCode's when it is unknown."""
+    for agent, doc in (("pi", "adapters/pi.md"), ("claude", "adapters/claude.md"),
+                       ("", "adapters/opencode.md"), ("$(x)", "adapters/opencode.md")):
+        monkeypatch.setenv("CORRAL_AGENT", agent)
+        assert hosted.adapter_doc() == doc
+    assert hosted.harness() == ""
+    line = json.dumps({"key": KEY, "env": {"CORRAL_AGENT": "pi", "MM_CHAT_URL": "https://mm"}}) + "\n"
+    assert hosted.read_start(io.BytesIO(line.encode()))[1]["CORRAL_AGENT"] == "pi"
+
+
+@pytest.mark.parametrize("marker", ["CORRAL_SANDBOX", "MM_BUS_MCP_ENDPOINT", "MM_BUS_ENDPOINT"])
+async def test_no_self_registration_inside_a_corral_sandbox(monkeypatch, marker):
+    """RT-6.18, RT-6.10: inside a sandbox corral set up the host registers the
+    bot; session_start (the tool and the client) refuses before anything goes
+    to the registrar, and bus_info says why instead of offering it."""
+    from mattermost_ai_agent_bus import server
+    from mattermost_ai_agent_bus.client import MattermostAdapter
+
+    monkeypatch.setenv(marker, "1")
+    monkeypatch.setenv("MM_REG_SECRET", "s")
+    c = MattermostAdapter(base_url="https://mm.example", reg_secret="s",
+                          register_url="https://mm.example/register/v1/agents")
+
+    def no_http():
+        raise AssertionError("nothing may reach the registrar")
+
+    monkeypatch.setattr(c, "_http", no_http)
+    with pytest.raises(RuntimeError, match=rf"self-registration refused: .*\({marker} is set\).*RT-6.18"):
+        await c.session_start("agent")
+    monkeypatch.setattr(server, "_get_client", lambda: (_ for _ in ()).throw(AssertionError("no client")))
+    got = json.loads(await server.session_start("agent"))
+    assert got["registered"] is False and "adapters/opencode.md" in got["refused"]
+    monkeypatch.setattr(server, "_get_client", lambda: (_ for _ in ()).throw(RuntimeError("no bus")))
+    info = json.loads(await server.bus_info())
+    assert info["on_bus"] is False and info["how"].startswith("self-registration refused")
+
+
+def test_the_sandbox_instructions_offer_no_session_start():
+    """RT-6.18: the server started in a corral sandbox without the relay (its
+    variables cleared, CORRAL_SANDBOX left) offers no self-registration."""
+    got = _server_text({"CORRAL_SANDBOX": "1", "MM_PROJECT_CHANNEL": "proj-x"})
+    assert "nothing registers one from inside (RT-6.18); session_start refuses" in got["text"]
+    assert "register with session_start" not in got["text"]

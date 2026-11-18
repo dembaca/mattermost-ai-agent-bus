@@ -627,7 +627,7 @@ HOST_PID="" HOST_PORT="" HOST_HOOK="" HOST_STARTED=1
 if jq -nc --rawfile key /dev/fd/4 --rawfile tok /dev/fd/5 --argjson base "$ENV_JSON" --arg kept "$KEPT_SID" '
      {key: $key,
       env: ((env | with_entries(select(.key | test(
-              "^(MM|MATTERMOST)_[A-Z0-9_]+$|^(CORRAL_WORKDIR|CORRAL_SESSION_ID|TZ|SSL_CERT_FILE|SSL_CERT_DIR)$|^(HTTPS?|NO|ALL)_PROXY$|^(https?|no|all)_proxy$")))
+              "^(MM|MATTERMOST)_[A-Z0-9_]+$|^(CORRAL_WORKDIR|CORRAL_SESSION_ID|CORRAL_AGENT|TZ|SSL_CERT_FILE|SSL_CERT_DIR)$|^(HTTPS?|NO|ALL)_PROXY$|^(https?|no|all)_proxy$")))
              | del(.MM_REG_SECRET, .MM_REG_SECRET_GOPASS, .MM_AGENT_SESSION_FILE,
                    .MM_REG_BOT_NAME, .MM_BUS_KEY, .MATTERMOST_TOKEN, .MM_BUS_KEPT_SID))
             + $base + {MM_BOT_TOKEN: $tok}

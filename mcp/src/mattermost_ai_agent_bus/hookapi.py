@@ -5,7 +5,7 @@ The hooks (hooks/*.sh) and the scripts an agent runs (bin/mm-agent-listen.sh,
 -post, -poll, -status) hold no bot token. They call this small HTTP API
 instead, served next to the WebSocket inbox in the server's event loop:
 
-    GET  /v1/me             {user_id, username, project, crown_until, channel}
+    GET  /v1/me             {user_id, username, project, crown_until, channel, relay?}
     GET  /v1/pending        {count[, stall: 1][, channels: [{id, type, pending, fyi}]]}
                             (?detail=1: up to 5 channels, with fyi counts)
     GET  /v1/last-post      {at, message, signed_off[, release][, unanswered]}: the own latest
@@ -96,8 +96,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import (
-    a2a, asks, attach, channel, files, gate, lease, life, ownpost, release, session_file, stall, stats, tasks, turnend,
-    unanswered, unread, usage,
+    a2a, asks, attach, channel, files, gate, hosted, lease, life, ownpost, release, session_file, stall, stats, tasks,
+    turnend, unanswered, unread, usage,
 )
 from .client import InvalidId, _pid_alive, dm_partner, guest_ids, mm_id, mm_name, watched_channel_ids
 from .model import Post, Refused
@@ -580,9 +580,13 @@ async def me(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[
     project = _project(client)
     # channel: the agent confirmed the channel check (RT-6.12); the hooks of a
     # keyless session cannot see the file that says so (RT-6.18).
+    # relay: a keyless session's host process has had no relay since its start
+    # (RT-6.18): the harness most likely lacks the bus plugin.
+    relay = hosted.relay_warning()
     return 200, {"user_id": uid, "username": who.username,
                  "project": project, "crown_until": lease.crown_until(uid),
-                 "channel": bool(_UID.fullmatch(uid)) and channel.confirmed_file(uid).exists()}
+                 "channel": bool(_UID.fullmatch(uid)) and channel.confirmed_file(uid).exists(),
+                 **({"relay": relay} if relay else {})}
 
 
 async def pending(client: MattermostAdapter, query: Mapping[str, str], body: Mapping[str, Any]) -> Reply:

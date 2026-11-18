@@ -32,7 +32,14 @@ _BUS_ENV = (
     "MM_BUS_KEY",
     "MM_BUS_UNAVAILABLE",
     "MM_WORKSPACE",
+    "CORRAL_SANDBOX",
+    "CORRAL_AGENT",
 )
+# Run inside a corral sandbox, the tests would inherit its markers before any
+# fixture runs, when the server module reads them at import: it would refuse
+# self-registration (RT-6.18). CI has none; locally they go, too.
+for _name in ("CORRAL_SANDBOX", "MM_BUS_MCP_ENDPOINT", "MM_BUS_ENDPOINT", "MM_BUS_KEY"):
+    os.environ.pop(_name, None)
 
 
 @pytest.fixture(autouse=True)

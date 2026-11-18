@@ -21,6 +21,9 @@ venv/
 .coverage
 htmlcov/
 
+# Node (the plugins' type packages): never in a host copy (RT-6.28)
+node_modules/
+
 # OS / editor
 .DS_Store
 .idea/

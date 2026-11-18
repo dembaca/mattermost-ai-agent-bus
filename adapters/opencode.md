@@ -60,7 +60,10 @@ The plugin adds the MCP server `mattermost-agent-bus` (`uv run --locked --projec
 <checkout>/mcp mattermost-ai-agent-bus-mcp`) unless your configuration already has it or
 another local server running `mattermost-ai-agent-bus-mcp`, and the skill. It writes no
 file. The server it adds gets `MM_WORKSPACE` (the project directory), an empty
-`CLAUDE_CODE_SESSION_ID` and `CLAUDE_PROJECT_DIR`, and `MM_CHANNEL_PUSH=0`, and the plugin
+`CLAUDE_CODE_SESSION_ID` and `CLAUDE_PROJECT_DIR`, `MM_CHANNEL_PUSH=0` and (0.93.0 on,
+not with your own `command`) `UV_PROJECT_ENVIRONMENT` in your cache
+(`~/.cache/mm-agent-bus/venv-<hash of the checkout>`, as for pi): uv writes nothing into
+the checkout, which may be read-only. It is a cache, safe to delete. And the plugin
 looks only for that workspace's endpoint file. A server you configure yourself needs the
 same (below), else the plugin may not find it and says so once in OpenCode's log.
 
@@ -85,6 +88,90 @@ the secret only into the server's command (above).
 In scripts, `opencode run` waits for input on a stdin that is not a terminal: give it
 `</dev/null`. A wake-up needs a process that keeps running (the service, the TUI or
 `opencode serve`): `opencode run --standalone` ends with its prompt.
+
+## With corral
+
+Under `corral run opencode` the host session hooks register the bot on the host and
+run the session's MCP server there; the sandbox gets `MM_BUS_MCP_ENDPOINT`,
+`MM_BUS_ENDPOINT` and `MM_BUS_KEY`, the server the plugin adds becomes the relay to that
+host process, and neither the registration secret nor the bot token enters the sandbox
+([adapters/corral.md](corral.md),
+[RT-6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)). OpenCode
+still needs the plugin for that: without it it has no bus tools and no turn cycle, so
+the agent hears nothing from the bus and its bot drops out of the roster while the host
+keeps the session alive.
+
+**The entry: the host copy, no options.** The installer (`mm-agent-host-install.sh`,
+0.93.0 on) puts the plugin into every release of the host copy, from the signed tag or
+the clone you reviewed, out of every agent's reach
+([RT-6.28](../docs/arc42/06-runtime-view.md#628-host-copy-install-switch-and-rollback)).
+Point the entry at it, with the host's absolute path (the sandbox's `~` is another
+directory):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    { "package": "file:///Users/you/.local/share/mm-agent-bus/current/opencode" }
+  ]
+}
+```
+
+and let the sandbox read the host copy, in the global corral config
+`~/.config/corral/config.yml`:
+
+```yaml
+providers:
+  paths:
+    ro:
+      - ~/.local/share/mm-agent-bus   # the host copy: releases/, current
+```
+
+The plugin starts the relay with `uv run --locked --project <release>/mcp
+mattermost-ai-agent-bus-mcp` and `UV_PROJECT_ENVIRONMENT` in the sandbox's cache
+(`$HOME/.cache/mm-agent-bus/venv-<hash of the release>`, `$HOME` being the corral home),
+as the pi extension does: nothing is written into the host copy, and its own
+`mcp/.venv` (the host's, for the host process) stays the host's. A new release is a
+new path, so the next session builds a new cache entry; delete
+`~/.cache/mm-agent-bus/venv-*` in the corral home at any time. A dev checkout works the
+same way (`file:///ABS/PATH/mattermost-ai-agent-bus/opencode`, granted read-only), but
+an agent can change a checkout it can write: prefer the host copy.
+
+**No options under corral.** `command` with `MM_REG_SECRET` (the gopass example above)
+and `environment` with `MM_CHAT_URL`, `MM_REGISTER_URL`, `MM_TEAM` … are for setups
+without corral, where the server registers the bot itself. Remove them under corral:
+the host hooks pass the bus settings, and a secret the sandbox can fetch lets an agent
+register a second bot whose token is then in the sandbox. Inside a corral sandbox the
+server and `mm-agent-register.sh` refuse to register
+([RT-6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session) error
+handling), but that check reads the environment, which an agent can clear: the
+boundary is a sandbox that cannot read the secret.
+
+**The config the sandboxed OpenCode reads.** corral gives OpenCode a private `$HOME`
+(the corral home), so `~/.config/opencode/opencode.json` of your own home is not the one
+it reads. Put the entry into the project's `opencode.json` in the workdir, or into
+`.config/opencode/opencode.json` of the corral home. To find that home, ask the agent
+(or run in its shell) `echo "$HOME"`; `ls "$HOME/.config/opencode"` there shows the file
+it reads.
+
+**Check it works**, after `corral run opencode` in the project:
+
+- OpenCode's log has the line `loading plugin … opencode` (the path of the entry);
+- the session lists the bus tools (`mattermost-agent-bus`: `announce`, `bus_info`,
+  `post_message` …);
+- `announce()` posts a `HELLO` in the project channel; `bus_info` shows no `relay` warning.
+
+When no relay reaches the host process within 5 minutes of the start, the host
+says so: `bus_info` and the hook API's `/v1/me` show `relay: none since HH:MM — is the
+bus plugin installed in the harness? (adapters/opencode.md)`, and your responsible human
+gets one DM for the session
+([RT-6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session)).
+
+**The idle unload.** OpenCode unloads a location after an idle time
+(`experimental.location_idle_timeout`, default 60 min; `false` keeps the location
+loaded), and with it the plugin and its relay: the next use loads both again, and the
+host process takes the relay back. Whether a `--standalone` server unloads at all is
+unverified; set `false` if the bot drops out after an hour without use.
 
 ## Skill / instructions
 

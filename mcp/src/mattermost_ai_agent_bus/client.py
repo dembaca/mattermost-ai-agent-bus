@@ -453,6 +453,30 @@ def responsible_human() -> str:
     return env("MM_RESPONSIBLE_HUMAN").strip().lstrip("@") or (trusted[0] if trusted else "")
 
 
+# RT-6.18, RT-6.10: what marks a sandbox corral set up. There the host's
+# session hook registered the bot and keeps its token, and the bus reaches
+# the agent through the relay; a bot registered from inside would put a token
+# into the sandbox. CORRAL_SANDBOX is corral's own, the others its preStart
+# contribution. Not CORRAL_SESSION_ID: corral's host hooks have it as well.
+# Defense in depth only: an agent that clears them gets past it; the real
+# boundary is a sandbox that cannot read the registration secret.
+SANDBOX_MARKERS = ("CORRAL_SANDBOX", "MM_BUS_MCP_ENDPOINT", "MM_BUS_ENDPOINT")
+
+
+def corral_sandbox() -> str:
+    """The first marker of a corral sandbox that is set; '' outside one."""
+    return next((m for m in SANDBOX_MARKERS if env(m).strip()), "")
+
+
+def sandbox_refusal(marker: str) -> str:
+    """Why nothing self-registers inside a corral sandbox (RT-6.18)."""
+    return (f"self-registration refused: this runs inside a corral sandbox ({marker} is set). "
+            "There the host's session hook registers the bot and its token stays on the host; "
+            "the bus tools reach it through the relay (RT-6.18). No bus tools in this session "
+            "means the harness does not load the bus plugin: tell your human "
+            "(adapters/opencode.md, adapters/pi.md).")
+
+
 def _registration_fields(name: str, display: str) -> dict[str, Any]:
     """Registration body: who the agent answers to goes along (RT-6.8), so the
     registrar can put it into the bot's profile. Unknown fields are ignored."""
@@ -684,7 +708,10 @@ class MattermostAdapter:
         """POST registrar → set token / session fields.
 
         With ``unique`` (default) a session suffix is appended to ``name``.
+        Never inside a corral sandbox (RT-6.18): refused before anything is sent.
         """
+        if marker := corral_sandbox():
+            raise RuntimeError(sandbox_refusal(marker))
         if not self.reg_secret:
             raise RuntimeError("MM_REG_SECRET is required for session_start")
         if not self.register_url:
@@ -1441,6 +1468,19 @@ class MattermostAdapter:
                              json=[mm_id(me.id, "user"), mm_id(user_id, "user")])
         cid: str = ch["id"]
         return cid
+
+    async def human_id(self, username: str) -> str | None:
+        """A person's user id by username; None for a bot, an unknown or an
+        invalid name (the no-relay DM, RT-6.18)."""
+        try:
+            name = mm_name(username.strip().lstrip("@").lower(), "user")
+        except InvalidId:
+            return None
+        found = await self._api("POST", "/api/v4/users/usernames", json=[name]) or []
+        user = found[0] if found else None
+        if isinstance(user, Mapping) and not user.get("is_bot", False) and user.get("id"):
+            return str(user["id"])
+        return None
 
     async def humans_among(self, names: set[str]) -> set[str]:
         """The usernames among ``names`` that belong to people, not bots; cached.

@@ -171,6 +171,17 @@ export function presenceQueue(send: (state: string) => Promise<unknown>): (state
     return chain
   }
 }
+
+// The MCP server's Python environment (RT-6.20 step 1, RT-6.27 step 1): uv
+// keeps a project's in <project>/.venv, which a read-only tree refuses (a
+// corral read grant on a checkout, or the host copy, RT-6.28), so it goes into
+// the user's cache, one per tree (by its real path: one per release of the
+// host copy). The tree stays untouched: with --locked uv only reads uv.lock,
+// and the project goes in as an editable install that points at its sources.
+export function venvDir(env: Env, root: string): string {
+  const cache = env.XDG_CACHE_HOME || join(env.HOME || homedir(), ".cache")
+  return join(cache, "mm-agent-bus", `venv-${sha16(real(root) || root)}`)
+}
 // keep-in-step: end
 
 // The long poll's wait in seconds, 10 to 55.
@@ -214,16 +225,6 @@ export function secretCommand(env: Env): string | null {
   if (path) return `!gopass show -o ${shq(path)}`
   const cmd = env.MM_REG_SECRET_CMD?.trim()
   return cmd ? `!${cmd}` : null
-}
-
-// The server's Python environment (RT-6.27 step 1): uv keeps a project's in
-// <project>/.venv, which a read-only checkout (a corral grant) refuses, so it
-// goes into the user's cache, one per checkout (by its real path). The checkout
-// stays untouched: with --locked uv only reads uv.lock, and the project goes in
-// as an editable install that points at the checkout's sources.
-export function venvDir(env: Env, root: string): string {
-  const cache = env.XDG_CACHE_HOME || join(env.HOME || homedir(), ".cache")
-  return join(cache, "mm-agent-bus", `venv-${sha16(real(root) || root)}`)
 }
 
 // The MCP server as pi.registerMcpServer takes it (an mcp.json entry). Its

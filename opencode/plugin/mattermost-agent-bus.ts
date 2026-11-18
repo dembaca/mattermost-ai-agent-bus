@@ -176,6 +176,17 @@ export function presenceQueue(send: (state: string) => Promise<unknown>): (state
     return chain
   }
 }
+
+// The MCP server's Python environment (RT-6.20 step 1, RT-6.27 step 1): uv
+// keeps a project's in <project>/.venv, which a read-only tree refuses (a
+// corral read grant on a checkout, or the host copy, RT-6.28), so it goes into
+// the user's cache, one per tree (by its real path: one per release of the
+// host copy). The tree stays untouched: with --locked uv only reads uv.lock,
+// and the project goes in as an editable install that points at its sources.
+export function venvDir(env: Env, root: string): string {
+  const cache = env.XDG_CACHE_HOME || join(env.HOME || homedir(), ".cache")
+  return join(cache, "mm-agent-bus", `venv-${sha16(real(root) || root)}`)
+}
 // keep-in-step: end
 
 // The long poll's wait in seconds: the option, else WAIT_SEC; 10 to 55 (a
@@ -212,7 +223,8 @@ export function busRoot(options: Options, env: Env, here: string): string | null
 // The MCP transform: the server, unless the user has it (by name, or another
 // local entry that runs mattermost-ai-agent-bus-mcp). true: the user's server
 // has no MM_WORKSPACE, so its endpoint file may lie where the plugin does not look.
-export function addMcp(editor: any, options: Options, root: string | null, directory: string): boolean {
+export function addMcp(editor: any, options: Options, root: string | null, directory: string,
+                       env: Env = {}): boolean {
   const runs = (cfg: any) =>
     Array.isArray(cfg?.command) && cfg.command.some((a: unknown) => String(a).includes("mattermost-ai-agent-bus-mcp"))
   const own = editor.get(SERVER) ?? editor.list().find(([, cfg]: [string, any]) => runs(cfg))?.[1]
@@ -227,8 +239,12 @@ export function addMcp(editor: any, options: Options, root: string | null, direc
     // server's files on that session: blanked, and the workspace named, where
     // busFile looks (RT-6.20 step 2). No channel push: that is Claude Code's.
     const dir = real(directory) || directory
+    // The default command's Python environment in the user's cache (venvDir):
+    // the tree may be read-only, a checkout under a corral read grant or the
+    // host copy (RT-6.28), whose own mcp/.venv is the host's.
+    const venv = !options.command && root ? { UV_PROJECT_ENVIRONMENT: venvDir(env, root) } : {}
     const environment = { CLAUDE_CODE_SESSION_ID: "", CLAUDE_PROJECT_DIR: "", MM_CHANNEL_PUSH: "0", MM_WORKSPACE: dir,
-                          ...(options.environment ?? {}) }
+                          ...venv, ...(options.environment ?? {}) }
     if (command) editor.set(SERVER, { type: "local", command, environment, cwd: dir })
   }
   return Boolean(own && !own.environment?.MM_WORKSPACE)
@@ -631,7 +647,7 @@ export async function setup(ctx: Plugin.Context) {
 
   const root = busRoot(options, env, fileURLToPath(import.meta.url))
   await keep(ctx.mcp.transform((editor: any) => {
-    unkeyed = addMcp(editor, options, root, directory)
+    unkeyed = addMcp(editor, options, root, directory, env)
   }))
   const skill = skillInfo(root)
   if (skill) {

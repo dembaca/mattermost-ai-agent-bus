@@ -32,6 +32,19 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$NAME" ]] || usage
+# Never inside a corral sandbox (RT-6.18): the host's session hook registers
+# the bot there and keeps its token on the host. CORRAL_SANDBOX is corral's,
+# the others its preStart contribution (the host hooks have none of them).
+# Defense in depth only: an agent that clears them gets past it.
+for v in CORRAL_SANDBOX MM_BUS_MCP_ENDPOINT MM_BUS_ENDPOINT; do
+  if [[ -n "${!v:-}" ]]; then
+    echo "mm-agent-register: self-registration refused: this runs inside a corral sandbox ($v is set)." \
+      "There the host's session hook registers the bot and its token stays on the host; the bus tools" \
+      "reach it through the relay (RT-6.18). No bus tools in this session means the harness does not" \
+      "load the bus plugin: tell your human (adapters/opencode.md, adapters/pi.md)." >&2
+    exit 2
+  fi
+done
 DISPLAY="${DISPLAY:-$NAME}"
 mm_require_reg_secret
 mm_validate_short_name "$NAME"

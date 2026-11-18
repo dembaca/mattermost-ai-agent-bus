@@ -13,7 +13,7 @@ import { after, afterEach, before, beforeEach, mock, test } from "node:test"
 import { fileURLToPath } from "node:url"
 
 import plugin, { addMcp, busFile, busRoot, MARK, RETRY_SEC, retryMs, SERVER, setup, SKILL, skillInfo, timing, WAIT_SEC,
-  WAKE_BACKOFF_MAX_MS, WAKE_BACKOFF_MS, wakeBackoffMs, waitSec } from "../plugin/mattermost-agent-bus.ts"
+  venvDir, WAKE_BACKOFF_MAX_MS, WAKE_BACKOFF_MS, wakeBackoffMs, waitSec } from "../plugin/mattermost-agent-bus.ts"
 import entry from "../server.ts"
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -296,7 +296,10 @@ test("RT-6.20: mcp.transform adds the server and skill.transform the skill, neve
   // Code session it was started from; no channel push (Claude Code's).
   const keyed = { CLAUDE_CODE_SESSION_ID: "", CLAUDE_PROJECT_DIR: "", MM_CHANNEL_PUSH: "0", MM_WORKSPACE: ws }
   const fx = await start()
-  assert.deepEqual(fx.mcpServers.get(SERVER), { type: "local", environment: keyed, cwd: ws,
+  // Its Python environment in the user's cache, never in the tree, which may
+  // be read-only: a checkout under a corral grant, or the host copy (RT-6.28).
+  assert.deepEqual(fx.mcpServers.get(SERVER), { type: "local", cwd: ws,
+    environment: { ...keyed, UV_PROJECT_ENVIRONMENT: venvDir(process.env, REPO) },
     command: ["uv", "run", "--locked", "--project", join(REPO, "mcp"), "mattermost-ai-agent-bus-mcp"] })
   const skill = fx.skills.get(SKILL)
   assert.equal(skill.name, SKILL)
@@ -326,6 +329,26 @@ test("RT-6.20: mcp.transform adds the server and skill.transform the skill, neve
   mine.skills.set(SKILL, { id: SKILL, name: "mine" })
   await (await setup(mine.ctx) as any)()
   assert.equal(mine.skills.get(SKILL).name, "mine")
+})
+
+test("RT-6.20 step 1, RT-6.28: from the host copy the default server builds nothing in it", () => {
+  // A release of the host copy as the installer lays it out: current -> releases/<v>.
+  const host = join(tmp, "host")
+  const rel = join(host, "releases", "9.9.9")
+  mkdirSync(join(rel, "opencode", "plugin"), { recursive: true })
+  mkdirSync(join(rel, "mcp"), { recursive: true })
+  writeFileSync(join(rel, "mcp", "pyproject.toml"), "")
+  writeFileSync(join(rel, "opencode", "plugin", "mattermost-agent-bus.ts"), "")
+  symlinkSync(join("releases", "9.9.9"), join(host, "current"))
+  const root = busRoot({}, {}, join(host, "current", "opencode", "plugin", "mattermost-agent-bus.ts"))
+  assert.equal(root, realpathSync(rel))
+  const m = new Map<string, any>()
+  const ed = { list: () => [...m.entries()], get: (n: string) => m.get(n), set: (n: string, c: any) => m.set(n, c) }
+  addMcp(ed, {}, root, ws, { HOME: "/h", XDG_CACHE_HOME: "" })
+  const venv = m.get(SERVER).environment.UV_PROJECT_ENVIRONMENT
+  assert.equal(venv, `/h/.cache/mm-agent-bus/venv-${createHash("sha1").update(realpathSync(rel)).digest("hex").slice(0, 16)}`)
+  assert.ok(!venv.startsWith(host))
+  assert.equal(venvDir({ XDG_CACHE_HOME: "/c" }, root!), venv.replace("/h/.cache", "/c"))
 })
 
 test("RT-6.20: a turn: working, drain at the end as synthetic input, then listening", async () => {
