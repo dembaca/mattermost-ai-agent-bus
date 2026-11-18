@@ -128,7 +128,9 @@ providers:
 ```
 
 A checkout works the same way, but one an agent can write is code the next session
-runs: prefer the host copy. No `MM_REG_SECRET_GOPASS` or `MM_REG_SECRET_CMD` for pi
+runs: prefer the host copy. The relay's Python dependencies in the sandbox cache are
+still the agent's to change, like any file in its home, and hold no token (the same
+caveat as [for OpenCode](opencode.md#with-corral)). No `MM_REG_SECRET_GOPASS` or `MM_REG_SECRET_CMD` for pi
 under corral: the extension ignores them there, and inside a corral sandbox the server
 refuses to register a bot
 ([RT-6.18](../docs/arc42/06-runtime-view.md#618-keyless-host-managed-session); a check

@@ -131,7 +131,14 @@ The plugin starts the relay with `uv run --locked --project <release>/mcp
 mattermost-ai-agent-bus-mcp` and `UV_PROJECT_ENVIRONMENT` in the sandbox's cache
 (`$HOME/.cache/mm-agent-bus/venv-<hash of the release>`, `$HOME` being the corral home),
 as the pi extension does: nothing is written into the host copy, and its own
-`mcp/.venv` (the host's, for the host process) stays the host's. A new release is a
+`mcp/.venv` (the host's, for the host process) stays the host's. The plugin code is
+out of the agent's reach; the relay's Python dependencies in that cache (`mcp`,
+`httpx`, `anyio` …) are not: they are the agent's to change, like any file in its home
+(`uv run --locked` checks no installed file), so code one session plants there runs
+in the next session's relay. They hold no token: such code has the sandbox's own
+standing, `MM_BUS_KEY` and the loopback endpoints. To check later: running the relay
+from the host copy's own read-only environment (`UV_PROJECT_ENVIRONMENT=<release>/mcp/.venv`,
+`uv run --no-sync`), if the interpreter it links to is readable in the sandbox. A new release is a
 new path, so the next session builds a new cache entry; delete
 `~/.cache/mm-agent-bus/venv-*` in the corral home at any time. A dev checkout works the
 same way (`file:///ABS/PATH/mattermost-ai-agent-bus/opencode`, granted read-only), but

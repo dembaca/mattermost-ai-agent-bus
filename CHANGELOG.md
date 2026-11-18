@@ -5,6 +5,8 @@ before 0.5.0 are described in the git history.
 
 ## 0.93.0
 
+Needs: host copy 0.93.0, and under corral the opencode plugin entry pointing at it.
+
 ### Added
 
 - **The harness plugins come with the host copy**
@@ -21,6 +23,8 @@ before 0.5.0 are described in the git history.
   (`~/.cache/mm-agent-bus/venv-<hash of the tree>`), the mechanism the pi
   extension has used since 0.86.3 (`venvDir`, now shared by both): nothing is
   written into the host copy, whose `mcp/.venv` stays the host process's.
+  The relay's Python dependencies in that cache stay the agent's to change,
+  like any file in its home, and hold no token.
   `node_modules/` is ignored, so an `npm install` in a clone does not block an
   install from it.
 - **[adapters/opencode.md](adapters/opencode.md), *With corral***: the minimal
