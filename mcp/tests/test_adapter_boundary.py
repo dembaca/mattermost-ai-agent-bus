@@ -132,14 +132,19 @@ def test_every_allowed_module_exists():
 
 
 def client_imports(source: str) -> list[str]:
-    """The names `source` imports from client.py (the module itself as "client")."""
+    """The names `source` imports from client.py (the module itself as
+    "client"): relative or absolute, module or member."""
+    package = "mattermost_ai_agent_bus"
     out = []
     for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.ImportFrom) and node.level == 1:
-            if node.module == "client":
+        if isinstance(node, ast.ImportFrom) and (node.level == 1 or node.module == package
+                                                 or node.module == f"{package}.client"):
+            if node.module in ("client", f"{package}.client"):
                 out += [a.name for a in node.names]
-            elif node.module is None:
+            elif node.module in (None, package):
                 out += [a.name for a in node.names if a.name == "client"]
+        elif isinstance(node, ast.Import):
+            out += ["client" for a in node.names if a.name == f"{package}.client"]
     return out
 
 
@@ -181,6 +186,11 @@ def test_the_port_guard_sees_an_import():
               "if TYPE_CHECKING:\n    from .port import ChatPort\n"
               "x = client.post_sync\n")
     assert sorted(client_imports(source)) == ["MattermostAdapter", "client"]
+    absolute = ("import mattermost_ai_agent_bus.client\n"
+                "from mattermost_ai_agent_bus.client import InvalidId\n"
+                "from mattermost_ai_agent_bus import a2a, client\n")
+    assert sorted(client_imports(absolute)) == ["InvalidId", "client", "client"]
+    assert client_imports("from mattermost_ai_agent_bus import a2a\nimport mattermost_ai_agent_bus\n") == []
     assert client_members(source) == {"post_sync"}
 
 
@@ -268,3 +278,32 @@ def test_the_symbols_guard_sees_an_import():
     assert not imports_symbols("from . import a2a\n")
     assert reaches_symbols_through_a2a("x = a2a._symbols._CROWN\n")
     assert not reaches_symbols_through_a2a("x = a2a.symbol(Mark.CROWN)\n")
+
+
+# Helpers that moved out of client.py, by their new home: the homes import no
+# client.py, and client.py re-exports each, so client.X is the moved X.
+MOVED_HELPERS = {
+    "ids": ("InvalidId", "mm_id", "mm_name"),
+    "config": ("env",),
+    "sandbox": ("SANDBOX_MARKERS", "corral_sandbox", "sandbox_refusal"),
+    "owners": ("responsible_human",),
+    "session_file": ("SessionInfo", "_pid_alive"),
+    "a2a": ("attachment_props", "props_view", "with_debug", "DEBUG_TITLE", "JWS_MIN", "PROP_VALUE_MAX"),
+}
+
+
+def test_moved_helpers_do_not_import_the_adapter():
+    found = {name: client_imports((SRC / f"{name}.py").read_text()) for name in sorted(MOVED_HELPERS)}
+    assert {name: names for name, names in found.items() if names} == {}
+
+
+def test_client_reexports_the_moved_helpers():
+    import importlib
+
+    from mattermost_ai_agent_bus import client
+
+    for module, names in MOVED_HELPERS.items():
+        home = importlib.import_module(f"mattermost_ai_agent_bus.{module}")
+        for name in names:
+            assert getattr(client, name) is getattr(home, name), f"{module}.{name}"
+    assert issubclass(client.InvalidId, ValueError)

@@ -19,9 +19,18 @@ from urllib.parse import urlparse, urlunparse
 import httpx
 
 from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, stats, unanswered, watermark
+# Neutral helpers that lived here, re-exported: client.X is the moved X.
+from .a2a import DEBUG_TITLE as DEBUG_TITLE, JWS_MIN as JWS_MIN, PROP_VALUE_MAX as PROP_VALUE_MAX
+from .a2a import attachment_props as attachment_props, props_view as props_view, with_debug as with_debug
+from .config import env as env
+from .ids import _ID, _NAME, InvalidId as InvalidId, mm_id as mm_id, mm_name as mm_name
 from .model import (Channel, ChannelUser, FileInfo, Me, NoAttestationEndpoint, NoDebugEndpoint, NoMandateEndpoint,
                     Post,
                     Reaction, Refused, Thread, UnreadChannel)
+from .owners import _trusted_names, responsible_human as responsible_human
+from .sandbox import SANDBOX_MARKERS as SANDBOX_MARKERS, corral_sandbox as corral_sandbox
+from .sandbox import sandbox_refusal as sandbox_refusal
+from .session_file import SessionInfo as SessionInfo, _pid_alive as _pid_alive
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -230,91 +239,6 @@ def _account_of(user: Mapping[str, Any]) -> Account:
                    bool(user.get("delete_at")))
 
 
-def attachment_props(fields: list[tuple[str, str, bool]], *, fallback: str,
-                     urgent: bool, title: str = "") -> dict[str, Any]:
-    """Props for a message attachment: a card with an optional title and
-    (title, value, short) fields, red when urgent, else amber."""
-    return {"attachments": [{
-        "color": "#d24b4e" if urgent else "#e8a317",
-        "fallback": fallback,
-        **({"title": title} if title else {}),
-        "fields": [{"title": t, "value": v, "short": s} for t, v, s in fields],
-    }]}
-
-
-# RT-6.31: the grey attachment the server adds to its agent's post while debug is
-# on, after any other (an ask's card); known by its title and fallback together.
-DEBUG_TITLE, _DEBUG_FALLBACK, _DEBUG_COLOR = "debug", "MCP debug", "#8b8b8b"
-# RT-6.31 step 4: a value under a key naming a secret shows as its length, at
-# any depth, and so does a text that looks like a compact JWS, whatever its key;
-# any other text over PROP_VALUE_MAX characters is cut.
-_SECRET_KEY = re.compile(r"token|key|secret|passw|auth|bearer|credential|jwt|private|signature", re.I)
-_JWS = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?![A-Za-z0-9_.-])")
-JWS_MIN = 40  # a shorter dotted word (a host name, a version) stays
-PROP_VALUE_MAX = 500
-
-
-def _is_debug(card: object) -> bool:
-    return (isinstance(card, Mapping) and card.get("title") == DEBUG_TITLE
-            and card.get("fallback") == _DEBUG_FALLBACK)
-
-
-def with_debug(props: Mapping[str, Any] | None, text: str) -> dict[str, Any]:
-    """The server's own props with the `debug` attachment holding text added
-    last, after any card the post has (an ask's) (RT-6.31 step 5)."""
-    out = dict(props or {})
-    cards = out.get("attachments")
-    kept = [c for c in cards if not _is_debug(c)] if isinstance(cards, list) else []
-    out["attachments"] = [*kept, {"color": _DEBUG_COLOR, "title": DEBUG_TITLE,
-                                  "fallback": _DEBUG_FALLBACK, "text": text}]
-    return out
-
-
-def _unjws(text: str) -> str:
-    """A text with each compact-JWS look-alike as its length (RT-6.31 step 4)."""
-    return _JWS.sub(lambda m: f"<{len(m[0])} chars>" if len(m[0]) >= JWS_MIN else m[0], text)
-
-
-def props_view(props: Mapping[str, Any] | None, *, own: bool = False) -> dict[str, Any]:
-    """A post's props as debug shows them (RT-6.31 step 4): `attachments` as one
-    line with their count and titles, no text or fallback; a value under a key
-    naming a secret (token, key, secret, passw, auth, bearer, credential, jwt,
-    private, signature; any case, any depth) and a compact-JWS look-alike as
-    their length; every other text over PROP_VALUE_MAX characters cut. `own`:
-    the server's own props (`props out`), whose `debug` attachment is left out;
-    in anyone else's (`props in`) a card titled `debug` counts like any other,
-    so a post cannot hide a card behind that title."""
-    def length(value: object) -> str:
-        n = len(value) if isinstance(value, str) else len(json.dumps(value, default=str))
-        return f"<{n} chars>"
-
-    def counted(card: object) -> bool:
-        return not (own and _is_debug(card))
-
-    def cards(value: list[Any]) -> str:
-        shown = [c for c in value if counted(c)]
-        titles = [_unjws(" ".join(str(c.get("title"))[:100].split())) for c in shown
-                  if isinstance(c, Mapping) and c.get("title")]
-        return (f"[{len(shown)} card{'' if len(shown) == 1 else 's'}"
-                + (f", title: {'; '.join(titles)}" if titles else "") + "]")
-
-    def shown(key: object, value: object) -> object:
-        if isinstance(key, str) and _SECRET_KEY.search(key):
-            return length(value)
-        if isinstance(value, Mapping):
-            return {str(k): shown(k, v) for k, v in value.items()
-                    if not (k == "attachments" and isinstance(v, list) and not any(map(counted, v)))}
-        if isinstance(value, list):
-            return cards(value) if key == "attachments" else [shown("", v) for v in value]
-        if isinstance(value, str):
-            value = _unjws(value)
-            return value[:PROP_VALUE_MAX] + "…" if len(value) > PROP_VALUE_MAX else value
-        return value
-
-    out = shown("", dict(props or {}))
-    return out if isinstance(out, dict) else {}
-
-
 def dm_partner(channel: Channel, me: str) -> str:
     """The other account of a DM (Mattermost names it `<id>__<id>`), '' for
     any other channel or a DM with oneself."""
@@ -324,21 +248,7 @@ def dm_partner(channel: Channel, me: str) -> str:
     return (b if a == me else a if b == me else "") if sep and a != b else ""
 
 
-def _pid_alive(pid: str) -> bool:
-    if not pid.isdigit():
-        return False
-    try:
-        os.kill(int(pid), 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
 _NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$")
-_PLACEHOLDER_RE = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
-
-
 # A bot description (its owner and trusted list, ADR-003) is read again after this.
 DESCRIPTION_TTL_SEC = 600.0
 # The most a registrar's answer with a signed record may hold (an ask mode, a
@@ -373,12 +283,6 @@ def _error_of(body: bytes) -> str:
     return value if isinstance(value, str) else ""
 # Three base64url segments, as the registrar sends it (attest.py checks the rest).
 _ATTESTATION_RE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
-_ID = re.compile(r"[a-z0-9]{26}")
-_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
-
-
-class InvalidId(ValueError):
-    """An id or name that must not go into a Mattermost API path (#81)."""
 
 
 def _refused(exc: httpx.HTTPStatusError, what: str = "post") -> Refused:
@@ -388,36 +292,6 @@ def _refused(exc: httpx.HTTPStatusError, what: str = "post") -> Refused:
         why = ""
     return Refused(f"Mattermost refused the {what} ({exc.response.status_code})" + (f": {why}" if why else ""),
                    status=exc.response.status_code)
-
-
-def mm_id(value: object, what: str) -> str:
-    """`value` if it is a Mattermost id (26 lowercase letters and digits), else
-    InvalidId: nothing an agent or hook passes reaches an API path unchecked."""
-    if not isinstance(value, str) or not _ID.fullmatch(value):
-        raise InvalidId(f"invalid {what} id")
-    return value
-
-
-def mm_name(value: object, what: str) -> str:
-    """`value` if it is a safe team, channel, user or agent name for an API
-    path: letters, digits, '.', '_', '-', no '..', at most 64; else InvalidId.
-    A DM channel's name "<id>__<id>" passes."""
-    if not isinstance(value, str) or not _NAME.fullmatch(value) or ".." in value:
-        raise InvalidId(f"invalid {what} name")
-    return value
-
-
-def env(name: str, default: str = "") -> str:
-    """Read an env var, treating an unexpanded ``${VAR}`` as unset.
-
-    A plugin manifest declares env as ``"MM_PROJECT_CHANNEL": "${MM_PROJECT_CHANNEL}"``.
-    When the variable is not set in the environment, the placeholder can arrive
-    verbatim — and a literal "${MM_PROJECT_CHANNEL}" is not a channel name.
-    """
-    value = os.environ.get(name, "")
-    if not value or _PLACEHOLDER_RE.match(value):
-        return default
-    return value
 
 
 def channel_list(value: str) -> list[str]:
@@ -439,42 +313,6 @@ GUEST_TTL_SEC = 60.0
 # How long an agent found by its name, and whether it is in a channel, is kept
 # (RT-6.21): mentioned again within that, an agent not here costs no read.
 PEER_TTL_SEC = 60.0
-
-
-def _trusted_names() -> list[str]:
-    return [n.strip().lstrip("@") for n in
-            (env("MM_TRUSTED_HUMANS") or env("MM_OWNER")).split(",") if n.strip()]
-
-
-def responsible_human() -> str:
-    """The session's responsible human: MM_RESPONSIBLE_HUMAN, else the first
-    trusted name; '' without either."""
-    trusted = _trusted_names()
-    return env("MM_RESPONSIBLE_HUMAN").strip().lstrip("@") or (trusted[0] if trusted else "")
-
-
-# RT-6.18, RT-6.10: what marks a sandbox corral set up. There the host's
-# session hook registered the bot and keeps its token, and the bus reaches
-# the agent through the relay; a bot registered from inside would put a token
-# into the sandbox. CORRAL_SANDBOX is corral's own, the others its preStart
-# contribution. Not CORRAL_SESSION_ID: corral's host hooks have it as well.
-# Defense in depth only: an agent that clears them gets past it; the real
-# boundary is a sandbox that cannot read the registration secret.
-SANDBOX_MARKERS = ("CORRAL_SANDBOX", "MM_BUS_MCP_ENDPOINT", "MM_BUS_ENDPOINT")
-
-
-def corral_sandbox() -> str:
-    """The first marker of a corral sandbox that is set; '' outside one."""
-    return next((m for m in SANDBOX_MARKERS if env(m).strip()), "")
-
-
-def sandbox_refusal(marker: str) -> str:
-    """Why nothing self-registers inside a corral sandbox (RT-6.18)."""
-    return (f"self-registration refused: this runs inside a corral sandbox ({marker} is set). "
-            "There the host's session hook registers the bot and its token stays on the host; "
-            "the bus tools reach it through the relay (RT-6.18). No bus tools in this session "
-            "means the harness does not load the bus plugin: tell your human "
-            "(adapters/opencode.md, adapters/pi.md).")
 
 
 def _registration_fields(name: str, display: str) -> dict[str, Any]:
@@ -519,23 +357,6 @@ def ws_url_from_http(http_url: str) -> str:
     else:
         ws_path = f"{path}/api/v4/websocket"
     return urlunparse((scheme, parsed.netloc, ws_path, "", "", ""))
-
-
-@dataclass
-class SessionInfo:
-    url: str
-    name: str
-    username: str
-    user_id: str
-    bot_token: str
-    # The registrar's signed owner claim (RT-6.24); '' when it sent none.
-    attestation: str = ""
-
-    @property
-    def prefix(self) -> str:
-        """The registrar's username prefix, learned from this registration."""
-        return session_file.agent_prefix(
-            {"MM_BOT_USERNAME": self.username, "MM_REG_BOT_NAME": self.name})
 
 
 @dataclass

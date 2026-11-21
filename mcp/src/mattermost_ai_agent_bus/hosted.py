@@ -287,7 +287,7 @@ async def relay_watch(host: Host, started: float) -> None:
 
 async def _relay_dm(client: Any, started: float) -> None:
     """Plain text to the responsible human: bot, harness, what to check."""
-    from .client import responsible_human
+    from .owners import responsible_human
 
     who = responsible_human()
     try:

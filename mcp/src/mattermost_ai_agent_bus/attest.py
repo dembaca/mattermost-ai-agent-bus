@@ -84,7 +84,7 @@ SKEW_SEC = 60
 # Longer is no attestation (the host process takes values up to 8192, hosted.py).
 MAX_LEN = 8192
 _SEGMENT = re.compile(r"[A-Za-z0-9_-]+")
-# A plugin manifest's unexpanded ${VAR} is no value (client.env).
+# A plugin manifest's unexpanded ${VAR} is no value (config.env).
 _PLACEHOLDER = re.compile(r"^\$\{[A-Za-z_][A-Za-z0-9_]*\}$")
 _HANDLE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _ID = re.compile(r"[a-z0-9]{26}")  # a Mattermost id

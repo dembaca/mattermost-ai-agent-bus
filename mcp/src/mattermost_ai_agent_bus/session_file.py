@@ -29,12 +29,9 @@ import sys
 import tempfile
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlsplit
-
-if TYPE_CHECKING:
-    from .client import SessionInfo
 
 DEFAULT_AGENT_PREFIX = "agent-"
 
@@ -54,6 +51,23 @@ def agent_prefix(values: Mapping[str, str] | None = None) -> str:
     if name and len(user) > len(name) and user.endswith(name):
         return user[: -len(name)]
     return DEFAULT_AGENT_PREFIX
+
+
+@dataclass
+class SessionInfo:
+    url: str
+    name: str
+    username: str
+    user_id: str
+    bot_token: str
+    # The registrar's signed owner claim (RT-6.24); '' when it sent none.
+    attestation: str = ""
+
+    @property
+    def prefix(self) -> str:
+        """The registrar's username prefix, learned from this registration."""
+        return agent_prefix(
+            {"MM_BOT_USERNAME": self.username, "MM_REG_BOT_NAME": self.name})
 
 
 # The state directory the host process chose for its session (RT-6.18): set,
@@ -344,6 +358,18 @@ def parse(path: Path) -> dict[str, str]:
             k, v = line.split("=", 1)
             out[k] = v
     return out
+
+
+def _pid_alive(pid: str) -> bool:
+    if not pid.isdigit():
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 # A server without a session id that ends without session_end appends this

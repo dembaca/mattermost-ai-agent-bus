@@ -475,3 +475,88 @@ def card_of(post: Post, name: str = "") -> dict[str, Any] | None:
     )
     found.pop("version", None)
     return found
+
+
+def attachment_props(fields: list[tuple[str, str, bool]], *, fallback: str,
+                     urgent: bool, title: str = "") -> dict[str, Any]:
+    """Props for a message attachment: a card with an optional title and
+    (title, value, short) fields, red when urgent, else amber."""
+    return {"attachments": [{
+        "color": "#d24b4e" if urgent else "#e8a317",
+        "fallback": fallback,
+        **({"title": title} if title else {}),
+        "fields": [{"title": t, "value": v, "short": s} for t, v, s in fields],
+    }]}
+
+
+# RT-6.31: the grey attachment the server adds to its agent's post while debug is
+# on, after any other (an ask's card); known by its title and fallback together.
+DEBUG_TITLE, _DEBUG_FALLBACK, _DEBUG_COLOR = "debug", "MCP debug", "#8b8b8b"
+# RT-6.31 step 4: a value under a key naming a secret shows as its length, at
+# any depth, and so does a text that looks like a compact JWS, whatever its key;
+# any other text over PROP_VALUE_MAX characters is cut.
+_SECRET_KEY = re.compile(r"token|key|secret|passw|auth|bearer|credential|jwt|private|signature", re.I)
+_JWS = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}(?![A-Za-z0-9_.-])")
+JWS_MIN = 40  # a shorter dotted word (a host name, a version) stays
+PROP_VALUE_MAX = 500
+
+
+def _is_debug(card: object) -> bool:
+    return (isinstance(card, Mapping) and card.get("title") == DEBUG_TITLE
+            and card.get("fallback") == _DEBUG_FALLBACK)
+
+
+def with_debug(props: Mapping[str, Any] | None, text: str) -> dict[str, Any]:
+    """The server's own props with the `debug` attachment holding text added
+    last, after any card the post has (an ask's) (RT-6.31 step 5)."""
+    out = dict(props or {})
+    cards = out.get("attachments")
+    kept = [c for c in cards if not _is_debug(c)] if isinstance(cards, list) else []
+    out["attachments"] = [*kept, {"color": _DEBUG_COLOR, "title": DEBUG_TITLE,
+                                  "fallback": _DEBUG_FALLBACK, "text": text}]
+    return out
+
+
+def _unjws(text: str) -> str:
+    """A text with each compact-JWS look-alike as its length (RT-6.31 step 4)."""
+    return _JWS.sub(lambda m: f"<{len(m[0])} chars>" if len(m[0]) >= JWS_MIN else m[0], text)
+
+
+def props_view(props: Mapping[str, Any] | None, *, own: bool = False) -> dict[str, Any]:
+    """A post's props as debug shows them (RT-6.31 step 4): `attachments` as one
+    line with their count and titles, no text or fallback; a value under a key
+    naming a secret (token, key, secret, passw, auth, bearer, credential, jwt,
+    private, signature; any case, any depth) and a compact-JWS look-alike as
+    their length; every other text over PROP_VALUE_MAX characters cut. `own`:
+    the server's own props (`props out`), whose `debug` attachment is left out;
+    in anyone else's (`props in`) a card titled `debug` counts like any other,
+    so a post cannot hide a card behind that title."""
+    def length(value: object) -> str:
+        n = len(value) if isinstance(value, str) else len(json.dumps(value, default=str))
+        return f"<{n} chars>"
+
+    def counted(card: object) -> bool:
+        return not (own and _is_debug(card))
+
+    def cards(value: list[Any]) -> str:
+        shown = [c for c in value if counted(c)]
+        titles = [_unjws(" ".join(str(c.get("title"))[:100].split())) for c in shown
+                  if isinstance(c, Mapping) and c.get("title")]
+        return (f"[{len(shown)} card{'' if len(shown) == 1 else 's'}"
+                + (f", title: {'; '.join(titles)}" if titles else "") + "]")
+
+    def shown(key: object, value: object) -> object:
+        if isinstance(key, str) and _SECRET_KEY.search(key):
+            return length(value)
+        if isinstance(value, Mapping):
+            return {str(k): shown(k, v) for k, v in value.items()
+                    if not (k == "attachments" and isinstance(v, list) and not any(map(counted, v)))}
+        if isinstance(value, list):
+            return cards(value) if key == "attachments" else [shown("", v) for v in value]
+        if isinstance(value, str):
+            value = _unjws(value)
+            return value[:PROP_VALUE_MAX] + "…" if len(value) > PROP_VALUE_MAX else value
+        return value
+
+    out = shown("", dict(props or {}))
+    return out if isinstance(out, dict) else {}

@@ -28,9 +28,11 @@ from . import (
     owners, ownpost, permission,
     profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unanswered, unread, usage,
 )
-from .client import (InvalidId, MattermostAdapter, attachment_props, corral_sandbox, dm_partner, guest_ids,
-                     mm_id, mm_name, props_view, sandbox_refusal, with_debug)
+from .a2a import attachment_props, props_view, with_debug
+from .client import MattermostAdapter, dm_partner, guest_ids
+from .ids import InvalidId, mm_id, mm_name
 from .model import Answer, Mark, Post, Refused
+from .sandbox import corral_sandbox, sandbox_refusal
 from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox, channel_type
 
 log = logging.getLogger(__name__)

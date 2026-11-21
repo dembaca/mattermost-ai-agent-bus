@@ -99,8 +99,10 @@ from . import (
     a2a, asks, attach, channel, files, gate, hosted, lease, life, ownpost, release, session_file, stall, stats, tasks,
     turnend, unanswered, unread, usage,
 )
-from .client import InvalidId, _pid_alive, dm_partner, guest_ids, mm_id, mm_name, watched_channel_ids
+from .client import dm_partner, guest_ids, watched_channel_ids
+from .ids import InvalidId, mm_id, mm_name
 from .model import Post, Refused
+from .session_file import _pid_alive
 
 if TYPE_CHECKING:
     from .client import MattermostAdapter

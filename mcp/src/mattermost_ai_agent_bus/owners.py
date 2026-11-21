@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from . import attest, profile
+from .config import env
 
 if TYPE_CHECKING:
     from .port import ChatPort
@@ -226,3 +227,15 @@ async def foreign(client: ChatPort, agent_ids: Iterable[str]) -> dict[str, str]:
         elif not is_peer(agent, names):
             out[uid] = agent.owner
     return out
+
+
+def _trusted_names() -> list[str]:
+    return [n.strip().lstrip("@") for n in
+            (env("MM_TRUSTED_HUMANS") or env("MM_OWNER")).split(",") if n.strip()]
+
+
+def responsible_human() -> str:
+    """The session's responsible human: MM_RESPONSIBLE_HUMAN, else the first
+    trusted name; '' without either."""
+    trusted = _trusted_names()
+    return env("MM_RESPONSIBLE_HUMAN").strip().lstrip("@") or (trusted[0] if trusted else "")
