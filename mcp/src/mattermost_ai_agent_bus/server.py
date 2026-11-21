@@ -29,7 +29,8 @@ from . import (
     profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unanswered, unread, usage,
 )
 from .a2a import attachment_props, props_view, with_debug
-from .client import MattermostAdapter, dm_partner, guest_ids
+from .client import MattermostAdapter, dm_partner
+from .homes import guest_ids
 from .ids import InvalidId, mm_id, mm_name
 from .model import Answer, Mark, Post, Refused
 from .sandbox import corral_sandbox, sandbox_refusal

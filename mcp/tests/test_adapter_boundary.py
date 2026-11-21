@@ -9,8 +9,8 @@ runs: RT-6.32); the rest of the server gets bus types
 The modules in PORT_MODULES talk to the chat through port.ChatPort only: they
 never import client.py, and every member they use on it is the port's.
 client.MattermostAdapter implements the port, and what the port gives back is
-a bus type, never Mattermost's JSON. The tests' FakeChat (fakes.py) is a typed
-subset of the port: only port members, each with the port's signature.
+a bus type, never Mattermost's JSON. The tests' FakeChat (fakes.py) has every
+port member and nothing else, each with the port's signature.
 """
 
 import ast
@@ -56,7 +56,7 @@ POST_KEYS_ALLOWED = {
 # Modules that reach the chat through port.ChatPort only, never client.py.
 PORT_MODULES = {"gate.py", "lease.py", "slim.py", "files.py", "departed.py", "remind.py", "stall.py",
                 "ownpost.py", "stats.py", "unread.py", "attest.py", "askroute.py", "mandate.py", "debug.py",
-                "attach.py"}
+                "attach.py", "homes.py"}
 
 
 def _key(node: ast.AST) -> str | None:
@@ -233,6 +233,15 @@ def test_the_fake_is_a_typed_subset_of_the_port():
             assert _signature(FakeChat, name) == _signature(ChatPort, name), name
 
 
+def test_the_fake_has_every_port_member():
+    """A test that hands FakeChat to code under test meets the whole port:
+    no member is missing, so no getattr fallback for a stand-in decides."""
+    from fakes import FakeChat
+
+    fake = FakeChat()
+    assert {m for m in _port_members() if not hasattr(fake, m)} == set()
+
+
 # Who may import symbols.py, the one Python module that knows Mattermost's
 # characters and shortcodes: the wire door a2a (the core calls a2a.symbol,
 # a2a.head and the like, in meanings from model.py) and the adapter.
@@ -289,6 +298,7 @@ MOVED_HELPERS = {
     "owners": ("responsible_human",),
     "session_file": ("SessionInfo", "_pid_alive"),
     "a2a": ("attachment_props", "props_view", "with_debug", "DEBUG_TITLE", "JWS_MIN", "PROP_VALUE_MAX"),
+    "homes": ("guest_ids", "lobby_ids", "watched_channel_ids"),
 }
 
 

@@ -23,6 +23,8 @@ from . import a2a, asks, attest, links, owners, ownpost, profile, session_file, 
 from .a2a import DEBUG_TITLE as DEBUG_TITLE, JWS_MIN as JWS_MIN, PROP_VALUE_MAX as PROP_VALUE_MAX
 from .a2a import attachment_props as attachment_props, props_view as props_view, with_debug as with_debug
 from .config import env as env
+from .homes import guest_ids as guest_ids, lobby_ids as lobby_ids
+from .homes import watched_channel_ids as watched_channel_ids
 from .ids import _ID, _NAME, InvalidId as InvalidId, mm_id as mm_id, mm_name as mm_name
 from .model import (Channel, ChannelUser, FileInfo, Me, NoAttestationEndpoint, NoDebugEndpoint, NoMandateEndpoint,
                     Post,
@@ -1753,58 +1755,6 @@ class MattermostAdapter:
                 break
         return sorted((post_of(read_links(p, self.permalink_base)) for p in found.values()),
                       key=lambda p: p.create_at)
-
-
-async def watched_channel_ids(client: MattermostAdapter) -> set[str]:
-    """The channels the bus watches (RT-6.2 step 1): the work channel (the
-    home), the project channel and the default channel (the lobby), by the
-    ids the host passed (MM_PROJECT_CHANNEL_ID, MM_CHANNEL_ID) and by name,
-    and the guest channels (RT-6.22: the bot's other team channels, where
-    only a mention or a reply in its own thread wakes it). Never a DM or
-    group channel. The one list for both sides: the inbox delivers their
-    posts (websocket_inbox), the hook API counts and reads them (hookapi), so
-    what the Stop hook counts is what wait_for_events can hand over. A
-    channel that does not resolve is left out, the others still count."""
-    ids = {v for v in (env("MM_PROJECT_CHANNEL_ID"), env("MM_CHANNEL_ID")) if _ID.fullmatch(v)}
-    names = dict.fromkeys(n for n in (client.channel_name, client.project_channel_name) if n)
-    for name in names:
-        try:
-            ids.add(await client.get_channel_id(name))
-        except Exception as exc:  # noqa: BLE001 — a channel that is not there
-            log.warning("could not resolve watched channel %r: %s", name, exc)
-    try:
-        ids.add(await client.work_channel_id())
-    except Exception as exc:  # noqa: BLE001
-        log.warning("could not resolve the work channel: %s", exc)
-    return ids | await guest_ids(client)
-
-
-async def lobby_ids(client: MattermostAdapter) -> set[str]:
-    """The lobby (ADR-002, RT-6.22 step 3): MM_CHANNEL's id while it is not the
-    home. None when it is the home (no project channel) or cannot be resolved:
-    then its posts follow the home's rules, as before 0.63.0."""
-    lobby = getattr(client, "lobby_channel_id", None)
-    if lobby is None:  # a test's stand-in without a lobby
-        return set()
-    try:
-        cid, home = await lobby(), await client.work_channel_id()
-    except Exception as exc:  # noqa: BLE001
-        log.warning("could not resolve the lobby: %s", exc)
-        return set()
-    return {cid} - {home, ""}
-
-
-async def guest_ids(client: MattermostAdapter) -> set[str]:
-    """client.guest_channel_ids, none when the memberships cannot be read
-    (RT-6.22): the home and the lobby still count."""
-    guests = getattr(client, "guest_channel_ids", None)
-    if guests is None:  # a test's stand-in without memberships
-        return set()
-    try:
-        return set(await guests())
-    except Exception as exc:  # noqa: BLE001
-        log.warning("could not read the guest channels: %s", exc)
-        return set()
 
 
 if TYPE_CHECKING:

@@ -99,7 +99,8 @@ from . import (
     a2a, asks, attach, channel, files, gate, hosted, lease, life, ownpost, release, session_file, stall, stats, tasks,
     turnend, unanswered, unread, usage,
 )
-from .client import dm_partner, guest_ids, watched_channel_ids
+from .client import dm_partner
+from .homes import guest_ids, watched_channel_ids
 from .ids import InvalidId, mm_id, mm_name
 from .model import Post, Refused
 from .session_file import _pid_alive
@@ -676,7 +677,7 @@ def _slim(post: Post, agents: set[str], gated: set[str], absent: set[str]) -> di
 
 
 async def watched(client: MattermostAdapter) -> set[str]:
-    """The channels the bus watches, the inbox's list (client.watched_channel_ids):
+    """The channels the bus watches, the inbox's list (homes.watched_channel_ids):
     the work, project and default channel and the guest channels (RT-6.22).
     Never a DM or group channel."""
     return await watched_channel_ids(client)

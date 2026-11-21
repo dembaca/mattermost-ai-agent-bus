@@ -6,9 +6,10 @@ only module that talks HTTP. Registration (the registrar, bot and token) is no
 chat operation and stays outside the port: the adapter does it, server.py and
 hosted.py drive it.
 
-The members are the ones the port's modules call, nothing more. What comes
-back is a bus type (model.py), never Mattermost's JSON: posts and threads, the
-bot account, a channel, a channel's accounts and reactions.
+The members are the ones the port's modules and the entry points call,
+nothing more. What comes back is a bus type (model.py), never Mattermost's
+JSON: posts and threads, the bot account, a channel, a channel's accounts and
+reactions.
 """
 
 from __future__ import annotations
@@ -45,6 +46,17 @@ class ChatPort(Protocol):
     def work_channel_name(self) -> str: ...
 
     @property
+    def channel_name(self) -> str:
+        """MM_CHANNEL's name: the lobby while a project channel is the home,
+        else the home itself (ADR-002)."""
+        ...
+
+    @property
+    def project_channel_name(self) -> str:
+        """The project channel's name (MM_PROJECT_CHANNEL's first entry); '' without one."""
+        ...
+
+    @property
     def permalink_base(self) -> str:
         """A post's permalink is this plus its id (RT-6.15)."""
         ...
@@ -66,6 +78,19 @@ class ChatPort(Protocol):
         ...
 
     async def get_channel(self, channel_id: str) -> Channel: ...
+
+    async def lobby_channel_id(self) -> str:
+        """The lobby's id (ADR-002): MM_CHANNEL's, by the id the host passed or by name."""
+        ...
+
+    def forget_guests(self) -> None:
+        """The bot's channel memberships changed (RT-6.22): read them again."""
+        ...
+
+    @property
+    def guest_join_failures(self) -> dict[str, str]:
+        """The guest channels the session could not join, by name: why (RT-6.22)."""
+        ...
 
     async def guest_channel_ids(self) -> set[str]:
         """The guest channels (RT-6.22): every channel the bot is a member of
@@ -89,6 +114,10 @@ class ChatPort(Protocol):
     # --- people --------------------------------------------------------------
     async def usernames(self, user_ids: set[str]) -> dict[str, str]: ...
 
+    async def username(self, user_id: str) -> str:
+        """One account's username, uncached; raises when it cannot be read."""
+        ...
+
     async def agents(self, user_ids: set[str]) -> set[str]: ...
 
     async def bots_named(self, usernames: set[str]) -> dict[str, ChannelUser]:
@@ -98,6 +127,31 @@ class ChatPort(Protocol):
         ...
 
     async def trusted_humans(self) -> dict[str, str]: ...
+
+    @property
+    def trusted_source(self) -> str:
+        """Where trusted_humans found them (RT-6.8), for bus_info; '' before it ran."""
+        ...
+
+    async def human_id(self, username: str) -> str | None:
+        """A person's user id by username; None for a bot, an unknown or an
+        invalid name (the no-relay DM, RT-6.18)."""
+        ...
+
+    async def humans_among(self, names: set[str]) -> set[str]:
+        """The usernames among `names` that belong to people, not bots; unknown
+        names count as no one."""
+        ...
+
+    async def direct_channel_with(self, user_id: str) -> str:
+        """The DM channel id between this bot and a user id; no checks."""
+        ...
+
+    async def direct_channel_with_bot(self, username: str) -> str:
+        """The DM channel id between this bot and another bot. Raises
+        ValueError for a person (asked with ask_human) or an unknown name,
+        InvalidId for an invalid one."""
+        ...
 
     async def bot_description(self, user_id: str) -> str | None:
         """A bot's profile description, read with the bot's own token, where
@@ -128,6 +182,11 @@ class ChatPort(Protocol):
 
     # --- channel membership, status and presence -----------------------------
     async def member_channels(self) -> list[UnreadChannel]: ...
+
+    async def view_channel(self, channel_id: str) -> None:
+        """Mark a channel read for the chat's own UI: best-effort cleanup; the
+        bus counts what waits by its own watermark (RT-6.2)."""
+        ...
 
     async def channel_users(self, channel_id: str) -> list[ChannelUser]: ...
 
@@ -195,6 +254,13 @@ class ChatPort(Protocol):
 
     async def channel_posts(self, channel_id: str, *, per_page: int | None = None,
                             since_ms: int | None = None) -> list[Post]: ...
+
+    async def list_recent(self, *, channel_id: str | None = None, per_page: int = 20,
+                          since_ms: int | None = None) -> list[Post]:
+        """A channel's newest posts (default: the home), oldest first, their
+        links read (RT-6.15): what the list_recent tool shows. channel_posts
+        gives them newest first, their links as the chat stores them."""
+        ...
 
     async def posts_after(self, since_ms: int, *, channel_id: str | None = None,
                           max_pages: int = 25) -> list[Post]: ...

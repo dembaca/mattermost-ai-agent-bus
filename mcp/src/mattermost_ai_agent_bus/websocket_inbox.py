@@ -15,8 +15,8 @@ from websockets.asyncio.client import connect as ws_connect
 
 from . import (a2a, askroute, asks, departed, gate, lease, mandate, ownpost, receipt, unread,
                watermark)
-from .client import (MattermostAdapter, guest_ids, lobby_ids, post_of, reaction_of, read_links,
-                     watched_channel_ids, with_links, ws_url_from_http)
+from .client import MattermostAdapter, post_of, reaction_of, read_links, with_links, ws_url_from_http
+from .homes import guest_ids, lobby_ids, watched_channel_ids
 from .model import Channel, Post, Reaction, UnreadChannel
 
 log = logging.getLogger(__name__)
