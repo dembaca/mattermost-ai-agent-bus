@@ -3,15 +3,15 @@
 The WebSocket inbox (websocket_inbox.py) takes its live events from an
 EventSource and reads no wire format: mattermost_ws.MattermostEvents reads
 Mattermost's WebSocket for it, and a second chat brings its own source,
-chosen in compose.event_source. The events carry bus types (model.py); a
-post's wire message stays in `raw`, for the tools asked for it (raw=true).
+chosen in compose.event_source. The events carry bus types (model.py) and
+nothing of the wire: the tools asked for raw=true show the post's own JSON
+(Post.raw), never the event that brought it.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeAlias
+from typing import Protocol, TypeAlias
 
 from .model import Post, Reaction
 
@@ -20,13 +20,11 @@ from .model import Post, Reaction
 class PostEvent:
     """A post, new or edited (RT-6.12 step 3), its links read as the bus
     reads them (RT-6.15). channel_type: D, G, O or P where the event names
-    it, else None (the inbox reads the channel). raw: the whole event as the
-    chat sent it."""
+    it, else None (the inbox reads the channel)."""
 
     post: Post
     channel_type: str | None
     edited: bool
-    raw: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
@@ -71,8 +69,8 @@ class EventSource(Protocol):
     @property
     def connected(self) -> bool:
         """Whether a connection is open, so an event now reaches the inbox:
-        from the moment open() starts connecting until the stream ends or
-        close() runs."""
+        from the dial's return, the handshake included, until the stream
+        ends or close() runs."""
         ...
 
     async def open(self) -> None:

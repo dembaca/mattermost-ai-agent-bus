@@ -9,13 +9,12 @@ is chosen here and nowhere else.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from .port import ChatPort
 from .registration import RegistrationPort
 
 if TYPE_CHECKING:
-    from .client import MattermostAdapter
     from .events import EventSource
     from .session_file import SessionInfo
 
@@ -41,9 +40,11 @@ def client_from_env() -> BusClient:
 
 def event_source(client: ChatPort) -> EventSource:
     """The live events of the chat client_from_env built (events.py), for a
-    WebSocket inbox handed none: Mattermost's WebSocket, as client's bot."""
-    from .mattermost_ws import MattermostEvents
+    WebSocket inbox handed none: Mattermost's WebSocket, as client's bot.
+    Raises TypeError for a client without the server's address and the bot's
+    token (mattermost_ws.Wire): no source for that chat."""
+    from .mattermost_ws import MattermostEvents, Wire
 
-    # client_from_env builds the Mattermost adapter and nothing else; the
-    # source reads its address and token, which are no port members.
-    return MattermostEvents(cast("MattermostAdapter", client))
+    if not isinstance(client, Wire):
+        raise TypeError("event_source: no source for this chat")
+    return MattermostEvents(client)

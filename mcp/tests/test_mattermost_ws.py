@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from websockets.exceptions import ConnectionClosedError
 
+from fakes import FakeChat, FakeEvents, read_frames
 from mattermost_ai_agent_bus import compose, mattermost_ws, websocket_inbox
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of, reaction_of, read_links
 from mattermost_ai_agent_bus.events import MembershipEvent, PostEvent, ReactionEvent
@@ -41,10 +42,6 @@ def test_a_posted_frame_is_a_post_event_with_its_links_read(as_text):
     assert event.post == post_of(read_links(dict(POST), BASE))  # RT-6.15
     assert event.post.message == f"see {LINKED}."  # the bus's permalink as a bare id
     assert (event.channel_type, event.edited) == ("D", False)
-    # raw: the whole frame as read (a post sent as an object with its links read).
-    assert {k: v for k, v in event.raw.items() if k != "data"} == {k: v for k, v in msg.items() if k != "data"}
-    assert event.raw["data"]["post"] == (msg["data"]["post"] if as_text
-                                         else POST | {"message": f"see {LINKED}."})
 
 
 def test_a_post_edited_frame_is_an_edited_post_event():
@@ -257,11 +254,23 @@ async def test_close_closes_the_socket(dialled):
 
 
 def test_the_composition_root_builds_mattermosts_source():
+    """An inbox handed no source builds Mattermost's at its first connect;
+    a client without the server's address and the bot's token has none."""
     client = _client()
     source = compose.event_source(client)
     assert isinstance(source, MattermostEvents) and source.client is client
     inbox = websocket_inbox.WebSocketInbox(client=client)
-    assert isinstance(inbox._source, MattermostEvents) and inbox._source.client is client
+    assert inbox._source is None and not inbox.connected
+    built = inbox._events()
+    assert isinstance(built, MattermostEvents) and built.client is client and inbox._events() is built
+    with pytest.raises(TypeError, match="no source for this chat"):
+        compose.event_source(FakeChat())
+
+
+def test_a_handed_source_is_the_one_attribute():
+    events = FakeEvents()
+    inbox = websocket_inbox.WebSocketInbox(client=FakeChat(), source=events)
+    assert inbox._events() is events and "source" not in vars(inbox)
 
 
 # --- the posts the inbox makes up -------------------------------------------------------
@@ -282,3 +291,13 @@ def test_a_made_up_post_is_what_post_of_built(raw):
     made, built = websocket_inbox._made_up(raw, **fields), post_of(raw)
     for f in dataclasses.fields(made):
         assert getattr(made, f.name) == getattr(built, f.name), f.name
+
+
+async def test_the_inbox_keeps_the_channel_type_the_event_named():
+    """A DM's live post: channel_type(event) is the event's D, read from no
+    frame in the inbox (the edit count and the gate's answer read it)."""
+    inbox = websocket_inbox.WebSocketInbox(client=FakeChat(), source=FakeEvents())
+    inbox._bot_user_id, inbox._bot_username = BOT, "agent-me"
+    await read_frames(inbox, {"event": "posted", "data": {"channel_type": "D", "post": json.dumps(POST)}})
+    [queued] = list(inbox._queue._queue)
+    assert queued.kind == "dm" and queued.raw is None and websocket_inbox.channel_type(queued) == "D"

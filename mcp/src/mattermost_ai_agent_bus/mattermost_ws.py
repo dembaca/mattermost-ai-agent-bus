@@ -12,15 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol, runtime_checkable
 
 from websockets.asyncio.client import connect as ws_connect
 
 from .client import post_of, reaction_of, read_links, ws_url_from_http
 from .events import ChatEvent, MembershipEvent, PostEvent, ReactionEvent
-
-if TYPE_CHECKING:
-    from .client import MattermostAdapter
 
 # Events that change the bot's channels (RT-6.22): the inbox reads its
 # watched and guest channels again when they name the bot.
@@ -73,7 +70,7 @@ def _post(msg: dict[str, Any], permalink_base: str) -> PostEvent | None:
     # RT-6.15: the bus's permalinks as bare ids, odd links written out.
     post = post_of(read_links(found, permalink_base))
     return PostEvent(post=post, channel_type=data.get("channel_type"),
-                     edited=msg.get("event") == EDITED, raw=msg)
+                     edited=msg.get("event") == EDITED)
 
 
 def _reaction(msg: dict[str, Any]) -> ReactionEvent | None:
@@ -90,10 +87,25 @@ def _reaction(msg: dict[str, Any]) -> ReactionEvent | None:
     return ReactionEvent(reaction=reaction_of(reaction), channel_id=str(cid or ""))
 
 
+@runtime_checkable
+class Wire(Protocol):
+    """What the source needs of its chat client, besides the port: the
+    server's address and the bot's token (MattermostAdapter has them)."""
+
+    @property
+    def base_url(self) -> str: ...
+
+    @property
+    def token(self) -> str | None: ...
+
+    @property
+    def permalink_base(self) -> str: ...
+
+
 class MattermostEvents:
     """events.EventSource over Mattermost's WebSocket, as the bot of `client`."""
 
-    def __init__(self, client: MattermostAdapter) -> None:
+    def __init__(self, client: Wire) -> None:
         self.client = client
         self._ws: Any = None
         # Every message sent on any of this source's connections has its own

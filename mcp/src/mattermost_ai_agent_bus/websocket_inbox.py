@@ -12,8 +12,8 @@ import contextlib
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import InitVar, dataclass, field
 from types import MappingProxyType
 from typing import Any
 
@@ -39,7 +39,11 @@ class ClassifiedEvent:
     kind: str  # mention | dm | watched_channel | reaction (to an open ask) | OWN_EVENTS
     post: Post
     channel: Channel | None = None
-    raw: Mapping[str, Any] | None = None
+    # A reaction's emoji and ask (RT-6.11); None for a post.
+    raw: dict[str, Any] | None = None
+    # D, G, O or P as the live event named it (PostEvent.channel_type); None
+    # when it named none or the post came from the backfill.
+    channel_type: str | None = None
     # RT-6.16: why the post wakes nobody here; "" when it is not gated.
     gated: str = ""
     # RT-6.21: the departed agents it mentions, for the agent that answers.
@@ -115,9 +119,8 @@ def classify_post(
 
 
 def channel_type(event: ClassifiedEvent) -> str:
-    """D, G, O or P, as the WebSocket or the channel read named it; O for neither."""
-    data = (event.raw or {}).get("data") or {}
-    return (event.channel.type if event.channel else "") or data.get("channel_type") or "O"
+    """D, G, O or P, as the channel read or the live event named it; O for neither."""
+    return (event.channel.type if event.channel else "") or event.channel_type or "O"
 
 
 @dataclass
@@ -184,12 +187,23 @@ class WebSocketInbox:
     on_queue: Callable[[], None] | None = None
     _gate_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False, init=False)
     # Where the live events come from (events.py); None: the chat's own,
-    # compose.event_source(client).
-    source: EventSource | None = None
-    _source: EventSource = field(init=False, repr=False)
+    # compose.event_source(client), built at the first connect.
+    source: InitVar[EventSource | None] = None
+    _source: EventSource | None = field(default=None, init=False, repr=False)
 
-    def __post_init__(self) -> None:
-        self._source = self.source if self.source is not None else compose.event_source(self.client)
+    def __post_init__(self, source: EventSource | None) -> None:
+        self._source = source
+
+    def _events(self) -> EventSource:
+        """The event source: the one handed in, else the chat's own, built
+        once (compose.event_source)."""
+        if self._source is None:
+            self._source = compose.event_source(self.client)
+        return self._source
+
+    def _live(self) -> bool:
+        """Whether the event source is connected; one not built yet is not."""
+        return self._source is not None and self._source.connected
 
     async def ensure_identity(self) -> None:
         me = await self.client.get_me()
@@ -267,7 +281,7 @@ class WebSocketInbox:
     @property
     def connected(self) -> bool:
         """Whether the event source is connected, so a post now reaches this inbox."""
-        return self._source.connected
+        return self._live()
 
     async def _channel(self, channel_id: str) -> Channel:
         if channel_id not in self._channel_cache:
@@ -277,13 +291,13 @@ class WebSocketInbox:
     async def ensure_connected(self) -> None:
         """The event source, opened if it is not (one connect at a time)."""
         async with self._connecting:
-            if not self._source.connected:
+            if not self._live():
                 await self.connect()
 
     async def connect(self) -> None:
         await self.ensure_identity()
         try:
-            await self._source.open()  # connected (and authenticated) as the bot
+            await self._events().open()  # connected (and authenticated) as the bot
             await self._open()
         except BaseException:
             # Cancelled (a long poll's deadline) or failed half way: nothing is
@@ -293,7 +307,7 @@ class WebSocketInbox:
                 self._reader.cancel()
                 self._reader = None
             try:
-                await self._source.close()
+                await self._events().close()
             except Exception:  # noqa: BLE001 — already gone
                 pass
             raise
@@ -371,7 +385,7 @@ class WebSocketInbox:
     def start_typing(self, channel_id: str, parent_id: str = "") -> None:
         """Show the bot as typing in channel_id (thread parent_id) for a while."""
         self.stop_typing()
-        if self.typing_sec <= 0 or not channel_id or not self._source.connected:
+        if self.typing_sec <= 0 or not channel_id or not self._live():
             return
         self._typing = asyncio.create_task(self._typing_loop(channel_id, parent_id))
 
@@ -388,11 +402,11 @@ class WebSocketInbox:
         # so the sender sees it wherever they are looking.
         parents = [parent_id, ""] if parent_id else [""]
         while loop.time() < deadline:
-            if not self._source.connected:
+            if not self._live():
                 return
             try:
                 for parent in parents:
-                    await self._source.typing(channel_id, parent)
+                    await self._events().typing(channel_id, parent)
             except Exception as exc:  # noqa: BLE001
                 # Cosmetic: never let the indicator disturb delivery.
                 log.debug("typing indicator stopped: %s", exc)
@@ -408,10 +422,11 @@ class WebSocketInbox:
             except asyncio.CancelledError:
                 pass
             self._reader = None
-        await self._source.close()
+        if self._source is not None:
+            await self._source.close()
 
     async def _read_loop(self) -> None:
-        stream = self._source.events()
+        stream = self._events().events()
         try:
             async for event in stream:
                 await self._on_event(event)
@@ -474,7 +489,8 @@ class WebSocketInbox:
             self._seen_ids.add(pid)
             if kind in ADDRESSED:
                 self._addressed.add(pid)
-        queued = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=event.raw, edited=edited,
+        queued = ClassifiedEvent(kind=kind, post=post, channel=channel,
+                                 channel_type=event.channel_type, edited=edited,
                                  guest=cid in self.guest_channel_ids,
                                  lobby=cid in self.lobby_channel_ids)
         await self._gate(queued, channel_type)
@@ -664,7 +680,7 @@ class WebSocketInbox:
         """Whether events of this channel wait in the queue; None while the
         event source is not connected, so nothing is known about what arrived.
         A gated post (RT-6.16) does not count: it keeps no counter up."""
-        if not self._source.connected:
+        if not self._live():
             return None
         return any(e.post.channel_id == channel_id and not e.gated for e in self._waiting())
 
@@ -700,7 +716,7 @@ class WebSocketInbox:
         to that newest one again, not just to itself. Unconnected, nothing
         moves: the backfill still has to read from the mark."""
         cid, pid, created = post.channel_id, post.id, post.create_at
-        if not self._source.connected or not (self._bot_user_id and cid and pid and created):
+        if not self._live() or not (self._bot_user_id and cid and pid and created):
             return
         behind = self._behind.setdefault(cid, {})
         behind[pid] = created

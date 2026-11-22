@@ -86,17 +86,45 @@ def leaks(source: str) -> list[str]:
     return out
 
 
-def post_key_reads(source: str) -> list[str]:
-    """What in `source` reads a key of Mattermost's post JSON, by line."""
+def key_reads(source: str, keys: set[str]) -> list[str]:
+    """What in `source` reads one of `keys` (x["k"], x.get("k")), by line."""
     out = []
     for node in ast.walk(ast.parse(source)):
         if (isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load)
-                and _key(node.slice) in POST_KEYS):
+                and _key(node.slice) in keys):
             out.append(f"{node.lineno}: [{_key(node.slice)!r}]")
         elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-              and node.func.attr == "get" and node.args and _key(node.args[0]) in POST_KEYS):
+              and node.func.attr == "get" and node.args and _key(node.args[0]) in keys):
             out.append(f"{node.lineno}: .get({_key(node.args[0])!r})")
     return out
+
+
+def post_key_reads(source: str) -> list[str]:
+    """What in `source` reads a key of Mattermost's post JSON, by line."""
+    return key_reads(source, POST_KEYS)
+
+
+# The envelope of Mattermost's WebSocket frames, as a read: only its event
+# source (mattermost_ws.py) reads a frame; the inbox gets events (events.py).
+FRAME_KEYS = {"data", "broadcast"}
+FRAME_KEYS_ALLOWED = {
+    "mattermost_ws.py": "the adapter's event source: Mattermost's WebSocket frames",
+    "client.py": "the Mattermost adapter",
+    "hookapi.py": "the hook API's own request body (an upload's bytes), no frame",
+}
+
+
+def test_only_the_event_source_reads_a_frame():
+    found = {f.name: key_reads(f.read_text(), FRAME_KEYS) for f in sorted(SRC.glob("*.py"))
+             if f.name not in FRAME_KEYS_ALLOWED}
+    assert {name: hits for name, hits in found.items() if hits} == {}
+
+
+def test_the_frame_guard_sees_a_read():
+    source = ('d = msg.get("data") or {}\n'
+              'w = msg["broadcast"]\n'
+              'why = "broadcast"  # a bus value\n')
+    assert sorted(key_reads(source, FRAME_KEYS)) == ["1: .get('data')", "2: ['broadcast']"]
 
 
 def test_posts_are_read_as_posts():
@@ -131,7 +159,7 @@ def test_the_guard_sees_a_leak():
 
 def test_every_allowed_module_exists():
     assert all((SRC / name).is_file()
-               for name in set(ALLOWED) | set(POST_KEYS_ALLOWED) | PORT_MODULES)
+               for name in set(ALLOWED) | set(POST_KEYS_ALLOWED) | PORT_MODULES | set(FRAME_KEYS_ALLOWED))
 
 
 def client_imports(source: str) -> list[str]:
