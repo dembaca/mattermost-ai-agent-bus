@@ -33,6 +33,7 @@ from .client import MattermostAdapter, dm_partner
 from .homes import guest_ids
 from .ids import InvalidId, mm_id, mm_name
 from .model import Answer, Mark, Post, Refused
+from .registration import RegistrationPort
 from .sandbox import corral_sandbox, sandbox_refusal
 from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox, channel_type
 
@@ -411,7 +412,7 @@ def _get_client() -> MattermostAdapter:
     return _client
 
 
-def _adopt(client: MattermostAdapter) -> None:
+def _adopt(client: RegistrationPort) -> None:
     """After `claude --continue` (same session id), or a harness restarting
     this workspace's server, the bot of the server that ended is still there:
     take it over (RT-6.10)."""

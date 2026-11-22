@@ -1,11 +1,13 @@
-"""The tests' stand-in for the chat port (port.ChatPort, arc42 §5.1).
+"""The tests' stand-ins for the chat port (port.ChatPort, arc42 §5.1) and the
+registration port (registration.RegistrationPort, arc42 §5.2).
 
 FakeChat answers from what a test hands it and records what is posted. It is
 a typed subset of the port, not a Mattermost emulator: it has only the members
 the port has, each with the port's signature (test_adapter_boundary checks
 both, and mypy checks this file). A member the port gains is added here, with
 the port's signature; what is no port member (the adapter's own attributes)
-goes into a subclass in the test.
+goes into a subclass in the test. FakeRegistrar does the same for the
+registration port.
 """
 
 from __future__ import annotations
@@ -18,9 +20,11 @@ from mattermost_ai_agent_bus.client import post_of, reaction_of
 from mattermost_ai_agent_bus.ids import mm_name
 from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, Post, Reaction,
                                            Thread, UnreadChannel)
+from mattermost_ai_agent_bus.session_file import SessionInfo
 
 if TYPE_CHECKING:
     from mattermost_ai_agent_bus.port import ChatPort
+    from mattermost_ai_agent_bus.registration import RegistrationPort
 
 BOT = "u" * 26
 WORK = "c" * 26
@@ -370,3 +374,81 @@ class FakeChat:
 class HookClient(FakeChat):
     """FakeChat as the hook API's tests name it: no channel names, so the
     work channel is the one watched."""
+
+
+class FakeRegistrar:
+    """A RegistrationPort for tests: the registrar session without a registrar.
+
+    info: the bot session_start registers; kept: the bot of an ended server
+    that adopt_sync takes over (None: none); keeps: whether the bot outlives
+    the server (keeps_bot_on_exit); setup: what finish_session_setup reports.
+    calls: what was asked of it, in order. Like FakeChat it has only the
+    port's members, each with the port's signature.
+    """
+
+    def __init__(self, *, info: SessionInfo | None = None, kept: SessionInfo | None = None,
+                 keeps: bool = False, setup: Mapping[str, Any] | None = None) -> None:
+        self.info = info or SessionInfo(url="https://mm.example", name="agent-x",
+                                        username="agent-agent-x", user_id=BOT, bot_token="t")
+        self.kept = kept
+        self.keeps_bot_on_exit = keeps
+        self.setup = dict(setup or {})
+        self.session: SessionInfo | None = None
+        self.reused = False
+        self.reaped: list[str] = []
+        self.profile_warning = ""
+        self.session_file_status: dict[str, Any] = {}
+        self.calls: list[str] = []
+
+    @property
+    def bot_id(self) -> str:
+        return self.session.user_id if self.session else ""
+
+    async def session_start(self, name: str, display_name: str | None = None, *,
+                            unique: bool = True) -> SessionInfo:
+        """Registers `info`, or returns the bot it has (reused)."""
+        self.calls.append(f"session_start {name}")
+        self.reused = self.session is not None
+        if self.session is None:
+            self.session = self.info
+            self.session_file_status = {"path": "", "written": True}
+        return self.session
+
+    async def finish_session_setup(self) -> dict[str, Any]:
+        self.calls.append("finish_session_setup")
+        return dict(self.setup)
+
+    async def session_end(self, name: str | None = None) -> None:
+        self.calls.append(f"session_end {name or ''}".rstrip())
+        self.session = None
+
+    def adopt_sync(self) -> SessionInfo | None:
+        """Takes `kept` over, once."""
+        self.calls.append("adopt_sync")
+        if self.session is not None or self.kept is None:
+            return None
+        self.session, self.kept = self.kept, None
+        return self.session
+
+    def keep_sync(self) -> str:
+        self.calls.append("keep_sync")
+        if self.session is None:
+            return "no session"
+        self.session = None
+        return "kept the bot for claude --continue (offline)"
+
+    def shutdown_sync(self) -> str:
+        self.calls.append("shutdown_sync")
+        if self.session is None:
+            return "no session"
+        name, self.session = self.session.name, None
+        return f"kept {name} for claude --continue" if self.keeps_bot_on_exit else f"unregistered {name}"
+
+
+if TYPE_CHECKING:
+    def _fake_chat_is_a_port(fake: FakeChat) -> ChatPort:
+        """mypy checks that the fakes satisfy their ports, structurally."""
+        return fake
+
+    def _fake_registrar_is_a_port(fake: FakeRegistrar) -> RegistrationPort:
+        return fake

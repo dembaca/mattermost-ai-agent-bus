@@ -3,8 +3,8 @@
 The modules that only post, read and set status depend on ChatPort, not on
 client.py. client.MattermostAdapter implements it for Mattermost and stays the
 only module that talks HTTP. Registration (the registrar, bot and token) is no
-chat operation and stays outside the port: the adapter does it, server.py and
-hosted.py drive it.
+chat operation and stays outside the port: registration.RegistrationPort names
+it, the adapter does it, server.py and hosted.py drive it.
 
 The members are the ones the port's modules and the entry points call,
 nothing more. What comes back is a bus type (model.py), never Mattermost's

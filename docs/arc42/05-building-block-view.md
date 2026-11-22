@@ -62,7 +62,7 @@ The MCP server's inside is cut once more, at the chat: see 5.2.
 |-------|---------|----------------|
 | Entry points | `server.py` (MCP tools, instructions), `hookapi.py` (hook API, RT-6.17), `hosted.py` (host process, RT-6.18), `websocket_inbox.py` (inbox) | Take requests and events and drive the bus logic; the only modules besides the adapter that import `client.py` |
 | Bus logic | `gate.py`, `homes.py`, `owners.py`, `attest.py`, `lease.py`, `life.py`, `receipt.py`, `slim.py`, `files.py`, `attach.py`, `departed.py`, `remind.py`, `stall.py`, `askroute.py`, `mandate.py`, `debug.py`, `ownpost.py`, `unanswered.py`, `stats.py`, `unread.py`, `usage.py`, `release.py`, `selfupdate.py` | Wake gate, the channels the bus watches (home, project channel, lobby, guests) and the lobby's and guests' ids, each left out when it cannot be read (`homes.py`, RT-6.2 step 1, RT-6.22), peer or foreign agent (ADR-001) and the session's responsible human (`owners.responsible_human`), the owner attestation: verified with the pinned keys, never fetched (RT-6.24), lease and roster, the agent's sign of life (`life.py`, RT-6.6 step 1), the 👑's receipts and the claim over a missing one (`receipt.py`, RT-6.6 step 10, RT-6.12 step 7), slim results, a post's files for the agent (RT-6.23), the agent's own files checked by their bytes and its fresh uploads kept for its posts (`attach.py`, RT-6.33), departed agents and agents not here, ask reminders, stall check, ask classes and modes with the fallback to the human (RT-6.25), the home's mandate for a role (RT-6.26), the home's debug setting and its lines about events and posts (RT-6.31), own post, the posts that wait for its answer (`unanswered.py`, RT-6.2 step 2), stats, pending count; the last usage report of the status line, kept in memory (`usage.py`, ADR-008; RT-6.6 step 8); the release notice read from the host's release check, its version in the status, and the check started as a bounded child once a day (`release.py`, RT-6.30), with what self-update will do (RT-6.32); the registrar's release record read and verified on the host for the installer and the check, never by the server (`selfupdate.py`, RT-6.32). Take a `ChatPort`, never import `client.py` |
-| Port | `port.py` | `ChatPort`, a `typing.Protocol` with the chat operations the bus logic and the entry points call and nothing more |
+| Port | `port.py`, `registration.py` | `ChatPort`, a `typing.Protocol` with the chat operations the bus logic and the entry points call and nothing more; `RegistrationPort`, the bot's life at the registrar, which only the entry points drive |
 | Bus types | `model.py` | `Post`, `Thread`, `Me`, `Channel`, `ChannelUser`, `Reaction` and the bus's own rows: only the fields the bus reads; the meanings the core speaks in instead of characters, each once: `Mark` (a mark in a text), `Answer` (yes, no, or the choice of an alternative), `StatusMark` (a custom status state), `Head` |
 | Adapter | `client.py` (`MattermostAdapter`), with `a2a.py` (the bus's props, an ask's card (`attachment_props`), the debug card and the debug view of props (`with_debug`, `props_view`), and the wire door to `symbols.py`) and `lease.py` (status, crown, roster); `symbols.py` (Mattermost's emoji and shortcodes for the meanings) | The only code that reads or writes Mattermost's carriers: REST, post props, custom status, unread counters, the registrar's profile. The entry points still compose Mattermost's cards through `a2a.py`'s helpers; those move behind `ChatPort` in a later change |
 | Bus state | `watermark.py`, the state files of `session_file.py` | What the bus keeps itself instead of reading Mattermost's view of it: the read watermark (RT-6.2), the latest own post, asks, reminders, stall; the registrar session a server holds (`session_file.SessionInfo`) and whether a session file's process still runs (`session_file._pid_alive`) |
@@ -127,8 +127,11 @@ keys on JSON that is no post), that the bus-logic modules import no
 `client.py`, use no member the port lacks, and that no port member returns
 JSON. The tests share one fake of the port, `FakeChat` in
 `mcp/tests/fakes.py`: canned answers and a record of what was posted, no
-Mattermost emulator, with only the members the tests call, each with the
-port's signature (the same test compares them, mypy checks the file).
+Mattermost emulator, with every port member and nothing else, each with the
+port's signature (the same test compares them, mypy checks the file and that
+the fake satisfies the port). `FakeRegistrar` beside it does the same for
+`RegistrationPort`: a bot to register, one to take over, and a record of
+what was asked (`test_registration`).
 
 ### Decision: port and adapter (0.49.0)
 
@@ -147,4 +150,12 @@ configuration, such as the bot name prefix) with `MM_REG_SECRET`, not with the
 bot's token, and happens before a chat session exists and after it ended. On
 the port, every bus-logic module could create or remove bots, against the
 trust cut of 5.1. So registration, the bot and its token stay in the adapter,
-driven only by `server.py` and `hosted.py` (RT-6.1, RT-6.10, RT-6.18).
+driven only by `server.py` and `hosted.py` (RT-6.1, RT-6.10, RT-6.18). Its own
+port, `RegistrationPort` (`registration.py`), names what they drive: start,
+take over, keep and end the bot (`session_start`, `finish_session_setup`,
+`adopt_sync`, `keep_sync`, `shutdown_sync`, `session_end`), whether the bot
+outlives the server (`keeps_bot_on_exit`), and what the last start did
+(`reused`, `reaped`, `profile_warning`, `session_file_status`). For now the
+same `MattermostAdapter` implements both ports, since a new bot's token and the
+chat's caches change together; a later chat adapter brings its own
+registration with it (mypy checks the adapter against both).

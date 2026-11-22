@@ -36,6 +36,7 @@ from .session_file import SessionInfo as SessionInfo, _pid_alive as _pid_alive
 
 if TYPE_CHECKING:
     from .port import ChatPort
+    from .registration import RegistrationPort
 
 log = logging.getLogger(__name__)
 
@@ -364,7 +365,8 @@ def ws_url_from_http(http_url: str) -> str:
 @dataclass
 class MattermostAdapter:
     """The chat port for Mattermost (API v4), plus the registrar session:
-    registering, adopting and ending the bot, which is no port operation."""
+    registering, adopting and ending the bot, which is no chat operation
+    (registration.RegistrationPort)."""
 
     base_url: str
     token: str | None = None
@@ -1760,4 +1762,8 @@ class MattermostAdapter:
 if TYPE_CHECKING:
     def _implements_the_port(adapter: MattermostAdapter) -> ChatPort:
         """mypy checks that the adapter satisfies the port, structurally."""
+        return adapter
+
+    def _implements_registration(adapter: MattermostAdapter) -> RegistrationPort:
+        """And the registration port, the same way."""
         return adapter

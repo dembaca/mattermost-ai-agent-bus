@@ -155,10 +155,14 @@ def client_members(source: str) -> set[str]:
             and node.value.id == "client"}
 
 
-def _port_members() -> set[str]:
-    tree = ast.parse((SRC / "port.py").read_text())
-    port = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "ChatPort")
+def _port_members(module: str = "port.py", name: str = "ChatPort") -> set[str]:
+    tree = ast.parse((SRC / module).read_text())
+    port = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == name)
     return {n.name for n in port.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+
+def _registration_members() -> set[str]:
+    return _port_members("registration.py", "RegistrationPort")
 
 
 def test_port_modules_do_not_import_the_adapter():
@@ -178,6 +182,19 @@ def test_the_adapter_has_every_port_member():
     missing = {m for m in _port_members()
                if not hasattr(MattermostAdapter, m) and m not in MattermostAdapter.__dataclass_fields__}
     assert missing == set()
+
+
+def test_the_adapter_has_every_registration_member():
+    from mattermost_ai_agent_bus.client import MattermostAdapter
+    missing = {m for m in _registration_members()
+               if not hasattr(MattermostAdapter, m) and m not in MattermostAdapter.__dataclass_fields__}
+    assert missing == set()
+
+
+def test_the_registration_port_imports_no_adapter():
+    """Registration is no chat operation, and a second adapter brings its own
+    (RT-6.1, RT-6.10): the port names it without client.py."""
+    assert client_imports((SRC / "registration.py").read_text()) == []
 
 
 def test_the_port_guard_sees_an_import():
@@ -208,11 +225,12 @@ def test_the_port_gives_back_no_json():
 def _signature(cls: type, name: str) -> inspect.Signature:
     """The member's signature with its annotations resolved, a property's as
     its getter's."""
-    from mattermost_ai_agent_bus import model, port
+    from mattermost_ai_agent_bus import model, port, session_file
 
     member = inspect.getattr_static(cls, name)
     func = member.fget if isinstance(member, property) else member
-    hints = typing.get_type_hints(func, localns={**vars(model), **vars(port)})
+    hints = typing.get_type_hints(func, localns={**vars(model), **vars(port),
+                                                 "SessionInfo": session_file.SessionInfo})
     sig = inspect.signature(func)
     params = [p.replace(annotation=hints.get(p.name, p.annotation)) for p in sig.parameters.values()]
     return sig.replace(parameters=params, return_annotation=hints.get("return"))
@@ -240,6 +258,23 @@ def test_the_fake_has_every_port_member():
 
     fake = FakeChat()
     assert {m for m in _port_members() if not hasattr(fake, m)} == set()
+
+
+def test_the_fake_registrar_is_the_registration_port():
+    """fakes.FakeRegistrar stands in for the registration port: exactly its
+    members, the methods with its signatures; plain values stand for its
+    properties."""
+    from fakes import FakeRegistrar
+    from mattermost_ai_agent_bus.registration import RegistrationPort
+
+    fake = FakeRegistrar()
+    port = _registration_members()
+    assert {m for m in port if not hasattr(fake, m)} == set()
+    assert {n for n in vars(FakeRegistrar) if not n.startswith("_")} - port == set()
+    for name in sorted(port):
+        member = inspect.getattr_static(FakeRegistrar, name, None)
+        if callable(member) or isinstance(member, property):
+            assert _signature(FakeRegistrar, name) == _signature(RegistrationPort, name), name
 
 
 # Who may import symbols.py, the one Python module that knows Mattermost's
