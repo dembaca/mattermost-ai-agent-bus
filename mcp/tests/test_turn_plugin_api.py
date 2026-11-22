@@ -345,7 +345,8 @@ async def test_handoff_reloads_a_skill_the_cap_would_cut(api, monkeypatch):
     """RT-6.7 step 1: Claude Code saves an additionalContext over 10,000
     characters to a file and shows a preview; the real SKILL.md is longer, so
     the hook gets the call to load the skill with the Skill tool and the rules
-    most often broken instead, never a cut skill, within the cap."""
+    most often broken instead, never a cut skill, within the cap; so it does
+    when the server has no SKILL.md beside it."""
     assert len(release.SKILL_FILE.read_text()) > turnend.CAPPED["claude-code"][0]
     client = FakeClient(posts=[post(f"p{i}", "RESULT · " + "x" * 900, user=UID, at=3000 - i,
                                     props=None) for i in range(5)])
@@ -359,6 +360,12 @@ async def test_handoff_reloads_a_skill_the_cap_would_cut(api, monkeypatch):
     full = (await h.get("/v1/handoff?runtime=opencode")).json()["context"]
     assert "## Contract" in full and "Skill tool" not in full
     assert (await h.get("/v1/handoff?runtime=cursor")).status_code == 400
+    # Neither the reload line nor the rules need SKILL.md here: Claude Code loads its own.
+    monkeypatch.setattr(release, "SKILL_FILE", release.SKILL_FILE.parent / "missing.md")
+    client.posts = []
+    text = (await h.get("/v1/handoff?runtime=claude-code")).json()["context"]
+    assert "with the Skill tool" in text and "there is no `question` argument" in text
+    assert (await h.get("/v1/handoff?runtime=opencode")).json() == {"context": ""}
 
 
 def test_handoff_finds_a_coordinators_hello():

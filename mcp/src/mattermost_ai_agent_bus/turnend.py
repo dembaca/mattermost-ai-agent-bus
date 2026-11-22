@@ -227,7 +227,8 @@ CAPPED = {"claude-code": (10_000, "Load the skill `mattermost-ai-agent-bus:matte
 # leaves the skill out (RT-6.7 step 1).
 RULES = ("Until then, the rules most often broken after a compaction:\n"
          "- ask_human: `need` is the question, there is no `question` argument; one question per ask; "
-         "`answers` are two to four plain texts, the server adds the emojis.\n"
+         "`answers`, if given, two to four plain texts (`[\"go\", \"no-go\"]` for an approval), "
+         "the server adds the emojis.\n"
          "- Answer a post from the bus in its thread (reply_in_thread with its root_id), "
          "never only in your terminal.\n"
          "- A status post (IDLE, BYE, RESULT, WAITING, …) passes its word as kind: a headline "
@@ -247,20 +248,20 @@ def handoff(posts: Iterable[Mapping[str, Any]], me: str, *, skill: str = "", run
     """After a compaction (RT-6.7): the agent's own latest posts, the newest
     three, each cut to 600 characters, and where its HELLO thread is; then the
     bus skill (`skill`, SKILL.md's text) verbatim, or for a runtime that would
-    cut it (CAPPED) the line that reloads it and the rules most often broken.
-    '' with neither own posts in the work channel nor a skill."""
+    cut it (CAPPED) the line that reloads it and the rules most often broken,
+    which need no SKILL.md here (the runtime loads its own). '' with neither
+    own posts in the work channel nor a skill to hand back."""
     own = [p for p in posts if p.get("user_id") == me and not p.get("type")]
     body = skill_body(skill) if skill else ""
-    if not own and not body:
+    capped = runtime in CAPPED
+    if not own and not body and not capped:
         return ""
     text = "Your conversation was just compacted." + (_posts(own) if own else "")
     end = "\nBefore you continue, check the bus with wait_for_events(timeout_sec=1)."
-    if not body:
-        return text + end
     full = (text + "\n\nThe Mattermost agent bus skill (mattermost-ai-agent-bus) is no longer in your "
-            "context; here it is again, verbatim. Follow it.\n\n" + body + "\n" + end)
+            "context; here it is again, verbatim. Follow it.\n\n" + body + "\n" + end) if body else text + end
     cap, reload = CAPPED.get(runtime, (0, ""))
-    if not cap or len(full) <= cap:
+    if not capped or (body and len(full) <= cap):
         return full
     return (text + "\n\nThe Mattermost agent bus skill is no longer in your context. " + reload + "\n"
             + RULES + end)

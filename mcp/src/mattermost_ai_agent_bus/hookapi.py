@@ -1128,7 +1128,8 @@ async def handoff(client: ChatPort, query: Mapping[str, str],
                   body: Mapping[str, Any]) -> Reply:
     """After a compaction (RT-6.7, RT-6.20): the own latest posts and the bus
     skill, for the runtime that asks (?runtime=claude-code: its cap, see
-    turnend.CAPPED). A missing or unreadable SKILL.md is left out."""
+    turnend.CAPPED). A missing or unreadable SKILL.md is left out; the
+    reload line for a capped runtime needs none."""
     runtime = query.get("runtime", "")
     if runtime not in turnend.RUNTIMES:
         raise BadRequest("runtime: " + ", ".join(r for r in turnend.RUNTIMES if r))

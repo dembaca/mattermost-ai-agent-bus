@@ -24,10 +24,10 @@
 //                      no timer, no listen window; the same counter again
 //                      after the turn it woke backs off; "replaced" backs off
 //   session.compaction.ended
-//                      GET /v1/handoff → the own latest posts as synthetic
-//                      context that starts no turn (RT-6.7); a compaction
-//                      between turns (/compact) runs as an execution of its
-//                      own, whose end is no turn end
+//                      GET /v1/handoff → the own latest posts and the bus
+//                      skill as synthetic context that starts no turn
+//                      (RT-6.7); a compaction between turns (/compact) runs
+//                      as an execution of its own, whose end is no turn end
 // It holds no token and no secret, writes no file, and fails open: without a
 // server or a bus session every call comes back empty and nothing happens.
 // Only top-level sessions of its own location count: a subagent's session

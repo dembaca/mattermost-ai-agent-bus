@@ -23,7 +23,8 @@
 //   turn_end, agent_settled
 //                       the context use (ctx.getContextUsage) → POST /v1/usage
 //                       for the status (ADR-008), not awaited
-//   session_compact     GET /v1/handoff → context that starts no run (RT-6.7)
+//   session_compact     GET /v1/handoff → the own posts and the bus skill as
+//                       context that starts no run, not shown (RT-6.7)
 //   one long poll       GET /v1/wake?wait=50 (ADR-009) from session_start to
 //                       session_shutdown: a wake → pi.sendUserMessage, at once
 //                       when idle, deliverAs "followUp" while a human's run

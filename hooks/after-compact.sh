@@ -10,7 +10,8 @@
 # that reloads the skill instead of the skill itself.
 # Spec: RT-6.7 in docs/arc42/06-runtime-view.md.
 #
-# Reads only the agent's own posts, through the MCP server (RT-6.17). Fails
+# Reads only the agent's own posts and the skill (or the line to reload it),
+# through the MCP server (RT-6.17). Fails
 # open: no server, no bus session, no jq, an API error — exit 0 without
 # output, and the session goes on as without the hook.
 set -uo pipefail
