@@ -376,7 +376,8 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     if crown > now and not _at_this_home(uid, home):
         # ADR-002, #258: a crown recorded for another channel is not this home's.
         log.info("crown dropped: claimed in %s, this home is %s", crown_home(uid), home)
-        _save_coord(uid, 0, 0, 0, "")
+        kept = _coord(uid)  # a pending take and a yield stay
+        _save_coord(uid, 0, kept.get("PENDING", 0), kept.get("YIELD_UNTIL", 0), "")
         crown = 0
     if since and crown > now:
         # A silent holder drops the crown; the next agent claims at its slot. It
@@ -404,7 +405,9 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
     if coord is not None and coord.is_file():
         # The beat records the home too (ADR-002, #258): a file from before has none.
         lines = [ln for ln in _read_lines(coord) if not ln.startswith("CROWN_HOME=")]
-        stamp = f"CROWN_HOME={home}\n" if crown and _UID.fullmatch(home) else ""
+        # A home not resolved this beat keeps the recorded one: never adopt a crown blindly.
+        stamp = (f"CROWN_HOME={home or crown_home(uid)}\n"
+                 if crown and _UID.fullmatch(home or crown_home(uid)) else "")
         _write(coord, "".join(f"CROWN_UNTIL={crown}\n" if ln.startswith("CROWN_UNTIL=") else f"{ln}\n"
                               for ln in lines) + stamp)
 

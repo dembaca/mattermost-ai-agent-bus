@@ -84,6 +84,39 @@ async def test_a_matching_project_channel_id_is_the_home(monkeypatch):
     assert await _adapter(monkeypatch, "chat-next").work_channel_id() == B
 
 
+async def test_a_refused_project_channel_id_is_passed_over_once_and_not_read_again(monkeypatch):
+    """RT-6.6, ADR-002: an id the chat refuses (gone, not allowed) is no home:
+    the name decides, and the refusal is kept, no read per call."""
+    from mattermost_ai_agent_bus.model import NotFound
+    monkeypatch.setenv("MM_PROJECT_CHANNEL_ID", B)
+    c = _adapter(monkeypatch, "unused")
+
+    async def refused(cid):
+        c.reads.append(cid)  # type: ignore[attr-defined]
+        raise NotFound("channel: not there (404)")
+
+    monkeypatch.setattr(c, "get_channel", refused)
+    assert await c.work_channel_id() == A
+    assert await c.work_channel_id() == A
+    assert c.reads == [B]  # type: ignore[attr-defined]
+
+
+async def test_a_passing_read_failure_keeps_the_project_channel_id(monkeypatch):
+    """RT-6.6 fail-open, as the shell CLI: a read that fails for a passing
+    reason keeps the id, and the next call reads again."""
+    monkeypatch.setenv("MM_PROJECT_CHANNEL_ID", B)
+    c = _adapter(monkeypatch, "unused")
+
+    async def flaky(cid):
+        c.reads.append(cid)  # type: ignore[attr-defined]
+        raise OSError("connection reset")
+
+    monkeypatch.setattr(c, "get_channel", flaky)
+    assert await c.work_channel_id() == B
+    assert await c.work_channel_id() == B
+    assert c.reads == [B, B]  # type: ignore[attr-defined]
+
+
 async def test_an_id_without_a_project_channel_name_is_taken_unread(monkeypatch):
     """RT-6.6 parity: only the id given, nothing to compare it with: no read."""
     monkeypatch.setenv("MM_PROJECT_CHANNEL_ID", B)

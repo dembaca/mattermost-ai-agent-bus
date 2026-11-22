@@ -1674,8 +1674,9 @@ class MattermostAdapter:
         MM_CHANNEL_ID, the default channel's name. One home (ADR-002, #258):
         MM_PROJECT_CHANNEL_ID counts only while it is the project channel's
         (no name configured, or the id's channel has that name); an id of
-        another channel, or one that cannot be read, is passed over for the
-        name, logged once."""
+        another channel, or of one the chat refuses (gone, not allowed), is
+        passed over for the name, logged once. A read that fails otherwise
+        keeps the id, as the shell CLI does (fail-open)."""
         pid = env("MM_PROJECT_CHANNEL_ID")
         if pid and (not self.project_channel_name or await self._is_home(pid)):
             return pid
@@ -1686,19 +1687,24 @@ class MattermostAdapter:
         return await self.get_channel_id()
 
     async def _is_home(self, channel_id: str) -> bool:
-        """Whether channel_id is the project channel's by its name (#258)."""
+        """Whether channel_id is the project channel's by its name (#258). A
+        definite answer is kept for the process: no read per call."""
+        if channel_id in self._not_home:
+            return False
         try:
             name = (await self.get_channel(channel_id)).name
-        except Exception as exc:  # noqa: BLE001 — the name decides then
-            name, why = "", f"not read: {exc}"
-        else:
-            why = f"is ~{name}"
-        if name and name.lower() == self.project_channel_name.lstrip("~").lower():
+        except (NotFound, NotAllowed) as exc:
+            why = f"is refused: {exc}"
+        except Exception as exc:  # noqa: BLE001 — fail-open, as the shell CLI: the id stays
+            log.info("MM_PROJECT_CHANNEL_ID %s not read now, kept: %s", channel_id, exc)
             return True
-        if channel_id not in self._not_home:
-            self._not_home.add(channel_id)
-            log.warning("MM_PROJECT_CHANNEL_ID %s %s, not ~%s: the home is resolved by its name",
-                        channel_id, why, self.project_channel_name)
+        else:
+            if name.lower() == self.project_channel_name.lstrip("~").lower():
+                return True
+            why = f"is ~{name}"
+        self._not_home.add(channel_id)
+        log.warning("MM_PROJECT_CHANNEL_ID %s %s, not ~%s: the home is resolved by its name",
+                    channel_id, why, self.project_channel_name)
         return False
 
     async def lobby_channel_id(self) -> str:
