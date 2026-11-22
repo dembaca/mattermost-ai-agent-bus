@@ -147,6 +147,11 @@ class WebSocketInbox:
     # then no mark moves, for the snapshot is read from it.
     _unqueued: dict[str, dict[str, int]] | None = field(default_factory=dict, repr=False,
                                                         init=False)
+    # Per channel, the posts handled while the source was down (post id ->
+    # create_at): posts may have come meanwhile that nothing saw, so they join
+    # _behind only once a backfill has read what came after the mark. Like
+    # _behind, it grows only by what is handled, and only after a first connect.
+    _down: dict[str, dict[str, int]] = field(default_factory=dict, repr=False, init=False)
     _queue: asyncio.Queue[ClassifiedEvent] = field(
         default_factory=asyncio.Queue, repr=False, init=False
     )
@@ -322,8 +327,8 @@ class WebSocketInbox:
         """The source is open: the reader starts before the backfill, so a
         post arriving while the backfill reads is not missed (_seen_ids drops
         the doubles)."""
-        await self._before_backfill()
         self._unqueued = None   # no mark moves until the snapshot is read (_settle)
+        await self._before_backfill()
         self._reader = asyncio.create_task(self._read_loop())
         await self._backfill()
 
@@ -353,8 +358,8 @@ class WebSocketInbox:
         path hands over moves no mark until the snapshot is read; then each
         snapshot post holds its channel's mark until it is queued or passed
         here, so a restart in between reads it again (#245). Hand-overs while
-        the source was down move the mark here, once the snapshot is through
-        (#244).
+        the source was down move the mark here, once the snapshot is through;
+        a backfill that cannot read keeps them for the next one (#244).
         """
         try:
             unhandled = await unread.after(self.client)
@@ -364,6 +369,11 @@ class WebSocketInbox:
             return
         self._unqueued = {entry.channel_id: {p.id: p.create_at for p in posts}
                           for entry, posts in unhandled}
+        # What came while the source was down is in the snapshot now: the
+        # posts handled meanwhile may pass the mark as far as it is queued.
+        for cid, handled in self._down.items():
+            self._behind.setdefault(cid, {}).update(handled)
+        self._down = {}
         # Every channel whose newest post is past the read watermark (RT-6.2),
         # read from the mark: never before the bot existed, at most a day back.
         for entry, posts in unhandled:
@@ -408,8 +418,9 @@ class WebSocketInbox:
 
     def _snapshot_through(self) -> None:
         """The backfill's snapshot is queued or passed (or could not be read):
-        the posts handled meanwhile, or while the source was down, move the
-        marks as far as no older post waits (_settle)."""
+        the posts handled meanwhile move the marks as far as no older post
+        waits (_settle); those handled while the source was down join them
+        only after a snapshot was read (_down)."""
         self._unqueued = {}
         for cid in list(self._behind):
             self._settle(cid)
@@ -774,12 +785,15 @@ class WebSocketInbox:
         to that newest one again, not just to itself. Unconnected, or before
         the backfill read its snapshot, nothing moves: the backfill still has
         to read from the mark. The post is remembered all the same, and the
-        mark passes it once the next backfill is through (#244)."""
+        mark passes it once a backfill has read what came meanwhile (#244)."""
         cid, pid, created = post.channel_id, post.id, post.create_at
         if not (self._bot_user_id and cid and pid and created):
             return
         if self._source is None:
             return  # never connected: the first backfill reads from the mark
+        if not self._live():
+            self._down.setdefault(cid, {})[pid] = created
+            return
         if self._unqueued:
             self._unqueued.get(cid, {}).pop(pid, None)
         self._behind.setdefault(cid, {})[pid] = created

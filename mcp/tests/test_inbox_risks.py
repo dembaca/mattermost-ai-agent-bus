@@ -570,3 +570,67 @@ async def test_a_hand_over_while_the_socket_is_down_passes_no_post_that_came_mea
     assert ids(await drain(inbox)) == ["gap"]
     assert watermark.read(BOT)[WORK].post_id == own["id"]
     assert await unread.channels(chat, {WORK}) == []
+
+
+async def test_a_hand_over_before_the_reconnects_backfill_passes_no_post_that_came_meanwhile(
+        chat, dial, inbox):
+    """The read mark (RT-6.2 step 1, #245): at a reconnect the crown is renewed
+    before the backfill (RT-6.6 step 6), and that tick may post: the bot's own
+    post, handled at once. That hand-over, and one while the socket was down,
+    move the mark past no post that came meanwhile: it counts as pending
+    until it is handed over, and comes once."""
+    from mattermost_ai_agent_bus.client import post_of
+    opens = 0
+
+    async def renew_crown() -> None:
+        nonlocal opens
+        opens += 1
+        if opens == 2:   # the reconnect: the tick posts, the server hands it over
+            tick = post("tick", "crown renewed", user_id=BOT)
+            chat.add(tick)
+            inbox.handled(post_of(tick))
+
+    inbox.before_backfill = renew_crown
+    await inbox.ensure_connected()
+    dial.now.feed(ERROR)
+    await until_disconnected(inbox)
+    gap = post("gap", "@agent-me while you were away")
+    chat.add(gap)
+    own = post("own", "on it", user_id=BOT)
+    chat.add(own)
+    inbox.handled(post_of(own))
+    await inbox.ensure_connected()
+    assert watermark.at(BOT, WORK) < gap["create_at"]
+    assert [r.waiting for r in await unread.channels(chat, {WORK})] == [1]
+    assert ids(await drain(inbox)) == ["gap"]
+
+
+async def test_a_backfill_that_cannot_read_lets_no_hand_over_pass_a_missed_post(
+        chat, dial, inbox, monkeypatch):
+    """The read mark (RT-6.2 step 1, #244): what was handed over while the
+    socket was down waits for a backfill that reads what came meanwhile. One
+    that cannot read (Mattermost answers 503) moves the mark past nothing it
+    did not see, and the next reconnect's backfill delivers the missed post."""
+    from mattermost_ai_agent_bus.client import post_of
+    await inbox.ensure_connected()
+    dial.now.feed(ERROR)
+    await until_disconnected(inbox)
+    gap = post("gap", "@agent-me while you were away")
+    chat.add(gap)
+    own = post("own", "on it", user_id=BOT)
+    chat.add(own)
+    inbox.handled(post_of(own))
+    readable = chat.member_channels
+
+    async def unavailable() -> list[UnreadChannel]:
+        raise RuntimeError("503")
+
+    monkeypatch.setattr(chat, "member_channels", unavailable)
+    await inbox.ensure_connected()
+    assert inbox.connected
+    monkeypatch.setattr(chat, "member_channels", readable)
+    assert watermark.at(BOT, WORK) < gap["create_at"]
+    dial.now.feed(ERROR)
+    await until_disconnected(inbox)
+    assert ids(await drain(inbox)) == ["gap"]
+    assert watermark.read(BOT)[WORK].post_id == own["id"]
