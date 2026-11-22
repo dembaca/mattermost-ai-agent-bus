@@ -365,6 +365,47 @@ def test_only_the_composition_root_builds_the_adapter():
     assert found == CLIENT_IMPORTERS
 
 
+def imports_module(source: str, name: str) -> bool:
+    """Any import of the package's module `name`: relative or absolute,
+    module or member, at the top or inside a function."""
+    package = "mattermost_ai_agent_bus"
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.ImportFrom):
+            if node.level == 0 and (node.module or "").split(".")[0] != package:
+                continue  # another package's (http.client)
+            if (node.module or "").split(".")[-1] == name or any(a.name == name for a in node.names):
+                return True
+        elif isinstance(node, ast.Import) and any(a.name == f"{package}.{name}" for a in node.names):
+            return True
+    return False
+
+
+# The entry points (arc42 §5.2): they drive the bus through ChatPort,
+# RegistrationPort and the EventSource, and compose.py builds what stands
+# behind them; the whole server runs on stand-ins (test_server_on_fakes).
+ENTRY_POINTS = ("server.py", "hosted.py", "hookapi.py", "websocket_inbox.py")
+
+
+def test_the_entry_points_import_no_adapter():
+    """Phase 2 of the NATS move (ADR-014): no entry point imports Mattermost's
+    adapter (client.py) or its event source (mattermost_ws.py); only the
+    composition root does."""
+    found = {(f, m) for f in ENTRY_POINTS for m in ("client", "mattermost_ws")
+             if imports_module((SRC / f).read_text(), m)}
+    assert found == set()
+    builders = {f.name for f in sorted(SRC.glob("*.py"))
+                if f.name != "mattermost_ws.py" and imports_module(f.read_text(), "mattermost_ws")}
+    assert builders == {"compose.py"}
+
+
+def test_the_entry_point_guard_sees_an_import():
+    assert imports_module("def f():\n    from .mattermost_ws import Wire\n", "mattermost_ws")
+    assert imports_module("from . import client\n", "client")
+    assert imports_module("import mattermost_ai_agent_bus.client as c\n", "client")
+    assert not imports_module("from .compose import client_from_env\n", "client")
+    assert not imports_module("import http.client\nfrom http import client\n", "client")
+
+
 def test_the_symbols_guard_sees_an_import():
     assert imports_symbols("from . import symbols\n")
     assert imports_symbols("from .symbols import Vocabulary\n")

@@ -9,18 +9,22 @@ the port's signature; what is no port member (the adapter's own attributes)
 goes into a subclass in the test. FakeRegistrar does the same for the
 registration port, FakeEvents for the inbox's event source (events.py);
 frames() reads Mattermost WebSocket messages into events for it, and
-read_frames() hands them to an inbox as its reader does.
+read_frames() hands them to an inbox as its reader does. FakeBus is what
+compose.client_from_env returns in the test of the whole server
+(test_server_on_fakes): FakeChat and a FakeRegistrar on one object.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from mattermost_ai_agent_bus import owners
+from mattermost_ai_agent_bus import owners, ownpost, unanswered
 from mattermost_ai_agent_bus.client import dm_partner, post_of, reaction_of, with_links
-from mattermost_ai_agent_bus.events import ChatEvent
+from mattermost_ai_agent_bus.events import ChatEvent, PostEvent
 from mattermost_ai_agent_bus.ids import mm_name
 from mattermost_ai_agent_bus.mattermost_ws import event_of
 from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, NotFound, Post, Reaction,
@@ -28,6 +32,7 @@ from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, N
 from mattermost_ai_agent_bus.session_file import SessionInfo
 
 if TYPE_CHECKING:
+    from mattermost_ai_agent_bus.compose import BusClient
     from mattermost_ai_agent_bus.events import EventSource
     from mattermost_ai_agent_bus.port import ChatPort
     from mattermost_ai_agent_bus.registration import RegistrationPort
@@ -63,7 +68,7 @@ class FakeChat:
     """
 
     token: str | None = "t"
-    session = None
+    session: SessionInfo | None = None
     work_channel_name = "agents"
     channel_name = ""
     project_channel_name = ""
@@ -468,22 +473,143 @@ class FakeRegistrar:
         return f"kept {name} for claude --continue" if self.keeps_bot_on_exit else f"unregistered {name}"
 
 
+class FakeBus(FakeChat):
+    """A compose.BusClient for tests: FakeChat's chat and a FakeRegistrar's
+    registrar session on one object, as the entry points hold them. The
+    registration members go to `registrar`, whose bot the chat speaks as.
+
+    Unlike FakeChat, the bot's posts are kept: each gets a new id and a later
+    create_at, goes first into `posts` (as channel_posts reads them) and is
+    remembered as the adapter remembers its own posts (client._remember:
+    unanswered.answered, and ownpost.record in the work channel), so the
+    hook API and the exit read back what the server posted.
+    """
+
+    def __init__(self, registrar: FakeRegistrar | None = None, **chat: Any) -> None:
+        self.registrar = registrar or FakeRegistrar()
+        info = self.registrar.info
+        super().__init__(uid=info.user_id, username=info.username, **chat)
+        self.clock = int(time.time() * 1000)  # within the day the bus reads back (unread.DAY_MS)
+        self.serial = 0
+
+    async def member_channels(self) -> list[UnreadChannel]:
+        """The work channel, its newest post the newest in `posts`; then `channels`."""
+        newest = max((p.create_at for p in self._posts() if p.channel_id == WORK), default=0)
+        return [UnreadChannel(WORK, "O", last_post_at=newest, name=self.channel), *self.channels]
+
+    # --- the registration port: the registrar's -----------------------------
+    @property
+    def session(self) -> SessionInfo | None:  # type: ignore[override]
+        return self.registrar.session
+
+    @property
+    def bot_id(self) -> str:
+        return self.registrar.bot_id
+
+    @property
+    def keeps_bot_on_exit(self) -> bool:
+        return self.registrar.keeps_bot_on_exit
+
+    @property
+    def reused(self) -> bool:
+        return self.registrar.reused
+
+    @property
+    def reaped(self) -> list[str]:
+        return self.registrar.reaped
+
+    @property
+    def profile_warning(self) -> str:
+        return self.registrar.profile_warning
+
+    @property
+    def session_file_status(self) -> dict[str, Any]:
+        return self.registrar.session_file_status
+
+    async def session_start(self, name: str, display_name: str | None = None, *,
+                            unique: bool = True) -> SessionInfo:
+        return await self.registrar.session_start(name, display_name, unique=unique)
+
+    async def finish_session_setup(self) -> dict[str, Any]:
+        return await self.registrar.finish_session_setup()
+
+    async def session_end(self, name: str | None = None) -> None:
+        await self.registrar.session_end(name)
+
+    def adopt_sync(self) -> SessionInfo | None:
+        return self.registrar.adopt_sync()
+
+    def keep_sync(self) -> str:
+        return self.registrar.keep_sync()
+
+    def shutdown_sync(self) -> str:
+        return self.registrar.shutdown_sync()
+
+    # --- the bot's posts, kept -----------------------------------------------
+    def _kept(self, message: str, channel_id: str, root_id: str,
+              props: Mapping[str, Any] | None, file_ids: Sequence[str] = ()) -> Post:
+        self.serial += 1
+        self.clock += 1_000
+        post = post_of({"id": f"{self.serial:0>26}", "message": message, "user_id": self.me.id,
+                        "channel_id": channel_id, "root_id": root_id, "create_at": self.clock,
+                        "props": dict(props or {}), "file_ids": list(file_ids)})
+        self.posts.insert(0, post)
+        if self.bot_id:
+            unanswered.answered(self.bot_id, channel_id, post)
+            if channel_id == WORK:
+                ownpost.record(self.bot_id, channel_id, post)
+        return post
+
+    async def post(self, message: str, *, channel_id: str | None = None,
+                   root_id: str | None = None, props: dict[str, Any] | None = None,
+                   file_ids: Sequence[str] = ()) -> Post:
+        """Recorded in `posted` as by FakeChat, kept and remembered."""
+        await super().post(message, channel_id=channel_id, root_id=root_id, props=props,
+                           file_ids=file_ids)
+        return self._kept(message, channel_id or WORK, root_id or "", props, file_ids)
+
+    def post_sync(self, message: str, *, channel_id: str, root_id: str = "",
+                  props: dict[str, Any] | None = None, timeout: float = 5.0) -> Post:
+        """Recorded in `sent_sync` as by FakeChat, kept and remembered."""
+        super().post_sync(message, channel_id=channel_id, root_id=root_id, props=props,
+                          timeout=timeout)
+        return self._kept(message, channel_id, root_id, props)
+
+    def arrive(self, post: Mapping[str, Any]) -> PostEvent:
+        """Someone else's post in the work channel (unless it names another):
+        kept in `posts`, and its event for FakeEvents to deliver."""
+        self.clock += 1_000
+        got = post_of({"channel_id": WORK, "root_id": "", "create_at": self.clock, "props": {}}
+                      | dict(post))
+        self.posts.insert(0, got)
+        return PostEvent(post=got, channel_type="O", edited=False)
+
+
 class FakeEvents:
     """An event source (events.EventSource) for tests: connected as handed in
     (connected by default, so the inbox reads as connected without dialling),
     connected again by open(). Its stream gives `pending`, then ends, or
     raises `error`; its end, and aclose(), leave it not connected, as a
-    real source's do. opens: how often open() ran; closed: close() ran;
+    real source's do. held: the stream does not end when `pending` runs
+    out but waits for push(), as an open socket does, until close().
+    opens: how often open() ran; closed: close() ran;
     typed: each typing indicator sent, as {channel_id, parent_id}."""
 
     def __init__(self, *events: ChatEvent, connected: bool = True,
-                 error: BaseException | None = None) -> None:
+                 error: BaseException | None = None, held: bool = False) -> None:
         self.pending: list[ChatEvent] = list(events)
         self.connected = connected
         self.error = error
+        self.held = held
+        self.more = asyncio.Event()
         self.opens = 0
         self.closed = False
         self.typed: list[dict[str, str]] = []
+
+    def push(self, *events: ChatEvent) -> None:
+        """Events arriving on the open stream."""
+        self.pending.extend(events)
+        self.more.set()
 
     async def open(self) -> None:
         self.opens += 1
@@ -498,6 +624,7 @@ class FakeEvents:
     async def close(self) -> None:
         self.closed = True
         self.connected = False
+        self.more.set()
 
 
 class _FakeStream:
@@ -508,6 +635,9 @@ class _FakeStream:
         return self
 
     async def __anext__(self) -> ChatEvent:
+        while self._source.held and self._source.connected and not self._source.pending:
+            self._source.more.clear()
+            await self._source.more.wait()
         if self._source.pending:
             return self._source.pending.pop(0)
         self._source.connected = False
@@ -542,4 +672,8 @@ if TYPE_CHECKING:
         return fake
 
     def _fake_registrar_is_a_port(fake: FakeRegistrar) -> RegistrationPort:
+        return fake
+
+    def _fake_bus_is_a_bus_client(fake: FakeBus) -> BusClient:
+        """What the entry points hold (compose.BusClient): both ports, one object."""
         return fake
