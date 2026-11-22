@@ -2981,8 +2981,9 @@ no new device approval, `offline_access` for the bus's client alone with
 30 idle days and no maximum lifetime, rotation with reuse detection left
 off with its residual risk named, the revocation path, and the login
 service in Go; the owner maintains and reviews that service himself while it
-runs in the lab (points 6 and 7; of the open points, only who reviews
-besides the owner remains, point 1 below).
+runs in the lab (points 6 and 7). The report's target of at most one
+approval per day and agent falls away; the open points below are those that
+remain.
 Checked in the lab and decided: Mattermost logs in through the
 same Keycloak, and the human is the same name on both sides (point 6).
 Builds on the
@@ -3076,8 +3077,9 @@ separately.
    `compose.py`; the bus logic stays as it is. The MCP instructions keep
    their Mattermost words (`@channel`, reactions): they stay true while
    Mattermost is the humans' chat. The MCP server stays Python; the login service is
-   written in Go (decided by the owner on 2026-11-22), the central adapter's
-   language still open.
+   written in Go (decided by the owner on 2026-11-22). Where it lives is
+   still open, this repository or a new one for the whole bus; the central
+   adapter's language is open too.
 4. **What JetStream carries.** A durable inbox per agent, presence and the
    crown lease as key-value entries with expiry, role addressing, files
    between agents, one NATS account per tenant. The sender is part of the
@@ -3150,23 +3152,25 @@ separately.
      the nkey seed it cannot be replayed.
    - One device approval, then the agent keeps its access as long as the
      refresh token stays valid: `offline_access` for the bus's client only,
-     30 days idle, no maximum lifetime (decided by the owner on 2026-11-22).
-     The bus's ordinary session keeps 4 h idle and 12 h at most; these
-     longer tokens renew the bus client alone. Resuming a session
-     (`--resume` and the like) needs no new device approval while that
-     refresh token is valid (decided by the owner on 2026-11-22).
+     30 days idle and no maximum lifetime (decided by the owner on
+     2026-11-22). The realm's ordinary session is unchanged: 4 h idle and
+     12 h at most; the offline token renews the bus's client alone.
+     Resuming a session (`--resume` and the like) needs no new device
+     approval while that refresh token is valid. A new login is needed after
+     30 idle days or a revocation.
    - Keycloak's refresh-token rotation with reuse detection stays off
      (decided by the owner on 2026-11-22): Keycloak offers the detection
      only for the whole realm, not for one client. The host uses each
      refresh token once and always stores the new one. The residual risk is
      named rather than fixed: nobody notices a reused refresh token. It
      stays small because the token never leaves the host and a revocation
-     takes effect within 15 min.
+     ends the person's access within 15 min.
    - Revocation on suspicion (decided by the owner on 2026-11-22): end the
      bus client's offline sessions in Keycloak, or withdraw the person's
      consent. The first device login checks that the person has the realm
      role `offline_access`.
-   - Why a refresh token of up to 30 idle days on the host is acceptable:
+   - Why a refresh token with 30 idle days and no maximum on the host is
+     acceptable:
      it lives where the bot token lives today (the keyless host session,
      RT-6.18), in the host process and never in a sandbox, and it is
      narrower than a bot token: bound to the bus's client and audience,
@@ -3312,7 +3316,7 @@ connection, without a login service: NATS cannot bind them to "agent X on
 behalf of human Y", to an nkey or to subject rights. Rejected. (e)
 `offline_access` for long sessions: a refresh token that outlives the
 person's session on the host. First rejected for the login without it
-(point 6); decided for the bus client alone on 2026-11-22 (point 7).
+(point 6); adopted on 2026-11-22 for the bus's client alone (point 7).
 (f) A big-bang switch without parallel operation: no way back per channel.
 Rejected for the switch per home channel (point 14). (g) Measure first and
 build only past an abort criterion, as the report recommended: the owner
@@ -3336,11 +3340,15 @@ decided against it (Context).
   14,000 lines of new tests (7,000 to 28,000), for about 25,000 lines of
   production code in all (21,000 to 34,000) against 17,600 today. The
   central adapter is not in these numbers.
-- Plus: a human confirms a device approval once per agent and, while the
-  refresh token lasts, never again; the report's target of at most one
-  approval per day and agent falls away with it (decided by the owner on
+- Plus: a human confirms a device approval once per agent; while the
+  refresh token lasts there is no further approval. The report's target of
+  at most one approval per day and agent falls away (decided by the owner on
   2026-11-22), and the acceptance measures instead how often an approval is
   needed (below).
+- Minus: a refresh token with no maximum lifetime lies on the host, and
+  nobody notices a reuse of it: Keycloak's reuse detection is off, since it
+  is offered per realm only. A revocation or 30 idle days end it, nothing
+  else does.
 - Minus: three new services (NATS, the login service, the central adapter),
   two of them security-critical; the central adapter holds every bot token
   of its tenant and the key for human-origin events in one place.
@@ -3373,7 +3381,8 @@ decided against it (Context).
    `websocket_inbox.py` and `session_file.py` talk only to `ChatPort`;
    registration lies behind `RegistrationPort`; `compose.py` builds the
    adapter. No change of behaviour; all tests green, the whole server runs
-   against the port's fake. Being finished now (Section 5.2).
+   against the port's fake. Built (PRs #237–#256), accepted 2026-11-22
+   (Section 5.2).
 3. **NATS, the login service and the NATS adapter in parallel
    operation.** The lab: NATS JetStream, the bus's public client and the
    approvers' group in the lab's Keycloak realm, the login service rolled
@@ -3387,6 +3396,7 @@ decided against it (Context).
    |----------|----------|--------|--------|
    | Delivery | runs of 100 messages each under fault | no loss; 95th percentile wait no worse than today's bus | one loss |
    | Roles and coordinator | 50 hard stops of the coordinator; 100 human posts under fault | take-over within 30 s at the 95th percentile; nothing handled twice or not at all | handled twice or lost |
+   | Device approvals | the runs of the delivery and role rows counted by how often a human had to approve a login | each agent asked once; a new approval only after 30 idle days or a revocation | a second approval inside 30 days without either |
    | Identity | at least 10 forgery cases: agent as another agent, agent as a human, foreign owner, expired token, and three replays: a Keycloak token replayed at the login service (fails without the nkey), a NATS message replayed (JetStream's message-id dedup), an old approval replayed (the 24 h rule, RT-6.11) | all refused | one passes |
    | No rule relies on order | the inbox risk tests (`mcp/tests/test_inbox_risks.py`) run against the NATS event source too, with messages delivered out of order and redelivered | all pass, nothing lost at a restart | one fails |
    | Unchanged tools | tool schemas compared; the bus's scenarios with unchanged agents | no schema change; at least 90 % of the scenarios unchanged | an agent needs a changed instruction |
@@ -3440,10 +3450,10 @@ failure, among them Mattermost's rate limits for the mirroring bots
 **Open for the owner:**
 
 1. Who besides the owner reviews the security-critical parts (the review,
-   point 15). To be decided before the login service runs beyond a test
-   channel. The owner maintains and reviews the login service himself while
-   it runs in the lab alone and names a second person before it runs
-   elsewhere (decided by the owner on 2026-11-22).
+   point 15; the owner maintains and reviews the login service himself while
+   it runs in the lab, and names a second person before it runs elsewhere,
+   decided by the owner on 2026-11-22). To be decided before the login
+   service runs outside the lab.
 2. Whether wire compatibility with Cotal stays a goal, and whether a
    subject prefix with its name may be used. To be decided before the wire
    format is fixed.
