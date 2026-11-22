@@ -412,12 +412,12 @@ test("RT-6.27 step 4: a check the human overtook is dropped", async () => {
   assert.equal(f.sent.length, 0, "no answer round into the human's new turn")
 })
 
-test("RT-6.27 step 6: after a compaction the own posts as context that starts no run", async () => {
+test("RT-6.27 step 6: after a compaction the own posts and the skill as context that starts no run, not shown", async () => {
   const f = await started()
   answers["/v1/handoff"] = { context: "Your conversation was just compacted." }
   await f.emit("session_compact", { reason: "threshold", willRetry: false, fromExtension: false })
   assert.deepEqual(f.messages, [{ message: { customType: SERVER, content: "Your conversation was just compacted.",
-                                             display: true }, opts: { triggerTurn: false } }])
+                                             display: false }, opts: { triggerTurn: false } }])
   assert.deepEqual(bodies("/v1/stat"), [{ k: "compact", chars: 37 }])
   answers["/v1/handoff"] = { context: "" }
   await f.emit("session_compact", { reason: "manual", willRetry: false, fromExtension: false })

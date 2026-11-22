@@ -514,7 +514,8 @@ export function create(pi: ExtensionAPI, deps: Deps = {}) {
     nudge()
   })
 
-  // After a compaction: the own latest posts as context that starts no run (RT-6.7).
+  // After a compaction: the own latest posts and the bus skill as context that
+  // starts no run, not shown: the human needs neither in the terminal (RT-6.7).
   pi.on("session_compact", async (_event, c) => {
     ctx = c
     t.compacting = 0
@@ -524,7 +525,7 @@ export function create(pi: ExtensionAPI, deps: Deps = {}) {
     if (!text) return
     await stat("compact", { chars: text.length })
     try {
-      pi.sendMessage({ customType: SERVER, content: text, display: true }, { triggerTurn: false })
+      pi.sendMessage({ customType: SERVER, content: text, display: false }, { triggerTurn: false })
     } catch {
       // the next turn goes without it
     }

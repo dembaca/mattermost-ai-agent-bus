@@ -28,7 +28,9 @@ before 0.5.0 are described in the git history.
   asks `GET /v1/handoff?runtime=claude-code` instead of building the text from
   `GET /v1/posts`, so one place words it for all three runtimes. Without own
   posts the skill alone comes back; a server without `SKILL.md` beside it
-  leaves it out.
+  leaves it out. The pi extension adds it without showing it (`display: false`): the
+  human needs neither the skill nor the posts, which are on the bus, in the
+  terminal.
 
 ### Internal
 
