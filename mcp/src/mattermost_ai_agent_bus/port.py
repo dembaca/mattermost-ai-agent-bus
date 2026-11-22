@@ -74,8 +74,9 @@ class ChatPort(Protocol):
     async def join_channel(self, channel_name: str) -> str:
         """The team's channel `channel_name`, joined as the bot (a non-member
         cannot read it; joining twice is harmless): its id. Never creates one:
-        a missing channel raises model.NotFound, one the bot may not join
-        model.NotAllowed."""
+        a missing channel raises model.NotFound, one the bot may not see
+        model.NotAllowed; a refused join itself is logged and the id still
+        returned."""
         ...
 
     async def get_channel(self, channel_id: str) -> Channel:

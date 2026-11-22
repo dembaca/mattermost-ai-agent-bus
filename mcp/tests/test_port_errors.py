@@ -5,29 +5,34 @@ on those, so a later adapter without httpx keeps them."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx
 import pytest
+from fakes import FakeChat
 
 from mattermost_ai_agent_bus import hookapi
 from mattermost_ai_agent_bus.client import MattermostAdapter
-from mattermost_ai_agent_bus.model import NotAllowed, NotFound
+from mattermost_ai_agent_bus.model import NotAllowed, NotFound, Refused
 
+Handler = Callable[[httpx.Request], httpx.Response]
 TEAM = "t" * 26
 HOME = "h" * 26
 CHAN = "c" * 26
 
 
-def _client(status: int) -> tuple[MattermostAdapter, list[str]]:
-    """An adapter whose Mattermost answers `status` to every request."""
+def _client(status: int, handler: Handler | None = None) -> tuple[MattermostAdapter, list[str]]:
+    """An adapter whose Mattermost answers `status` to every request, unless
+    `handler` says otherwise; it sees each request's path first."""
     seen: list[str] = []
 
-    def handler(req: httpx.Request) -> httpx.Response:
+    def answer(req: httpx.Request) -> httpx.Response:
         seen.append(req.url.path)
-        return httpx.Response(status, json={"message": "nope"})
+        return handler(req) if handler else httpx.Response(status, json={"message": "nope"})
 
     c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._team_id = TEAM
-    c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    c._client = httpx.AsyncClient(transport=httpx.MockTransport(answer))
     return c, seen
 
 
@@ -84,19 +89,42 @@ async def test_get_channel_keeps_any_other_failure():
         await c.get_channel(CHAN)
 
 
-async def test_a_join_the_adapter_reports_still_says_which_channel():
-    """RT-6.22 step 2: joining a missing or private channel is reported, never
-    raised, and the reports read as before: the port's typed errors carry them."""
-    c, _ = _client(404)
-    assert await c._join_named("missing", "u" * 26) == {
-        "name": "missing", "joined": False,
-        "error": f"channel 'missing' does not exist in team '{c.team_name}' "
-                 "(check the name; this server never creates channels)"}
-    c, _ = _client(403)
-    assert await c._join_named("private", "u" * 26) == {
-        "name": "private", "joined": False,
-        "error": "cannot join 'private': private channel (a human must add "
-                 "the bot) or joining is denied on this instance"}
+@pytest.mark.parametrize("status,error", [
+    (404, "channel 'x' does not exist in team 'agents' (check the name; this server never creates channels)"),
+    (403, "cannot join 'x': private channel (a human must add the bot) or joining is denied on this instance"),
+    # A dead token, and Mattermost's answer to an invalid name: still a bare
+    # status, never the text that would tell a human to add the bot.
+    (400, "HTTP 400"), (401, "HTTP 401")])
+async def test_a_join_the_adapter_reports_still_says_which_channel(status, error):
+    """RT-6.22 step 2: joining a channel it cannot join is reported, never
+    raised, and each report reads as before the port typed the read."""
+    c, _ = _client(status)
+    assert await c._join_named("x", "u" * 26) == {"name": "x", "joined": False, "error": error}
+
+
+@pytest.mark.parametrize("status", [404, 403, 400, 401])
+async def test_post_still_refuses_when_the_home_does_not_resolve(status):
+    """(3) `post()` looks the home up itself: its typed NotFound or NotAllowed
+    becomes the same Refused a bare status was, status kept, so the callers'
+    `except Refused` still catches it."""
+    c, _ = _client(status)
+    with pytest.raises(Refused) as caught:
+        await c.post("hi")
+    assert caught.value.status == status
+    assert f"({status})" in str(caught.value)
+    assert isinstance(caught.value.__cause__, (NotAllowed, NotFound))
+
+
+async def test_post_reaches_mattermost_once_the_home_resolves():
+    """The same lookup, a home that is there: the post goes out."""
+    def handler(req: httpx.Request) -> httpx.Response:
+        if "/channels/name/" in req.url.path:
+            return httpx.Response(200, json={"id": HOME})
+        return httpx.Response(201, json={"id": "p" * 26, "channel_id": HOME, "message": "hi",
+                                         "create_at": 1})
+
+    c, _ = _client(200, handler)
+    assert (await c.post("hi")).id == "p" * 26
 
 
 async def test_the_hook_api_answers_a_missing_channel_by_its_type():
@@ -119,22 +147,28 @@ async def test_the_hook_api_answers_a_missing_channel_by_its_type():
 
 async def test_the_hook_api_refuses_a_channel_not_the_bots_by_its_type(monkeypatch):
     """(3) `upload_channel` turns NotFound and NotAllowed into the same 403 as
-    before, with no look at an HTTP status."""
+    before, with no look at an HTTP status; any other failure is raised."""
     async def watched(client):
         return set()
 
     monkeypatch.setattr(hookapi, "watched", watched)
+    c = FakeChat()
+    c.missing_channels.add(CHAN)
+    with pytest.raises(hookapi.Forbidden, match="not a channel of the bot") as caught:
+        await hookapi.upload_channel(c, CHAN)
+    assert isinstance(caught.value.__cause__, NotFound)
 
-    class Port:
-        def __init__(self, exc):
-            self.exc = exc
-
+    class Port(FakeChat):
         async def get_channel(self, channel_id):
-            raise self.exc
+            raise NotAllowed(f"channel {channel_id}: the bot may not see it")
 
-    for exc in (NotFound("gone"), NotAllowed("denied")):
-        with pytest.raises(hookapi.Forbidden, match="not a channel of the bot") as caught:
-            await hookapi.upload_channel(Port(exc), CHAN)
-        assert caught.value.__cause__ is exc
+    with pytest.raises(hookapi.Forbidden, match="not a channel of the bot") as caught:
+        await hookapi.upload_channel(Port(), CHAN)
+    assert isinstance(caught.value.__cause__, NotAllowed)
+
+    class Broken(FakeChat):
+        async def get_channel(self, channel_id):
+            raise RuntimeError("down")
+
     with pytest.raises(RuntimeError):
-        await hookapi.upload_channel(Port(RuntimeError("down")), CHAN)
+        await hookapi.upload_channel(Broken(), CHAN)

@@ -96,12 +96,14 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from . import (
-    a2a, asks, attach, channel, files, gate, hosted, lease, life, ownpost, release, session_file, stall, stats, tasks,
-    turnend, unanswered, unread, usage,
+    a2a, asks, attach, channel, files, gate, hosted, lease, life, model, ownpost, release, session_file, stall, stats,
+    tasks, turnend, unanswered, unread, usage,
 )
 from .homes import guest_ids, watched_channel_ids
 from .ids import InvalidId, mm_id, mm_name
-from .model import NotAllowed, NotFound, Post, Refused
+# model.NotAllowed and model.NotFound stay qualified below: attach.NotAllowed,
+# a refused file, is a different one.
+from .model import Post, Refused
 from .session_file import _pid_alive
 
 if TYPE_CHECKING:
@@ -741,7 +743,7 @@ async def _channel(client: ChatPort, chan: str) -> str:
         name = mm_name(chan, "channel")  # InvalidId: a 400, before any request
         try:
             cid = await client.get_channel_id(name)
-        except NotFound as exc:
+        except model.NotFound as exc:
             raise BadRequest(f"no channel {chan} in the team") from exc
     if cid not in await watched(client):
         raise Forbidden("channel: only the work, project, default and guest channels")
@@ -961,7 +963,7 @@ async def upload_channel(client: ChatPort, cid: str) -> str:
         found = await client.get_channel(mm_id(cid, "channel"))
     except InvalidId:
         raise
-    except (NotAllowed, NotFound) as exc:  # not there, or not the bot's: refused, never a 502
+    except (model.NotAllowed, model.NotFound) as exc:  # not there, or not the bot's: refused, never a 502
         raise Forbidden(f"channel {cid}: not a channel of the bot") from exc
     if client.dm_partner(found, await _uid(client)):
         return cid

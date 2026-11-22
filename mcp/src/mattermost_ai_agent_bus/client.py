@@ -298,6 +298,15 @@ def _refused(exc: httpx.HTTPStatusError, what: str = "post") -> Refused:
                    status=exc.response.status_code)
 
 
+def _status_of(exc: BaseException) -> int:
+    """The HTTP status behind a refusal, 0 when there is none: the httpx error
+    itself, or the port's NotFound/NotAllowed, which keep it as their cause."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code
+    cause = exc.__cause__
+    return cause.response.status_code if isinstance(cause, httpx.HTTPStatusError) else 0
+
+
 def _channel_error(exc: httpx.HTTPStatusError, what: str) -> Exception:
     """Mattermost's refusal of a channel read, as the port's own exception: a 404
     (no such channel) and a 400 (Mattermost's answer to an invalid id or name)
@@ -946,16 +955,8 @@ class MattermostAdapter:
             return {"name": name, "id": cid, "joined": True}
         except InvalidId as exc:
             return {"name": name, "joined": False, "error": str(exc)}
-        except NotFound:
-            return {"name": name, "joined": False,
-                    "error": f"channel '{name}' does not exist in team '{self.team_name}' "
-                             "(check the name; this server never creates channels)"}
-        except NotAllowed:
-            return {"name": name, "joined": False,
-                    "error": f"cannot join '{name}': private channel (a human must add "
-                             "the bot) or joining is denied on this instance"}
-        except httpx.HTTPStatusError as exc:  # the join itself: this call's own error
-            code = exc.response.status_code
+        except (NotAllowed, NotFound, httpx.HTTPStatusError) as exc:
+            code = _status_of(exc)  # a 400 and a 401 still read as they did before
             reason = {
                 404: f"channel '{name}' does not exist in team '{self.team_name}' "
                 "(check the name; this server never creates channels)",
@@ -1404,13 +1405,22 @@ class MattermostAdapter:
         file_ids: Sequence[str] = (),
     ) -> Post:
         """Post; Refused when Mattermost will not take it (a root it does not
-        find, no permission): the MCP SDK would hide the error's text.
+        find, no permission, no home channel): the MCP SDK would hide the
+        error's text. The home channel is looked up here, so its typed
+        NotFound or NotAllowed becomes the same Refused a 404 or 403 was.
         file_ids: files uploaded to the post's channel (RT-6.33)."""
         try:
             return await self._post(message, channel_id=channel_id, root_id=root_id, props=props,
                                     file_ids=file_ids)
         except httpx.HTTPStatusError as exc:
             raise _refused(exc) from exc
+        except (NotAllowed, NotFound) as exc:
+            # The cause is Mattermost's own error, so the text and the status
+            # stay those of the status this used to surface.
+            cause = exc.__cause__
+            if isinstance(cause, httpx.HTTPStatusError):
+                raise _refused(cause) from exc
+            raise Refused(str(exc)) from exc
 
     async def upload_file(self, channel_id: str, name: str, data: bytes) -> FileInfo:
         """POST /api/v4/files (multipart) into the channel, as the bot (RT-6.33);
