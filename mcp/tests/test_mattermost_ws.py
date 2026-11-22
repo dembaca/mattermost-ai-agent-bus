@@ -246,6 +246,52 @@ async def test_aclose_disconnects_and_a_cancelled_read_does_not(dialled):
     assert not events.connected
 
 
+async def test_aclose_closes_the_socket_it_forgets(dialled):
+    """#250: a stream the inbox ends (an event failed in its handler) closes
+    the socket, once, and the source reads as not connected."""
+    events = await _opened(dialled, sock := Socket({"event": "hello"}))
+    await events.events().aclose()
+    assert sock.closed and not events.connected
+    await events.events().aclose()  # again: nothing left to close
+    assert sock.closed
+
+
+async def test_a_socket_already_closed_is_not_closed_twice(dialled):
+    """#250: a socket that was closed or dropped elsewhere is left alone."""
+    class Counting(Socket):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.closes = 0
+
+        async def close(self) -> None:
+            self.closes += 1
+            await super().close()
+
+    # Closed by someone else before the stream ended.
+    events = await _opened(dialled, sock := Counting({"event": "hello"}))
+    await sock.close()
+    await events.events().aclose()
+    assert sock.closes == 1
+
+    # Dropped: the stream ended by a failure, the socket is gone already.
+    events = await _opened(dialled, dropped := Counting({"event": "hello"}))
+    dropped.closed = True
+    await events.events().aclose()
+    assert dropped.closes == 0
+
+
+async def test_open_closes_a_socket_still_open_before_dialling(dialled):
+    """#250: open() over a source that is still connected closes the old
+    socket first, so there is never a second connection beside the first."""
+    old = Socket({"event": "hello"})
+    events = await _opened(dialled, old)
+    new = Socket({"event": "hello"})
+    dialled["next"] = new
+    await events.open()
+    assert old.closed and not new.closed and events.connected
+    assert len(dialled["urls"]) == 2
+
+
 async def test_close_closes_the_socket(dialled):
     events = await _opened(dialled, sock := Socket({"event": "hello"}))
     await events.close()

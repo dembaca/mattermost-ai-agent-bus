@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Protocol, runtime_checkable
 
 from websockets.asyncio.client import connect as ws_connect
 
 from .client import post_of, reaction_of, read_links, ws_url_from_http
 from .events import ChatEvent, MembershipEvent, PostEvent, ReactionEvent
+
+log = logging.getLogger(__name__)
 
 # Events that change the bot's channels (RT-6.22): the inbox reads its
 # watched and guest channels again when they name the bot.
@@ -102,6 +105,18 @@ class Wire(Protocol):
     def permalink_base(self) -> str: ...
 
 
+async def _close_quietly(ws: Any) -> None:
+    """Close a socket the source no longer tracks (#250), best effort: a socket
+    that is already closed or dropped is left alone, an error while closing is
+    logged, and the caller goes on either way. `None`: nothing to do."""
+    if ws is None or ws.closed:
+        return
+    try:
+        await ws.close()
+    except Exception as exc:  # noqa: BLE001 — closing must never fail the reader
+        log.info("closing the WebSocket: %s", exc)
+
+
 class MattermostEvents:
     """events.EventSource over Mattermost's WebSocket, as the bot of `client`."""
 
@@ -118,9 +133,13 @@ class MattermostEvents:
 
     async def open(self) -> None:
         """Dial the WebSocket and authenticate; raises RuntimeError without a
-        bot token. Connected from the dial on, the handshake included."""
+        bot token. Connected from the dial on, the handshake included. A
+        socket still open from before is closed first (#250), so the source
+        never holds two connections."""
         if not self.client.token:
             raise RuntimeError("bot token required for WebSocket")
+        previous, self._ws = self._ws, None
+        await _close_quietly(previous)
         self._ws = await ws_connect(ws_url_from_http(self.client.base_url))
         await self._authenticate(self._ws)
 
@@ -189,7 +208,12 @@ class _Frames:
             raise
 
     async def aclose(self) -> None:
+        """Stop reading and close the socket this stream leaves behind (#250):
+        best effort, no exception, and a socket the source already dropped is
+        not closed twice."""
+        ws = self._source._ws
         self._end()
+        await _close_quietly(ws)
 
     def _end(self) -> None:
         self._source._ws = None
