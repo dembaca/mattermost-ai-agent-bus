@@ -33,10 +33,14 @@ async def wired(monkeypatch):
 
     def client_from_env():
         built.append("client")
-        return bus
+        # As the real root does (#255): the wrapper keeps the own posts, so the
+        # server, not the fake, writes the record the Stop hook reads back.
+        return compose.Remembered(bus)
 
     def event_source(client):
-        assert client is bus
+        # The wrapped client, as the real root hands it on (#255).
+        assert isinstance(client, compose.Remembered)
+        assert client.bot_id == bus.bot_id
         built.append("events")
         return source
 
@@ -89,7 +93,8 @@ async def test_the_whole_server_runs_on_stand_ins(wired):
     assert [(i["kind"], i["post"]["id"], i["from_trusted_human"], i["from_agent"], i["trusted_human"])
             for i in items] == [("mention", MENTION, True, False, "dembaca")]
     assert built == ["client", "events"] and source.opens == 1
-    assert server._inbox is not None and server._inbox.client is bus
+    # The inbox holds the client the root handed out, wrapped as in production (#255).
+    assert server._inbox is not None and isinstance(server._inbox.client, compose.Remembered)
 
     # 4. An ask (RT-6.11) and its answer, that human's thumbs-up on the open
     # stream, delivered as the answer; resolve_ask closes the ask.

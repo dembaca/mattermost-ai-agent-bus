@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 from conftest import CHANNEL, PROJECT, ROOT, TEAM
-from mattermost_ai_agent_bus import hookapi, session_file
+from mattermost_ai_agent_bus import compose, hookapi, session_file
 from mattermost_ai_agent_bus.client import MattermostAdapter
 
 POST = "bin/mm-agent-post.sh"
@@ -190,7 +190,7 @@ def server(mm, state: Path, cwd: Path, **env):
     loop = asyncio.new_event_loop()
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
-    client = MattermostAdapter.from_env()
+    client = compose.client_from_env()  # wrapped as the server does (#255)
 
     async def get():
         return client

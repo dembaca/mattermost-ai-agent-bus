@@ -41,7 +41,7 @@ sys.path.insert(0, str(ROOT / "mcp" / "src"))
 for _name in ("CORRAL_SANDBOX", "MM_BUS_MCP_ENDPOINT", "MM_BUS_ENDPOINT", "MM_BUS_KEY"):
     os.environ.pop(_name, None)
 
-from mattermost_ai_agent_bus import hookapi, release, server  # noqa: E402,F401
+from mattermost_ai_agent_bus import compose, hookapi, release, server  # noqa: E402,F401
 from mattermost_ai_agent_bus.client import MattermostAdapter  # noqa: E402
 
 # Scripts that ask the hook API instead of Mattermost: no token in their environment.
@@ -271,7 +271,9 @@ def hook_api(env: dict[str, str], *, write_file: bool = False):
     thread = threading.Thread(target=loop.run_forever, daemon=True)
     thread.start()
     try:
-        client = MattermostAdapter.from_env()
+        # As the server builds it (#255): the wrapper keeps the bus's own-post
+        # record, which the harness reads back after a CLI post.
+        client = compose.client_from_env()
     except RuntimeError:
         client = None
 

@@ -22,7 +22,7 @@ import time
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
-from mattermost_ai_agent_bus import owners, ownpost, unanswered
+from mattermost_ai_agent_bus import owners
 from mattermost_ai_agent_bus.client import dm_partner, post_of, reaction_of, with_links
 from mattermost_ai_agent_bus.events import ChatEvent, PostEvent
 from mattermost_ai_agent_bus.ids import mm_name
@@ -480,9 +480,8 @@ class FakeBus(FakeChat):
 
     Unlike FakeChat, the bot's posts are kept: each gets a new id and a later
     create_at and goes first into `posts` (as channel_posts reads them); one
-    sent with post() is also remembered as the adapter's post() remembers it
-    (client._remember: unanswered.answered, and ownpost.record in the work
-    channel), so the hook API and the exit read back what the server posted.
+    sent with post() is kept; the bus's own bookkeeping is the server's, not
+    the fake's (#255: compose.Remembered wraps whichever port it was handed).
     """
 
     def __init__(self, registrar: FakeRegistrar | None = None, **chat: Any) -> None:
@@ -555,10 +554,6 @@ class FakeBus(FakeChat):
                         "channel_id": channel_id, "root_id": root_id, "create_at": self.clock,
                         "props": dict(props or {}), "file_ids": list(file_ids)})
         self.posts.insert(0, post)
-        if remember and self.bot_id:
-            unanswered.answered(self.bot_id, channel_id, post)
-            if channel_id == WORK:
-                ownpost.record(self.bot_id, channel_id, post)
         return post
 
     async def post(self, message: str, *, channel_id: str | None = None,

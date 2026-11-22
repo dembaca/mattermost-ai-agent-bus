@@ -7,7 +7,7 @@ import json
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import a2a, ownpost, server
+from mattermost_ai_agent_bus import a2a, compose, ownpost, server
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
 from mattermost_ai_agent_bus.model import Me
 
@@ -32,7 +32,9 @@ def client(monkeypatch):
                 **json}
 
     monkeypatch.setattr(c, "_api", api)
-    return c
+    # The bookkeeping is the bus's, not the adapter's (#255): as client_from_env
+    # wraps the adapter, these tests read through the same wrapper.
+    return compose.Remembered(c)
 
 
 @pytest.mark.asyncio

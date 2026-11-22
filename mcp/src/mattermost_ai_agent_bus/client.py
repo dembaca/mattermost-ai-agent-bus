@@ -1478,10 +1478,8 @@ class MattermostAdapter:
         if props:
             body["props"] = attachment_texts(
                 props, lambda s: links.send(s, post_url=base, ask_title=ask_title))
-        post = post_of(read_links(await self._api("POST", "/api/v4/posts", json=body),
+        return post_of(read_links(await self._api("POST", "/api/v4/posts", json=body),
                                   self.permalink_base))
-        await self._remember(cid, post)
-        return post
 
     async def _ask_headlines(self, ids: list[str]) -> dict[str, str]:
         """Other agents' asks by their headline (RT-6.15 step 2), at most
@@ -1530,21 +1528,6 @@ class MattermostAdapter:
 
     async def post_channel_id(self, post_id: str) -> str:
         return (await self._root(post_id))[0]
-
-    async def _remember(self, channel_id: str, post: Post) -> None:
-        """Keep the bot's latest post in the work channel for the Stop hook and
-        the exit handler (ownpost.py); a post in a thread (or DM) answers the
-        posts there that waited for it (unanswered.py, RT-6.2 step 2) — not a
-        line the server writes on its own (a reminder, a permission prompt or
-        verdict, a system reply), nor a pure status such as an IDLE
-        (`unanswered.answers`). Bookkeeping: never fails the post."""
-        try:
-            if self.bot_id:
-                unanswered.answered(self.bot_id, channel_id, post)
-            if self.bot_id and channel_id == await self.work_channel_id():
-                ownpost.record(self.bot_id, channel_id, post)
-        except Exception as exc:  # noqa: BLE001
-            log.info("own post not remembered: %s", exc)
 
     def post_sync(self, message: str, *, channel_id: str, root_id: str = "",
                   props: dict[str, Any] | None = None, timeout: float = 5.0) -> Post:

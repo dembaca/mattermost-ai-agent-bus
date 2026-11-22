@@ -8,7 +8,7 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import a2a, hookapi, server, turnend, unanswered
+from mattermost_ai_agent_bus import compose, a2a, hookapi, server, turnend, unanswered
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
 
@@ -150,7 +150,8 @@ def client(monkeypatch):
         return {"id": f"p{next(posts)}".ljust(26, "0"), "user_id": UID, "create_at": 1000, **json}
 
     monkeypatch.setattr(c, "_api", api)
-    return c
+    # The bookkeeping is compose's, not the adapter's (#255), as in production.
+    return compose.Remembered(c)
 
 
 @pytest.mark.asyncio

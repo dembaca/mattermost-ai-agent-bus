@@ -205,9 +205,6 @@ def _adapter(monkeypatch, posts):
     otherwise). Returns it, the bodies posted and the ids read."""
     sent, reads = [], []
 
-    async def no_bookkeeping(self, cid, post):
-        return None
-
     def handler(req):
         if req.method == "GET":
             pid = req.url.path.rsplit("/", 1)[-1]
@@ -221,7 +218,9 @@ def _adapter(monkeypatch, posts):
         sent.append(json.loads(req.content))
         return httpx.Response(201, json={"id": "n" * 26, **sent[-1]})
 
-    monkeypatch.setattr(MattermostAdapter, "_remember", no_bookkeeping)
+    # The bus's own-post bookkeeping is no part of these tests (#255: it lives in
+    # compose.Remembered, which client_from_env wraps the adapter in); a bare
+    # adapter posts without it.
     monkeypatch.setenv("MM_BOT_USER_ID", "b" * 26)
     c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -350,14 +349,11 @@ async def test_an_asks_card_links_post_ids_and_reads_back_bare(monkeypatch):
     stay plain."""
     sent = []
 
-    async def no_bookkeeping(self, cid, post):
-        return None
-
     def handler(req):
         sent.append(json.loads(req.content))
         return httpx.Response(201, json={"id": "n" * 26, **sent[-1]})
 
-    monkeypatch.setattr(MattermostAdapter, "_remember", no_bookkeeping)
+    # A bare adapter: the bus's own-post bookkeeping is compose's (#255).
     c = MattermostAdapter(base_url="https://mm.example", token="t")
     c._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     pr = "[PR #7](https://forge.example/pull/7)"
