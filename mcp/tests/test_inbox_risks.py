@@ -450,12 +450,6 @@ async def test_a_failed_redial_fails_that_read_and_the_next_one_reconnects(chat,
     assert inbox.connected and len(dial.sockets) == 2 and dial.now.authenticated
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "bug on main: mentions handed over while the socket was down (it dropped "
-    "during the backfill) never move the read mark: handled() skips them "
-    "unconnected, and the reconnect's backfill skips them as seen without "
-    "handling them, so the turn hooks count them as pending, which "
-    "wait_for_events never returns, until a newer post there is handed over"))
 async def test_mentions_handed_over_while_the_socket_was_down_leave_nothing_pending(
         chat, dial, inbox):
     """Risk 3, the read mark (RT-6.2 step 1): the socket drops during the
@@ -466,4 +460,113 @@ async def test_mentions_handed_over_while_the_socket_was_down_leave_nothing_pend
     dial.on_open = [ERROR]
     assert sorted(ids(await drain(inbox))) == ["b1", "b2"]
     assert inbox.connected and len(dial.sockets) == 2   # the last read reconnected
+    assert await unread.channels(chat, {WORK}) == []
+
+
+# 4. The read mark while the backfill runs (#244, #245) ------------------------
+
+
+class SlowBackfill(Chat):
+    """Chat whose posts read (the backfill's snapshot) waits until `go` is
+    set: the live socket is read meanwhile, as when Mattermost answers slowly."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.go = asyncio.Event()
+
+    async def channel_posts(self, channel_id: str, *, per_page: int | None = None,
+                            since_ms: int | None = None) -> list[Post]:
+        await self.go.wait()
+        return await super().channel_posts(channel_id, per_page=per_page, since_ms=since_ms)
+
+
+async def settle() -> None:
+    """Let the live reader catch up with what the socket holds."""
+    for _ in range(100):
+        await asyncio.sleep(0)
+
+
+def guest_inbox(chat: Chat) -> WebSocketInbox:
+    """The home as a guest channel (RT-6.22): a post that does not name the
+    agent is dropped there, and dropped is handled: the mark moves on."""
+    return WebSocketInbox(client=chat, watched_channel_ids={WORK}, guest_channel_ids={WORK})
+
+
+async def test_a_post_dropped_while_the_backfill_reads_keeps_the_mark_before_an_older_one(dial):
+    """The read mark (RT-6.2 step 1, #245): while the backfill still reads,
+    a newer post handled outside the hand-over (here dropped live as not for
+    this agent, RT-6.22) does not move the mark past an older post the
+    backfill has not queued yet. A server that ends in that moment leaves the
+    older post to the next server's backfill, which delivers it."""
+    chat = SlowBackfill()
+    older, newer = post("older", "@agent-me please look"), post("newer")
+    chat.add(older)
+    chat.add(newer)
+    dial.on_open = [posted(newer)]
+    first = guest_inbox(chat)
+    connecting = asyncio.create_task(first.ensure_connected())
+    await settle()
+    assert watermark.at(BOT, WORK) < older["create_at"]
+    connecting.cancel()   # the server ends before its backfill queued `older`
+    with pytest.raises(asyncio.CancelledError):
+        await connecting
+    await first.close()
+    chat.go.set()
+    again = guest_inbox(chat)
+    try:
+        assert ids(await drain(again)) == ["older"]
+    finally:
+        await again.close()
+
+
+async def test_an_edit_seen_before_the_backfill_reaches_its_post_keeps_the_mark_before_it(dial):
+    """The read mark (RT-6.2 step 1, #245): a live edit of a post the backfill
+    has not reached yet queues that post as the edit (RT-6.12 step 3), and the
+    backfill skips it as queued. Until the edit is handed over, a newer post
+    handled meanwhile does not move the mark past it: a server that ends
+    before the hand-over leaves it to the next server's backfill."""
+    chat = SlowBackfill()
+    named = post("named", "@agent-me please look")
+    chat.add(named)
+    dial.on_open = [edited(named, "@agent-me please look, typo fixed")]
+    first = guest_inbox(chat)
+    try:
+        connecting = asyncio.create_task(first.ensure_connected())
+        await settle()        # the edit is read before the backfill reaches its post
+        chat.go.set()
+        await connecting
+        newer = post("newer")
+        chat.add(newer)
+        dial.now.feed(posted(newer))   # not for this agent: dropped, handled
+        await settle()
+        assert watermark.at(BOT, WORK) < named["create_at"]
+    finally:
+        await first.close()   # the server ends before the edit is handed over
+    again = guest_inbox(chat)
+    try:
+        assert ids(await drain(again)) == ["named"]
+    finally:
+        await again.close()
+
+
+async def test_a_hand_over_while_the_socket_is_down_passes_no_post_that_came_meanwhile(
+        chat, dial, inbox):
+    """The read mark (RT-6.2 step 1, #244): what is handled while the socket
+    is down (here the bot's own post) moves the mark only after the
+    reconnect's backfill has queued what came meanwhile: an older mention
+    counts as pending until it is handed over, then the mark ends at the
+    newest post handled."""
+    from mattermost_ai_agent_bus.client import post_of
+    await inbox.ensure_connected()
+    dial.now.feed(ERROR)
+    await until_disconnected(inbox)
+    gap = post("gap", "@agent-me while you were away")
+    chat.add(gap)
+    own = post("own", "on it", user_id=BOT)
+    chat.add(own)
+    inbox.handled(post_of(own))
+    await inbox.ensure_connected()
+    assert [r.waiting for r in await unread.channels(chat, {WORK})] == [1]
+    assert ids(await drain(inbox)) == ["gap"]
+    assert watermark.read(BOT)[WORK].post_id == own["id"]
     assert await unread.channels(chat, {WORK}) == []

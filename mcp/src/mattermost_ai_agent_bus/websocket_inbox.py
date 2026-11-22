@@ -141,6 +141,12 @@ class WebSocketInbox:
     # Per channel, the posts handled while an older one there still waited (post
     # id -> create_at): the read watermark passes them once that one is handled.
     _behind: dict[str, dict[str, int]] = field(default_factory=dict, repr=False, init=False)
+    # Per channel, the posts of the backfill's snapshot it has not queued or
+    # passed yet (post id -> create_at): they hold the read watermark as a
+    # queued post does. None while a backfill has not read its snapshot yet:
+    # then no mark moves, for the snapshot is read from it.
+    _unqueued: dict[str, dict[str, int]] | None = field(default_factory=dict, repr=False,
+                                                        init=False)
     _queue: asyncio.Queue[ClassifiedEvent] = field(
         default_factory=asyncio.Queue, repr=False, init=False
     )
@@ -317,6 +323,7 @@ class WebSocketInbox:
         post arriving while the backfill reads is not missed (_seen_ids drops
         the doubles)."""
         await self._before_backfill()
+        self._unqueued = None   # no mark moves until the snapshot is read (_settle)
         self._reader = asyncio.create_task(self._read_loop())
         await self._backfill()
 
@@ -341,37 +348,30 @@ class WebSocketInbox:
         the pending count still reported it. That mismatch is what made the Stop
         hook block on a message nothing could deliver. Reads what unread.after
         finds past the read watermark, the same posts the count comes from.
+
+        RT-6.2 step 1: the live reader runs meanwhile, and what it or a side
+        path hands over moves no mark until the snapshot is read; then each
+        snapshot post holds its channel's mark until it is queued or passed
+        here, so a restart in between reads it again (#245). Hand-overs while
+        the source was down move the mark here, once the snapshot is through
+        (#244).
         """
         try:
             unhandled = await unread.after(self.client)
         except Exception as exc:  # noqa: BLE001
             log.warning("could not look for missed messages: %s", exc)
+            self._snapshot_through()
             return
+        self._unqueued = {entry.channel_id: {p.id: p.create_at for p in posts}
+                          for entry, posts in unhandled}
         # Every channel whose newest post is past the read watermark (RT-6.2),
         # read from the mark: never before the bot existed, at most a day back.
         for entry, posts in unhandled:
             for unlinked in posts:
                 post = self.client.with_links(unlinked)
-                kind = classify_post(
-                    post,
-                    bot_user_id=self._bot_user_id,
-                    bot_username=self._bot_username,
-                    channel_type=entry.channel_type,
-                    watched_channel_ids=self.watched_channel_ids,
-                )
-                if not kind or await self._drop(post, kind):
-                    continue
-                if post.id in self._seen_ids or await self._ask_mode(post):
-                    continue
-                self._seen_ids.add(post.id)
-                if kind in ADDRESSED:
-                    self._addressed.add(post.id)
-                event = ClassifiedEvent(kind=kind, post=post,
-                                        guest=post.channel_id in self.guest_channel_ids,
-                                        lobby=post.channel_id in self.lobby_channel_ids)
-                await self._gate(event, entry.channel_type)
-                await self._departed(event)
-                await self._put(event)
+                await self._backfill_one(post, entry.channel_type)
+                self._unqueue(post)
+        self._snapshot_through()
         # Reactions to open asks given while nothing was listening.
         for pid in asks.open_asks(self._bot_user_id):
             try:
@@ -381,6 +381,46 @@ class WebSocketInbox:
                 continue
             for reaction in found:
                 await self._queue_reaction(reaction, "")
+
+    async def _backfill_one(self, post: Post, channel_type: str) -> None:
+        """One post of the backfill's snapshot: classified, dropped (RT-6.22),
+        or gated (RT-6.16) and queued, unless it was queued before."""
+        kind = classify_post(
+            post,
+            bot_user_id=self._bot_user_id,
+            bot_username=self._bot_username,
+            channel_type=channel_type,
+            watched_channel_ids=self.watched_channel_ids,
+        )
+        if not kind or await self._drop(post, kind):
+            return
+        if post.id in self._seen_ids or await self._ask_mode(post):
+            return
+        self._seen_ids.add(post.id)
+        if kind in ADDRESSED:
+            self._addressed.add(post.id)
+        event = ClassifiedEvent(kind=kind, post=post,
+                                guest=post.channel_id in self.guest_channel_ids,
+                                lobby=post.channel_id in self.lobby_channel_ids)
+        await self._gate(event, channel_type)
+        await self._departed(event)
+        await self._put(event)
+
+    def _snapshot_through(self) -> None:
+        """The backfill's snapshot is queued or passed (or could not be read):
+        the posts handled meanwhile, or while the source was down, move the
+        marks as far as no older post waits (_settle)."""
+        self._unqueued = {}
+        for cid in list(self._behind):
+            self._settle(cid)
+
+    def _unqueue(self, post: Post) -> None:
+        """The backfill is past this snapshot post (queued, dropped, or queued
+        before): it holds the mark no longer, the posts handled behind it may
+        pass (_settle)."""
+        snapshot = (self._unqueued or {}).get(post.channel_id)
+        if snapshot is not None and snapshot.pop(post.id, None) is not None:
+            self._settle(post.channel_id)
 
     def start_typing(self, channel_id: str, parent_id: str = "") -> None:
         """Show the bot as typing in channel_id (thread parent_id) for a while."""
@@ -439,9 +479,12 @@ class WebSocketInbox:
         # event that failed here. The stream ends, so the source reads as not
         # connected and the next wait_for_events reconnects: otherwise nothing
         # feeds the queue and every later call times out silently — the agent
-        # goes deaf with no error anywhere.
+        # goes deaf with no error anywhere. The handle goes first, and only
+        # while it is this task's: a close that takes a while lets the next
+        # read connect meanwhile, and that connection's reader stays.
+        if self._reader is asyncio.current_task():
+            self._reader = None
         await stream.aclose()
-        self._reader = None
 
     async def _on_event(self, event: ChatEvent) -> None:
         if isinstance(event, ReactionEvent):
@@ -697,11 +740,26 @@ class WebSocketInbox:
                                [e.post for e in events]) for cid, events in found.items()]
 
     def _first_waiting(self, channel_id: str) -> int | None:
-        """create_at of the oldest post of the channel that waits in the queue
-        unhandled (not gated), None for none."""
-        ats = [e.post.create_at for e in self._waiting()
-               if e.post.channel_id == channel_id and not e.gated and e.kind != "reaction"
-               and not e.edited]
+        """create_at of the oldest post of the channel not handed over yet,
+        None for none: one that waits in the queue unhandled (not gated), one
+        of the backfill's snapshot not queued yet, and a queued edit whose post
+        was not handed over (neither behind the mark nor remembered in
+        _behind): its post reached the inbox only as that edit (#245)."""
+        ats = list(((self._unqueued or {}).get(channel_id) or {}).values())
+        behind = self._behind.get(channel_id, {})
+        mark: int | None = None
+        for e in self._waiting():
+            post = e.post
+            if post.channel_id != channel_id or e.gated or e.kind == "reaction":
+                continue
+            if e.edited:
+                if post.id in behind:
+                    continue
+                if mark is None:
+                    mark = watermark.at(self._bot_user_id, channel_id)
+                if post.create_at <= mark:
+                    continue
+            ats.append(post.create_at)
         return min(ats) if ats else None
 
     def handled(self, post: Post) -> None:
@@ -713,13 +771,27 @@ class WebSocketInbox:
         returns them first) never counts as pending again. The newest post the
         mark passed stays remembered too: an older post that arrives later
         pulls the mark back (_put, watermark.hold), and its hand-over moves it
-        to that newest one again, not just to itself. Unconnected, nothing
-        moves: the backfill still has to read from the mark."""
+        to that newest one again, not just to itself. Unconnected, or before
+        the backfill read its snapshot, nothing moves: the backfill still has
+        to read from the mark. The post is remembered all the same, and the
+        mark passes it once the next backfill is through (#244)."""
         cid, pid, created = post.channel_id, post.id, post.create_at
-        if not self._live() or not (self._bot_user_id and cid and pid and created):
+        if not (self._bot_user_id and cid and pid and created):
             return
-        behind = self._behind.setdefault(cid, {})
-        behind[pid] = created
+        if self._source is None:
+            return  # never connected: the first backfill reads from the mark
+        if self._unqueued:
+            self._unqueued.get(cid, {}).pop(pid, None)
+        self._behind.setdefault(cid, {})[pid] = created
+        self._settle(cid)
+
+    def _settle(self, cid: str) -> None:
+        """The channel's mark passes the posts handled there that no older
+        post waits before (_first_waiting), up to the newest of them; only
+        while connected and once the backfill read its snapshot."""
+        behind = self._behind.get(cid)
+        if not behind or not self._live() or self._unqueued is None:
+            return
         first = self._first_waiting(cid)
         ready = [(at, p) for p, at in behind.items() if first is None or at < first]
         if not ready:

@@ -98,3 +98,53 @@ async def test_wait_for_events_waits_for_a_connect_under_way(inbox, monkeypatch)
     await waiter
     # It connected afresh itself (two connections in all) rather than wait on a dead one.
     assert inbox.events.opens == 2 and inbox.connected
+
+
+async def test_a_reader_that_closes_slowly_leaves_the_next_readers_handle(inbox, monkeypatch):
+    """A stream whose close waits (the socket's close handshake): the next
+    read connects meanwhile, and the old reader, ending after it, does not
+    clear the new connection's reader, which close() then still stops."""
+    release = asyncio.Event()
+    streams: list[str] = []
+
+    class Stream:
+        def __init__(self, first: bool) -> None:
+            self.first = first
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.first:   # the first connection ends at once
+                inbox.events.connected = False
+                raise StopAsyncIteration
+            await asyncio.Event().wait()   # the second stays open
+
+        async def aclose(self) -> None:
+            if self.first:
+                await release.wait()
+
+    def events():
+        streams.append("s")
+        return Stream(len(streams) == 1)
+
+    async def no_backfill():
+        return None
+
+    monkeypatch.setattr(inbox.events, "events", events)
+    monkeypatch.setattr(inbox, "_backfill", no_backfill)
+    await inbox.ensure_connected()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert not inbox.connected   # the first stream ended; its close still waits
+    await inbox.ensure_connected()
+    reader = inbox._reader
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert reader is not None and len(streams) == 2
+    release.set()
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert inbox._reader is reader and not reader.done()
+    await inbox.close()
+    assert reader.done()
