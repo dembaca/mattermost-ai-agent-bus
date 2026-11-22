@@ -171,8 +171,12 @@ async def test_guests_are_the_memberships_besides_home_lobby_and_stats(monkeypat
     async def get_channel_id(name=None, team_name=None):
         return {"agents-stats": stats_id}[name]
 
+    async def get_channel(cid):  # MM_PROJECT_CHANNEL_ID is the home's (ADR-002, #258)
+        return Channel(id=cid, name="agents", type="O")
+
     monkeypatch.setattr(c, "member_channels", member_channels)
     monkeypatch.setattr(c, "get_channel_id", get_channel_id)
+    monkeypatch.setattr(c, "get_channel", get_channel)
     assert await c.guest_channel_ids() == {GUEST}
 
 
@@ -190,12 +194,16 @@ async def test_team_default_channels_are_guests_only_when_named(monkeypatch):
     async def get_channel_id(name=None, team_name=None):
         raise LookupError(name)
 
+    async def get_channel(cid):  # MM_PROJECT_CHANNEL_ID is the home's (ADR-002, #258)
+        return Channel(id=cid, name="agents", type="O")
+
     for configured, want in (("agents,guest-a", {GUEST}),
                              ("agents,guest-a,~town-square", {GUEST, square})):
         c = MattermostAdapter(base_url="https://mm.example", token="t",
                               project_channel_name=configured)
         monkeypatch.setattr(c, "member_channels", member_channels)
         monkeypatch.setattr(c, "get_channel_id", get_channel_id)
+        monkeypatch.setattr(c, "get_channel", get_channel)
         assert await c.guest_channel_ids() == want
 
 

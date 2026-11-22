@@ -99,7 +99,8 @@ def _dir(tmp_path):
 
 def coord(tmp_path) -> dict[str, int]:
     f = _dir(tmp_path) / f"coord-{UID}.env"
-    return {k: int(v) for k, v in (ln.split("=") for ln in f.read_text().split())} if f.exists() else {}
+    return ({k: int(v) for k, v in (ln.split("=") for ln in f.read_text().split()) if k != "CROWN_HOME"}
+            if f.exists() else {})
 
 
 def holds() -> bool:
@@ -594,8 +595,10 @@ def test_roster_rows_become_status_words():
 def test_coordinator_posts_start_with_the_crown(tmp_path, monkeypatch):
     """RT-6.6: bot posts never show a status, so the crown goes into the post."""
     _coord_file(tmp_path, monkeypatch, CROWN_UNTIL=int(time.time()) + 600)
-    assert lease.with_crown("ACK", UID) == "\U0001F451 ACK"
-    assert lease.with_crown("\U0001F451 ACK", UID) == "\U0001F451 ACK"
+    # The caller says where the post goes (crown_here); the default is plain (ADR-002, #258).
+    assert lease.with_crown("ACK", UID) == "ACK"
+    assert lease.with_crown("ACK", UID, here=True) == "\U0001F451 ACK"
+    assert lease.with_crown("\U0001F451 ACK", UID, here=True) == "\U0001F451 ACK"
 
 
 def test_no_prefix_without_a_live_crown(tmp_path, monkeypatch):

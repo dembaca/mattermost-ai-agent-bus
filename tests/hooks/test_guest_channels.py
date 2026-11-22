@@ -9,7 +9,7 @@ import os
 import subprocess
 import time
 
-from conftest import CHANNEL, GUEST, PROJECT, ROOT
+from conftest import CHANNEL, GUEST, PROJECT, ROOT, TEAM
 
 STATUS = "bin/mm-agent-status.sh"
 CHANNELS = "bin/mm-agent-channels.sh"
@@ -102,3 +102,27 @@ def test_the_shell_posts_in_a_guest_channel_by_name(mm, run):
     r = run(POST, "--channel", "guest-x", "--root", "r" * 26, "hi", **env)
     assert r.code == 2 and "a reply stays in its root's channel" in r.stderr
     assert len(mm.writes) == n
+
+
+def _work_channel_id(mm, **env: str) -> tuple[str, str]:
+    """mm_work_channel_id against the fake server: (stdout, stderr)."""
+    p = subprocess.run(
+        ["bash", "-c", 'source "$1"; mm_work_channel_id', "_", str(ROOT / "bin" / "mm-agent-lib.sh")],
+        env={"PATH": os.environ["PATH"], "LC_ALL": "C", "LANG": "C", "MM_CHAT_URL": mm.url,
+             "MM_BOT_TOKEN": "bot-token-for-tests", "MM_TEAM_ID": TEAM, "MM_CHANNEL": "agents",
+             "MM_PROJECT_CHANNEL": "proj-x"} | env,
+        capture_output=True, text=True, timeout=30)
+    assert p.returncode == 0, p.stderr
+    # Callers read it with $(…), which drops the trailing newline the name path prints.
+    return p.stdout.rstrip("\n"), p.stderr
+
+
+def test_a_project_channel_id_of_another_channel_is_passed_over(mm):
+    """RT-6.6, ADR-002 (one home): an MM_PROJECT_CHANNEL_ID whose channel has
+    another name than the home's resolves the home by its name; the home's own
+    id, or one whose channel cannot be read (fail-open), is kept."""
+    mm.channel_names = {CHANNEL: "ai-agent-bus-dev", PROJECT: "proj-x"}
+    out, err = _work_channel_id(mm, MM_PROJECT_CHANNEL_ID=CHANNEL)
+    assert out == PROJECT and "is ~ai-agent-bus-dev, not ~proj-x" in err
+    assert _work_channel_id(mm, MM_PROJECT_CHANNEL_ID=PROJECT) == (PROJECT, "")
+    assert _work_channel_id(mm, MM_PROJECT_CHANNEL_ID=GUEST)[0] == GUEST  # not readable: kept

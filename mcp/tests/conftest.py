@@ -70,6 +70,8 @@ def _isolate_bus_env(monkeypatch, tmp_path, request):
     # The bus line each home's header was last checked for (RT-6.6 step 7), and
     # what the ask-mode reader keeps per process (RT-6.25).
     monkeypatch.setattr(lease, "_header_line", {})
+    # The home crown_held compares CROWN_HOME with (ADR-002, #258).
+    monkeypatch.setattr(lease, "_home", [""])
     askroute._looked.clear()
     askroute._fetched.clear()
     # What the mandate reader keeps per process (RT-6.26).

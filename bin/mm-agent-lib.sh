@@ -326,14 +326,27 @@ mm_api() {
 # MM_TEAM) when given, else the home (the first MM_PROJECT_CHANNEL entry,
 # RT-6.22), else the default channel.
 # Prefers resolved ids from the environment and asks the API only for names.
+# One home (ADR-002, #258): MM_PROJECT_CHANNEL_ID counts only while it is the
+# home's. With a home name set it is checked by one read; an id whose channel
+# has another name is passed over for the name (said on stderr). Fail-open: a
+# read that does not go through keeps the id.
 # shellcheck disable=SC2120  # the argument comes from other scripts (stats)
 mm_work_channel_id() {
-  local arg="${1:-}" id="" name="" team_id
+  local arg="${1:-}" id="" name="" team_id home seen
   if [[ -n "$arg" ]]; then
     # Mattermost ids are 26 lowercase alphanumerics; anything else is a name.
     if [[ "$arg" =~ ^[a-z0-9]{26}$ ]]; then id="$arg"; else name="$arg"; fi
   elif [[ -n "${MM_PROJECT_CHANNEL_ID:-}" ]]; then
     id="$MM_PROJECT_CHANNEL_ID"
+    home="$(mm_project_channels | head -n 1 | tr '[:upper:]' '[:lower:]')"
+    if [[ -n "$home" && "$id" =~ ^[a-z0-9]{26}$ ]] \
+        && mm_api GET "/api/v4/channels/${id}" 2>/dev/null && [[ "$MM_API_STATUS" == 200 ]]; then
+      seen="$(jq -r '.name // empty' <<<"$MM_API_BODY" 2>/dev/null || true)"
+      if [[ -n "$seen" && "$seen" != "$home" ]]; then
+        echo "MM_PROJECT_CHANNEL_ID is ~${seen}, not ~${home}: the home is resolved by its name" >&2
+        id="" name="$home"
+      fi
+    fi
   elif [[ -n "$(mm_project_channels)" ]]; then
     name="$(mm_home_channel)"
   elif [[ -n "${MM_CHANNEL_ID:-}" ]]; then

@@ -417,6 +417,8 @@ class MattermostAdapter:
     _channels: dict[str, Channel] = field(
         default_factory=dict, repr=False, init=False
     )
+    # MM_PROJECT_CHANNEL_ID values that are not the project channel (#258), logged once.
+    _not_home: set[str] = field(default_factory=set, repr=False, init=False)
     # user id -> its name, bot mark and deletion: one read fills all (RT-6.16 step 1).
     _accounts: dict[str, Account] = field(default_factory=dict, repr=False, init=False)
     # post id -> (its channel, its root): a post never moves.
@@ -1669,12 +1671,35 @@ class MattermostAdapter:
     async def work_channel_id(self) -> str:
         """The work channel's id, resolved in the shell CLI's order
         (mm_work_channel_id): MM_PROJECT_CHANNEL_ID, the project channel's name,
-        MM_CHANNEL_ID, the default channel's name."""
-        if env("MM_PROJECT_CHANNEL_ID"):
-            return env("MM_PROJECT_CHANNEL_ID")
+        MM_CHANNEL_ID, the default channel's name. One home (ADR-002, #258):
+        MM_PROJECT_CHANNEL_ID counts only while it is the project channel's
+        (no name configured, or the id's channel has that name); an id of
+        another channel, or one that cannot be read, is passed over for the
+        name, logged once."""
+        pid = env("MM_PROJECT_CHANNEL_ID")
+        if pid and (not self.project_channel_name or await self._is_home(pid)):
+            return pid
+        if pid:
+            return await self.get_channel_id()
         if not self.project_channel_name and env("MM_CHANNEL_ID"):
             return env("MM_CHANNEL_ID")
         return await self.get_channel_id()
+
+    async def _is_home(self, channel_id: str) -> bool:
+        """Whether channel_id is the project channel's by its name (#258)."""
+        try:
+            name = (await self.get_channel(channel_id)).name
+        except Exception as exc:  # noqa: BLE001 — the name decides then
+            name, why = "", f"not read: {exc}"
+        else:
+            why = f"is ~{name}"
+        if name and name.lower() == self.project_channel_name.lstrip("~").lower():
+            return True
+        if channel_id not in self._not_home:
+            self._not_home.add(channel_id)
+            log.warning("MM_PROJECT_CHANNEL_ID %s %s, not ~%s: the home is resolved by its name",
+                        channel_id, why, self.project_channel_name)
+        return False
 
     async def lobby_channel_id(self) -> str:
         """MM_CHANNEL's id (ADR-002: the lobby), by the id the host passed or by name."""

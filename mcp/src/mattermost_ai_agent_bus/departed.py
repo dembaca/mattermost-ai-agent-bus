@@ -271,7 +271,9 @@ async def tell(client: ChatPort, post: Post, uid: str,
     """Answer in the post's thread; when that fails, the next mention may try again."""
     root = post.thread
     try:
-        text = lease.with_crown(reply_text(found, client.permalink_base, client.work_channel_name), uid)
+        here = await lease.crown_here(client, uid, post.channel_id, root)
+        text = lease.with_crown(reply_text(found, client.permalink_base, client.work_channel_name), uid,
+                                here=here)
         await client.post(text, channel_id=post.channel_id or None, root_id=root,
                           props={a2a.system_key(): True})
     except Exception as exc:  # noqa: BLE001 — the wake-up stands all the same

@@ -467,13 +467,13 @@ async def observe(client: ChatPort, post: Post, uid: str) -> bool:
         got = parse(post.message) if signed() else None
         if got is None:
             return False
-        home = await client.work_channel_id()
+        home = await lease.home_id(client)  # crown_held below: this home's crown only (#258)
         if (post.channel_id != home or post.root_id or post.type or post.from_webhook
                 or post.delete_at or not post.user_id
                 or post.user_id not in await client.trusted_humans()
                 or post.user_id in await client.agents({post.user_id})):
             return False
-        if not lease.crown_held(uid):
+        if not lease.crown_held(uid):  # this home's crown only (ADR-002, #258)
             _note(("swallowed", post.id), "mandate post %s by a trusted human goes to no agent "
                   "(the registrar's keys are pinned); only the coordinator's server answers it", post.id)
         else:
@@ -481,7 +481,8 @@ async def observe(client: ChatPort, post: Post, uid: str) -> bool:
             posts = (await client.thread(post.id)).posts
             if not any(p.kind == a2a.MANDATE for p in posts):
                 command = f"set ~{name}" + (f" until {until}" if until else "")
-                await client.post(lease.with_crown(_HINT.format(command=command), uid),
+                here = await lease.crown_here(client, uid, post.channel_id)
+                await client.post(lease.with_crown(_HINT.format(command=command), uid, here=here),
                                   root_id=post.id, props=a2a.props(kind=a2a.MANDATE))
         return True
     except Exception as exc:  # noqa: BLE001 — fail open

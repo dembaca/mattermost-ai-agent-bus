@@ -78,6 +78,8 @@ class Bus:
             if path == "/api/v4/users/ids":  # accounts outlive their channel membership
                 names = {ME: "agent-me", OLD: "agent-old", IDLE: "agent-idle", WORKER: "agent-w"}
                 return [{"id": i, "username": names[i]} for i in json if i in names]
+            if path == f"/api/v4/channels/{PROJ}":  # the home's id checked by its name (#258)
+                return {"id": PROJ, "name": "proj", "type": "O"}
             if path == f"/api/v4/channels/{PROJ}/posts":
                 return {"order": [p["id"] for p in self.posts], "posts": {p["id"]: p for p in self.posts}}
             if path.startswith("/api/v4/posts/"):

@@ -439,6 +439,10 @@ async def watch(client: ChatPort) -> float | None:
         log.debug("watch: %s", exc)
         return None
     global _held
+    try:
+        await lease.home_id(client)  # crown_held compares with it: this home's crown only (#258)
+    except Exception as exc:  # noqa: BLE001 — the crown as last resolved
+        log.debug("watch: home not resolved: %s", exc)
     held = lease.crown_held(uid)
     if held and not _held:
         crowned(uid)

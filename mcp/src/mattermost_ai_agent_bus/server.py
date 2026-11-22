@@ -924,7 +924,9 @@ async def bus_info() -> str:
         "channels": await _own_channels(client),
         **({"guests_not_joined": failed}
            if (failed := client.guest_join_failures) else {}),
-        "crown": lease.crown_held(me.id),
+        # RT-6.6, ADR-002: the home whose crown this agent holds (`~name`, true
+        # to a reader that only tests it), else false; never another channel's.
+        "crown": f"~{client.work_channel_name}" if await lease.crown_here(client, me.id) else False,
         # ADR-008 step 3: the last report, and why it does or does not reach the roster.
         "usage": usage.info(),
         # RT-6.25: direct or coordinator, from MM_ASK_ROUTE ("env"), the switching post,
@@ -1505,7 +1507,8 @@ async def announce(
     stats.set_user(me.id)
     text = a2a.styled("\n".join(lines))  # `HELLO`, a blank line, the two lines
     stats.record("post", chars=len(text))
-    post = await client.post(lease.with_crown(_unbroadcast(text)[0], me.id),
+    post = await client.post(lease.with_crown(_unbroadcast(text)[0], me.id,
+                                              here=await lease.crown_here(client, me.id)),
                              props=a2a.props("HELLO", card=card))
     out = await slim.post(client, post)
     warning = await _foreign_coordinator(client, me.id)
@@ -2113,7 +2116,9 @@ async def _post_ask(client: ChatPort, me: Any, *, to: str, head: str, need: str,
     question to the 👑 `to` that falls back to that human (RT-6.25 step 3)."""
     # The question is the card's title, so it stands in the card; the text
     # keeps the mention, which notifies (RT-6.11 step 1).
-    text = lease.with_crown(f"{a2a.symbol(Mark.QUESTION if human else Mark.ASK)} @{to}", me.id)
+    # Top-level in the home (below): the 👑 there only (ADR-002).
+    text = lease.with_crown(f"{a2a.symbol(Mark.QUESTION if human else Mark.ASK)} @{to}", me.id,
+                            here=await lease.crown_here(client, me.id))
     fields = [("For", f"{CROWN} {to}: a question for the coordinator, not for a human; asked of "
                       f"{human} if unanswered for {askroute.wait_sec() // 60} min", False)
               ] if human else []
@@ -2227,7 +2232,9 @@ async def resolve_ask(post_id: str, note: str = "") -> str:
         note, _ = await _unmention(client, note)
         stats.record("post", chars=len(note))
         with unanswered.server_line():  # resolving answered the thread, the note adds nothing
-            await client.post(lease.with_crown(note, me.id), root_id=post_id,
+            await client.post(lease.with_crown(note, me.id,
+                                               here=await lease.crown_here(client, me.id, root_id=post_id)),
+                              root_id=post_id,
                               props=a2a.props(note))
     return _out("resolve_ask", {"ask": post_id, "was_open": was_open})
 

@@ -112,9 +112,10 @@ async def arrived(client: ChatPort, post: Post, uid: str, gated: bool) -> None:
         holder, name, marked = lease.holder()
         if not holding and not (holder and marked):
             return  # no holder seen, or an older plugin's: judged as before
-        home = await client.work_channel_id()
+        home = await lease.home_id(client)
         if post.channel_id != home:
             return
+        holding = lease.crown_held(uid)  # against this home now: its crown only (ADR-002, #258)
         if holding:
             me = (await client.get_me()).username
             cls = (await gate.author_classes(client, [post]))[0]

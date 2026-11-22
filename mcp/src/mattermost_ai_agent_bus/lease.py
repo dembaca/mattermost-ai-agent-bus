@@ -4,8 +4,10 @@ The MCP server keeps them. Mattermost carries them as the bot's user status and
 custom status (emoji, text, expiry), read and written here and in client.py
 only. Two files in the state dir hold the local side: presence-<uid>.env (the
 state and label last reported, STATE / LABEL) and coord-<uid>.env (the crown
-lease CROWN_UNTIL, a pending take, YIELD_UNTIL after a release); the status
-line (bin/mm-agent-statusline.sh) reads CROWN_UNTIL.
+lease CROWN_UNTIL, the home it was claimed in CROWN_HOME, a pending take,
+YIELD_UNTIL after a release); the status line (bin/mm-agent-statusline.sh)
+reads CROWN_UNTIL. The crown is its home's (ADR-002, RT-6.6 step 5): held
+only while CROWN_HOME is this server's home (crown_held).
 
 Every status is a lease of MM_LEASE_SEC (default 900 s). heartbeat() renews it
 every MM_HEARTBEAT_SEC (default 300 s) while the session lives, faster while a
@@ -137,28 +139,63 @@ def _coord(user_id: str) -> dict[str, int]:
     return {k: int(v) for k, v in _read(_file("coord", user_id)).items() if v.isdigit()}
 
 
-def _save_coord(user_id: str, crown_until: int, pending: int, yield_until: int) -> None:
+def _save_coord(user_id: str, crown_until: int, pending: int, yield_until: int,
+                home: str | None = None) -> None:
+    """home: the home the crown is claimed in (CROWN_HOME); None keeps the
+    recorded one. Written only with a crown."""
+    if home is None:
+        home = crown_home(user_id)
     _write(_file("coord", user_id),
-           f"CROWN_UNTIL={crown_until}\nPENDING={pending}\nYIELD_UNTIL={yield_until}\n")
+           f"CROWN_UNTIL={crown_until}\nPENDING={pending}\nYIELD_UNTIL={yield_until}\n"
+           + (f"CROWN_HOME={home}\n" if crown_until and _UID.fullmatch(home) else ""))
 
 
-def crown_held(user_id: str) -> bool:
-    return _coord(user_id).get("CROWN_UNTIL", 0) > time.time()
+# The home's id as this server resolved it last (home_id): what CROWN_HOME is
+# held against; empty until it was resolved once.
+_home: list[str] = [""]
+
+
+async def home_id(client: ChatPort) -> str:
+    """client.work_channel_id, kept for crown_held (ADR-002); raises as it does."""
+    cid = await client.work_channel_id()
+    _home[0] = cid
+    return cid
+
+
+def crown_home(user_id: str) -> str:
+    """The home the crown was claimed in (CROWN_HOME); '' when none is recorded."""
+    return _read(_file("coord", user_id)).get("CROWN_HOME", "")
+
+
+def _at_this_home(user_id: str, home: str | None = None) -> bool:
+    """The recorded CROWN_HOME is `home` (None: this server's, home_id).
+    Before the home is known, or for a file without CROWN_HOME (a server
+    before #258 wrote it; the next beat records it), the lease alone counts."""
+    want, got = _home[0] if home is None else home, crown_home(user_id)
+    return not want or not got or want == got
+
+
+def crown_held(user_id: str, home: str | None = None) -> bool:
+    """This agent holds its home's crown (RT-6.6, ADR-002): the lease runs and
+    it was claimed in this server's home (or `home`). A crown recorded for
+    another channel is none here: never a prefix or a duty there (#258)."""
+    return _coord(user_id).get("CROWN_UNTIL", 0) > time.time() and _at_this_home(user_id, home)
 
 
 def crown_until(user_id: str) -> int:
-    """Epoch until which this agent holds the crown; 0 without one."""
-    return _coord(user_id).get("CROWN_UNTIL", 0)
+    """Epoch until which this agent holds its home's crown; 0 without one
+    (also for a crown recorded for another home)."""
+    return _coord(user_id).get("CROWN_UNTIL", 0) if _at_this_home(user_id) else 0
 
 
 def take_pending(user_id: str) -> bool:
     return _coord(user_id).get("PENDING", 0) == 1
 
 
-def with_crown(message: str, user_id: str, *, here: bool = True) -> str:
+def with_crown(message: str, user_id: str, *, here: bool = False) -> str:
     """Prefix the coordinator's posts: bot posts never show a custom status.
-    here: the post goes where the crown shows (crown_here); False leaves it
-    plain, as a guest's post (ADR-002)."""
+    here: the post goes where the crown shows (crown_here); every caller
+    decides, the default leaves it plain, as a guest's post (ADR-002, #258)."""
     if here and user_id and crown_held(user_id):
         return a2a.with_crown(message)
     return message
@@ -210,9 +247,12 @@ async def crown_here(client: ChatPort, user_id: str, channel_id: str = "",
     if not user_id or not crown_held(user_id):
         return False
     try:
+        home = await home_id(client)
+        if not crown_held(user_id):
+            return False  # claimed in another home (#258)
         if not channel_id and root_id:
             channel_id = await client.post_channel_id(root_id)
-        if not channel_id or channel_id == await client.work_channel_id():
+        if not channel_id or channel_id == home:
             return True
         return await is_direct(client, channel_id)
     except Exception as exc:  # noqa: BLE001 — cosmetic: a plain post
@@ -227,7 +267,7 @@ async def routes(client: ChatPort) -> set[str]:
     there wakes only that channel's own crown, if someone has it as home.
     Empty when the home cannot be resolved."""
     try:
-        return {await client.work_channel_id()}
+        return {await home_id(client)}
     except Exception as exc:  # noqa: BLE001
         log.debug("crown channels: %s", exc)
         return set()
@@ -237,10 +277,14 @@ async def coordinates_in(client: ChatPort, user_id: str, channel_id: str) -> boo
     """This agent holds the crown and acts as coordinator for a post in
     channel_id (RT-6.6 step 5, RT-6.16 step 2): a channel it routes
     (`routes`), a DM or group message, or one it was not told (''). Unsure:
-    as before, the crown counts."""
+    as before, the crown counts. A crown claimed in another home counts
+    nowhere (crown_held, #258)."""
     if not user_id or not crown_held(user_id):
         return False
-    if not channel_id or channel_id in await routes(client):
+    homes = await routes(client)  # resolves the home crown_held compares with
+    if not crown_held(user_id):
+        return False
+    if not channel_id or channel_id in homes:
         return True
     return await is_direct(client, channel_id, unsure=True)
 
@@ -324,6 +368,16 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
         _write(pres, f"STATE={state}\nLABEL={label}\n")
 
     crown = _coord(uid).get("CROWN_UNTIL", 0)
+    try:
+        home = await home_id(client)
+    except Exception as exc:  # noqa: BLE001 — the lease alone then
+        log.debug("status: home not resolved: %s", exc)
+        home = ""
+    if crown > now and not _at_this_home(uid, home):
+        # ADR-002, #258: a crown recorded for another channel is not this home's.
+        log.info("crown dropped: claimed in %s, this home is %s", crown_home(uid), home)
+        _save_coord(uid, 0, 0, 0, "")
+        crown = 0
     if since and crown > now:
         # A silent holder drops the crown; the next agent claims at its slot. It
         # yields one crown lease, not a release's two leases: a silence may end
@@ -348,9 +402,11 @@ async def _set_status(client: ChatPort, state: str, label: str = "") -> None:
                            version=release.segment())
         usage.shown()
     if coord is not None and coord.is_file():
-        lines = _read_lines(coord)
+        # The beat records the home too (ADR-002, #258): a file from before has none.
+        lines = [ln for ln in _read_lines(coord) if not ln.startswith("CROWN_HOME=")]
+        stamp = f"CROWN_HOME={home}\n" if crown and _UID.fullmatch(home) else ""
         _write(coord, "".join(f"CROWN_UNTIL={crown}\n" if ln.startswith("CROWN_UNTIL=") else f"{ln}\n"
-                              for ln in lines))
+                              for ln in lines) + stamp)
 
     try:
         await client.set_presence(uid, presence)
@@ -688,7 +744,7 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
     now, lease = int(time.time()), lease_sec()
     state = _coord(uid)
     crown, pending, yield_until = (state.get(k, 0) for k in ("CROWN_UNTIL", "PENDING", "YIELD_UNTIL"))
-    cid = await client.work_channel_id()
+    cid = await home_id(client)
     if action == "tick":
         await _render(client)
         # Re-read: the renewal may have let an idle crown run out.
@@ -709,7 +765,7 @@ async def _command(client: ChatPort, action: str, passed: list[bool] | None = No
 
     async def take_now() -> None:
         global _crown_since
-        _save_coord(uid, now + crown_lease_sec(), 0, 0)
+        _save_coord(uid, now + crown_lease_sec(), 0, 0, cid)
         _crown_since = now
         await _render(client)
         if crown <= now:
@@ -922,14 +978,14 @@ async def look(client: ChatPort) -> bool:
                 return False
             now = int(time.time())
             state = _coord(uid)
-            cid = await client.work_channel_id()
+            cid = await home_id(client)
             rows = _at_home(await _rows(client, cid), client.work_channel_name)
             free = not any(r["crown"] for r in rows)
             gone = not any(r["id"] == _holder_id and r["reachable"] for r in rows)
             mine = any(r["id"] == uid and r["reachable"] for r in rows) and not _silent(uid)
             if (free and gone and mine and state.get("CROWN_UNTIL", 0) <= now
                     and state.get("YIELD_UNTIL", 0) <= now and uid in (await _election(client, rows)).ids):
-                _save_coord(uid, now + crown_lease_sec(), 0, 0)
+                _save_coord(uid, now + crown_lease_sec(), 0, 0, cid)
                 await _render(client)
                 claimed.append(_coord(uid).get("CROWN_UNTIL", 0) > now)
                 log.info("crown claimed at this agent's slot (ADR-007 step 2)")
@@ -990,7 +1046,7 @@ async def take_over(client: ChatPort, holder_id: str, post_id: str) -> bool:
                 return False
             now = int(time.time())
             state = _coord(uid)
-            cid = await client.work_channel_id()
+            cid = await home_id(client)
             rows = _at_home(await _rows(client, cid), client.work_channel_name)
             held = next((r for r in rows if r["id"] == holder_id), None)
             if (held is None or not held["crown"] or not sets_receipts(held["text"])
@@ -999,7 +1055,7 @@ async def take_over(client: ChatPort, holder_id: str, post_id: str) -> bool:
                     or state.get("CROWN_UNTIL", 0) > now or state.get("YIELD_UNTIL", 0) > now
                     or uid not in (await _election(client, [r for r in rows if r["id"] != holder_id])).ids):
                 return False
-            _save_coord(uid, now + crown_lease_sec(), 0, 0)
+            _save_coord(uid, now + crown_lease_sec(), 0, 0, cid)
             await _render(client)
             if _coord(uid).get("CROWN_UNTIL", 0) <= now:
                 return False
@@ -1023,7 +1079,7 @@ async def _crown_taken(client: ChatPort, cid: str, uid: str, holder_id: str, why
     which yields when it reads it. Never raises."""
     try:
         me = (await client.get_me()).username
-        message = with_crown(f"taken over by `{me}`: {why}", uid)
+        message = with_crown(f"taken over by `{me}`: {why}", uid, here=crown_held(uid))
         props = a2a.props(kind=a2a.CROWN_TAKEN) or {}
         props["a2a"] = {**props.get("a2a", {}), "holder": holder_id}
         stats.record("post", chars=len(message))
@@ -1230,7 +1286,8 @@ async def ctx_line(client: ChatPort) -> None:
         ctx = usage.take_ctx_line()
         if ctx is None:
             return
-        message = with_crown(f"ctx {round(ctx)}% · compaction soon", uid)
+        message = with_crown(f"ctx {round(ctx)}% · compaction soon", uid,
+                             here=await crown_here(client, uid, channel_id))
         stats.record("post", chars=len(message))
         await client.post(message, channel_id=channel_id, root_id=hello,
                           props=a2a.props(kind=a2a.USAGE))

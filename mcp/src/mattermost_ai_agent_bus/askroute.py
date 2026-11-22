@@ -279,8 +279,8 @@ async def _reply_once(client: ChatPort, post_id: str, text: str, uid: str,
     posts = (await client.thread(post_id)).posts if thread_posts is None else thread_posts
     if any(p.kind == a2a.ASK_MODE for p in posts):
         return
-    await client.post(lease.with_crown(text, uid), root_id=post_id,
-                      props=a2a.props(kind=a2a.ASK_MODE))
+    await client.post(lease.with_crown(text, uid, here=await lease.crown_here(client, uid, root_id=post_id)),
+                      root_id=post_id, props=a2a.props(kind=a2a.ASK_MODE))
 
 
 async def _acknowledge(client: ChatPort, post_id: str, mode: str, uid: str, who: str = "") -> None:
@@ -311,7 +311,8 @@ async def _confirm(client: ChatPort, uid: str, home: str) -> None:
                    and head in p.message for p in posts):
             who = _SIGNED.format(who=got.get("SET_BY") or "a trusted human")
             text = _ACK[mode].format(who=who, wait=wait_sec() // 60)
-            await client.post(lease.with_crown(text, uid), channel_id=home,
+            await client.post(lease.with_crown(text, uid, here=await lease.crown_here(client, uid, home)),
+                              channel_id=home,
                               props=a2a.props(kind=a2a.ASK_MODE))
     elif got.get("POST"):
         await _acknowledge(client, got["POST"], mode, uid, got.get("SET_BY", ""))
@@ -328,13 +329,13 @@ async def observe(client: ChatPort, post: Post, uid: str) -> bool:
     if command(post.message) is None:
         return False
     try:
-        home = await client.work_channel_id()
+        home = await lease.home_id(client)  # crown_held below: this home's crown only (#258)
         found = await _switches(client, post, home)
         if found is None:
             return False
         mode, who = found
         if signed():
-            if lease.crown_held(uid):
+            if lease.crown_held(uid):  # the crown of this home only (ADR-002, #258)
                 await _reply_once(client, post.id, _HINT.format(mode=mode), uid)
             return True
         if _store(uid, home, post, mode, who) and lease.crown_held(uid):
@@ -402,7 +403,7 @@ async def _heartbeat(client: ChatPort, uid: str, now: float) -> None:
     REFRESH_SEC (keys pinned), and the 👑's server confirms a kept mode no one
     confirmed yet (one kept while no server held the crown). Never raises."""
     try:
-        home = await client.work_channel_id()
+        home = await lease.home_id(client)
         last = _fetched.get(home)
         if signed() and (last is None or now - last >= REFRESH_SEC):
             await refresh(client, uid, home, now)

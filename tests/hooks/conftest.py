@@ -82,6 +82,8 @@ class FakeMattermost:
     # GET /register/v1/release (RT-6.32): (status, JSON body); None: no such route
     registrar_release: tuple[int, object] | None = None
     uploads: list[dict] = field(default_factory=list)  # POST /api/v4/files (RT-6.33)
+    # GET /api/v4/channels/<id>: channel id -> name; any other id answers 404
+    channel_names: dict[str, str] = field(default_factory=dict)
     url: str = ""
 
     def agent(self, uid: str, username: str, create_at: int, emoji: str = "",
@@ -164,6 +166,8 @@ def _handler(fake: FakeMattermost):
                 if name.startswith("guest"):  # a guest channel (RT-6.22)
                     return self._send({"id": GUEST})
                 return self._send({"id": PROJECT if name.startswith("proj") else CHANNEL})
+            if (m := re.fullmatch(r"/api/v4/channels/([a-z0-9]{26})", p)) and m[1] in fake.channel_names:
+                return self._send({"id": m[1], "name": fake.channel_names[m[1]], "type": "O"})
             if p.startswith("/api/v4/posts/") and p.endswith("/reactions"):
                 return self._send(fake.reactions.get(p.split("/")[4], []))
             if re.fullmatch(r"/api/v4/posts/[a-z0-9]{26}", p):  # a reply's root
