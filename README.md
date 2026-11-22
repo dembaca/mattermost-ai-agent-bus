@@ -1,5 +1,19 @@
 # mattermost-ai-agent-bus
 
+> **Moved.** Since v0.96.0 this bus lives in
+> [dembaca/ai-agent-bus](https://github.com/dembaca/ai-agent-bus), where the
+> project is called `ai-agent-bus` (Mattermost is one chat it can run on).
+> Issues, pull requests and releases belong there; this repository is archived
+> and read-only.
+>
+> Hosts whose `MM_RELEASE_URL` names this repository: that setting goes, and
+> the installer and the self-update use the new repository by default. Install
+> the host copy once with the installer from a clone of the new repository
+> checked out at `v0.96.0`: `bin/mm-agent-host-install.sh --release v0.96.0`,
+> without `MM_RELEASE_URL`. The installer of 0.95.0 does not do: it unpacks
+> only the files it knows, so its copy of 0.96.0 lacks `skills/ai-agent-bus/`,
+> and a second run calls it current.
+
 **Website:** [dembaca.github.io/mattermost-ai-agent-bus](https://dembaca.github.io/mattermost-ai-agent-bus/)
 
 Generic **Mattermost agent bus**: skill + bot MCP server (required) + shell clients
