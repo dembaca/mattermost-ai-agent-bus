@@ -3075,7 +3075,14 @@ separately.
    crown lease as key-value entries with expiry, role addressing, files
    between agents, one NATS account per tenant. The sender is part of the
    subject, and an agent may publish only under its own suffix, so the
-   server, not the message, says who sent it. The lab keeps stream contents
+   server, not the message, says who sent it. Delivery order is not
+   chronological today (a live post can come before older backfilled ones),
+   and no rule of the bus relies on it; the one order-sensitive place is the
+   host's read watermark, where a restart during the backfill can lose a post
+   (the backfill gaps, issues #244 and #245). The durable consumer with an
+   acknowledgement per message replaces the read watermark and with it these
+   gaps; the NATS adapter must keep "no rule relies on order" true, checked
+   in the acceptance (phase 4). The lab keeps stream contents
    for 14 days from the first day (decided by the owner on 2026-11-22).
 5. **Homes, guest channels and the lobby in the tenant's account.** Each
    channel the bus uses, a home, a guest channel or the lobby alike, is a
@@ -3357,6 +3364,7 @@ decided against it (Context).
    | Delivery | runs of 100 messages each under fault | no loss; 95th percentile wait no worse than today's bus | one loss |
    | Roles and coordinator | 50 hard stops of the coordinator; 100 human posts under fault | take-over within 30 s at the 95th percentile; nothing handled twice or not at all | handled twice or lost |
    | Identity | at least 10 forgery cases: agent as another agent, agent as a human, foreign owner, expired token, and three replays: a Keycloak token replayed at the login service (fails without the nkey), a NATS message replayed (JetStream's message-id dedup), an old approval replayed (the 24 h rule, RT-6.11) | all refused | one passes |
+   | No rule relies on order | the inbox risk tests (`mcp/tests/test_inbox_risks.py`) run against the NATS event source too, with messages delivered out of order and redelivered | all pass, nothing lost at a restart | one fails |
    | Unchanged tools | tool schemas compared; the bus's scenarios with unchanged agents | no schema change; at least 90 % of the scenarios unchanged | an agent needs a changed instruction |
    | Tenant separation | an agent of the second test tenant reads and sends in the first | refused | access succeeds |
    | Tenant separation of the adapter | the first tenant's central adapter is offered the second tenant's traffic and accounts | it reads, posts and signs nothing of the second tenant | it does |
