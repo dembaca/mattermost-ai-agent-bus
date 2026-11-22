@@ -22,7 +22,7 @@ code does today and point here where a decision will change them.
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day (hourly while the newest found is older than the running host copy) as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); 0.84.0, decisions (4) and (5) of 2026-11-12: keys pinned once per host in `release-signers` beside `releases/`, `--replace-signers`, `--forget-signers`, a withdrawn version refused unless `--withdrawn-ok` (RT-6.29, RT-6.30); phase 3 built (0.86.0: the registrar distributes the release keys once and names the version, and corral's host copy updates itself to it between sessions, RT-6.32), `latest` built (0.87.0) | – |
 | ADR-012 | Files an agent attaches: the server never opens a path the agent names; the bytes come from inside the sandbox (the shell's `POST /v1/files`, or a small text in the `attach` tool), checked by their bytes, uploaded for a post that takes only this server's fresh uploads | Decided 2026-11-14, built (0.90.0, RT-6.33) | — |
 | ADR-013 | The channel banner shows what waits: the home's 👑 server writes it on a change only, at most once a minute; a stall in red, asks waiting on a human in amber, else the crown and the agents by status; display only, never input; a human's banner is left alone and told to its human; without the licence or the permission everything stays as today; later the 👑 prefix only on asks and routings | Withdrawn (2026-11-16): depends on the Mattermost edition and a permission setting; the header carries the rare facts instead | — |
-| ADR-014 | Agent-to-agent traffic over NATS JetStream; Mattermost stays the humans' chat behind one central adapter per tenant; agents log in through Keycloak (device flow) and a login service issues 15-minute NATS credentials bound to the host's own key; a clean-room build from Cotal's protocol description; tools, hook API and bus logic unchanged behind the ports; parallel operation switched per home channel, the registrar shut down last | Accepted (2026-11-22) by the owner, with the review's recommendations; seven later points open (below), none of them blocks the first NATS code; not built | — |
+| ADR-014 | Agent-to-agent traffic over NATS JetStream; Mattermost stays the humans' chat behind one central adapter per tenant; agents log in through Keycloak (device flow) and a login service issues 15-minute NATS credentials bound to the host's own key; a clean-room build from Cotal's protocol description; tools, hook API and bus logic unchanged behind the ports; parallel operation switched per home channel, the registrar shut down last | Accepted (2026-11-22) by the owner, with the review's recommendations; four later points open (below), none of them blocks the first NATS code; not built | — |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2963,7 +2963,7 @@ until then installations without Enterprise Advanced keep the header line only.
 ## ADR-014: Agent-to-agent traffic over NATS
 
 **Status:** Accepted (2026-11-22) by the owner, with the review's
-recommendations; seven later points open (below), none of them blocks the
+recommendations; four later points open (below), none of them blocks the
 first NATS code; not built. The
 owner's order to
 move to NATS asks for this decision to be recorded before any NATS code is
@@ -2976,7 +2976,13 @@ to everyone (points 6 and 10), agent names from the login service
 (point 6), the credentials and their renewal (point 7) and the signed
 human-origin events (point 10), older plugins supported only until the
 central adapter runs (point 14), and 14 days' stream retention in the lab
-(point 4).
+(point 4). Later the same day, on the credentials: resuming a session needs
+no new device approval, `offline_access` for the bus's client alone with
+30 idle days and no maximum lifetime, rotation with reuse detection left
+off with its residual risk named, the revocation path, and the login
+service in Go; the owner maintains and reviews that service himself while it
+runs in the lab (points 6 and 7; of the open points, only who reviews
+besides the owner remains, point 1 below).
 Checked in the lab and decided: Mattermost logs in through the
 same Keycloak, and the human is the same name on both sides (point 6).
 Builds on the
@@ -3068,9 +3074,9 @@ separately.
    second adapter behind `ChatPort` and `RegistrationPort`, chosen in
    `compose.py`; the bus logic stays as it is. The MCP instructions keep
    their Mattermost words (`@channel`, reactions): they stay true while
-   Mattermost is the humans' chat. The MCP server stays Python;
-   the build team proposes, with reasons, Python or Go for the login service
-   and the central adapter.
+   Mattermost is the humans' chat. The MCP server stays Python; the login service is
+   written in Go (decided by the owner on 2026-11-22), the central adapter's
+   language still open.
 4. **What JetStream carries.** A durable inbox per agent, presence and the
    crown lease as key-value entries with expiry, role addressing, files
    between agents, one NATS account per tenant. The sender is part of the
@@ -3103,8 +3109,9 @@ separately.
    credentials.**
    - A session a human starts logs in with the OAuth device flow against
      the bus's public client in the lab's Keycloak realm: device grant only,
-     an audience of its own, consent, no `offline_access`, no ID token. The
-     human confirms in the browser.
+     an audience of its own, consent, `offline_access` for that client alone
+     (point 7), no ID token. The human confirms in the browser; the consent
+     screen asks for offline access.
    - The client presents the token when it connects to NATS, and NATS asks
      the login service through the auth callout. The login service checks
      it: `aud` and `azp` must both name the bus's client; the owner comes
@@ -3140,16 +3147,29 @@ separately.
      within 15 min.
    - A Keycloak token seen in transit alone cannot make an agent: without
      the nkey seed it cannot be replayed.
-   - One device approval per session start. The session then runs as long
-     as the refresh token does: 4 h idle, which the reconnects every 15 min
-     never reach, and at most the realm's session limit (12 h); after it a
-     new device approval. Keycloak's refresh-token rotation with reuse
-     detection is on: a refresh token used a second time ends the session.
-   - Why a refresh token of up to 4 h on the host is acceptable: it lives
-     where the bot token lives today (the keyless host session, RT-6.18), in
-     the host process and never in a sandbox, and it is narrower: bound to
-     the bus's client and audience, without `offline_access`, and void once
-     a copy is used.
+   - One device approval, then the agent keeps its access as long as the
+     refresh token stays valid: `offline_access` for the bus's client only,
+     30 days idle, no maximum lifetime (decided by the owner on 2026-11-22).
+     The bus's ordinary session keeps 4 h idle and 12 h at most; these
+     longer tokens renew the bus client alone. Resuming a session
+     (`--resume` and the like) needs no new device approval while that
+     refresh token is valid (decided by the owner on 2026-11-22).
+   - Keycloak's refresh-token rotation with reuse detection stays off
+     (decided by the owner on 2026-11-22): Keycloak offers the detection
+     only for the whole realm, not for one client. The host uses each
+     refresh token once and always stores the new one. The residual risk is
+     named rather than fixed: nobody notices a reused refresh token. It
+     stays small because the token never leaves the host and a revocation
+     takes effect within 15 min.
+   - Revocation on suspicion (decided by the owner on 2026-11-22): end the
+     bus client's offline sessions in Keycloak, or withdraw the person's
+     consent. The first device login checks that the person has the realm
+     role `offline_access`.
+   - Why a refresh token of up to 30 idle days on the host is acceptable:
+     it lives where the bot token lives today (the keyless host session,
+     RT-6.18), in the host process and never in a sandbox, and it is
+     narrower than a bot token: bound to the bus's client and audience,
+     granted for offline use alone.
 8. **Long-running agents in the cluster.** A pod presents a projected
    service-account token whose audience is the login service; the login
    service verifies it with a TokenReview and looks the pair (namespace,
@@ -3206,7 +3226,7 @@ separately.
 
     | Registrar duty today | Proposed successor | Note |
     |----------------------|--------------------|------|
-    | Bot accounts and registration per session | central adapter (accounts and their tokens), login service (the agent's name) | per identity or per session: build team to check; the adapter's own account and rights are open for the owner (open point 7 below) |
+    | Bot accounts and registration per session | central adapter (accounts and their tokens), login service (the agent's name) | per identity or per session: build team to check; the adapter's own account and rights are open for the owner (open point 4 below) |
     | Enrollment tokens and the owner binding (`/agent-token`) | fall away: the Keycloak device login and the login service bind the owner | |
     | Owner attestation (RT-6.24) | login service: owner from the Keycloak token, sender pinned in the subject | the adapter shows the owner on the bot |
     | The per-agent trusted-humans list | login service, from the session's configuration, signed into the credential | read by the other agents' servers as today |
@@ -3290,7 +3310,8 @@ accounts per agent (point 11). (d) Keycloak's own tokens on the NATS
 connection, without a login service: NATS cannot bind them to "agent X on
 behalf of human Y", to an nkey or to subject rights. Rejected. (e)
 `offline_access` for long sessions: a refresh token that outlives the
-person's session on the host. Rejected for the login without it (point 6).
+person's session on the host. First rejected for the login without it
+(point 6); decided for the bus client alone on 2026-11-22 (point 7).
 (f) A big-bang switch without parallel operation: no way back per channel.
 Rejected for the switch per home channel (point 14). (g) Measure first and
 build only past an abort criterion, as the report recommended: the owner
@@ -3314,9 +3335,11 @@ decided against it (Context).
   14,000 lines of new tests (7,000 to 28,000), for about 25,000 lines of
   production code in all (21,000 to 34,000) against 17,600 today. The
   central adapter is not in these numbers.
-- Minus: a human confirms a device approval at every session start and
-  again past the realm's session limit (12 h); the report's trial aimed at
-  at most one approval per day and agent.
+- Plus: a human confirms a device approval once per agent and, while the
+  refresh token lasts, never again; the report's target of at most one
+  approval per day and agent falls away with it (decided by the owner on
+  2026-11-22), and the acceptance measures instead how often an approval is
+  needed (below).
 - Minus: three new services (NATS, the login service, the central adapter),
   two of them security-critical; the central adapter holds every bot token
   of its tenant and the key for human-origin events in one place.
@@ -3415,22 +3438,18 @@ failure, among them Mattermost's rate limits for the mirroring bots
 
 **Open for the owner:**
 
-1. Whether resuming a session counts as a session start and needs a new
-   device approval. To be decided before the login service is built.
-2. Who besides the owner reviews the security-critical parts (the review,
+1. Who besides the owner reviews the security-critical parts (the review,
    point 15). To be decided before the login service runs beyond a test
-   channel.
-3. Whether wire compatibility with Cotal stays a goal, and whether a
+   channel. The owner maintains and reviews the login service himself while
+   it runs in the lab alone and names a second person before it runs
+   elsewhere (decided by the owner on 2026-11-22); who owns the port rework
+   is still open.
+2. Whether wire compatibility with Cotal stays a goal, and whether a
    subject prefix with its name may be used. To be decided before the wire
    format is fixed.
-4. When the shutdown (phase 6) follows the central adapter. To be decided
+3. When the shutdown (phase 6) follows the central adapter. To be decided
    before the shutdown.
-5. Whether the acceptance keeps the report's target of at most one device
-   approval per day and agent. To be decided before the login service is
-   built.
-6. Which of the maintainers owns the login service and the port rework.
-   To be decided before the login service is built.
-7. Which Mattermost account the central adapter (phase 5) uses to create
+4. Which Mattermost account the central adapter (phase 5) uses to create
    the agents' bot accounts, with which rights, and where its credentials
    are kept. Today the registrar does it with an account of its own that
    may create bots (deployment view, the registrar's requirements). The
@@ -3444,8 +3463,8 @@ behaviour without an acknowledgement and after a long rest (acknowledgement
 wait, maximum deliveries, inactivity threshold); NATS's resource needs on
 Kubernetes; whether a
 key-value entry's expiry is reported to watchers (for the crown lease);
-noticing at once that an agent is gone; the language of the login service
-and the central adapter; a bot account per agent identity or per session;
+noticing at once that an agent is gone; the central adapter's language; a
+bot account per agent identity or per session;
 the exact subjects and streams of the channel mapping (point 5), and how a
 guest channel a human adds the bot to in Mattermost enters the credential;
 where a server learns a human's group membership before the central
