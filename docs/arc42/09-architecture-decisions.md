@@ -3437,8 +3437,8 @@ failure, among them Mattermost's rate limits for the mirroring bots
    adapter's account is a decision of its own, because whoever holds it can
    create any bot. The owner decides it as a question of its own: the
    account, its rights and where its credentials lie appear in no place of
-   this repository. To be decided before the central adapter is built
-   (phase 5).
+   this repository. To be decided before the central adapter (phase 5) is
+   built.
 
 Open for the build team, reported to the owner: the NATS consumers'
 behaviour without an acknowledgement and after a long rest (acknowledgement
