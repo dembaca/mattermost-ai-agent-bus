@@ -39,7 +39,7 @@ class ChatPort(Protocol):
 
     @property
     def session(self) -> BotSession | None:
-        """The bot this server registered, None when it adopted or was given one."""
+        """The bot this server registered or took over; None when it was given one."""
         ...
 
     @property

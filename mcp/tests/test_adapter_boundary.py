@@ -185,10 +185,16 @@ def test_the_adapter_has_every_port_member():
 
 
 def test_the_adapter_has_every_registration_member():
+    """Each with the port's signature: mypy's structural check lets a
+    default or an extra defaulted parameter drift."""
     from mattermost_ai_agent_bus.client import MattermostAdapter
+    from mattermost_ai_agent_bus.registration import RegistrationPort
     missing = {m for m in _registration_members()
                if not hasattr(MattermostAdapter, m) and m not in MattermostAdapter.__dataclass_fields__}
     assert missing == set()
+    for name in sorted(_registration_members()):
+        if callable(inspect.getattr_static(MattermostAdapter, name, None)):
+            assert _signature(MattermostAdapter, name) == _signature(RegistrationPort, name), name
 
 
 def test_the_registration_port_imports_no_adapter():
@@ -261,9 +267,9 @@ def test_the_fake_has_every_port_member():
 
 
 def test_the_fake_registrar_is_the_registration_port():
-    """fakes.FakeRegistrar stands in for the registration port: exactly its
-    members, the methods with its signatures; plain values stand for its
-    properties."""
+    """fakes.FakeRegistrar stands in for the registration port: every member
+    of it; its public methods and properties are the port's, with its
+    signatures; plain values stand for the port's other properties."""
     from fakes import FakeRegistrar
     from mattermost_ai_agent_bus.registration import RegistrationPort
 

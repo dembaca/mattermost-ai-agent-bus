@@ -5,9 +5,9 @@ are no chat operations (port.py): they go to the registrar with
 MM_REG_SECRET, or with the bot's own token to remove it, before a chat
 session exists and after it ended. RegistrationPort names what the entry
 points (server.py, hosted.py) drive of it, so that no bus-logic module can
-create or remove a bot. client.MattermostAdapter implements it; in this phase
-the same object holds the chat port, since a new bot's token and the chat
-caches change together (RT-6.1, RT-6.10, RT-6.18).
+create or remove a bot. client.MattermostAdapter implements it; in this phase the same object holds the chat port, since a
+new bot's token and the chat caches change together (RT-6.1, RT-6.10,
+RT-6.18).
 
 The members are the ones the entry points call, nothing more.
 """
@@ -74,7 +74,10 @@ class RegistrationPort(Protocol):
 
     async def finish_session_setup(self) -> dict[str, Any]:
         """Join the home and the guest channels and empty the new bot's inbox
-        (RT-6.22): what each join did; reports a failure, never raises."""
+        (RT-6.22): what each join did, as the session_start tool reports it;
+        reports a failure, never raises. The chat's part of a session start,
+        here until it gets a typed result (a port gives back no JSON): then
+        it moves to the chat port, beside guest_join_failures."""
         ...
 
     async def session_end(self, name: str | None = None) -> None:
@@ -88,11 +91,12 @@ class RegistrationPort(Protocol):
 
     def keep_sync(self) -> str:
         """Leave the bot to the host session hooks (RT-6.18 step 9): offline
-        only. Best effort, never raises; the outcome for the log."""
+        only (the chat's presence, the one chat write here). Best effort,
+        never raises; the outcome for the log."""
         ...
 
     def shutdown_sync(self) -> str:
         """At the process's exit, without an event loop: keep the bot for
-        the next server or unregister it (RT-6.10). Best effort, never
-        raises; the outcome for the log."""
+        the next server or unregister it (RT-6.10), offline first in the
+        chat. Best effort, never raises; the outcome for the log."""
         ...

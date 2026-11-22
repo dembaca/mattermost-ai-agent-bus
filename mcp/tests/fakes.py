@@ -381,9 +381,12 @@ class FakeRegistrar:
 
     info: the bot session_start registers; kept: the bot of an ended server
     that adopt_sync takes over (None: none); keeps: whether the bot outlives
-    the server (keeps_bot_on_exit); setup: what finish_session_setup reports.
-    calls: what was asked of it, in order. Like FakeChat it has only the
-    port's members, each with the port's signature.
+    the server (keeps_bot_on_exit); setup: what finish_session_setup
+    reports. calls: what was asked of it, in order.
+    Its public methods are the port's, each with the port's signature.
+    Unlike the adapter, keeps is a free flag (the adapter derives it from the
+    session and its file) and session_end never raises (the adapter does
+    without a name and a bot).
     """
 
     def __init__(self, *, info: SessionInfo | None = None, kept: SessionInfo | None = None,

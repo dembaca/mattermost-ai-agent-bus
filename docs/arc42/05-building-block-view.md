@@ -155,7 +155,12 @@ port, `RegistrationPort` (`registration.py`), names what they drive: start,
 take over, keep and end the bot (`session_start`, `finish_session_setup`,
 `adopt_sync`, `keep_sync`, `shutdown_sync`, `session_end`), whether the bot
 outlives the server (`keeps_bot_on_exit`), and what the last start did
-(`reused`, `reaped`, `profile_warning`, `session_file_status`). For now the
-same `MattermostAdapter` implements both ports, since a new bot's token and the
-chat's caches change together; a later chat adapter brings its own
-registration with it (mypy checks the adapter against both).
+(`reused`, `reaped`, `profile_warning`, `session_file_status`). Two parts of
+it are the chat's: a new bot joining its channels (`finish_session_setup`),
+which moves to `ChatPort` once it has a typed result instead of the tool's
+JSON, and going offline, the one chat write of `keep_sync` and
+`shutdown_sync`.
+For now the same `MattermostAdapter` implements both ports, since a new bot's
+token and the chat's caches change together; a later registration adapter
+implements `RegistrationPort` on its own (mypy checks the adapter against
+both, `test_adapter_boundary` its signatures).
