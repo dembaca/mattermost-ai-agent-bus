@@ -39,6 +39,13 @@ class _FakeClient:
             raise RuntimeError(f"channel {name!r} does not exist")
         return f"cid-{name}"
 
+    async def lobby_channel_id(self):
+        """No lobby of its own: the home (homes.lobby_ids leaves it out)."""
+        return await self.work_channel_id()
+
+    async def guest_channel_ids(self):
+        return set()
+
 
 @pytest.fixture(autouse=True)
 def _no_channel_ids(monkeypatch):
