@@ -29,7 +29,7 @@ from . import (
     profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unanswered, unread, usage,
 )
 from .a2a import attachment_props, props_view, with_debug
-from .client import MattermostAdapter, dm_partner
+from .client import MattermostAdapter
 from .homes import guest_ids
 from .ids import InvalidId, mm_id, mm_name
 from .model import Answer, Mark, Post, Refused
@@ -1369,7 +1369,7 @@ async def _debug_allowed(client: MattermostAdapter, channel_id: str, uid: str) -
     None in a guest channel, the lobby or a group message."""
     if channel_id == await client.work_channel_id():
         return frozenset(debug.CATEGORIES)
-    partner = dm_partner(await client.get_channel(channel_id), uid)
+    partner = client.dm_partner(await client.get_channel(channel_id), uid)
     if not partner:
         return None
     if partner in await client.trusted_humans() or (

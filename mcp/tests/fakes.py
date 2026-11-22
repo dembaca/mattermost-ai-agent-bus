@@ -16,7 +16,7 @@ from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from mattermost_ai_agent_bus import owners
-from mattermost_ai_agent_bus.client import post_of, reaction_of
+from mattermost_ai_agent_bus.client import dm_partner, post_of, reaction_of
 from mattermost_ai_agent_bus.ids import mm_name
 from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, Post, Reaction,
                                            Thread, UnreadChannel)
@@ -184,6 +184,10 @@ class FakeChat:
     async def humans_among(self, names: set[str]) -> set[str]:
         people = self._people()
         return {n for n in names if n.lower() in people}
+
+    def dm_partner(self, channel: Channel, me: str) -> str:
+        """Mattermost's rule: a DM is named `<id>__<id>`."""
+        return dm_partner(channel, me)
 
     async def direct_channel_with(self, user_id: str) -> str:
         """A DM id made from the user id, added to `dms`."""

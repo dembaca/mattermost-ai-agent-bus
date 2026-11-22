@@ -1286,6 +1286,9 @@ class MattermostAdapter:
             raise ValueError(f"{name} is a person: ask people with ask_human")
         return await self.direct_channel_with(found[0]["id"])
 
+    def dm_partner(self, channel: Channel, me: str) -> str:
+        return dm_partner(channel, me)
+
     async def direct_channel_with(self, user_id: str) -> str:
         """The DM channel id between this bot and a user id; no checks."""
         me = await self.get_me()

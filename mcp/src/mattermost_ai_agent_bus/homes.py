@@ -48,11 +48,8 @@ async def lobby_ids(client: ChatPort) -> set[str]:
     """The lobby (ADR-002, RT-6.22 step 3): MM_CHANNEL's id while it is not the
     home. None when it is the home (no project channel) or cannot be resolved:
     then its posts follow the home's rules, as before 0.63.0."""
-    lobby = getattr(client, "lobby_channel_id", None)
-    if lobby is None:  # a test's stand-in without a lobby
-        return set()
     try:
-        cid, home = await lobby(), await client.work_channel_id()
+        cid, home = await client.lobby_channel_id(), await client.work_channel_id()
     except Exception as exc:  # noqa: BLE001
         log.warning("could not resolve the lobby: %s", exc)
         return set()
@@ -62,11 +59,8 @@ async def lobby_ids(client: ChatPort) -> set[str]:
 async def guest_ids(client: ChatPort) -> set[str]:
     """client.guest_channel_ids, none when the memberships cannot be read
     (RT-6.22): the home and the lobby still count."""
-    guests = getattr(client, "guest_channel_ids", None)
-    if guests is None:  # a test's stand-in without memberships
-        return set()
     try:
-        return set(await guests())
+        return set(await client.guest_channel_ids())
     except Exception as exc:  # noqa: BLE001
         log.warning("could not read the guest channels: %s", exc)
         return set()

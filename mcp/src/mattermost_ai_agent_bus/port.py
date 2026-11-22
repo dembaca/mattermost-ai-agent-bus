@@ -143,6 +143,11 @@ class ChatPort(Protocol):
         names count as no one."""
         ...
 
+    def dm_partner(self, channel: Channel, me: str) -> str:
+        """The other account of a DM channel, by user id; '' for any other
+        channel or a DM with oneself (`me`)."""
+        ...
+
     async def direct_channel_with(self, user_id: str) -> str:
         """The DM channel id between this bot and a user id; no checks."""
         ...
