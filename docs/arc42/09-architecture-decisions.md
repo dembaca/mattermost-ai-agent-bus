@@ -22,7 +22,7 @@ code does today and point here where a decision will change them.
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day (hourly while the newest found is older than the running host copy) as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); 0.84.0, decisions (4) and (5) of 2026-11-12: keys pinned once per host in `release-signers` beside `releases/`, `--replace-signers`, `--forget-signers`, a withdrawn version refused unless `--withdrawn-ok` (RT-6.29, RT-6.30); phase 3 built (0.86.0: the registrar distributes the release keys once and names the version, and corral's host copy updates itself to it between sessions, RT-6.32), `latest` built (0.87.0) | – |
 | ADR-012 | Files an agent attaches: the server never opens a path the agent names; the bytes come from inside the sandbox (the shell's `POST /v1/files`, or a small text in the `attach` tool), checked by their bytes, uploaded for a post that takes only this server's fresh uploads | Decided 2026-11-14, built (0.90.0, RT-6.33) | — |
 | ADR-013 | The channel banner shows what waits: the home's 👑 server writes it on a change only, at most once a minute; a stall in red, asks waiting on a human in amber, else the crown and the agents by status; display only, never input; a human's banner is left alone and told to its human; without the licence or the permission everything stays as today; later the 👑 prefix only on asks and routings | Withdrawn (2026-11-16): depends on the Mattermost edition and a permission setting; the header carries the rare facts instead | — |
-| ADR-014 | Agent-to-agent traffic over NATS JetStream; Mattermost stays the humans' chat behind one central adapter per tenant; agents log in through Keycloak (device flow) and a login service issues 15-minute NATS credentials bound to the host's own key; a clean-room build from Cotal's protocol description; tools, hook API and bus logic unchanged behind the ports; parallel operation switched per home channel, the registrar shut down last | Proposed (2026-11-22), a draft, not built; the security model and older plugins decided by the owner on 2026-11-22, stream retention pending | — |
+| ADR-014 | Agent-to-agent traffic over NATS JetStream; Mattermost stays the humans' chat behind one central adapter per tenant; agents log in through Keycloak (device flow) and a login service issues 15-minute NATS credentials bound to the host's own key; a clean-room build from Cotal's protocol description; tools, hook API and bus logic unchanged behind the ports; parallel operation switched per home channel, the registrar shut down last | Proposed (2026-11-22); all open points decided by the owner on 2026-11-22; to be accepted with this PR's merge; not built | — |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2962,7 +2962,8 @@ until then installations without Enterprise Advanced keep the header line only.
 
 ## ADR-014: Agent-to-agent traffic over NATS
 
-**Status:** Proposed (2026-11-22), a draft; not built. The owner's order to
+**Status:** Proposed (2026-11-22); all open points decided by the owner on
+2026-11-22; to be accepted with this PR's merge; not built. The owner's order to
 move to NATS asks for this decision to be recorded before any NATS code is
 merged. Decided by the owner: one central adapter per tenant (point 1), the
 visibility setting per home (point 12), no unattended starts outside the
@@ -2971,9 +2972,9 @@ cluster (point 8), building without measuring first (Context), and on
 approvers' group and the session's trusted list, with starting agents open
 to everyone (points 6 and 10), agent names from the login service
 (point 6), the credentials and their renewal (point 7) and the signed
-human-origin events (point 10), and older plugins supported only until the
-central adapter runs (point 14). Still proposed, pending the owner: the
-stream retention (point 4).
+human-origin events (point 10), older plugins supported only until the
+central adapter runs (point 14), and 14 days' stream retention in the lab
+(point 4).
 Checked in the lab and decided: Mattermost logs in through the
 same Keycloak, and the human is the same name on both sides (point 6).
 Builds on the
@@ -3073,7 +3074,7 @@ separately.
    between agents, one NATS account per tenant. The sender is part of the
    subject, and an agent may publish only under its own suffix, so the
    server, not the message, says who sent it. The lab keeps stream contents
-   for 14 days from the first day (proposed, pending the owner).
+   for 14 days from the first day (decided by the owner on 2026-11-22).
 5. **Homes, guest channels and the lobby in the tenant's account.** Each
    channel the bus uses, a home, a guest channel or the lobby alike, is a
    channel of the protocol description inside the tenant's NATS account,
@@ -3404,18 +3405,16 @@ failure, among them Mattermost's rate limits for the mirroring bots
 
 **Open for the owner:**
 
-1. One recommendation of 2026-11-22 awaits the owner's confirmation: the
-   stream retention (point 4).
-2. Whether resuming a session counts as a session start and needs a new
+1. Whether resuming a session counts as a session start and needs a new
    device approval.
-3. Who besides the owner reviews the security-critical parts (the review,
+2. Who besides the owner reviews the security-critical parts (the review,
    point 15).
-4. Whether wire compatibility with Cotal stays a goal, and whether a
+3. Whether wire compatibility with Cotal stays a goal, and whether a
    subject prefix with its name may be used.
-5. When the shutdown (phase 6) follows the central adapter.
-6. Whether the acceptance keeps the report's target of at most one device
+4. When the shutdown (phase 6) follows the central adapter.
+5. Whether the acceptance keeps the report's target of at most one device
    approval per day and agent.
-7. Which of the maintainers owns the login service and the port rework.
+6. Which of the maintainers owns the login service and the port rework.
 
 Open for the build team, reported to the owner: the NATS consumers'
 behaviour without an acknowledgement and after a long rest (acknowledgement
