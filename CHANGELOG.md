@@ -3,6 +3,31 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.94.1
+
+### Fixed
+
+- **No post lost or counted forever around a reconnect's backfill**
+  ([RT-6.2](docs/arc42/06-runtime-view.md) step 1, #244, #245): posts handed
+  to the agent while the WebSocket was down no longer stay counted as pending
+  by the turn hooks although `wait_for_events` never returns them; the read
+  mark no longer passes a post the backfill has not queued yet (a newer
+  hand-over during the backfill or the crown renewal, or a live edit seen
+  first), so a server that ends meanwhile no longer loses it; a backfill that
+  cannot read leaves the hand-overs for the next one.
+- **A dropped event stream closes its socket** (#250): when handling an event
+  failed in the inbox, the old WebSocket stayed open beside the new one until
+  garbage collection; it is now closed, at most 2 s, before the reconnect.
+
+### Internal
+
+- The WebSocket inbox takes an event source (`events.py`, Mattermost's in
+  `mattermost_ws.py`); errors cross the chat port as `model.NotFound` and
+  `NotAllowed`, never as HTTP statuses; the host process is typed; the own-post
+  bookkeeping moved from the Mattermost adapter into `compose.py`; a test runs
+  the whole server on stand-ins (#247–#249, #251, #252, #256). ADR-014 (agent
+  traffic over NATS) accepted (#242, #253).
+
 ## 0.94.0
 
 ### Changed
