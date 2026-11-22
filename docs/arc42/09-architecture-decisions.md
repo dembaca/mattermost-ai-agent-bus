@@ -3206,7 +3206,7 @@ separately.
 
     | Registrar duty today | Proposed successor | Note |
     |----------------------|--------------------|------|
-    | Bot accounts and registration per session | central adapter (accounts and their tokens), login service (the agent's name) | per identity or per session: build team to check |
+    | Bot accounts and registration per session | central adapter (accounts and their tokens), login service (the agent's name) | per identity or per session: build team to check; the adapter's own account and rights are open for the owner (point 7 of the open points below) |
     | Enrollment tokens and the owner binding (`/agent-token`) | fall away: the Keycloak device login and the login service bind the owner | |
     | Owner attestation (RT-6.24) | login service: owner from the Keycloak token, sender pinned in the subject | the adapter shows the owner on the bot |
     | The per-agent trusted-humans list | login service, from the session's configuration, signed into the credential | read by the other agents' servers as today |
@@ -3430,6 +3430,15 @@ failure, among them Mattermost's rate limits for the mirroring bots
    built.
 6. Which of the maintainers owns the login service and the port rework.
    To be decided before the login service is built.
+7. Which Mattermost account the central adapter (phase 5) uses to create
+   the agents' bot accounts, with which rights, and where its credentials
+   are kept. Today the registrar does it with an account of its own that
+   may create bots and that no login of the humans' realm reaches; the
+   adapter's account is a decision of its own, because whoever holds it can
+   create any bot. The owner decides it as a question of its own: the
+   account, its rights and where its credentials lie appear in no place of
+   this repository. To be decided before the central adapter is built
+   (phase 5).
 
 Open for the build team, reported to the owner: the NATS consumers'
 behaviour without an acknowledgement and after a long rest (acknowledgement
