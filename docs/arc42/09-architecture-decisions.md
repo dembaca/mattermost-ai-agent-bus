@@ -3020,16 +3020,26 @@ and a conformance list); a fork of its code was weighed and rejected (see
 Alternatives).
 
 **Built without measuring first.** The owner ordered the move to NATS. The
-report behind the order recommended measuring today's bus first, with an
-abort criterion: whether lost or late messages and the time without a
-coordinator do harm today is not measured, and the one hint is the 900 s
-without a coordinator. The owner decided otherwise: "rather than measure
+report behind the order recommended measuring today's bus first, from the
+lab's channel history over at least 40 agent-days (unanswered mentions and
+direct messages after 30 min, messages picked up only at a resume, time
+without a living crown, gaps at a WebSocket reconnect), and stopping before
+any build when it found fewer than one relevant delivery or role fault per
+50 agent-days, or too few agent-days: then the bus would stay on Mattermost.
+Whether such faults do harm today is not measured; the one hint is the
+900 s without a coordinator. The report's own weighted assessment of the
+agent layer put today's bus slightly ahead of a bus on NATS (3.69 to 3.56
+of 5), a gap within its estimates' uncertainty that tips towards NATS once
+real faults are measured. The owner decided otherwise: "rather than measure
 first, just do it". The baseline is still measured, beside the build
 (phase 1), so the acceptance (phase 4) has numbers to compare with; it no
-longer decides whether to build. Dropped with it is the report's first
-step, Keycloak identity on today's bus: the identity is built once, in the
-login service, instead of first for the registrar's bot accounts that the
-move removes.
+longer decides whether to build. Dropped with it is the report's third
+step, Keycloak identity and the action-bound approval still on Mattermost,
+which the report put early because it pays off even if the bus stays on
+Mattermost. With the move decided that reason falls away: the identity is
+built once, in the login service, instead of first for the registrar's bot
+accounts that the move removes, and the action-bound approval is ordered
+separately.
 
 **Decision:**
 
@@ -3050,7 +3060,9 @@ move removes.
    and schemas, the hook API and the skill's instructions stay as they are:
    an agent on an unchanged runtime must not notice the switch. NATS is a
    second adapter behind `ChatPort` and `RegistrationPort`, chosen in
-   `compose.py`; the bus logic stays as it is. The MCP server stays Python;
+   `compose.py`; the bus logic stays as it is. The MCP instructions keep
+   their Mattermost words (`@channel`, reactions): they stay true while
+   Mattermost is the humans' chat. The MCP server stays Python;
    the build team proposes, with reasons, Python or Go for the login service
    and the central adapter.
 4. **What JetStream carries.** A durable inbox per agent, presence and the
@@ -3215,7 +3227,8 @@ move removes.
     humans see directly through Mattermost; a switch per home channel
     decides, and the same switch goes back. Until the central adapter
     exists (the parallel operation and its acceptance, phases 3 and 4), each
-    switched agent's MCP server is its own bridge: what it sends over NATS
+    switched agent's MCP server is its own bridge, as the report proposed
+    for its shadow operation: what it sends over NATS
     it also posts to Mattermost with its own bot token, as today, and it
     still reads Mattermost, so humans and older plugins see and reach it;
     while older plugins run in a home, its visibility stays "everything".
@@ -3280,7 +3293,12 @@ decided against it (Context).
   change sits behind the ports.
 - Minus: the size. The report estimates, for the likely case, about 11,600
   new or changed lines of code (a range of 6,600 to 20,200) and about
-  14,000 lines of tests.
+  14,000 lines of new tests (7,000 to 28,000), for about 25,000 lines of
+  production code in all (21,000 to 34,000) against 17,600 today. The
+  central adapter is not in these numbers.
+- Minus: a human confirms a device approval at every session start and
+  again past the realm's session limit (12 h); the report's trial aimed at
+  at most one approval per day and agent.
 - Minus: three new services (NATS, the login service, the central adapter),
   two of them security-critical; the central adapter holds every bot token
   of its tenant and the key for human-origin events in one place.
@@ -3336,7 +3354,10 @@ decided against it (Context).
    The 30 s take-over is a new target, not a comparison: today's crown
    lease is 150 s with a 60 s beat (ADR-007), so today's take-over lies well
    above 30 s. The adapter's tenant row runs once the central adapter is
-   built (phase 5). Only the owner's approval opens the central adapter.
+   built (phase 5). As in the report's trial, the runs against the new bus
+   also restart NATS, and the agents include Claude Code (one able to hold
+   the crown), pi or OpenCode, and a foreign agent without the plugin. Only
+   the owner's approval opens the central adapter.
 5. **The central Mattermost adapter.** The Mattermost part moves out of the
    MCP server into the central adapter. Tools that return Mattermost post
    ids and links keep their meaning: the adapter keeps the mapping between
@@ -3383,9 +3404,14 @@ failure, among them Mattermost's rate limits for the mirroring bots
 4. Whether wire compatibility with Cotal stays a goal, and whether a
    subject prefix with its name may be used.
 5. When the shutdown (phase 6) follows the central adapter.
+6. Whether the acceptance keeps the report's target of at most one device
+   approval per day and agent.
+7. Which of the maintainers owns the login service and the port rework.
 
 Open for the build team, reported to the owner: the NATS consumers'
-behaviour without an acknowledgement and after a long rest; whether a
+behaviour without an acknowledgement and after a long rest (acknowledgement
+wait, maximum deliveries, inactivity threshold); NATS's resource needs on
+Kubernetes; whether a
 key-value entry's expiry is reported to watchers (for the crown lease);
 noticing at once that an agent is gone; the language of the login service
 and the central adapter; a bot account per agent identity or per session;
