@@ -8,7 +8,7 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import compose, a2a, hookapi, server, turnend, unanswered
+from mattermost_ai_agent_bus import a2a, compose, hookapi, server, turnend, unanswered
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
 

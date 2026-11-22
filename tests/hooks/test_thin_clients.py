@@ -18,7 +18,6 @@ from pathlib import Path
 import pytest
 from conftest import CHANNEL, PROJECT, ROOT, TEAM
 from mattermost_ai_agent_bus import compose, hookapi, session_file
-from mattermost_ai_agent_bus.client import MattermostAdapter
 
 POST = "bin/mm-agent-post.sh"
 POLL = "bin/mm-agent-poll.sh"

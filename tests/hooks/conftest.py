@@ -42,7 +42,6 @@ for _name in ("CORRAL_SANDBOX", "MM_BUS_MCP_ENDPOINT", "MM_BUS_ENDPOINT", "MM_BU
     os.environ.pop(_name, None)
 
 from mattermost_ai_agent_bus import compose, hookapi, release, server  # noqa: E402,F401
-from mattermost_ai_agent_bus.client import MattermostAdapter  # noqa: E402
 
 # Scripts that ask the hook API instead of Mattermost: no token in their environment.
 API_USERS = ("hooks/", "bin/mm-agent-listen.sh", "bin/mm-agent-post.sh", "bin/mm-agent-poll.sh",

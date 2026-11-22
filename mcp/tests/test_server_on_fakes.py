@@ -93,8 +93,11 @@ async def test_the_whole_server_runs_on_stand_ins(wired):
     assert [(i["kind"], i["post"]["id"], i["from_trusted_human"], i["from_agent"], i["trusted_human"])
             for i in items] == [("mention", MENTION, True, False, "dembaca")]
     assert built == ["client", "events"] and source.opens == 1
-    # The inbox holds the client the root handed out, wrapped as in production (#255).
-    assert server._inbox is not None and isinstance(server._inbox.client, compose.Remembered)
+    # The inbox holds the client the root handed out, wrapped as in production
+    # (#255) — and it is *this* bus inside: an isinstance alone hid the Wire bug.
+    assert server._inbox is not None
+    assert isinstance(server._inbox.client, compose.Remembered)
+    assert server._inbox.client.port is bus
 
     # 4. An ask (RT-6.11) and its answer, that human's thumbs-up on the open
     # stream, delivered as the answer; resolve_ask closes the ask.

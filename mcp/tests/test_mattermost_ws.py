@@ -358,6 +358,17 @@ def test_the_composition_root_builds_mattermosts_source():
         compose.event_source(FakeChat())
 
 
+def test_the_wrapped_adapter_still_gives_a_source():
+    """#256 review: the root hands out compose.Remembered, not the bare adapter,
+    and `isinstance` against a runtime_checkable Protocol does not see
+    `__getattr__` — a wrapper with only that would have left the inbox without
+    a source, and the bus deaf, in every process."""
+    wrapped = compose.Remembered(_client())
+    assert isinstance(wrapped, mattermost_ws.Wire)
+    source = compose.event_source(wrapped)
+    assert isinstance(source, MattermostEvents)
+
+
 def test_a_handed_source_is_the_one_attribute():
     events = FakeEvents()
     inbox = websocket_inbox.WebSocketInbox(client=FakeChat(), source=events)
