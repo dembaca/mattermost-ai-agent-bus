@@ -15,7 +15,8 @@ from websockets.asyncio.client import connect as ws_connect
 
 from . import (a2a, askroute, asks, departed, gate, lease, mandate, ownpost, receipt, unread,
                watermark)
-from .client import MattermostAdapter, post_of, reaction_of, read_links, with_links, ws_url_from_http
+from .client import post_of, reaction_of, read_links, with_links, ws_url_from_http
+from .compose import BusClient
 from .homes import guest_ids, lobby_ids, watched_channel_ids
 from .model import Channel, Post, Reaction, UnreadChannel
 
@@ -103,7 +104,7 @@ def channel_type(event: ClassifiedEvent) -> str:
 
 @dataclass
 class WebSocketInbox:
-    client: MattermostAdapter
+    client: BusClient
     watched_channel_ids: set[str] = field(default_factory=set)
     # The guest channels among them (RT-6.22): only a mention or a reply in a
     # thread this agent took part in there is queued.

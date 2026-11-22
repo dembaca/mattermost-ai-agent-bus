@@ -23,16 +23,17 @@ from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from pydantic import ValidationError
 
 from . import (
-    __version__, a2a, askroute, asks, attach, attest, channel, debug, departed, files, gate, hookapi, hosted, lease, life,
-    mandate, overhead,
+    __version__, a2a, askroute, asks, attach, attest, channel, compose, debug, departed, files, gate, hookapi, hosted,
+    lease, life, mandate, overhead,
     owners, ownpost, permission,
     profile, receipt, release, remind, session_file, slim, stall, stats, tasks, unanswered, unread, usage,
 )
 from .a2a import attachment_props, props_view, with_debug
-from .client import MattermostAdapter
+from .compose import BusClient
 from .homes import guest_ids
 from .ids import InvalidId, mm_id, mm_name
 from .model import Answer, Mark, Post, Refused
+from .port import ChatPort
 from .registration import RegistrationPort
 from .sandbox import corral_sandbox, sandbox_refusal
 from .websocket_inbox import FYI_EVENTS, OWN_EVENTS, WebSocketInbox, channel_type
@@ -203,7 +204,7 @@ STALE_HOW = ("restart this runtime's MCP server from the installed plugin, or po
              "runtime's MCP configuration at it (an older copy registers no bot and takes none over, RT-6.10)")
 
 
-async def _bus_client() -> MattermostAdapter | None:
+async def _bus_client() -> BusClient | None:
     try:
         return _get_client()
     except RuntimeError:  # no bus configured
@@ -386,7 +387,7 @@ class _StrictServer(MCPServer):
 mcp = _StrictServer("mattermost-ai-agent-bus", instructions=_instructions(), lifespan=_lifespan,
                     version=VERSION)
 
-_client: MattermostAdapter | None = None
+_client: BusClient | None = None
 _inbox: WebSocketInbox | None = None
 
 
@@ -399,13 +400,13 @@ _adopt_tried = False
 _roots_pending = False
 
 
-def _get_client() -> MattermostAdapter:
+def _get_client() -> BusClient:
     global _client, _adopt_tried
     if STALE:
         # A stale copy registers no bot and takes none over (RT-6.10 steps 1, 5).
         raise RuntimeError(STALE)
     if _client is None:
-        _client = MattermostAdapter.from_env()
+        _client = compose.client_from_env()
     if _client_named and not _adopt_tried and not _roots_pending:
         _adopt_tried = True
         _adopt(_client)
@@ -505,7 +506,7 @@ async def _wake_connect() -> None:
 hookapi.connect = _wake_connect
 
 
-async def _my_id(client: MattermostAdapter) -> str:
+async def _my_id(client: ChatPort) -> str:
     try:
         uid = await lease._user_id(client)
         stats.set_user(uid)
@@ -514,7 +515,7 @@ async def _my_id(client: MattermostAdapter) -> str:
         return ""
 
 
-async def _posted(client: MattermostAdapter, post: Post) -> None:
+async def _posted(client: ChatPort, post: Post) -> None:
     """The bot's own post is handled (RT-6.2): the read watermark passes it,
     unless the inbox holds (or, unconnected, may have missed) an older message
     there still to be collected. Mattermost counts it unread for the bot, in a
@@ -527,7 +528,7 @@ async def _posted(client: MattermostAdapter, post: Post) -> None:
 
 
 
-async def _work_posts(client: MattermostAdapter, channel_id: str = "",
+async def _work_posts(client: ChatPort, channel_id: str = "",
                       known: dict[str, str] | None = None) -> tuple[list[Post], dict[str, str]]:
     """The work channel's (or channel_id's) posts of the task window, and the
     names of their authors and of those who reacted (an agent's ✅ closes an
@@ -546,7 +547,7 @@ async def _work_posts(client: MattermostAdapter, channel_id: str = "",
     return posts, {i: known[i] for i in ids if i in known}
 
 
-async def _tasks(client: MattermostAdapter, posts: list[Post], names: dict[str, str],
+async def _tasks(client: ChatPort, posts: list[Post], names: dict[str, str],
                  crown: set[str] | None = None, *, home: bool = True) -> list[dict[str, Any]]:
     """The task rows; with trusted humans configured, a TASK root by anyone
     but them and the peer agents is no task (RT-6.16, ADR-001). Unsure: all
@@ -573,7 +574,7 @@ async def _tasks(client: MattermostAdapter, posts: list[Post], names: dict[str, 
                        mandated=marks)
 
 
-async def _owners_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, dict[str, Any]]:
+async def _owners_of(client: ChatPort, rows: list[Any]) -> dict[str, dict[str, Any]]:
     """Per roster row's username: the owner and trusted humans its bot
     description names, and foreign when it is another owner's agent (ADR-001).
     A description that cannot be read gives nothing."""
@@ -593,7 +594,7 @@ async def _owners_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, di
     return out
 
 
-async def _usage_of(client: MattermostAdapter, rows: list[Any]) -> dict[str, dict[str, Any]]:
+async def _usage_of(client: ChatPort, rows: list[Any]) -> dict[str, dict[str, Any]]:
     """Per roster row's username: the context, limits and cost its status text
     carries (ADR-008 step 3; the roster read holds the text anyway: no lookup
     per agent). This agent's own row is what it holds in memory, exact. An agent
@@ -612,7 +613,7 @@ def _why(exc: BaseException) -> str:
     return (str(exc).split(" for url ")[0] or type(exc).__name__)[:120]
 
 
-async def _overview(client: MattermostAdapter, action: str) -> dict[str, Any]:
+async def _overview(client: ChatPort, action: str) -> dict[str, Any]:
     """coordinator(action, scope="all"), RT-6.14 step 9: per channel the bot
     is in (home, guests, lobby: _own_channels, RT-6.22 step 4) its crown and
     its tasks and asks, or its roster, as for the home; for tasks also each
@@ -662,7 +663,7 @@ async def _overview(client: MattermostAdapter, action: str) -> dict[str, Any]:
     return {"channels": rows, "asks_by_human": by_human}
 
 
-async def _queued_rows(client: MattermostAdapter) -> list[dict[str, Any]]:
+async def _queued_rows(client: ChatPort) -> list[dict[str, Any]]:
     """This agent's queued asks (RT-6.11 step 3) as rows of `asks`, marked
     queued: only its own server knows them (they are in its state file, no
     post yet). Not an item of the stall check, which reads posts. Fails open."""
@@ -918,10 +919,10 @@ async def bus_info() -> str:
         # RT-6.22: where the agent lives, where it is a guest, the lobby.
         "home": client.work_channel_name,
         "guests": await _guest_names(client),
-        "lobby": getattr(client, "channel_name", ""),
+        "lobby": client.channel_name,
         "channels": await _own_channels(client),
         **({"guests_not_joined": failed}
-           if (failed := getattr(client, "guest_join_failures", None)) else {}),
+           if (failed := client.guest_join_failures) else {}),
         "crown": lease.crown_held(me.id),
         # ADR-008 step 3: the last report, and why it does or does not reach the roster.
         "usage": usage.info(),
@@ -943,7 +944,7 @@ async def bus_info() -> str:
     })
 
 
-async def _guest_names(client: MattermostAdapter) -> list[str]:
+async def _guest_names(client: ChatPort) -> list[str]:
     """The guest channels by name (RT-6.22); an unreadable one by its id."""
     names = []
     for cid in await guest_ids(client):
@@ -954,7 +955,7 @@ async def _guest_names(client: MattermostAdapter) -> list[str]:
     return sorted(names)
 
 
-async def _own_channels(client: MattermostAdapter) -> list[dict[str, str]]:
+async def _own_channels(client: ChatPort) -> list[dict[str, str]]:
     """The agent's own channels with their ids (RT-6.22 step 4): the home, the
     guests, the lobby (once, as the home, when it is the same). Names and ids
     come from the cached lookups (channel names, GUEST_TTL_SEC guest list)."""
@@ -966,11 +967,8 @@ async def _own_channels(client: MattermostAdapter) -> list[dict[str, str]]:
             seen.add(cid)
             out.append({"name": name, "id": cid, "role": role})
 
-    for role, name, getter in (
-            ("home", getattr(client, "work_channel_name", ""), getattr(client, "work_channel_id", None)),
-            ("lobby", getattr(client, "channel_name", ""), getattr(client, "lobby_channel_id", None))):
-        if getter is None:
-            continue
+    for role, name, getter in (("home", client.work_channel_name, client.work_channel_id),
+                               ("lobby", client.channel_name, client.lobby_channel_id)):
         try:
             add(name, await getter(), role)
         except Exception as exc:  # noqa: BLE001 — not resolvable: left out
@@ -985,7 +983,7 @@ async def _own_channels(client: MattermostAdapter) -> list[dict[str, str]]:
     return sorted(out, key=lambda c: (order[c["role"]], c["name"]))
 
 
-async def _channel_arg(client: MattermostAdapter, value: str) -> tuple[str, str]:
+async def _channel_arg(client: ChatPort, value: str) -> tuple[str, str]:
     """(id, '') for a channel_id argument that is an id or the name (`~name`,
     any case) of one of the agent's own channels, else ('', why) (RT-6.22
     step 4). Only the agent's own channels resolve: a name never widens
@@ -1010,7 +1008,7 @@ async def _channel_arg(client: MattermostAdapter, value: str) -> tuple[str, str]
     return "", f'unknown channel "{value.lstrip("~")}": yours are {yours}'
 
 
-async def _guest_target(client: MattermostAdapter, channel_id: str, root_id: str) -> str:
+async def _guest_target(client: ChatPort, channel_id: str, root_id: str) -> str:
     """The guest channel (an id) a post goes to (RT-6.22); '' for the home,
     the lobby, a DM, or when that cannot be told."""
     if not channel_id and not root_id:
@@ -1026,7 +1024,7 @@ async def _guest_target(client: MattermostAdapter, channel_id: str, root_id: str
     return cid if cid in guests else ""
 
 
-async def _as_guest(client: MattermostAdapter, uid: str, guest: str, post: Post) -> None:
+async def _as_guest(client: ChatPort, uid: str, guest: str, post: Post) -> None:
     """The agent took part in this guest thread (RT-6.22): a reply there wakes
     it, and its BYE lists the thread while it is open."""
     if not guest:
@@ -1210,7 +1208,7 @@ def _unbroadcast(text: str) -> tuple[str, list[str]]:
     return _in_prose(text, lambda p: _EVERYONE_RE.sub(lambda m: m.group(1), p)), found
 
 
-async def _unmention(client: MattermostAdapter, text: str) -> tuple[str, list[str]]:
+async def _unmention(client: ChatPort, text: str) -> tuple[str, list[str]]:
     """Turn @-mentions of people into plain names, and @channel/@here/@all into
     plain words (RT-6.11); code blocks and spans are left as written.
 
@@ -1241,7 +1239,7 @@ async def _unmention(client: MattermostAdapter, text: str) -> tuple[str, list[st
     return out, sorted(set(person.values())) + everyone
 
 
-async def _unasked(client: MattermostAdapter, text: str, uid: str) -> list[str]:
+async def _unasked(client: ChatPort, text: str, uid: str) -> list[str]:
     """Trusted humans a post names while this bot has no open ask to them (RT-6.11).
 
     "Merge waits on dembaca" reaches nobody: only an ask notifies the person.
@@ -1294,7 +1292,7 @@ def _with_unmentioned(result: dict[str, Any], removed: list[str],
     return result
 
 
-async def _unreachable(client: MattermostAdapter, message: str, post: Post) -> tuple[list[str], bool]:
+async def _unreachable(client: ChatPort, message: str, post: Post) -> tuple[list[str], bool]:
     """Agents a TASK or DELEGATE names that the roster of the channel it went to
     does not show as reachable (RT-6.14 step 10), and whether that channel is
     not the home; the post is out already. Not for a DM; fails open."""
@@ -1322,7 +1320,7 @@ def _with_unreachable(result: dict[str, Any], found: tuple[list[str], bool], wor
     return result
 
 
-async def _responsible_and_trusted(client: MattermostAdapter) -> tuple[str | None, list[str]]:
+async def _responsible_and_trusted(client: ChatPort) -> tuple[str | None, list[str]]:
     trusted = await client.trusted_humans()
     names = [n for n in trusted.values() if n]
     responsible = os.environ.get("MM_RESPONSIBLE_HUMAN", "").strip().lstrip("@") or (
@@ -1362,7 +1360,7 @@ def _changed(call: str, notes: list[str]) -> str:
     return call
 
 
-async def _debug_allowed(client: MattermostAdapter, channel_id: str, uid: str) -> frozenset[str] | None:
+async def _debug_allowed(client: ChatPort, channel_id: str, uid: str) -> frozenset[str] | None:
     """RT-6.31 steps 6 and 7: the categories a post of this agent in `channel_id`
     may show: all in its home, and in a DM with a peer agent or a trusted human;
     in a DM with anyone else only what describes the post itself (calls, props);
@@ -1378,7 +1376,7 @@ async def _debug_allowed(client: MattermostAdapter, channel_id: str, uid: str) -
     return debug.SHARED
 
 
-async def _with_debug(client: MattermostAdapter, uid: str, props: dict[str, Any] | None, *,
+async def _with_debug(client: ChatPort, uid: str, props: dict[str, Any] | None, *,
                       channel_id: str, root_id: str, call: str, thread: str = "") -> dict[str, Any] | None:
     """RT-6.31 step 5: the props of the agent's post with the grey `debug`
     attachment while a category of its home is on and the channel may show it,
@@ -1394,7 +1392,7 @@ async def _with_debug(client: MattermostAdapter, uid: str, props: dict[str, Any]
         return props
 
 
-async def _debug_card(client: MattermostAdapter, uid: str, props: dict[str, Any] | None, *,
+async def _debug_card(client: ChatPort, uid: str, props: dict[str, Any] | None, *,
                       channel_id: str, root_id: str, call: str, thread: str) -> dict[str, Any] | None:
     try:
         state = await debug.current(client)
@@ -1515,7 +1513,7 @@ async def announce(
     return _out("announce", out)
 
 
-async def _foreign_coordinator(client: MattermostAdapter, me: str) -> str:
+async def _foreign_coordinator(client: ChatPort, me: str) -> str:
     """ADR-001: the home's crown holder is another owner's agent. It routes,
     but its TASKs and mentions are requests to this worker. '' when not."""
     try:
@@ -1570,7 +1568,7 @@ async def post_message(
                                                   channel_name=channel, props=props, files=files))
 
 
-async def _join_by_name(client: MattermostAdapter, name: str) -> str:
+async def _join_by_name(client: ChatPort, name: str) -> str:
     """post_message(channel=…): the channel's id, joined (RT-6.22). The bot's
     memberships are read again, so the inbox watches it as a guest channel."""
     cid = await client.join_channel(mm_name(name.strip().lstrip("~"), "channel"))
@@ -1583,7 +1581,7 @@ async def _join_by_name(client: MattermostAdapter, name: str) -> str:
     return cid
 
 
-async def post_as_bot(client: MattermostAdapter | None, message: str, channel_id: str = "",
+async def post_as_bot(client: ChatPort | None, message: str, channel_id: str = "",
                       root_id: str = "", to: str = "", kind: str = "", *,
                       channel_name: str = "", props: dict[str, Any] | None = None,
                       files: list[str] | None = None) -> dict[str, Any]:
@@ -1690,7 +1688,7 @@ async def reply_in_thread(
                                                       files=files))
 
 
-async def reply_as_bot(client: MattermostAdapter | None, root_id: str, message: str,
+async def reply_as_bot(client: ChatPort | None, root_id: str, message: str,
                        channel_id: str = "", to: str = "", kind: str = "",
                        props: dict[str, Any] | None = None, *,
                        files: list[str] | None = None) -> dict[str, Any]:
@@ -1762,7 +1760,7 @@ def _in_background(coro: Any) -> None:
     task.add_done_callback(_background.discard)
 
 
-async def _task_closed(client: MattermostAdapter, root_id: str) -> None:
+async def _task_closed(client: ChatPort, root_id: str) -> None:
     """RT-6.9: this agent posted DONE in a thread whose root is an agent's
     TASK: closed between agents when no human posted in the thread, else with
     a human. One read of the thread; when it fails nothing is counted. A TASK
@@ -1785,7 +1783,7 @@ async def _task_closed(client: MattermostAdapter, root_id: str) -> None:
         log.info("task close of %s not counted: %s", root_id, exc)
 
 
-async def _take_files(client: MattermostAdapter, files: list[str] | None, channel_id: str,
+async def _take_files(client: ChatPort, files: list[str] | None, channel_id: str,
                       root_id: str) -> tuple[list[attach.Upload], str]:
     """RT-6.33 step 5: the uploads a post carries, taken from this server's
     store, or why not (nothing taken, nothing posted). A file must be in the
@@ -1837,7 +1835,7 @@ async def attach_text(name: str, text: str, channel: str = "", to: str = "") -> 
 _my_tasks: set[str] = set()
 
 
-async def _claimed(client: MattermostAdapter, root_id: str, message: str, uid: str,
+async def _claimed(client: ChatPort, root_id: str, message: str, uid: str,
                    result: dict[str, Any]) -> dict[str, Any]:
     """RT-6.14 step 3: a task goes to the first claim in its thread, so a later
     ACK, PROGRESS or RESULT gets taken_by back. One thread read per task and
@@ -2016,7 +2014,7 @@ async def ask_human(
     return _out("ask_human", _with_unmentioned(out, everyone, ask=True))
 
 
-async def _ask_route(client: MattermostAdapter, me: Any, kind: str,
+async def _ask_route(client: ChatPort, me: Any, kind: str,
                      only_human: bool = False) -> dict[str, Any]:
     """RT-6.25: where an ask of this class goes. {"to": <the 👑>} for a
     question in ask mode coordinator from an agent without the crown while a
@@ -2045,7 +2043,7 @@ async def _ask_route(client: MattermostAdapter, me: Any, kind: str,
 _queue_post = asyncio.Lock()
 
 
-async def _post_queued(client: MattermostAdapter, me: Any, key: str,
+async def _post_queued(client: ChatPort, me: Any, key: str,
                        answered: frozenset[str] | set[str] = frozenset()) -> str | None:
     """RT-6.11 step 2: post the oldest ask queued for `key`, routed as of now
     (RT-6.25), unless its target has an ask open that is not answered; the
@@ -2099,14 +2097,14 @@ async def _post_queued(client: MattermostAdapter, me: Any, key: str,
     return str(out["ask"])
 
 
-async def _advance_queue(client: MattermostAdapter, key: str, answered: set[str]) -> None:
+async def _advance_queue(client: ChatPort, key: str, answered: set[str]) -> None:
     await _post_queued(client, await client.get_me(), key, answered)
 
 
-remind.advance = _advance_queue  # type: ignore[assignment]
+remind.advance = _advance_queue
 
 
-async def _post_ask(client: MattermostAdapter, me: Any, *, to: str, head: str, need: str,
+async def _post_ask(client: ChatPort, me: Any, *, to: str, head: str, need: str,
                     context: str, recommendation: str, decision: str, where: str,
                     blocking: bool, answers: list[str], root_id: str,
                     human: str = "", forwarded: bool = False) -> dict[str, Any]:
@@ -2557,7 +2555,7 @@ async def _typing_for_task(events: list[Any], items: list[dict[str, Any]]) -> No
     _get_inbox().start_typing(task.post.channel_id, task.post.thread)
 
 
-async def _roots_from_trusted(client: MattermostAdapter, roots: set[str],
+async def _roots_from_trusted(client: ChatPort, roots: set[str],
                               trusted: dict[str, str]) -> dict[str, str]:
     """Of these thread roots, the ones a trusted human posted, with their name
     (ADR-001: a routed request keeps its author). Unreadable: not marked."""
@@ -3007,7 +3005,7 @@ async def _push_intercept(item: dict[str, Any]) -> bool:
         return False
 
 
-async def permissions_obsolete(client: MattermostAdapter) -> None:
+async def permissions_obsolete(client: ChatPort) -> None:
     """The turn ended (RT-6.13 step 5; hookapi.presence, idle or listening):
     no prompt can still be open, the terminal answered each one left. Say so
     under it and close it, so a late `yes <id>` gets the unknown-id reply."""

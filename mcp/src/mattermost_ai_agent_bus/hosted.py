@@ -733,7 +733,7 @@ def _detach(log_file: Path | None) -> None:
 
 
 def _daemon(args: argparse.Namespace, key: str) -> int:
-    from .client import MattermostAdapter
+    from .compose import client_from_env
 
     logging.basicConfig(level=logging.INFO, force=True,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -744,7 +744,7 @@ def _daemon(args: argparse.Namespace, key: str) -> int:
             log.warning("corral (pid %d) is gone already", args.watch_pid)
             return 1
     try:
-        client = MattermostAdapter.from_env()
+        client = client_from_env()
     except RuntimeError as exc:
         log.warning("no bus: %s", exc)
         return 1

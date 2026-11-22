@@ -191,5 +191,5 @@ async def test_an_update_while_running_keeps_the_bot(home, monkeypatch):
     assert server.STALE == ""
     seen = []
     monkeypatch.setattr(server, "_client", None)
-    monkeypatch.setattr(server.MattermostAdapter, "from_env", classmethod(lambda cls: seen.append(1) or object()))
+    monkeypatch.setattr(server.compose, "client_from_env", lambda: seen.append(1) or object())
     assert server._get_client() is not None and seen == [1]

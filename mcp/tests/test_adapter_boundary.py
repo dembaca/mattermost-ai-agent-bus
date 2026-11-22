@@ -321,6 +321,20 @@ def test_nobody_reaches_symbols_through_a2a():
     assert found == set()
 
 
+# Who may import client.py besides the adapter itself: the composition root,
+# which builds it, and the WebSocket inbox, until it is the adapter's own
+# event source (phase 2 of the NATS move, PR 6).
+CLIENT_IMPORTERS = {"compose.py", "websocket_inbox.py"}
+
+
+def test_only_the_composition_root_builds_the_adapter():
+    """The entry points hold a compose.BusClient and get it from
+    compose.client_from_env; none of them imports client.py."""
+    found = {f.name for f in sorted(SRC.glob("*.py"))
+             if f.name != "client.py" and client_imports(f.read_text())}
+    assert found == CLIENT_IMPORTERS
+
+
 def test_the_symbols_guard_sees_an_import():
     assert imports_symbols("from . import symbols\n")
     assert imports_symbols("from .symbols import Vocabulary\n")
