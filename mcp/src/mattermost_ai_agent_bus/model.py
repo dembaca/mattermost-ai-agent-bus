@@ -273,6 +273,18 @@ class Refused(Exception):
         self.status = status
 
 
+class NotFound(LookupError):
+    """What was asked for is not there (`get_channel_id`, `get_channel`). The
+    adapter turns a Mattermost 404, and its 400 for an invalid id or name,
+    into this over the port, so a later adapter without HTTP statuses raises
+    it too."""
+
+
+class NotAllowed(PermissionError):
+    """What was asked for is there, but not for this bot to see: Mattermost's
+    401 and 403 on the port's channel reads, turned into this by the adapter."""
+
+
 class NoAttestationEndpoint(ValueError):
     """A 404 on the registrar's attestation route that is not its own `no
     attestation` (RT-6.24 step 5): that registrar does not serve attestations

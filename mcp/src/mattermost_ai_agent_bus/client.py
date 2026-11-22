@@ -27,6 +27,7 @@ from .homes import guest_ids as guest_ids, lobby_ids as lobby_ids
 from .homes import watched_channel_ids as watched_channel_ids
 from .ids import _ID, _NAME, InvalidId as InvalidId, mm_id as mm_id, mm_name as mm_name
 from .model import (Channel, ChannelUser, FileInfo, Me, NoAttestationEndpoint, NoDebugEndpoint, NoMandateEndpoint,
+                    NotAllowed, NotFound,
                     Post,
                     Reaction, Refused, Thread, UnreadChannel)
 from .owners import _trusted_names, responsible_human as responsible_human
@@ -295,6 +296,19 @@ def _refused(exc: httpx.HTTPStatusError, what: str = "post") -> Refused:
         why = ""
     return Refused(f"Mattermost refused the {what} ({exc.response.status_code})" + (f": {why}" if why else ""),
                    status=exc.response.status_code)
+
+
+def _channel_error(exc: httpx.HTTPStatusError, what: str) -> Exception:
+    """Mattermost's refusal of a channel read, as the port's own exception: a 404
+    (no such channel) and a 400 (Mattermost's answer to an invalid id or name)
+    are NotFound, a 401 or 403 NotAllowed. Any other status stays as it is, so
+    a 5xx still reads as a failed request."""
+    status = exc.response.status_code
+    if status in (400, 404):
+        return NotFound(f"{what}: not there ({status})")
+    if status in (401, 403):
+        return NotAllowed(f"{what}: the bot may not see it ({status})")
+    return exc
 
 
 def channel_list(value: str) -> list[str]:
@@ -932,7 +946,15 @@ class MattermostAdapter:
             return {"name": name, "id": cid, "joined": True}
         except InvalidId as exc:
             return {"name": name, "joined": False, "error": str(exc)}
-        except httpx.HTTPStatusError as exc:
+        except NotFound:
+            return {"name": name, "joined": False,
+                    "error": f"channel '{name}' does not exist in team '{self.team_name}' "
+                             "(check the name; this server never creates channels)"}
+        except NotAllowed:
+            return {"name": name, "joined": False,
+                    "error": f"cannot join '{name}': private channel (a human must add "
+                             "the bot) or joining is denied on this instance"}
+        except httpx.HTTPStatusError as exc:  # the join itself: this call's own error
             code = exc.response.status_code
             reason = {
                 404: f"channel '{name}' does not exist in team '{self.team_name}' "
@@ -1173,7 +1195,8 @@ class MattermostAdapter:
         """Resolve a channel name to its id.
 
         Defaults to the work channel (project channel when set, else MM_CHANNEL).
-        Never creates a channel: a missing one surfaces as the API's 404.
+        Never creates a channel: a missing one is NotFound (Mattermost's 404, as
+        an invalid name is its 400); one the bot may not see is NotAllowed.
         """
         cname = mm_name(channel_name or self.work_channel_name, "channel")
         key = f"{team_name or self.team_name}/{cname}"
@@ -1181,9 +1204,12 @@ class MattermostAdapter:
         if cached:
             return cached
         tid = await self.get_team_id(team_name)
-        data = await self._api(
-            "GET", f"/api/v4/teams/{mm_id(tid, 'team')}/channels/name/{cname}"
-        )
+        try:
+            data = await self._api(
+                "GET", f"/api/v4/teams/{mm_id(tid, 'team')}/channels/name/{cname}"
+            )
+        except httpx.HTTPStatusError as exc:
+            raise _channel_error(exc, f"channel {channel_name or cname}") from exc
         cid: str = data["id"]
         self._channel_ids[key] = cid
         return cid
@@ -1193,9 +1219,15 @@ class MattermostAdapter:
         return _int((await self.get_me()).raw.get("create_at"))
 
     async def get_channel(self, channel_id: str) -> Channel:
+        """The channel, read once and kept; NotFound for one that does not exist
+        (Mattermost's 404, or its 400 for an invalid id), NotAllowed for one the
+        bot may not see."""
         if channel_id not in self._channels:
-            self._channels[channel_id] = channel_of(await self._api(
-                "GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}"))
+            try:
+                raw = await self._api("GET", f"/api/v4/channels/{mm_id(channel_id, 'channel')}")
+            except httpx.HTTPStatusError as exc:
+                raise _channel_error(exc, f"channel {channel_id}") from exc
+            self._channels[channel_id] = channel_of(raw)
         return self._channels[channel_id]
 
     async def channel_header(self, channel_id: str) -> str:

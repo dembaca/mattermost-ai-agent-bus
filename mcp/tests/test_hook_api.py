@@ -12,7 +12,7 @@ import pytest
 
 from mattermost_ai_agent_bus import channel, hookapi, lease, life, ownpost, session_file, unread
 from mattermost_ai_agent_bus.client import post_of
-from mattermost_ai_agent_bus.model import UnreadChannel
+from mattermost_ai_agent_bus.model import NotFound, UnreadChannel
 
 from fakes import HookClient
 
@@ -554,8 +554,7 @@ async def test_post_by_channel_name_only_in_the_bots_channels(api, monkeypatch):
 
     async def get_channel_id(name=None):
         if name not in names:
-            raise httpx.HTTPStatusError("404", request=httpx.Request("GET", "http://x"),
-                                        response=httpx.Response(404))
+            raise NotFound(f"no channel {name}")
         return names[name]
 
     async def guest_channel_ids():

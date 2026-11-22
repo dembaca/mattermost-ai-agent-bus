@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 from mattermost_ai_agent_bus import owners
 from mattermost_ai_agent_bus.client import dm_partner, post_of, reaction_of
 from mattermost_ai_agent_bus.ids import mm_name
-from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, Post, Reaction,
+from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, NotFound, Post, Reaction,
                                            Thread, UnreadChannel)
 from mattermost_ai_agent_bus.session_file import SessionInfo
 
@@ -48,7 +48,8 @@ class FakeChat:
     by lower-case username (RT-6.21), in the channel or not. people: user
     id -> username of the accounts that are people, not bots (human_id,
     humans_among); none by default, so a mention stays as written.
-    dms: the DM channels, direct_channel_with adds its own; viewed: the
+    dms: the DM channels, direct_channel_with adds its own;
+    missing_channels: ids get_channel reports NotFound for; viewed: the
     channels marked read; sent_sync: what post_sync and post_by_name_sync
     sent. No lobby of its own (it is the home), no channel names, no
     permalink base: links stay as written.
@@ -95,6 +96,7 @@ class FakeChat:
         self.status: dict[str, str] | None = None
         self.header = ""
         self.dms: set[str] = set()
+        self.missing_channels: set[str] = set()
         self.viewed: list[str] = []
         self.sent_sync: list[dict[str, Any]] = []
         self.guest_join_failures: dict[str, str] = {}
@@ -147,7 +149,7 @@ class FakeChat:
             return WORK
         if channel_name in self.channel_ids:
             return self.channel_ids[channel_name]
-        raise LookupError(f"no channel {channel_name}")
+        raise NotFound(f"no channel {channel_name}")
 
     async def lobby_channel_id(self) -> str:
         """The home: the lobby is no channel of its own."""
@@ -157,7 +159,10 @@ class FakeChat:
         """Nothing kept: guest_channel_ids reads `guests` each time."""
 
     async def get_channel(self, channel_id: str) -> Channel:
-        """Ids in `dms` are DMs; every other channel is open and named `channel`."""
+        """Ids in `dms` are DMs; every other channel is open and named `channel`,
+        except one in `missing_channels`, which is not there (NotFound)."""
+        if channel_id in self.missing_channels:
+            raise NotFound(f"no channel {channel_id}")
         return Channel(id=channel_id, name=self.channel, type="D" if channel_id in self.dms else "O")
 
     async def post_channel_id(self, post_id: str) -> str:

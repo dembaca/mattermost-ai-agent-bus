@@ -74,10 +74,15 @@ class ChatPort(Protocol):
     async def join_channel(self, channel_name: str) -> str:
         """The team's channel `channel_name`, joined as the bot (a non-member
         cannot read it; joining twice is harmless): its id. Never creates one:
-        a missing channel raises."""
+        a missing channel raises model.NotFound, one the bot may not join
+        model.NotAllowed."""
         ...
 
-    async def get_channel(self, channel_id: str) -> Channel: ...
+    async def get_channel(self, channel_id: str) -> Channel:
+        """The channel by id; raises model.NotFound for one that does not
+        exist and model.NotAllowed for one the bot may not see, never a chat
+        system's own HTTP status."""
+        ...
 
     async def lobby_channel_id(self) -> str:
         """The lobby's id (ADR-002): MM_CHANNEL's, by the id the host passed or by name."""
@@ -101,8 +106,9 @@ class ChatPort(Protocol):
     async def get_channel_id(self, channel_name: str | None = None,
                              team_name: str | None = None) -> str:
         """The id of the team's channel `channel_name` (default: the home),
-        without joining it (RT-6.26 step 4); raises when it is missing or
-        the bot may not see it."""
+        without joining it (RT-6.26 step 4); raises model.NotFound when the
+        team has no such channel and model.NotAllowed when the bot may not
+        see it, never a chat system's own HTTP status."""
         ...
 
     async def channel_header(self, channel_id: str) -> str:

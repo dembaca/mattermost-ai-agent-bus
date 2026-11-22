@@ -95,7 +95,10 @@ account of a DM by the chat's own rule); membership, status and
 presence (`member_channels`, `view_channel`, `channel_users`, `is_member`, `presences`, `set_presence`,
 `set_custom_status`, `clear_custom_status`); posting (`post`, `post_sync`,
 `post_by_name_sync`); reading (`thread`, `channel_posts`, newest first as stored,
-`list_recent`, oldest first with links read, `posts_after`, `reactions`, `add_reaction`). Nothing crosses it as Mattermost's JSON. `MattermostAdapter`
+`list_recent`, oldest first with links read, `posts_after`, `reactions`, `add_reaction`). Nothing crosses it as Mattermost's JSON: a channel that is not
+there comes back as `model.NotFound`, one the bot may not see as
+`model.NotAllowed`, never as Mattermost's HTTP status, so a later adapter
+without HTTP (NATS, ADR-014) raises the same two. `MattermostAdapter`
 implements it; mypy checks that structurally. `agent_owner` is the bot's
 native owner where the chat system keeps one (Mattermost: `owner_id`), else
 the registrar's `for @…`; the rule that combines them (`owners.decide`) is

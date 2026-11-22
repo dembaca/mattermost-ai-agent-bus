@@ -12,7 +12,7 @@ from fakes import BOT, WORK, HookClient
 
 from mattermost_ai_agent_bus import attach, hookapi, server
 from mattermost_ai_agent_bus.client import MattermostAdapter
-from mattermost_ai_agent_bus.model import Channel, Refused
+from mattermost_ai_agent_bus.model import Channel, NotFound, Refused
 
 GUEST, DM, GROUP, OTHER, PEER, ROOT = "g" * 26, "d" * 26, "x" * 26, "o" * 26, "p" * 26, "r" * 26
 GONE = "n" * 26  # a channel id that does not exist, or is none of the bot's
@@ -36,8 +36,7 @@ class Chat(HookClient):
 
     async def get_channel(self, channel_id: str) -> Channel:
         if channel_id == GONE:
-            raise httpx.HTTPStatusError("404", request=httpx.Request("GET", "http://x"),
-                                        response=httpx.Response(404))
+            raise NotFound(f"no channel {channel_id}")
         if channel_id == DM:
             return Channel(id=DM, name=f"{BOT}__{PEER}", type="D")
         return Channel(id=channel_id, name="g-room", type="G" if channel_id == GROUP else "O")
