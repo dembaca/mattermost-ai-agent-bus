@@ -22,7 +22,7 @@ code does today and point here where a decision will change them.
 | ADR-011 | Updates from a signed release only: the host copy is installed from a release tag signed by a pinned release key into a directory per version, switched in one step and rolled back the same way; the bus tells which release is available and what it needs, a human approves every update, a breaking one never runs by itself | Accepted, phase 1a built (0.81.0): `releases/`, `current` and `previous` as symlinks switched in one rename, `--rollback`, `--downgrade`, the release recorded per session, a hook dispatcher corral approves once (RT-6.28); phase 1b built (0.82.0): `--release v<x.y.z>` installs an annotated tag with its name, tree version and tag object checked, and its SSH signature when the host pins the keys in `MM_RELEASE_SIGNERS` (opt-in; the owner's key and an offline backup) (RT-6.29); phase 2 built (0.83.0): the release check on the host (the installer's `--check`, the MCP server once a day (hourly while the newest found is older than the running host copy) as a bounded child, a plugin's server through the host copy's script), the notice in `bus_info`, the start hook and the turn-end banner, the version in the roster, the `Needs:`/`Withdrawn:` lines with a doc-check (RT-6.30); 0.84.0, decisions (4) and (5) of 2026-11-12: keys pinned once per host in `release-signers` beside `releases/`, `--replace-signers`, `--forget-signers`, a withdrawn version refused unless `--withdrawn-ok` (RT-6.29, RT-6.30); phase 3 built (0.86.0: the registrar distributes the release keys once and names the version, and corral's host copy updates itself to it between sessions, RT-6.32), `latest` built (0.87.0) | – |
 | ADR-012 | Files an agent attaches: the server never opens a path the agent names; the bytes come from inside the sandbox (the shell's `POST /v1/files`, or a small text in the `attach` tool), checked by their bytes, uploaded for a post that takes only this server's fresh uploads | Decided 2026-11-14, built (0.90.0, RT-6.33) | — |
 | ADR-013 | The channel banner shows what waits: the home's 👑 server writes it on a change only, at most once a minute; a stall in red, asks waiting on a human in amber, else the crown and the agents by status; display only, never input; a human's banner is left alone and told to its human; without the licence or the permission everything stays as today; later the 👑 prefix only on asks and routings | Withdrawn (2026-11-16): depends on the Mattermost edition and a permission setting; the header carries the rare facts instead | — |
-| ADR-014 | Agent-to-agent traffic over NATS JetStream; Mattermost stays the humans' chat behind one central adapter per tenant; agents log in through Keycloak (device flow) and a login service issues 15-minute NATS credentials bound to the host's own key; a clean-room build from Cotal's protocol description; tools, hook API and bus logic unchanged behind the ports; parallel operation switched per home channel, the registrar shut down last | Proposed (2026-11-22), a draft, not built; the recommendations of 2026-11-22 pending the owner | — |
+| ADR-014 | Agent-to-agent traffic over NATS JetStream; Mattermost stays the humans' chat behind one central adapter per tenant; agents log in through Keycloak (device flow) and a login service issues 15-minute NATS credentials bound to the host's own key; a clean-room build from Cotal's protocol description; tools, hook API and bus logic unchanged behind the ports; parallel operation switched per home channel, the registrar shut down last | Proposed (2026-11-22), a draft, not built; the security model decided by the owner on 2026-11-22, stream retention and older plugins pending | — |
 
 **Terms.** An agent's **home** is the first entry of `MM_PROJECT_CHANNEL`,
 else `MM_CHANNEL`: exactly one per agent. Its **guest channels** are the
@@ -2967,13 +2967,13 @@ move to NATS asks for this decision to be recorded before any NATS code is
 merged. Decided by the owner: one central adapter per tenant (point 1), the
 visibility setting per home (point 12), no unattended starts outside the
 cluster (point 8), building without measuring first (Context), and on
-2026-11-22 approvals only from a human in both the approvers' group and the
-session's trusted list, with starting agents open to everyone (points 6
-and 10). The other recommendations of 2026-11-22 are proposed, pending the
-owner: the stream retention (point 4), the agent names (point 6), the
-credentials and their renewal (point 7), the signed human-origin events
-(point 10), and the support of older plugins
-(point 14). Checked in the lab and decided: Mattermost logs in through the
+2026-11-22 the security model: approvals only from a human in both the
+approvers' group and the session's trusted list, with starting agents open
+to everyone (points 6 and 10), agent names from the login service
+(point 6), the credentials and their renewal (point 7) and the signed
+human-origin events (point 10). Still proposed, pending the owner: the
+stream retention (point 4) and the support of older plugins (point 14).
+Checked in the lab and decided: Mattermost logs in through the
 same Keycloak, and the human is the same name on both sides (point 6).
 Builds on the
 port and adapter cut (Section 5.2: `ChatPort`, `RegistrationPort`,
@@ -3101,7 +3101,7 @@ separately.
      credentials that hold only for "agent X on behalf of human Y".
    - Agent names are assigned by the login service, as by the registrar
      today; a host never chooses a name, and no name of another owner's
-     agent is reused (proposed, pending the owner).
+     agent is reused (decided by the owner on 2026-11-22).
    - Starting agents stays open to everyone who may log in, as today; the
      approvers' group (point 10) is no gate at the start (decided by the
      owner on 2026-11-22).
@@ -3114,7 +3114,7 @@ separately.
      that `sub`. A human account that logs in to Mattermost without Keycloak
      cannot start a session through the bus's client and is never in the
      approvers' group.
-7. **Credentials and their renewal** (proposed, pending the owner).
+7. **Credentials and their renewal** (decided by the owner on 2026-11-22).
    - The host process generates its own NATS nkey pair; the seed never
      leaves it.
    - At every connect it presents a fresh Keycloak access token (the lab
@@ -3171,7 +3171,8 @@ separately.
       is the upper bound, the list selects within it. So the approvers
       stand in a Keycloak group, not only in a setting on a host. Starting
       agents stays open to everyone.
-    - Proposed, pending the owner: once no agent holds a Mattermost token,
+    - Decided by the owner on 2026-11-22: once no agent holds a Mattermost
+      token,
       only the central adapter can
       say an event comes from a trusted human. It signs every human-origin
       event (a post, a reaction, a slash command) with a key the hosts pin,
@@ -3401,7 +3402,8 @@ failure, among them Mattermost's rate limits for the mirroring bots
 
 **Open for the owner:**
 
-1. The recommendations of 2026-11-22 await the owner's confirmation.
+1. Two recommendations of 2026-11-22 await the owner's confirmation: the
+   stream retention (point 4) and the support of older plugins (point 14).
 2. Whether resuming a session counts as a session start and needs a new
    device approval.
 3. Who besides the owner reviews the security-critical parts (the review,
