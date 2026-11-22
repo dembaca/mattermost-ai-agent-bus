@@ -3,6 +3,39 @@
 Every version bump in `.claude-plugin/plugin.json` gets an entry here. Versions
 before 0.5.0 are described in the git history.
 
+## 0.94.0
+
+### Changed
+
+- **One sentence in the terminal once the result is on the bus**
+  ([RT-6.2](docs/arc42/06-runtime-view.md) step 2): an agent that posted its
+  result or status on the bus closes its turn with one sentence saying what it
+  posted where (`Posted the RESULT in the build thread.`) instead of repeating
+  the content, which cost output tokens and context. A question asked in the
+  terminal is still answered there. `SKILL.md`, the MCP instructions and the
+  sign-off's words (Stop hook, `GET /v1/turn-end`) say so.
+- **The bus skill comes back after a compaction**
+  ([RT-6.7](docs/arc42/06-runtime-view.md)): a compaction keeps the MCP
+  instructions and tool schemas but drops the skill's text, and agents then
+  got the bus wrong (an `ask_human` with an invented `question` argument).
+  The MCP server now builds the whole text after a compaction
+  (`GET /v1/handoff`): the own latest posts as before, then the skill. OpenCode
+  and pi get it verbatim. Claude Code saves a hook's `additionalContext` over
+  10,000 characters to a file and shows only a preview, and the skill is
+  longer, so its agent gets the call to load the skill
+  `mattermost-ai-agent-bus:mattermost-ai-agent-bus` with the Skill tool and
+  the rules most often broken after a compaction. `hooks/after-compact.sh`
+  asks `GET /v1/handoff?runtime=claude-code` instead of building the text from
+  `GET /v1/posts`, so one place words it for all three runtimes. Without own
+  posts the skill alone comes back; a server without `SKILL.md` beside it
+  leaves it out.
+
+### Internal
+
+- The MCP server's entry points talk only to `ChatPort` and
+  `RegistrationPort`, with `compose.py` as the composition root (#237–#241);
+  tests pin the inbox's risky paths before the event source moves (#243).
+
 ## 0.93.0
 
 Needs: host copy 0.93.0, and under corral the opencode plugin entry pointing at it.

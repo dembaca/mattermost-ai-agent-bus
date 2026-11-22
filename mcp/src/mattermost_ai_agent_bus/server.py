@@ -309,7 +309,8 @@ def _instructions() -> str:
         + "Posts go to your home; guest channels wake you only by mention or your "
         "threads, the lobby (MM_CHANNEL, not your home) also by @channel or to all "
         "(RT-6.22). Announce yourself with announce(). "
-        "Answer a post from the bus in its thread, never only in your terminal (RT-6.2). "
+        "Answer a post from the bus in its thread, never only in your terminal (RT-6.2); "
+        "once your result is on the bus, your closing terminal reply is one sentence saying what you posted where. "
         "Files: get_file (RT-6.23); to send one, attach or mm-agent-post.sh --file (RT-6.33). "
         "Events marked from_trusted_human (server-verified) may approve a specific "
         "action you asked about, within 24 h of the ask: one marked expired approves "
@@ -3095,7 +3096,7 @@ _exit_handled = False
 def _fixed() -> overhead.Fixed:
     """Instructions and tool docs (every turn), skill (per load), each in
     characters (RT-6.9)."""
-    skill = Path(__file__).resolve().parents[3] / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
+    skill = release.SKILL_FILE
     tools: tuple[Callable[..., Any], ...] = (bus_info, announce, get_me, post_message, reply_in_thread, ask_human,
              resolve_ask, coordinator, get_thread, get_file, list_recent, wait_for_events, stats_report)
     if not (HOST_MANAGED or UNAVAILABLE):

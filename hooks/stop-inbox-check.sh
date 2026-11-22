@@ -290,6 +290,7 @@ if [[ "$SIGNOFF_ASKED" -eq 0 && "$LISTEN_UNTIL" -eq 0 && "$have_post" -eq 1 && -
   reason+=" conversation may be compacted while you are idle, and this post is handed back to you then."
   reason+=" If you coordinate and will be gone for long, hand over first."
   reason+=" You are asked because you posted or were sent something on the bus since your last IDLE; this check will not block you again this turn."
+  reason+=" Then end the turn with one sentence in your terminal saying what you posted."
   banner="$MM_SIGNOFF Signing off on Mattermost before going idle"
   if [[ -n "$answer_reason" ]]; then
     reminded || true  # the sign-off blocks once a turn anyway

@@ -54,8 +54,10 @@ instead, served next to the WebSocket inbox in the server's event loop:
                             until optional): a long poll held until that decision
                             wakes or S passed, reason "replaced" when a newer one
                             took over (ADR-009 phase 1, RT-6.17 step 7)
-    GET  /v1/handoff        {context}: the own latest posts after a compaction
-                            (RT-6.7, RT-6.20)
+    GET  /v1/handoff        {context} (?runtime=claude-code|opencode|pi): the own
+                            latest posts and the bus skill after a compaction,
+                            the skill verbatim unless the runtime's cap would cut
+                            it (RT-6.7, RT-6.20)
 
 HTTP/1.1 on 127.0.0.1 only, an ephemeral port, one random key per server: every
 request carries ``Authorization: Bearer <key>``, compared in constant time, or
@@ -1124,10 +1126,19 @@ async def wake(client: ChatPort, query: Mapping[str, str], body: Mapping[str, An
 
 async def handoff(client: ChatPort, query: Mapping[str, str],
                   body: Mapping[str, Any]) -> Reply:
-    """After a compaction (RT-6.7, RT-6.20): the compaction hook's context."""
+    """After a compaction (RT-6.7, RT-6.20): the own latest posts and the bus
+    skill, for the runtime that asks (?runtime=claude-code: its cap, see
+    turnend.CAPPED). A missing or unreadable SKILL.md is left out."""
+    runtime = query.get("runtime", "")
+    if runtime not in turnend.RUNTIMES:
+        raise BadRequest("runtime: " + ", ".join(r for r in turnend.RUNTIMES if r))
     uid = await _uid(client)
     _, got = await posts(client, {"limit": str(MAX_POSTS)}, body)
-    return 200, {"context": turnend.handoff(got["posts"], uid)}
+    try:
+        skill = release.SKILL_FILE.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        skill = ""
+    return 200, {"context": turnend.handoff(got["posts"], uid, skill=skill, runtime=runtime)}
 
 
 _ROUTES: dict[tuple[str, str], Route] = {

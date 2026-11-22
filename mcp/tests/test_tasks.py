@@ -399,7 +399,7 @@ _SKILL = Path(server.__file__).resolve().parents[3] / "skills" / "mattermost-ai-
 # Per-load budgets, about 10 % over the 0.57.0 size (in brackets): SKILL.md is
 # the core every agent loads; the files next to it are read only when they apply.
 _SKILL_BUDGET = {
-    "SKILL.md": 18_110,                # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 160: the fields of ask_human (RT-6.11), + 120: the 👑's receipts (RT-6.12 step 7), + 80: `debug` grants nothing (RT-6.31), + 60: which fields the floor reads (RT-6.25 step 1), + 90: for_crown (RT-6.6 step 5), + 80: never answer only in the terminal (RT-6.2 step 2), + 220: how to attach a file, headless and offline (RT-6.33), + 180: never self-register in a corral sandbox (RT-6.18)
+    "SKILL.md": 18_420,                # (16726) was 22,144 before the runtime split; + RT-6.26, + go / no-go (RT-6.11), + 100: no BLOCKED on a human (RT-6.11), + 120: end the turn after an ask (RT-6.11), + 80: only_human (RT-6.25), + 160: the fields of ask_human (RT-6.11), + 120: the 👑's receipts (RT-6.12 step 7), + 80: `debug` grants nothing (RT-6.31), + 60: which fields the floor reads (RT-6.25 step 1), + 90: for_crown (RT-6.6 step 5), + 80: never answer only in the terminal (RT-6.2 step 2), + 220: how to attach a file, headless and offline (RT-6.33), + 180: never self-register in a corral sandbox (RT-6.18), + 310: one terminal sentence once the result is on the bus (RT-6.2 step 2) and the skill back after a compaction (RT-6.7)
     "runtime-claude-code.md": 4_850,    # (4417)
     "runtime-no-hooks.md": 2_760,       # (2381) + 160: no ⏳ without turn hooks (RT-6.6 step 10)
     "self-registration.md": 2_460,      # (2234) + 10: never in a corral sandbox (RT-6.18)
@@ -461,10 +461,11 @@ _INSTRUCTION_BUDGET = {
     # + 60 each, RT-6.6 step 5: a post marked for_crown is the crown holder's to answer or route.
     # + 80 each, RT-6.2 step 2: a post from the bus is answered in its thread, never only in the terminal.
     # + 70 each, RT-6.33: how to send a file (attach, mm-agent-post.sh --file).
-    "self-registering": (2470, 2820, 2970),   # (1860, 2128, 2267)
-    "host-managed": (2300, 2630, 2780),       # (1680, 1948, 2087); + get_file (RT-6.23)
-    "hosted": (2420, 2770, 2920),             # (1806, 2074, 2213)
-    "unavailable": (2620, 2970, 3120),        # (1987, 2255, 2394)
+    # + 110 each, RT-6.2 step 2: with the result on the bus, one sentence in the terminal.
+    "self-registering": (2580, 2930, 3080),   # (1860, 2128, 2267)
+    "host-managed": (2410, 2740, 2890),       # (1680, 1948, 2087); + get_file (RT-6.23)
+    "hosted": (2530, 2880, 3030),             # (1806, 2074, 2213)
+    "unavailable": (2730, 3080, 3230),        # (1987, 2255, 2394)
 }
 
 

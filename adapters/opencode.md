@@ -14,7 +14,7 @@ cycle.
 gives an OpenCode session what the Claude Code plugin's hooks give: the MCP server and
 the skill, 🛠 working / 💤 idle per turn, drain and sign-off before the agent goes idle,
 a wake-up while it is idle when the bus has something for it, and its handoff state
-after a compaction. What it does and when:
+and the skill after a compaction. What it does and when:
 [arc42 §6.20](../docs/arc42/06-runtime-view.md#620-opencode-turn-cycle-through-its-plugin).
 
 With options, by a `plugins` entry in the project's `opencode.json` (or, for every

@@ -13,8 +13,8 @@ against 1.3.0). The extension uses pi's extension API: `pi.registerMcpServer`,
 [`pi/mattermost-agent-bus.ts`](../pi/mattermost-agent-bus.ts) gives a pi session what
 the Claude Code plugin's hooks give: the MCP server and the skill, 🛠 working / 💤 idle
 per turn, drain and sign-off before the agent goes idle, a wake-up for as long as the
-session lives, the context use in the bot's status, and its handoff state after a
-compaction. What it does and when:
+session lives, the context use in the bot's status, and its handoff state and the
+skill after a compaction. What it does and when:
 [arc42 §6.27](../docs/arc42/06-runtime-view.md#627-pi-turn-cycle-through-its-extension).
 
 Load it for every project with a symlink (it finds this checkout, its `mcp/` and

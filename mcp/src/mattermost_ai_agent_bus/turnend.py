@@ -138,7 +138,8 @@ def signoff(*, push: bool) -> dict[str, Any]:
                "alone: your conversation may be compacted while you are idle, and this post is "
                "handed back to you then. If you coordinate and will be gone for long, hand over "
                "first. You are asked because you posted or were sent something on the bus since "
-               "your last IDLE; this check will not block you again this turn.")
+               "your last IDLE; this check will not block you again this turn. Then end the turn "
+               "with one sentence in your terminal saying what you posted.")
     return {"action": "signoff", "reason": reason,
             "banner": f"{a2a.symbol(Mark.SIGNOFF)} Signing off on Mattermost before going idle"}
 
@@ -213,13 +214,59 @@ def wake_reactions(count: int) -> dict[str, Any]:
                     "answer, call resolve_ask once it is settled, then finish your turn."}
 
 
-def handoff(posts: Iterable[Mapping[str, Any]], me: str) -> str:
-    """The agent's own latest posts after a compaction (RT-6.7): the newest
-    three, each cut to 600 characters, and where its HELLO thread is; '' when
-    it never posted in the work channel."""
+# The runtimes GET /v1/handoff knows (?runtime=, RT-6.7 step 1); "" is one
+# without a cap, as the OpenCode plugin and the pi extension ask.
+RUNTIMES = ("", "claude-code", "opencode", "pi")
+# What a runtime injects at most, in characters, and how its agent loads the
+# skill instead: Claude Code saves a hook's additionalContext over 10,000
+# characters to a file and passes a 2,000-character preview, without asking
+# the model to read it (code.claude.com/docs/en/hooks, "JSON output").
+CAPPED = {"claude-code": (10_000, "Load the skill `mattermost-ai-agent-bus:mattermost-ai-agent-bus` "
+                                  "with the Skill tool before your next bus post.")}
+# The rules agents break most after a compaction, for a runtime whose cap
+# leaves the skill out (RT-6.7 step 1).
+RULES = ("Until then, the rules most often broken after a compaction:\n"
+         "- ask_human: `need` is the question, there is no `question` argument; one question per ask; "
+         "`answers` are two to four plain texts, the server adds the emojis.\n"
+         "- Answer a post from the bus in its thread (reply_in_thread with its root_id), "
+         "never only in your terminal.\n"
+         "- A status post (IDLE, BYE, RESULT, WAITING, …) passes its word as kind: a headline "
+         "`IDLE · <gist>`, then a line each for `**done:**`, `**open:**`, `**next:**`.\n"
+         "- Once your result is on the bus, end the turn with one sentence in your terminal "
+         "saying what you posted where.")
+_FRONT_MATTER = re.compile(r"\A---\n.*?\n---\n+", re.S)
+
+
+def skill_body(text: str) -> str:
+    """SKILL.md without its front matter (name, description): the text the
+    agent loaded."""
+    return _FRONT_MATTER.sub("", text, count=1).strip()
+
+
+def handoff(posts: Iterable[Mapping[str, Any]], me: str, *, skill: str = "", runtime: str = "") -> str:
+    """After a compaction (RT-6.7): the agent's own latest posts, the newest
+    three, each cut to 600 characters, and where its HELLO thread is; then the
+    bus skill (`skill`, SKILL.md's text) verbatim, or for a runtime that would
+    cut it (CAPPED) the line that reloads it and the rules most often broken.
+    '' with neither own posts in the work channel nor a skill."""
     own = [p for p in posts if p.get("user_id") == me and not p.get("type")]
-    if not own:
+    body = skill_body(skill) if skill else ""
+    if not own and not body:
         return ""
+    text = "Your conversation was just compacted." + (_posts(own) if own else "")
+    end = "\nBefore you continue, check the bus with wait_for_events(timeout_sec=1)."
+    if not body:
+        return text + end
+    full = (text + "\n\nThe Mattermost agent bus skill (mattermost-ai-agent-bus) is no longer in your "
+            "context; here it is again, verbatim. Follow it.\n\n" + body + "\n" + end)
+    cap, reload = CAPPED.get(runtime, (0, ""))
+    if not cap or len(full) <= cap:
+        return full
+    return (text + "\n\nThe Mattermost agent bus skill is no longer in your context. " + reload + "\n"
+            + RULES + end)
+
+
+def _posts(own: list[Mapping[str, Any]]) -> str:
     lines = []
     for p in own[:3]:
         at = time.strftime("%Y-%m-%d %H:%M", time.localtime(int(p.get("create_at") or 0) / 1000))
@@ -230,7 +277,6 @@ def handoff(posts: Iterable[Mapping[str, Any]], me: str) -> str:
     # A coordinator's HELLO starts with 👑 (RT-6.6 step 3).
     hello = next((p.get("id") for p in own
                   if not p.get("root_id") and a2a.word(str(p.get("message") or "")) == "HELLO"), None)
-    return ("Your conversation was just compacted. Your own latest posts on the Mattermost agent bus "
+    return (" Your own latest posts on the Mattermost agent bus "
             "(work channel), newest first, are your handoff state:\n" + "\n".join(lines)
-            + (f"\nYour HELLO thread: root {hello}; read it with get_thread for more." if hello else "")
-            + "\nBefore you continue, check the bus with wait_for_events(timeout_sec=1).")
+            + (f"\nYour HELLO thread: root {hello}; read it with get_thread for more." if hello else ""))

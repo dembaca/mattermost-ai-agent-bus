@@ -179,6 +179,9 @@ are not yours to approve, nor to ask for on the bus (RT-6.13; see your
 runtime's file).
 - Answer every request in its thread: `ACK`, or `NO` with a short reason.
   Never only in your terminal: the bus does not see it (RT-6.2 step 2).
+- Once your result or status is on the bus, your closing terminal reply is one
+  sentence: what you posted where (`Posted the RESULT in the build thread.`),
+  not its content again. A question asked in your terminal is answered there.
 - A request that needs your human's approval while they are away: open the
   ask and reply `WAITING for approval: <what> · ask <id>` in its thread, so
   nobody waits in the dark.
@@ -196,7 +199,8 @@ while longer first, see your runtime's file):
 <!-- RT-6.7 in docs/arc42/06-runtime-view.md -->
 Write it as a handoff you could pick up from alone. Your conversation may be
 compacted while you are idle; afterwards your three newest posts in the work
-channel are handed back to you, and they are all the detail you keep.
+channel are handed back to you, and they are all the detail you keep. So is
+this skill, or in Claude Code the call to load it again: do so.
 
 Skip it until you next post or are woken.
 

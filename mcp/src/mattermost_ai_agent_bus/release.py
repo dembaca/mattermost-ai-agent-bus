@@ -37,6 +37,9 @@ log = logging.getLogger(__name__)
 # The tree this server runs from: a checkout, the plugin, or releases/<name>/
 # of the host copy (RT-6.28).
 ROOT = Path(__file__).resolve().parents[3]
+# The bus skill beside the server (optional in a host copy): the handoff after
+# a compaction (RT-6.7) and the overhead counts (RT-6.9) read it.
+SKILL_FILE = ROOT / "skills" / "mattermost-ai-agent-bus" / "SKILL.md"
 STATE_FILE = "release.env"
 STAMP_FILE = "release-check.at"          # the last check that succeeded (the script writes it)
 FAILED_FILE = "release-check.failed"     # the failed tries, one epoch a line (this module)

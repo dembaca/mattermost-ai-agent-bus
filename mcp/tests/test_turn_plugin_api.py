@@ -8,7 +8,7 @@ import time
 import httpx
 import pytest
 
-from mattermost_ai_agent_bus import hookapi, lease, ownpost, session_file, stall, turnend, unread
+from mattermost_ai_agent_bus import hookapi, lease, ownpost, release, session_file, stall, turnend, unread
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import UnreadChannel
 
@@ -297,8 +297,11 @@ def test_wake_rules_match_the_listener():
         assert got["wake"] is woken, p
 
 
-async def test_handoff_hands_back_the_own_posts(api):
-    """RT-6.20 (RT-6.7): the compaction hook's context, from the server."""
+async def test_handoff_hands_back_the_own_posts(api, monkeypatch, tmp_path):
+    """RT-6.20 (RT-6.7): the compaction hook's context, from the server; a
+    server without SKILL.md beside it (a host copy may lack it) leaves the
+    skill out and still hands back the posts."""
+    monkeypatch.setattr(release, "SKILL_FILE", tmp_path / "missing" / "SKILL.md")
     client = FakeClient(posts=[post("a", "IDLE · done: x\nnext: y", user=UID, at=3000, root="h"),
                                post("o", "other", at=2500),
                                post("j", "joined", user=UID, type_="system_join_channel"),
@@ -308,8 +311,54 @@ async def test_handoff_hands_back_the_own_posts(api):
     assert text.startswith("Your conversation was just compacted.")
     assert "] IDLE · done: x next: y\n- [" in text and "other" not in text and "joined" not in text
     assert "Your HELLO thread: root h; read it with get_thread for more." in text
+    assert "skill" not in text
     client.posts = [post("o", "other")]
     assert (await h.get("/v1/handoff")).json() == {"context": ""}
+    monkeypatch.setattr(release, "SKILL_FILE", tmp_path)  # a directory: unreadable, left out
+    assert (await h.get("/v1/handoff?runtime=pi")).json() == {"context": ""}
+
+
+SKILL = "---\nname: mattermost-ai-agent-bus\ndescription: x\n---\n\n# Mattermost AI agent bus\n\nRule one.\n"
+
+
+async def test_handoff_hands_back_the_skill_verbatim(api, monkeypatch, tmp_path):
+    """RT-6.7 step 1: after the posts, the bus skill as the agent loaded it
+    (without its front matter), verbatim, for a runtime without a cap
+    (OpenCode, pi, no runtime named); the check of the bus comes last. Without
+    own posts the skill still comes back."""
+    (tmp_path / "SKILL.md").write_text(SKILL)
+    monkeypatch.setattr(release, "SKILL_FILE", tmp_path / "SKILL.md")
+    client = FakeClient(posts=[post("a", "IDLE · done: x", user=UID, at=3000)])
+    h = await api(client)
+    for q in ("", "?runtime=opencode", "?runtime=pi", "?runtime=claude-code"):
+        text = (await h.get(f"/v1/handoff{q}")).json()["context"]
+        assert text.index("] IDLE · done: x") < text.index("# Mattermost AI agent bus\n\nRule one.\n"), q
+        assert "name: mattermost" not in text and "Skill tool" not in text, q
+        assert text.endswith("\nBefore you continue, check the bus with wait_for_events(timeout_sec=1)."), q
+    client.posts = []
+    text = (await h.get("/v1/handoff?runtime=pi")).json()["context"]
+    assert text.startswith("Your conversation was just compacted.\n\n") and "Rule one." in text
+    assert "handoff state" not in text
+
+
+async def test_handoff_reloads_a_skill_the_cap_would_cut(api, monkeypatch):
+    """RT-6.7 step 1: Claude Code saves an additionalContext over 10,000
+    characters to a file and shows a preview; the real SKILL.md is longer, so
+    the hook gets the call to load the skill with the Skill tool and the rules
+    most often broken instead, never a cut skill, within the cap."""
+    assert len(release.SKILL_FILE.read_text()) > turnend.CAPPED["claude-code"][0]
+    client = FakeClient(posts=[post(f"p{i}", "RESULT · " + "x" * 900, user=UID, at=3000 - i,
+                                    props=None) for i in range(5)])
+    h = await api(client)
+    text = (await h.get("/v1/handoff?runtime=claude-code")).json()["context"]
+    assert len(text) <= turnend.CAPPED["claude-code"][0]
+    assert "Load the skill `mattermost-ai-agent-bus:mattermost-ai-agent-bus` with the Skill tool" in text
+    assert "there is no `question` argument" in text and "one question per ask" in text
+    assert "reply_in_thread" in text and "`**done:**`" in text and "one sentence" in text
+    assert "## Contract" not in text and text.count("] RESULT · ") == 3
+    full = (await h.get("/v1/handoff?runtime=opencode")).json()["context"]
+    assert "## Contract" in full and "Skill tool" not in full
+    assert (await h.get("/v1/handoff?runtime=cursor")).status_code == 400
 
 
 def test_handoff_finds_a_coordinators_hello():

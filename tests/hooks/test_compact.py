@@ -57,9 +57,22 @@ def test_compaction_names_the_files_of_an_own_post(mm, run):
     assert lines[0].endswith("] IDLE · nothing attached")
 
 
-def test_nothing_to_hand_back_without_own_posts(mm, run):
-    """RT-6.7 error handling: no own posts, no bus → no output, the session goes on."""
-    assert run(COMPACT).stdout == ""
+def test_compaction_reloads_the_skill_within_the_cap(mm, run):
+    """RT-6.7 step 1: the hook asks the server (GET /v1/handoff?runtime=
+    claude-code); SKILL.md is longer than Claude Code's 10,000-character cap
+    on additionalContext, so the agent gets the call to load the skill and
+    the rules most often broken, never a cut skill. Without own posts too."""
+    for _ in range(2):
+        c = context(run(COMPACT))
+        assert 0 < len(c) <= 10_000
+        assert "Load the skill `mattermost-ai-agent-bus:mattermost-ai-agent-bus` with the Skill tool" in c
+        assert "there is no `question` argument" in c and "## Contract" not in c
+        mm.own_post("IDLE · done: a", 9000)
+    assert "] IDLE · done: a" in c
+
+
+def test_nothing_to_hand_back_without_a_bus(mm, run):
+    """RT-6.7 error handling: no bus session → no output, the session goes on."""
     assert run(COMPACT, MM_BOT_TOKEN=None).stdout == ""
 
 
