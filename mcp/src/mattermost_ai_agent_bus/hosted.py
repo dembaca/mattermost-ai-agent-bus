@@ -634,12 +634,12 @@ async def run_host(host: Host, *, ready_file: Path, key: str = "", with_services
     listener = await anyio.create_tcp_listener(local_host=LOOPBACK, local_port=0)
     port = listener.extra(SocketAttribute.local_port)
     async with AsyncExitStack() as stack:
-        # The services need the chat: the daemon always has one (_daemon builds
-        # the client or exits), and without one there are no hooks to serve.
-        if with_services and host.client is None:
-            raise RuntimeError("services need the bus client")
-        hook = (await stack.enter_async_context(services(key, host.client))
-                if with_services and host.client is not None else "")
+        # The services run on the client.
+        hook = ""
+        if with_services:
+            if host.client is None:
+                raise RuntimeError("services need the bus client")
+            hook = await stack.enter_async_context(services(key, host.client))
         async with listener, anyio.create_task_group() as tg:
             tg.start_soon(listener.serve, host.handle)
             if signals or keep_signals:

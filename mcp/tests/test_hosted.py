@@ -28,11 +28,8 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 
 
 class _Client:
-    """A bus client as `Host` takes one (compose.BusClient), for the tests
-    that never call into it: they only pass it through to exit_work."""
-
-    token = "t"
-    session = None
+    """An opaque stand-in, not a bus client: these tests only check that
+    whatever `Host` was given is handed through to exit_work unchanged."""
 
 
 async def _echo(read_stream, write_stream) -> None:
@@ -511,8 +508,9 @@ def test_exit_work_runs_the_servers_cleanup(monkeypatch):
     import mattermost_ai_agent_bus
 
     monkeypatch.setattr(mattermost_ai_agent_bus, "server", Fake, raising=False)
-    hosted.exit_work("client")
-    assert calls == ["client"]
+    client = _Client()
+    hosted.exit_work(client)
+    assert calls == [client]
 
 
 def test_watcher_tells_a_gone_or_reused_pid():
