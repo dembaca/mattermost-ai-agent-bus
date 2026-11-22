@@ -3,14 +3,19 @@
 Mattermost WebSocket moves out of websocket_inbox into an event source:
 
 1. backfill and live stream: what came before the socket opened (past the
-   read watermark, RT-6.2) and what comes live are delivered, in today's order;
+   read mark, RT-6.2 step 1) and what comes live are both delivered;
 2. dedup: a post, an ask's reaction (RT-6.11) or an edit (RT-6.12 step 3)
    seen twice wakes once;
 3. reconnect after a drop: the next read dials again, authenticates, runs
    the backfill, and delivers each post exactly once.
 
+RT-6.2 promises once-only delivery, mentions and DMs first within a batch,
+and the read mark at the newest post handed over; it promises no order
+between the backfill and the live stream, so the tests do not pin one.
+
 The one seam is the socket dial (DIAL): a fake socket that speaks
-Mattermost's frames. Everything else is the shared chat fake.
+Mattermost's frames. Everything else is the shared chat fake, whose REST
+reads suspend as a real client's do.
 """
 
 from __future__ import annotations
@@ -21,10 +26,10 @@ import time
 from typing import Any
 
 import pytest
-from websockets.exceptions import ConnectionClosedError
+from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from fakes import BOT, WORK, FakeChat
-from mattermost_ai_agent_bus import asks, watermark
+from mattermost_ai_agent_bus import asks, unread, watermark
 from mattermost_ai_agent_bus.model import Post, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
@@ -32,6 +37,7 @@ from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketIn
 DIAL = "mattermost_ai_agent_bus.websocket_inbox.ws_connect"
 
 HUMAN = "h" * 26
+HUMAN2 = "k" * 26
 ASK = "a" * 26
 END, ERROR = object(), object()   # the socket ends cleanly / drops with an error
 
@@ -42,7 +48,9 @@ def pid(name: str) -> str:
 
 class FakeSocket:
     """Mattermost's WebSocket: answers the authentication challenge, then
-    yields the frames fed to it, and waits for more until it is dropped."""
+    yields the frames fed to it, and waits for more until it is dropped.
+    Read by iteration or by recv() alike: the handshake replies come first,
+    then the frames."""
 
     def __init__(self, reply: str) -> None:
         self.reply = reply
@@ -50,7 +58,6 @@ class FakeSocket:
         self.closed = False
         self._replies: list[str] = []
         self._frames: asyncio.Queue[object] = asyncio.Queue()
-        self._idle = asyncio.Event()
 
     async def send(self, raw: str) -> None:
         msg = json.loads(raw)
@@ -60,20 +67,28 @@ class FakeSocket:
                 {"event": "hello", "data": {"server_version": "10"}} if self.reply == "hello"
                 else {"status": "OK", "seq_reply": msg.get("seq")}))
 
+    async def _next(self) -> object:
+        if self._replies:
+            return self._replies.pop(0)
+        item = await self._frames.get()
+        if item is ERROR:
+            raise ConnectionClosedError(None, None)
+        return item
+
     async def recv(self) -> str:
-        return self._replies.pop(0)
+        item = await self._next()
+        if item is END:
+            raise ConnectionClosedOK(None, None)
+        assert isinstance(item, str)
+        return item
 
     def __aiter__(self) -> FakeSocket:
         return self
 
     async def __anext__(self) -> str:
-        if self._frames.empty():
-            self._idle.set()
-        item = await self._frames.get()
+        item = await self._next()
         if item is END:
             raise StopAsyncIteration
-        if item is ERROR:
-            raise ConnectionClosedError(None, None)
         assert isinstance(item, str)
         return item
 
@@ -81,17 +96,10 @@ class FakeSocket:
         self.closed = True
         self._frames.put_nowait(END)
 
-    def feed(self, *frames: dict[str, Any]) -> None:
-        self._idle.clear()
+    def feed(self, *frames: dict[str, Any] | object) -> None:
+        """Frames as they arrive; END or ERROR drops the socket there."""
         for f in frames:
-            self._frames.put_nowait(json.dumps(f))
-
-    def drop(self, how: object) -> None:
-        self._frames.put_nowait(how)
-
-    async def settled(self) -> None:
-        """Until the reader has taken every frame fed and waits for the next."""
-        await asyncio.wait_for(self._idle.wait(), 5)
+            self._frames.put_nowait(f if f in (END, ERROR) else json.dumps(f))
 
     @property
     def authenticated(self) -> bool:
@@ -101,15 +109,21 @@ class FakeSocket:
 
 class Dialer:
     """The fake dial: a new socket per connect. Frames in `on_open` are on the
-    next socket the moment it opens (they arrived live around the open)."""
+    next socket the moment it opens (they arrived live around the open);
+    `fail` holds errors the next dials raise, one per dial."""
 
     def __init__(self) -> None:
         self.sockets: list[FakeSocket] = []
-        self.on_open: list[dict[str, Any]] = []
+        self.on_open: list[dict[str, Any] | object] = []
+        self.fail: list[BaseException] = []
         self.replies = ["hello", "ok"]
+        self.dials = 0
 
     async def __call__(self, url: str, *args: Any, **kwargs: Any) -> FakeSocket:
         assert url.startswith("wss://mm.example")
+        self.dials += 1
+        if self.fail:
+            raise self.fail.pop(0)
         sock = FakeSocket(self.replies[len(self.sockets) % len(self.replies)])
         sock.feed(*self.on_open)
         self.on_open = []
@@ -123,26 +137,23 @@ class Dialer:
 
 class Chat(FakeChat):
     """FakeChat with the adapter's base URL and one channel, the home, whose
-    newest post is what `posts` holds. `during_read` runs while the backfill
-    reads the channel (a REST read takes its time: the socket goes on)."""
+    newest post is what `posts` holds. A REST read suspends, as a real
+    client's HTTP call does: the socket is read meanwhile."""
 
     base_url = "https://mm.example"
 
     def __init__(self) -> None:
         super().__init__(username="agent-me")
-        self.during_read: Any = None
 
     async def member_channels(self) -> list[UnreadChannel]:
+        await asyncio.sleep(0)   # a REST read suspends
         at = max((p.create_at for p in self._posts()), default=0)
         return [UnreadChannel(WORK, "O", last_post_at=at)]
 
     async def channel_posts(self, channel_id: str, *, per_page: int | None = None,
                             since_ms: int | None = None) -> list[Post]:
-        got = await super().channel_posts(channel_id, per_page=per_page, since_ms=since_ms)
-        if self.during_read is not None:
-            during, self.during_read = self.during_read, None
-            await during()
-        return got
+        await asyncio.sleep(0)   # a REST read suspends
+        return await super().channel_posts(channel_id, per_page=per_page, since_ms=since_ms)
 
     def add(self, post: dict[str, Any]) -> None:
         self.posts.insert(0, post)
@@ -167,8 +178,8 @@ def edited(p: dict[str, Any], message: str) -> dict[str, Any]:
             "data": {"post": json.dumps(p)}}
 
 
-def reaction(emoji: str = "+1", at: int = 1) -> dict[str, Any]:
-    return {"user_id": HUMAN, "post_id": ASK, "emoji_name": emoji, "create_at": at}
+def reaction(emoji: str = "+1", user: str = HUMAN) -> dict[str, Any]:
+    return {"user_id": user, "post_id": ASK, "emoji_name": emoji, "create_at": 1}
 
 
 def reaction_added(r: dict[str, Any]) -> dict[str, Any]:
@@ -213,6 +224,10 @@ def ids(events: list[ClassifiedEvent]) -> list[str]:
     return [e.post.id.rstrip("0") for e in events]
 
 
+def reactions(events: list[ClassifiedEvent]) -> list[tuple[str, str, str, str]]:
+    return sorted((e.kind, e.raw["emoji"], e.raw["ask"], e.post.user_id) for e in events)
+
+
 async def until_disconnected(inbox: WebSocketInbox) -> None:
     for _ in range(200):
         if not inbox.connected:
@@ -224,10 +239,12 @@ async def until_disconnected(inbox: WebSocketInbox) -> None:
 # 1. Backfill and live stream ------------------------------------------------
 
 
-async def test_backfill_then_live_in_that_order(chat, dial, inbox):
-    """Risk 1, RT-6.2: the posts past the read watermark that came before the
-    socket opened are delivered (oldest first), the one behind the mark is
-    not, and posts arriving live after the open follow them."""
+async def test_backfill_and_live_posts_are_each_delivered_once(chat, dial, inbox):
+    """Risk 1, RT-6.2 step 1: the posts past the read mark that came before
+    the socket opened are delivered, the one behind the mark is not, and the
+    posts arriving live after the open are delivered too, each once. Today
+    the backfill (oldest first) comes before posts fed after the open: current
+    behaviour, not a contract."""
     old = post("old")
     chat.add(old)
     watermark.advance(BOT, WORK, old["id"], old["create_at"])
@@ -236,39 +253,32 @@ async def test_backfill_then_live_in_that_order(chat, dial, inbox):
     await inbox.ensure_connected()
     assert inbox.connected and dial.now.authenticated
     dial.now.feed(posted(post("l1")), posted(post("l2")))
-    assert ids(await drain(inbox)) == ["b1", "b2", "l1", "l2"]
+    assert sorted(ids(await drain(inbox))) == ["b1", "b2", "l1", "l2"]
+    assert watermark.read(BOT)[WORK].post_id == pid("l2")
 
 
-async def test_a_post_both_backfilled_and_live_at_the_open_comes_once_in_backfill_order(
-        chat, dial, inbox):
-    """Risks 1 and 2, RT-6.2: a post both in the backfill and on the socket as
-    it opens (the overlap around the open) is delivered once, in the
-    backfill's place; the live posts already on the socket follow the backfill."""
-    b1, both = post("b1"), post("both")
-    chat.add(b1)
+async def test_a_post_both_live_at_the_open_and_in_the_backfill_comes_once(chat, dial, inbox):
+    """Risks 1 and 2, RT-6.2 step 1: a post both on the socket as it opens
+    and in the backfill (the overlap around the open) is delivered once,
+    the others too. Today the socket is read while the backfill's REST
+    read is under way, so the live posts come before the older backfilled
+    one (both, l1, b1): current behaviour, not a contract."""
+    both = post("both")
+    chat.add(post("b1"))
     chat.add(both)
     dial.on_open = [posted(both), posted(post("l1"))]
-    events = await drain(inbox)
-    assert ids(events) == ["b1", "both", "l1"]
+    assert sorted(ids(await drain(inbox))) == ["b1", "both", "l1"]
     assert dial.now.authenticated
 
 
-async def test_live_posts_during_the_backfill_read_come_before_the_older_backfill(
-        chat, dial, inbox):
-    """Risks 1 and 2, RT-6.2, today's order: the socket is read while the
-    backfill reads the channel, so a post that arrives live meanwhile is
-    queued before the older posts the backfill finds; one that is both live
-    and in the backfill comes once, in its live place."""
-    b1, both = post("b1"), post("both")
-    chat.add(b1)
+async def test_a_live_post_already_backfilled_comes_once(chat, dial, inbox):
+    """Risk 2, RT-6.2 step 1: the overlap from the other side: the backfill
+    queued the post, then it arrives live as well; delivered once."""
+    both = post("both")
     chat.add(both)
-
-    async def arrive() -> None:
-        dial.now.feed(posted(both), posted(post("l1")))
-        await dial.now.settled()
-
-    chat.during_read = arrive
-    assert ids(await drain(inbox)) == ["both", "l1", "b1"]
+    await inbox.ensure_connected()
+    dial.now.feed(posted(both))
+    assert ids(await drain(inbox)) == ["both"]
 
 
 # 2. Dedup -------------------------------------------------------------------
@@ -277,18 +287,41 @@ async def test_live_posts_during_the_backfill_read_come_before_the_older_backfil
 async def test_a_reaction_to_an_open_ask_seen_by_backfill_and_live_comes_once(
         chat, dial, inbox):
     """Risk 2, RT-6.11: a reaction to an open ask that the backfill reads and
-    that also arrives as reaction_added is delivered once; after the drop
-    and reconnect the backfill reads it again and delivers nothing."""
+    that also arrives as reaction_added is delivered once; after a drop and
+    the reconnect, the backfill reads it again and delivers nothing, while a
+    new reaction (another emoji, or another person's) still comes, once."""
     asks.add(BOT, ASK)
     chat.reacts[ASK] = [reaction()]
     dial.on_open = [reaction_added(reaction())]
-    events = await drain(inbox)
-    assert [(e.kind, e.raw["emoji"], e.raw["ask"]) for e in events] == [("reaction", "+1", ASK)]
+    assert reactions(await drain(inbox)) == [("reaction", "+1", ASK, HUMAN)]
     dial.now.feed(reaction_added(reaction()))
     assert await drain(inbox) == []
-    dial.now.drop(ERROR)
+    dial.now.feed(ERROR)
     await until_disconnected(inbox)
     assert await drain(inbox) == [] and len(dial.sockets) == 2
+    dial.now.feed(reaction_added(reaction("-1")), reaction_added(reaction("+1", HUMAN2)),
+                  reaction_added(reaction("-1")))
+    assert reactions(await drain(inbox)) == [("reaction", "+1", ASK, HUMAN2),
+                                             ("reaction", "-1", ASK, HUMAN)]
+
+
+async def test_a_reaction_handed_over_stays_seen_for_the_next_server(chat, dial, inbox):
+    """Risk 2, RT-6.11: what makes a reaction seen outlives the inbox (the
+    asks file, not its memory): a new server of the same bot (a second inbox)
+    reads it again in its backfill and live, and delivers nothing; a new
+    reaction still comes, once."""
+    asks.add(BOT, ASK)
+    chat.reacts[ASK] = [reaction()]
+    assert reactions(await drain(inbox)) == [("reaction", "+1", ASK, HUMAN)]
+    await inbox.close()
+    again = WebSocketInbox(client=chat, watched_channel_ids={WORK})
+    try:
+        dial.on_open = [reaction_added(reaction())]
+        assert await drain(again) == [] and len(dial.sockets) == 2
+        dial.now.feed(reaction_added(reaction("-1")))
+        assert reactions(await drain(again)) == [("reaction", "-1", ASK, HUMAN)]
+    finally:
+        await again.close()
 
 
 @pytest.mark.parametrize("delivered_first", [False, True])
@@ -297,7 +330,7 @@ async def test_an_edit_of_a_post_queued_as_a_mention_does_not_wake_again(
     """Risk 2, RT-6.12 step 3: an edit of a post queued as a mention (still
     waiting, or already handed over) wakes nobody again, a typo fix
     included; the edit that first makes a plain post name the agent does wake,
-    once, marked edited."""
+    once, marked edited (mentions first within a batch)."""
     await inbox.ensure_connected()
     named, plain = post("named", "@agent-me please look"), post("plain", "deploy is done")
     dial.now.feed(posted(named), posted(plain))
@@ -319,10 +352,11 @@ async def test_an_edit_of_a_post_queued_as_a_mention_does_not_wake_again(
 
 async def test_an_edit_of_a_backfilled_mention_does_not_wake_again(chat, dial, inbox):
     """Risk 2, RT-6.12 step 3: a mention the backfill queued counts as queued
-    as a mention: its edit arriving live wakes nobody."""
+    as a mention: its edit arriving live afterwards wakes nobody."""
     named = post("named", "@agent-me please look")
     chat.add(named)
-    dial.on_open = [edited(named, "@agent-me please look, typo fixed")]
+    await inbox.ensure_connected()
+    dial.now.feed(edited(named, "@agent-me please look, typo fixed"))
     events = await drain(inbox)
     assert [(e.post.id.rstrip("0"), e.kind, e.edited) for e in events] == [
         ("named", "mention", False)]
@@ -335,11 +369,13 @@ async def test_an_edit_of_a_backfilled_mention_does_not_wake_again(chat, dial, i
 @pytest.mark.parametrize("how", [ERROR, END], ids=["error", "closed"])
 async def test_after_a_drop_the_next_read_reconnects_and_delivers_each_post_once(
         chat, dial, inbox, how, read):
-    """Risk 3, RT-6.2: the socket drops mid-stream (an error, or the server
-    closes it); the inbox reads as not connected. The next read dials again,
-    authenticates, runs the backfill: the post that arrived while nobody
-    listened comes once, the one delivered before the drop does not come
-    again, and one queued live but not yet read before the drop comes once."""
+    """Risk 3, the read mark (RT-6.2 step 1): the socket drops mid-stream (an
+    error, or the server closes it); the inbox reads as not connected. The
+    next read dials again, authenticates, runs the backfill: the post that
+    arrived while nobody listened comes once, the one delivered before the
+    drop does not come again, one queued live but not yet read before the
+    drop comes once (first: it was queued first), and the mark ends at the
+    newest post."""
     take = read == "take"
     await inbox.ensure_connected()
     first = post("before")
@@ -349,9 +385,7 @@ async def test_after_a_drop_the_next_read_reconnects_and_delivers_each_post_once
 
     queued = post("queued")
     chat.add(queued)
-    dial.now.feed(posted(queued))
-    await dial.now.settled()
-    dial.now.drop(how)
+    dial.now.feed(posted(queued), how)
     await until_disconnected(inbox)
     assert len(dial.sockets) == 1
 
@@ -360,25 +394,76 @@ async def test_after_a_drop_the_next_read_reconnects_and_delivers_each_post_once
     later = post("later")
     chat.add(later)
     dial.on_open = [posted(later)]
-    assert ids(await drain(inbox, take=take)) == ["queued", "missed", "later"]
-    assert inbox.connected and len(dial.sockets) == 2
-    assert dial.now.authenticated and dial.now.reply == "ok"
+    got = ids(await drain(inbox, take=take))
+    assert got[0] == "queued" and sorted(got[1:]) == ["later", "missed"]
+    # The second socket's handshake answered {"status": "OK"}, the first {"event": "hello"}.
+    assert inbox.connected and len(dial.sockets) == 2 and dial.now.authenticated
     assert watermark.read(BOT)[WORK].post_id == later["id"]
     await inbox.close()
     assert not inbox.connected and dial.now.closed
 
 
 async def test_a_drop_before_anything_was_read_loses_nothing(chat, dial, inbox):
-    """Risk 3, RT-6.2: a post that arrived live and a post that came while the
-    socket was down, read only after the reconnect, each come once."""
+    """Risk 3, the read mark (RT-6.2 step 1): a post that arrived live and a
+    post that came while the socket was down, read only after the
+    reconnect, each come once."""
     await inbox.ensure_connected()
     live = post("live")
     chat.add(live)
-    dial.now.feed(posted(live))
-    await dial.now.settled()
-    dial.now.drop(ERROR)
+    dial.now.feed(posted(live), ERROR)
     await until_disconnected(inbox)
     chat.add(post("gap"))
     await inbox.ensure_connected()
     assert inbox.connected and dial.now.authenticated
     assert ids(await drain(inbox)) == ["live", "gap"]
+
+
+async def test_a_drop_during_the_backfill_doubles_nothing(chat, dial, inbox):
+    """Risk 3, the read mark (RT-6.2 step 1): the socket drops while the
+    backfill reads; the backfilled posts come once, the next read connects
+    again and its backfill does not hand them over a second time, and a post
+    after that comes once."""
+    chat.add(post("b1"))
+    chat.add(post("b2"))
+    dial.on_open = [ERROR]
+    assert sorted(ids(await drain(inbox))) == ["b1", "b2"]
+    await inbox.ensure_connected()
+    assert inbox.connected and len(dial.sockets) == 2 and dial.now.authenticated
+    assert await drain(inbox) == []
+    dial.now.feed(posted(post("l1")))
+    assert ids(await drain(inbox)) == ["l1"]
+
+
+async def test_a_failed_redial_fails_that_read_and_the_next_one_reconnects(chat, dial, inbox):
+    """Risk 3, the read mark (RT-6.2 step 1): the socket drops and the next
+    dial fails: that read raises and leaves the inbox unconnected; the call
+    after it dials again and delivers what came meanwhile, once."""
+    await inbox.ensure_connected()
+    dial.now.feed(ERROR)
+    await until_disconnected(inbox)
+    chat.add(post("missed"))
+    dial.fail = [OSError("connection refused")]
+    with pytest.raises(OSError):
+        await inbox.wait_for_events(timeout_sec=0.2)
+    assert not inbox.connected and dial.dials == 2
+    assert ids(await drain(inbox)) == ["missed"]
+    assert inbox.connected and len(dial.sockets) == 2 and dial.now.authenticated
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "bug on main: mentions handed over while the socket was down (it dropped "
+    "during the backfill) never move the read mark: handled() skips them "
+    "unconnected, and the reconnect's backfill skips them as seen without "
+    "handling them, so the turn hooks count them as pending, which "
+    "wait_for_events never returns, until a newer post there is handed over"))
+async def test_mentions_handed_over_while_the_socket_was_down_leave_nothing_pending(
+        chat, dial, inbox):
+    """Risk 3, the read mark (RT-6.2 step 1): the socket drops during the
+    backfill, its mentions are handed over all the same; once the inbox is
+    connected again, nothing counts as pending for the turn hooks."""
+    chat.add(post("b1", "@agent-me one"))
+    chat.add(post("b2", "@agent-me two"))
+    dial.on_open = [ERROR]
+    assert sorted(ids(await drain(inbox))) == ["b1", "b2"]
+    assert inbox.connected and len(dial.sockets) == 2   # the last read reconnected
+    assert await unread.channels(chat, {WORK}) == []
