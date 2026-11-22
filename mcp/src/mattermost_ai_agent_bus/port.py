@@ -277,6 +277,12 @@ class ChatPort(Protocol):
     async def posts_after(self, since_ms: int, *, channel_id: str | None = None,
                           max_pages: int = 25) -> list[Post]: ...
 
+    def with_links(self, post: Post) -> Post:
+        """A post read with channel_posts or posts_after, its links read as
+        the bus reads them (RT-6.15): the bus's permalinks as bare ids, odd
+        links written out."""
+        ...
+
     async def reactions(self, post_id: str) -> list[Reaction]: ...
 
     async def add_reaction(self, post_id: str, emoji: str) -> None:

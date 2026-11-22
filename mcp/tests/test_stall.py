@@ -14,6 +14,8 @@ from mattermost_ai_agent_bus.client import post_of, reaction_of
 from mattermost_ai_agent_bus.model import Post, RosterEntry, Thread
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
+from fakes import FakeEvents
+
 ME = "c" * 26          # the coordinator
 BOB = "b" * 26         # an agent
 EVE = "e" * 26         # another agent
@@ -281,8 +283,7 @@ async def test_an_expired_ask_asks_for_a_new_one(bus):
 async def test_the_event_reaches_wait_for_events_push_and_hooks(monkeypatch):
     """RT-6.19: queued in the inbox, it comes out of wait_for_events as
     {kind: stall}, wakes the channel push, and counts in /v1/pending."""
-    inbox = WebSocketInbox(client=Client())
-    inbox._ws = object()                     # connected
+    inbox = WebSocketInbox(client=Client(), source=FakeEvents())  # connected
     monkeypatch.setattr(server, "_inbox", inbox)
     monkeypatch.setattr(server, "_get_inbox", lambda: inbox)
     monkeypatch.setattr(server, "_client", Client())

@@ -11,7 +11,7 @@ import time
 import pytest
 from fakes import BOT, WORK, FakeChat
 
-from mattermost_ai_agent_bus import channel, lease, server, websocket_inbox
+from mattermost_ai_agent_bus import channel, lease, mattermost_ws, server
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import ChannelUser, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
@@ -103,7 +103,7 @@ async def _reconnect(monkeypatch, inbox: WebSocketInbox) -> list[dict]:
     async def dial(_url):
         return Socket()
 
-    monkeypatch.setattr(websocket_inbox, "ws_connect", dial)
+    monkeypatch.setattr(mattermost_ws, "ws_connect", dial)
     inbox.watched_channel_ids = {WORK}
     try:
         await inbox.connect()

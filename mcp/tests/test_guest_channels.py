@@ -11,7 +11,7 @@ import time
 import anyio
 import httpx
 import pytest
-from fakes import BOT, WORK, FakeChat
+from fakes import BOT, WORK, FakeChat, FakeEvents, frames, read_frames
 from test_channel import Conn
 
 from mattermost_ai_agent_bus import channel, gate, lease, ownpost, server, unread
@@ -66,24 +66,6 @@ class GuestChat(FakeChat):
         return cid
 
 
-class _Socket:
-    """A connected WebSocket that feeds the given messages, then ends."""
-
-    def __init__(self, *messages):
-        self.messages = [json.dumps(m) for m in messages]
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if not self.messages:
-            raise StopAsyncIteration
-        return self.messages.pop(0)
-
-    async def send(self, msg):
-        pass
-
-
 def _posted(pid, message, where=GUEST, root="", props=None):
     post = {"id": pid, "user_id": HUMAN, "channel_id": where, "root_id": root,
             "message": message, "create_at": int(time.time() * 1000), "props": props or {}}
@@ -100,10 +82,9 @@ def chat(tmp_path, monkeypatch):
 
 async def _inbox(chat, *messages):
     """The inbox's reader over these WebSocket messages: what it queued."""
-    inbox = WebSocketInbox(client=chat)  # type: ignore[arg-type]
+    inbox = WebSocketInbox(client=chat, source=FakeEvents(*frames(*messages)))  # type: ignore[arg-type]
     inbox._bot_user_id, inbox._bot_username = BOT, "agent-me"
     await inbox.refresh_channels()
-    inbox._ws = _Socket(*messages)
     await inbox._read_loop()
     return inbox, [inbox._queue.get_nowait() for _ in range(inbox._queue.qsize())]
 
@@ -308,9 +289,8 @@ def _handed_over_chat(chat, *posts):
         return [p for p in await every(cid, **kw) if p.channel_id == cid]
 
     chat.channel_posts = own_channel
-    inbox = WebSocketInbox(client=chat)  # type: ignore[arg-type]
+    inbox = WebSocketInbox(client=chat, source=FakeEvents())  # type: ignore[arg-type]
     inbox._bot_user_id, inbox._bot_username = BOT, "agent-me"
-    inbox._ws = _Socket()
     return inbox
 
 
@@ -386,15 +366,15 @@ async def test_a_channel_the_bot_is_added_to_is_watched(chat):
     await inbox.refresh_channels()
     assert LATER not in inbox.watched_channel_ids
     chat.memberships.add(LATER)
-    await inbox._on_membership({"event": "user_added", "data": {"user_id": "x" * 26},
-                                "broadcast": {"channel_id": LATER}})
+    await read_frames(inbox, {"event": "user_added", "data": {"user_id": "x" * 26},
+                              "broadcast": {"channel_id": LATER}})
     assert LATER not in inbox.guest_channel_ids  # someone else was added
-    await inbox._on_membership({"event": "user_added", "data": {"user_id": BOT},
-                                "broadcast": {"channel_id": LATER}})
+    await read_frames(inbox, {"event": "user_added", "data": {"user_id": BOT},
+                              "broadcast": {"channel_id": LATER}})
     assert {GUEST, LATER} <= inbox.watched_channel_ids and inbox.guest_channel_ids == {GUEST, LATER}
     chat.memberships.discard(LATER)
-    await inbox._on_membership({"event": "user_removed", "data": {"channel_id": LATER},
-                                "broadcast": {"user_id": BOT}})
+    await read_frames(inbox, {"event": "user_removed", "data": {"channel_id": LATER},
+                              "broadcast": {"user_id": BOT}})
     assert LATER not in inbox.watched_channel_ids
 
 
@@ -461,10 +441,10 @@ async def _mine(item, uid):
 
 
 async def _lobby_inbox(chat, *messages):
-    inbox = WebSocketInbox(client=chat, in_my_thread=_mine)  # type: ignore[arg-type]
+    inbox = WebSocketInbox(client=chat, in_my_thread=_mine,  # type: ignore[arg-type]
+                           source=FakeEvents(*frames(*messages)))
     inbox._bot_user_id, inbox._bot_username = BOT, "agent-me"
     await inbox.refresh_channels()
-    inbox._ws = _Socket(*messages)
     await inbox._read_loop()
     return inbox, [inbox._queue.get_nowait() for _ in range(inbox._queue.qsize())]
 

@@ -1171,6 +1171,11 @@ class MattermostAdapter:
         """A post's permalink is this plus its id (RT-6.15)."""
         return f"{self.base_url}/{self.team_name}/pl/"
 
+    def with_links(self, post: Post) -> Post:
+        """A post read with channel_posts or posts_after, its links read as
+        the bus reads them (RT-6.15)."""
+        return with_links(post, self.permalink_base)  # the module's function
+
     async def get_me(self) -> Me:
         while self._me is None:
             gen = self._me_gen

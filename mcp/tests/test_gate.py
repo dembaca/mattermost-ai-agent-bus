@@ -14,6 +14,8 @@ from mattermost_ai_agent_bus.client import Account, MattermostAdapter, post_of
 from mattermost_ai_agent_bus.model import Me, RosterEntry, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox, classify_post
 
+from fakes import FakeEvents, frames, read_frames
+
 ME, HUMAN, STRANGER = "m" * 26, "h" * 26, "s" * 26
 AGENT, POSER, CI = "a" * 26, "x" * 26, "c" * 26
 PROJ, DM = "p" * 26, "d" * 26
@@ -25,25 +27,6 @@ USERS = {
     CI: {"id": CI, "username": "ci-bot", "is_bot": True},
 }
 GATED = "from mallory, not trusted by me: the coordinator answers"
-
-
-class _Socket:
-    """A connected WebSocket that feeds the given messages, then ends."""
-
-    def __init__(self, *messages):
-        self.messages = list(messages)
-        self.sent = []
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        if not self.messages:
-            raise StopAsyncIteration
-        return self.messages.pop(0)
-
-    async def send(self, msg):
-        self.sent.append(msg)
 
 
 class Bus:
@@ -81,9 +64,10 @@ class Bus:
         monkeypatch.setattr(gate.lease, "roster", roster)
         monkeypatch.setattr(gate, "_coord", None)
         self.threads = {"mine"}
-        self.inbox = WebSocketInbox(client=self.client, watched_channel_ids={PROJ})
+        self.events = FakeEvents()  # connected
+        self.inbox = WebSocketInbox(client=self.client, watched_channel_ids={PROJ},
+                                    source=self.events)
         self.inbox._bot_user_id, self.inbox._bot_username = ME, "agent-me"
-        self.inbox._ws = _Socket()
 
         async def in_my_thread(item, uid):
             return item["post"].get("root_id") in self.threads
@@ -426,8 +410,8 @@ async def test_backfill_and_the_live_stream_are_gated(bus, monkeypatch):
     await asyncio.gather(*list(bus.inbox._gate_tasks))
     assert bus.viewed == [PROJ]
     live = dict(old, id="p2000000000000000000000000", message="@agent-me and now?", root_id="p9000000000000000000000000")
-    bus.inbox._ws = _Socket(json.dumps({"event": "posted", "data": {
-        "channel_type": "O", "post": json.dumps(live)}}))
+    bus.events.pending = frames(json.dumps({"event": "posted", "data": {
+        "channel_type": "O", "post": json.dumps(live)}}), permalink_base=bus.client.permalink_base)
     await bus.inbox._read_loop()
     await asyncio.gather(*list(bus.inbox._gate_tasks))
     assert [e.gated == GATED for e in bus.inbox._queue._queue] == [True, True]
@@ -453,9 +437,9 @@ ASK = "k" * 26
 async def _react(bus, user, emoji="+1"):
     """A reaction to the worker's open ask arrives on the socket."""
     asks.add(ME, ASK)
-    await bus.inbox._on_reaction_event({"event": "reaction_added", "broadcast": {"channel_id": PROJ},
-                                        "data": {"reaction": json.dumps(
-                                            {"user_id": user, "post_id": ASK, "emoji_name": emoji})}})
+    await read_frames(bus.inbox, {"event": "reaction_added", "broadcast": {"channel_id": PROJ},
+                                  "data": {"reaction": json.dumps(
+                                      {"user_id": user, "post_id": ASK, "emoji_name": emoji})}})
     return bus.inbox._queue._queue[-1]
 
 

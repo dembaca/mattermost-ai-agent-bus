@@ -19,6 +19,8 @@ from mattermost_ai_agent_bus.model import Me
 from mattermost_ai_agent_bus import asks, channel, hookapi, lease, permission, server, session_file, watermark
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
+from fakes import FakeEvents
+
 BOT = "b" * 26
 HUMAN = "h" * 26
 OTHER = "o" * 26
@@ -351,8 +353,8 @@ async def test_the_dm_holds_nothing_unread_after_prompt_and_verdict(relay, monke
     async def view_channel(cid):
         viewed.append(cid)
 
-    inbox = WebSocketInbox(client=c)
-    inbox._ws, inbox._bot_user_id = object(), "b" * 26
+    inbox = WebSocketInbox(client=c, source=FakeEvents())  # connected
+    inbox._bot_user_id = "b" * 26
     monkeypatch.setattr(c, "post", post, raising=False)
     c.view_channel = view_channel
     monkeypatch.setattr(server, "_inbox", inbox)

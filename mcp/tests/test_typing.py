@@ -1,24 +1,12 @@
 """RT-6.5 typing indicator while a mention is answered (docs/arc42/06-runtime-view.md)."""
 
 import asyncio
-import json
 
 import pytest
 
-from fakes import WORK, FakeChat
+from fakes import WORK, FakeChat, FakeEvents
 from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
-
-
-class _FakeWs:
-    def __init__(self):
-        self.sent: list[dict] = []
-
-    async def send(self, raw):
-        self.sent.append(json.loads(raw))
-
-    def typing(self) -> list[dict]:
-        return [m["data"] for m in self.sent if m["action"] == "user_typing"]
 
 
 class _FakeClient:
@@ -26,10 +14,10 @@ class _FakeClient:
         return None
 
 
-def _inbox(**kw) -> tuple[WebSocketInbox, _FakeWs]:
-    inbox = WebSocketInbox(client=_FakeClient(), typing_interval=0.01, **kw)
-    ws = _FakeWs()
-    inbox._ws = ws
+def _inbox(**kw) -> tuple[WebSocketInbox, FakeEvents]:
+    """A connected inbox; ws.typed: the typing indicators its source sent."""
+    ws = FakeEvents()
+    inbox = WebSocketInbox(client=_FakeClient(), typing_interval=0.01, source=ws, **kw)
     return inbox, ws
 
 
@@ -44,7 +32,7 @@ async def test_mention_shows_typing_in_its_thread_until_next_wait():
     inbox, ws = _inbox()
     await _deliver(inbox, "mention", {"id": "p1", "channel_id": "c1", "root_id": "r1"})
     await asyncio.sleep(0.05)
-    sent = ws.typing()
+    sent = ws.typed
     assert len(sent) >= 4
     # Thread view and channel view each show only their own key.
     assert sent[:2] == [
@@ -52,9 +40,9 @@ async def test_mention_shows_typing_in_its_thread_until_next_wait():
         {"channel_id": "c1", "parent_id": ""},
     ]
     assert await inbox.wait_for_events(timeout_sec=0.01) == []
-    n = len(ws.typing())
+    n = len(ws.typed)
     await asyncio.sleep(0.05)
-    assert len(ws.typing()) == n
+    assert len(ws.typed) == n
 
 
 @pytest.mark.asyncio
@@ -62,7 +50,7 @@ async def test_top_level_post_uses_itself_as_thread():
     inbox, ws = _inbox()
     await _deliver(inbox, "dm", {"id": "p2", "channel_id": "d1"})
     await asyncio.sleep(0)
-    assert ws.typing()[:2] == [
+    assert ws.typed[:2] == [
         {"channel_id": "d1", "parent_id": "p2"},
         {"channel_id": "d1", "parent_id": ""},
     ]
@@ -75,7 +63,7 @@ async def test_watched_channel_post_promises_nothing():
     inbox, ws = _inbox()
     await _deliver(inbox, "watched_channel", {"id": "p3", "channel_id": "c1"})
     await asyncio.sleep(0.03)
-    assert ws.typing() == []
+    assert ws.typed == []
 
 
 @pytest.mark.asyncio
@@ -84,14 +72,14 @@ async def test_typing_ends_on_its_own_and_can_be_off():
     inbox, ws = _inbox(typing_sec=0.03)
     await _deliver(inbox, "mention", {"id": "p4", "channel_id": "c1"})
     await asyncio.sleep(0.08)
-    n = len(ws.typing())
+    n = len(ws.typed)
     await asyncio.sleep(0.05)
-    assert n > 0 and len(ws.typing()) == n
+    assert n > 0 and len(ws.typed) == n
 
     off, ws_off = _inbox(typing_sec=0)
     await _deliver(off, "mention", {"id": "p5", "channel_id": "c1"})
     await asyncio.sleep(0.03)
-    assert ws_off.typing() == []
+    assert ws_off.typed == []
 
 
 @pytest.mark.asyncio
@@ -109,9 +97,9 @@ async def test_post_stops_typing(monkeypatch):
     monkeypatch.setattr(server, "_get_client", lambda: _Client())
     await _deliver(inbox, "mention", {"id": "p6", "channel_id": "c1"})
     await server.reply_in_thread(root_id="p6", message="ACK")
-    n = len(ws.typing())
+    n = len(ws.typed)
     await asyncio.sleep(0.05)
-    assert len(ws.typing()) == n
+    assert len(ws.typed) == n
 
 
 # --- RT-6.5: the 👑 shows typing for a human's plain post (0.52.0) ----------------------
@@ -163,7 +151,7 @@ async def test_a_humans_plain_post_shows_the_crown_typing_in_both_paths(crowned,
     else:
         await server.wait_for_events(timeout_sec=1)
     await asyncio.sleep(0)
-    assert ws.typing()[:2] == [{"channel_id": WORK, "parent_id": "r7"}, {"channel_id": WORK, "parent_id": ""}]
+    assert ws.typed[:2] == [{"channel_id": WORK, "parent_id": "r7"}, {"channel_id": WORK, "parent_id": ""}]
 
 
 @pytest.mark.asyncio
@@ -173,7 +161,7 @@ async def test_a_pushed_mention_shows_typing():
     await inbox._queue.put(ClassifiedEvent(kind="mention", post=post_of({"id": "p8", "channel_id": "c1"})))
     await inbox.wait_for_events(timeout_sec=1, agent=False)
     await asyncio.sleep(0)
-    assert ws.typing()[:1] == [{"channel_id": "c1", "parent_id": "p8"}]
+    assert ws.typed[:1] == [{"channel_id": "c1", "parent_id": "p8"}]
     inbox.stop_typing()
 
 
@@ -198,7 +186,7 @@ async def test_no_typing_for_what_is_no_task_of_the_crown(crowned, monkeypatch, 
                             post=post_of({"id": "p9", "channel_id": "c1", "message": "hi"} | post))
     await server._typing_for_task([event], [item])
     await asyncio.sleep(0)
-    assert ws.typing() == []
+    assert ws.typed == []
 
 
 # --- RT-6.5 / RT-6.11: a trusted human's answer on an open ask (0.64.3) ------------------
@@ -241,7 +229,7 @@ async def test_a_trusted_answer_on_an_ask_shows_typing_in_its_thread(crowned, mo
     else:
         await server.wait_for_events(timeout_sec=1)
     await asyncio.sleep(0)
-    assert ws.typing()[:2] == [{"channel_id": "c1", "parent_id": "a1"}, {"channel_id": "c1", "parent_id": ""}]
+    assert ws.typed[:2] == [{"channel_id": "c1", "parent_id": "a1"}, {"channel_id": "c1", "parent_id": ""}]
 
 
 @pytest.mark.asyncio
@@ -251,7 +239,7 @@ async def test_an_answer_fetched_on_connect_finds_the_asks_channel(crowned):
     server, _, ws, _ = crowned
     await server._typing_for_task([_reaction({"channel_id": ""})], [_answer()])
     await asyncio.sleep(0)
-    assert ws.typing()[:1] == [{"channel_id": WORK, "parent_id": "a1"}]
+    assert ws.typed[:1] == [{"channel_id": WORK, "parent_id": "a1"}]
 
 
 @pytest.mark.parametrize(("item", "gated"), [
@@ -267,7 +255,7 @@ async def test_no_typing_for_a_reaction_that_promises_nothing(crowned, item, gat
     server, _, ws, _ = crowned
     await server._typing_for_task([_reaction(gated=gated)], [item])
     await asyncio.sleep(0)
-    assert ws.typing() == []
+    assert ws.typed == []
 
 
 @pytest.mark.asyncio
@@ -278,4 +266,4 @@ async def test_a_mention_keeps_the_indicator_over_an_ask_answer(crowned):
     inbox.start_typing("c2", "m1")  # what the inbox does for the delivered mention
     await server._typing_for_task([_reaction(), mention], [_answer(), _item(kind="mention")])
     await asyncio.sleep(0)
-    assert {m["channel_id"] for m in ws.typing()} == {"c2"}
+    assert {m["channel_id"] for m in ws.typed} == {"c2"}

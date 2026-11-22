@@ -5,7 +5,8 @@ import time
 
 import pytest
 
-from mattermost_ai_agent_bus.client import post_of
+from fakes import FakeEvents, frames
+from mattermost_ai_agent_bus.client import post_of, with_links
 from mattermost_ai_agent_bus import watermark
 from mattermost_ai_agent_bus.model import Me, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
@@ -45,6 +46,12 @@ class _FakeClient:
 
     async def guest_channel_ids(self):
         return set()
+
+    def forget_guests(self):
+        pass
+
+    def with_links(self, post):
+        return with_links(post, "")  # no permalink base: links stay as written
 
 
 @pytest.fixture(autouse=True)
@@ -110,45 +117,42 @@ async def test_explicit_watch_list_is_not_overridden():
     assert client.resolved == []
 
 
-class _DeadSocket:
-    """A socket whose read loop ends, as on a dropped connection."""
-
-    def __init__(self):
-        self.closed = False
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        raise StopAsyncIteration
-
-    async def close(self):
-        self.closed = True
-
-
 @pytest.mark.asyncio
 async def test_dead_socket_is_dropped_so_the_next_wait_reconnects():
     """Regression: a dropped WebSocket left _ws set, so the inbox went silently
-    deaf — every later wait_for_events timed out with nothing feeding the queue."""
-    import asyncio
-
-    inbox = WebSocketInbox(client=_FakeClient(), watched_channel_ids={"c"})
-    inbox._ws = _DeadSocket()
+    deaf — every later wait_for_events timed out with nothing feeding the queue.
+    The stream's end leaves the source not connected (Mattermost's:
+    test_mattermost_ws), and the inbox with it."""
+    inbox = WebSocketInbox(client=_FakeClient(), watched_channel_ids={"c"}, source=FakeEvents())
     await inbox._read_loop()
-    assert inbox._ws is None, "dead socket must be cleared to allow a reconnect"
+    assert not inbox.connected, "dead socket must be cleared to allow a reconnect"
     assert inbox._reader is None
-    del asyncio
+
+
+@pytest.mark.asyncio
+async def test_an_event_that_fails_here_ends_the_stream_too(monkeypatch):
+    """The same for an event the inbox fails on: the reader stops, and it
+    ends the stream (aclose), so the source is not left reading as connected."""
+    message = {"event": "posted", "data": {"post": {"id": "p1", "channel_id": "c"}}}
+    inbox = WebSocketInbox(client=_FakeClient(), watched_channel_ids={"c"},
+                           source=FakeEvents(*frames(message)))
+
+    async def boom(event):
+        raise RuntimeError("no")
+
+    monkeypatch.setattr(inbox, "_on_event", boom)
+    await inbox._read_loop()
+    assert not inbox.connected and inbox._reader is None
 
 
 @pytest.mark.asyncio
 async def test_close_still_closes_the_socket():
     """The reconnect fix must not stop close() from closing a live socket."""
-    inbox = WebSocketInbox(client=_FakeClient())
-    sock = _DeadSocket()
-    inbox._ws = sock
+    events = FakeEvents()
+    inbox = WebSocketInbox(client=_FakeClient(), source=events)
     await inbox.close()
-    assert sock.closed is True
-    assert inbox._ws is None
+    assert events.closed is True
+    assert not inbox.connected
 
 
 class _BackfillClient(_FakeClient):
@@ -184,9 +188,9 @@ async def test_messages_sent_before_connect_are_still_delivered():
     earlier in the session was invisible to the queue while the REST counters
     still reported it — the Stop hook blocked on an undeliverable message."""
     client = _BackfillClient([_post("p1", "sent while nobody was listening")])
-    inbox = WebSocketInbox(client=client, watched_channel_ids={"c"})
+    # already "connected": do not dial out
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"c"}, source=FakeEvents())
     inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
-    inbox._ws = _DeadSocket()  # already "connected": do not dial out
     await inbox._backfill()
     events = await inbox.wait_for_events(timeout_sec=1)
     assert [e.post.id for e in events] == ["p1"]
@@ -197,9 +201,9 @@ async def test_messages_sent_before_connect_are_still_delivered():
 async def test_backfill_does_not_deliver_a_post_twice():
     """Backfill and the live stream overlap at connect time."""
     client = _BackfillClient([_post("p1")])
-    inbox = WebSocketInbox(client=client, watched_channel_ids={"c"})
+    # already "connected": do not dial out
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"c"}, source=FakeEvents())
     inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
-    inbox._ws = _DeadSocket()  # already "connected": do not dial out
     await inbox._backfill()
     await inbox._backfill()
     events = await inbox.wait_for_events(timeout_sec=1)
@@ -210,9 +214,9 @@ async def test_backfill_does_not_deliver_a_post_twice():
 async def test_backfill_ignores_own_posts():
     """A bot's own welcome DM counts as unread for it but can never be for it."""
     client = _BackfillClient([_post("p1", user="bot1")])
-    inbox = WebSocketInbox(client=client, watched_channel_ids={"c"})
+    # already "connected": do not dial out
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"c"}, source=FakeEvents())
     inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
-    inbox._ws = _DeadSocket()  # already "connected": do not dial out
     await inbox._backfill()
     assert await inbox.wait_for_events(timeout_sec=0.2) == []
 
@@ -224,8 +228,7 @@ async def test_newer_wait_supersedes_pending_one():
 
     from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
 
-    inbox = WebSocketInbox(client=_FakeClient())
-    inbox._ws = object()  # pretend connected
+    inbox = WebSocketInbox(client=_FakeClient(), source=FakeEvents())  # pretend connected
     stale = asyncio.create_task(inbox.wait_for_events(timeout_sec=30))
     await asyncio.sleep(0)
     fresh = asyncio.create_task(inbox.wait_for_events(timeout_sec=30))
@@ -238,8 +241,7 @@ async def test_newer_wait_supersedes_pending_one():
 
 @pytest.mark.asyncio
 async def test_wait_times_out_empty():
-    inbox = WebSocketInbox(client=_FakeClient())
-    inbox._ws = object()
+    inbox = WebSocketInbox(client=_FakeClient(), source=FakeEvents())
     assert await inbox.wait_for_events(timeout_sec=0.01) == []
     assert inbox._queue.qsize() == 0
 
@@ -273,9 +275,8 @@ async def test_backfill_never_reads_before_the_bot_existed():
     old = [_post(f"old{i}", channel="proj", at=BORN - 1000 + i) for i in range(20)]
     new = _post("ask", "@agent-test hast du das gesehen?", channel="proj", at=BORN + 9000)
     client = _FreshBotClient(old + [new])
-    inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"})
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"}, source=FakeEvents())
     inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
-    inbox._ws = _DeadSocket()
     await inbox._backfill()
     assert client.since == [BORN]
     events = await inbox.wait_for_events(timeout_sec=1)
@@ -291,16 +292,15 @@ async def test_backfill_reads_from_the_watermark_and_hands_over_once():
              _post("new", "@agent-test new", channel="proj", at=BORN + 2000)]
     watermark.advance("bot1", "proj", "seen", BORN + 1000)
     client = _FreshBotClient(posts)
-    inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"})
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"}, source=FakeEvents())
     inbox._bot_user_id, inbox._bot_username = "bot1", "agent-test"
-    inbox._ws = _DeadSocket()
     await inbox._backfill()
     assert client.since == [BORN + 1000]
     assert [e.post.id for e in await inbox.wait_for_events(timeout_sec=1)] == ["new"]
     assert watermark.read("bot1")["proj"] == ("new", BORN + 2000)
-    again = WebSocketInbox(client=client, watched_channel_ids={"proj"})  # the next server
+    again = WebSocketInbox(client=client, watched_channel_ids={"proj"},  # the next server
+                           source=FakeEvents())
     again._bot_user_id, again._bot_username = "bot1", "agent-test"
-    again._ws = _DeadSocket()
     await again._backfill()
     assert client.since == [BORN + 1000]  # newest post not past the mark: no read
     assert await again.wait_for_events(timeout_sec=0.05) == []
@@ -313,8 +313,8 @@ async def test_a_post_queued_behind_the_watermark_holds_it_back():
     goes back before it, so the pending count still sees it until handed over."""
     from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
     client = _BackfillClient([])
-    inbox = WebSocketInbox(client=client)
-    inbox._bot_user_id, inbox._ws = "bot1", _DeadSocket()
+    inbox = WebSocketInbox(client=client, source=FakeEvents())
+    inbox._bot_user_id = "bot1"
     inbox.handled(post_of({"id": "own", "channel_id": "dm1", "create_at": 2000}))
     assert watermark.at("bot1", "dm1") == 2000
     late = _post("late", channel="dm1", at=1500)
@@ -333,8 +333,8 @@ async def test_mentions_and_dms_come_first_and_the_rest_stays_unread():
     a channel with posts still queued must not be marked read."""
     from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent
     client = _BackfillClient([])
-    inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"})
-    inbox._ws, inbox._bot_user_id = _DeadSocket(), "bot1"
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"proj"}, source=FakeEvents())
+    inbox._bot_user_id = "bot1"
     for i in range(12):
         inbox._queue.put_nowait(ClassifiedEvent(
             kind="watched_channel", post=_post(f"c{i}", channel="proj")))

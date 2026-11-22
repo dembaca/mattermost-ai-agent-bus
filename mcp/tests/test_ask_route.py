@@ -14,7 +14,7 @@ from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketIn
 
 from mattermost_ai_agent_bus.model import ChannelUser
 
-from fakes import WORK, FakeChat
+from fakes import WORK, FakeChat, read_frames
 
 BOT = "b" * 26      # the asking agent
 HUMAN = "h" * 26    # its trusted human, dembaca
@@ -253,10 +253,10 @@ async def test_the_inbox_hands_a_switch_to_no_agent():
     c = _Client()
     inbox = WebSocketInbox(client=c, watched_channel_ids={WORK})
     inbox._bot_user_id, inbox._bot_username = BOT, "agent-worker"
-    await inbox._on_post(_posted(SWITCH, HUMAN))
+    await read_frames(inbox, _posted(SWITCH, HUMAN))
     assert inbox._queue.empty()
     assert (await askroute.mode(c, BOT))[0] == "coordinator"
-    await inbox._on_post(_posted("o" * 26, OTHER, "ask-mode direct"))
+    await read_frames(inbox, _posted("o" * 26, OTHER, "ask-mode direct"))
     assert inbox._queue.qsize() == 1
     assert (await askroute.mode(c, BOT))[0] == "coordinator"
 

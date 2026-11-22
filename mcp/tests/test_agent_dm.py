@@ -70,17 +70,20 @@ async def test_own_post_leaves_no_unread_dm(monkeypatch):
     from mattermost_ai_agent_bus.client import post_of
     from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
+    from fakes import FakeEvents
+
     viewed = []
 
     class Client:
         async def view_channel(self, cid):
             viewed.append(cid)
 
-    inbox = WebSocketInbox(client=Client())
+    events = FakeEvents(connected=False)
+    inbox = WebSocketInbox(client=Client(), source=events)
     monkeypatch.setattr(server, "_inbox", inbox)
     await server._posted(Client(), post_of({"channel_id": DM}))
     assert viewed == []                       # not connected: may have missed one
-    inbox._ws = object()
+    events.connected = True
     await server._posted(Client(), post_of({"channel_id": DM}))
     assert viewed == [DM]
     inbox._queue.put_nowait(ClassifiedEvent(kind="dm", post=post_of({"channel_id": DM})))

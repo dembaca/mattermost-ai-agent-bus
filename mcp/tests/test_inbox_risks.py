@@ -34,7 +34,7 @@ from mattermost_ai_agent_bus.model import Post, UnreadChannel
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
 # Where the inbox dials Mattermost's WebSocket: the one line the event source changes.
-DIAL = "mattermost_ai_agent_bus.websocket_inbox.ws_connect"
+DIAL = "mattermost_ai_agent_bus.mattermost_ws.ws_connect"
 
 HUMAN = "h" * 26
 HUMAN2 = "k" * 26

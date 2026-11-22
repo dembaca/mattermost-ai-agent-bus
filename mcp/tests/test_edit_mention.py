@@ -5,7 +5,8 @@ import json
 import time
 
 import pytest
-from test_gate import GATED, HUMAN, ME, PROJ, STRANGER, Bus, _Socket
+from fakes import frames
+from test_gate import GATED, HUMAN, ME, PROJ, STRANGER, Bus
 
 from mattermost_ai_agent_bus import channel, hookapi, server, unread, watermark
 from mattermost_ai_agent_bus.client import post_of
@@ -46,10 +47,10 @@ def _edited(pid, message, **kw):
 
 async def _stream(bus, *messages):
     """The reader takes these WebSocket messages; the queue afterwards."""
-    bus.inbox._ws = _Socket(*messages)
+    bus.events.pending = frames(*messages, permalink_base=bus.client.permalink_base)
     await bus.inbox._read_loop()
     await asyncio.gather(*list(bus.inbox._gate_tasks))
-    bus.inbox._ws = _Socket()
+    bus.events.connected = True
     return list(bus.inbox._queue._queue)
 
 

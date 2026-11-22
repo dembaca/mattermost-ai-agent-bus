@@ -7,24 +7,31 @@ the port has, each with the port's signature (test_adapter_boundary checks
 both, and mypy checks this file). A member the port gains is added here, with
 the port's signature; what is no port member (the adapter's own attributes)
 goes into a subclass in the test. FakeRegistrar does the same for the
-registration port.
+registration port, FakeEvents for the inbox's event source (events.py);
+frames() reads Mattermost WebSocket messages into events for it, and
+read_frames() hands them to an inbox as its reader does.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 from mattermost_ai_agent_bus import owners
-from mattermost_ai_agent_bus.client import dm_partner, post_of, reaction_of
+from mattermost_ai_agent_bus.client import dm_partner, post_of, reaction_of, with_links
+from mattermost_ai_agent_bus.events import ChatEvent
 from mattermost_ai_agent_bus.ids import mm_name
+from mattermost_ai_agent_bus.mattermost_ws import event_of
 from mattermost_ai_agent_bus.model import (Channel, ChannelUser, FileInfo, Me, NotFound, Post, Reaction,
                                            Thread, UnreadChannel)
 from mattermost_ai_agent_bus.session_file import SessionInfo
 
 if TYPE_CHECKING:
+    from mattermost_ai_agent_bus.events import EventSource
     from mattermost_ai_agent_bus.port import ChatPort
     from mattermost_ai_agent_bus.registration import RegistrationPort
+    from mattermost_ai_agent_bus.websocket_inbox import WebSocketInbox
 
 BOT = "u" * 26
 WORK = "c" * 26
@@ -356,6 +363,10 @@ class FakeChat:
         """All posts: the test hands only what came after."""
         return self._posts()
 
+    def with_links(self, post: Post) -> Post:
+        """As the adapter reads a post's links, with this fake's permalink base."""
+        return with_links(post, self.permalink_base)
+
     async def file_info(self, file_id: str) -> FileInfo:
         return self.files[file_id]
 
@@ -457,9 +468,77 @@ class FakeRegistrar:
         return f"kept {name} for claude --continue" if self.keeps_bot_on_exit else f"unregistered {name}"
 
 
+class FakeEvents:
+    """An event source (events.EventSource) for tests: connected as handed in
+    (connected by default, so the inbox reads as connected without dialling),
+    connected again by open(). Its stream gives `pending`, then ends, or
+    raises `error`; its end, and aclose(), leave it not connected, as a
+    real source's do. opens: how often open() ran; closed: close() ran;
+    typed: each typing indicator sent, as {channel_id, parent_id}."""
+
+    def __init__(self, *events: ChatEvent, connected: bool = True,
+                 error: BaseException | None = None) -> None:
+        self.pending: list[ChatEvent] = list(events)
+        self.connected = connected
+        self.error = error
+        self.opens = 0
+        self.closed = False
+        self.typed: list[dict[str, str]] = []
+
+    async def open(self) -> None:
+        self.opens += 1
+        self.connected = True
+
+    def events(self) -> _FakeStream:
+        return _FakeStream(self)
+
+    async def typing(self, channel_id: str, parent_id: str) -> None:
+        self.typed.append({"channel_id": channel_id, "parent_id": parent_id})
+
+    async def close(self) -> None:
+        self.closed = True
+        self.connected = False
+
+
+class _FakeStream:
+    def __init__(self, source: FakeEvents) -> None:
+        self._source = source
+
+    def __aiter__(self) -> _FakeStream:
+        return self
+
+    async def __anext__(self) -> ChatEvent:
+        if self._source.pending:
+            return self._source.pending.pop(0)
+        self._source.connected = False
+        if self._source.error is not None:
+            raise self._source.error
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None:
+        self._source.connected = False
+
+
+def frames(*messages: str | Mapping[str, Any], permalink_base: str = "") -> list[ChatEvent]:
+    """Mattermost WebSocket messages (JSON text or objects) as the adapter's
+    event source reads them (mattermost_ws.event_of); those it ignores left out."""
+    found = (event_of(m if isinstance(m, str) else json.dumps(m), permalink_base) for m in messages)
+    return [e for e in found if e is not None]
+
+
+async def read_frames(inbox: WebSocketInbox, *messages: str | Mapping[str, Any],
+                      permalink_base: str = "") -> None:
+    """The inbox's reader takes these Mattermost WebSocket messages, one by one."""
+    for event in frames(*messages, permalink_base=permalink_base):
+        await inbox._on_event(event)
+
+
 if TYPE_CHECKING:
     def _fake_chat_is_a_port(fake: FakeChat) -> ChatPort:
         """mypy checks that the fakes satisfy their ports, structurally."""
+        return fake
+
+    def _fake_events_is_a_source(fake: FakeEvents) -> EventSource:
         return fake
 
     def _fake_registrar_is_a_port(fake: FakeRegistrar) -> RegistrationPort:

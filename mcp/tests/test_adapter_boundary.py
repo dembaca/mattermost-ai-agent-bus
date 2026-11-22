@@ -48,7 +48,8 @@ POST_KEYS_ALLOWED = {
     "slim.py": "its own output: the slim posts in wait_for_events items",
     "channel.py": "wait_for_events items, whose posts are slim (slim.py)",
     "overhead.py": "Claude Code transcript entries, no posts",
-    "websocket_inbox.py": "the WebSocket envelope and reaction JSON; posts go through client.post_of",
+    "mattermost_ws.py": "Mattermost's WebSocket frames and reaction JSON, the adapter's event source; "
+                        "posts go through client.post_of",
     "turnend.py": "the hook API's post items (hookapi._slim, GET /v1/posts), bus output",
     "attest.py": "the claims of the registrar's signed ask-mode record (RT-6.25 step 8), no post",
 }
@@ -58,7 +59,7 @@ PORT_MODULES = {"gate.py", "lease.py", "slim.py", "files.py", "departed.py", "re
                 "ownpost.py", "stats.py", "unread.py", "attest.py", "askroute.py", "mandate.py", "debug.py",
                 "attach.py", "homes.py",
                 # Entry points that already take the port (phase 2 of the NATS move).
-                "hookapi.py"}
+                "hookapi.py", "websocket_inbox.py"}
 
 
 def _key(node: ast.AST) -> str | None:
@@ -322,14 +323,15 @@ def test_nobody_reaches_symbols_through_a2a():
 
 
 # Who may import client.py besides the adapter itself: the composition root,
-# which builds it, and the WebSocket inbox, until it is the adapter's own
-# event source (phase 2 of the NATS move, PR 6).
-CLIENT_IMPORTERS = {"compose.py", "websocket_inbox.py"}
+# which builds it, and Mattermost's event source (its WebSocket), which reads
+# the frames' posts and reactions with the adapter's post_of and reaction_of.
+CLIENT_IMPORTERS = {"compose.py", "mattermost_ws.py"}
 
 
 def test_only_the_composition_root_builds_the_adapter():
     """The entry points hold a compose.BusClient and get it from
-    compose.client_from_env; none of them imports client.py."""
+    compose.client_from_env, the inbox its events from compose.event_source;
+    none of them imports client.py."""
     found = {f.name for f in sorted(SRC.glob("*.py"))
              if f.name != "client.py" and client_imports(f.read_text())}
     assert found == CLIENT_IMPORTERS

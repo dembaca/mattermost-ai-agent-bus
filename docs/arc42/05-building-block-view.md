@@ -60,12 +60,12 @@ The MCP server's inside is cut once more, at the chat: see 5.2.
 
 | Layer | Modules | Responsibility |
 |-------|---------|----------------|
-| Entry points | `server.py` (MCP tools, instructions), `hookapi.py` (hook API, RT-6.17), `hosted.py` (host process, RT-6.18), `websocket_inbox.py` (inbox) | Take requests and events and drive the bus logic. They import no `client.py`: `server.py` and `hosted.py` hold a `compose.BusClient` that `compose.client_from_env` builds, and hand on a `ChatPort` wherever the chat is all a function needs; `hookapi.py` takes a `ChatPort` like the bus logic. Only `websocket_inbox.py` still imports the adapter's post parsers and its link and WebSocket-address helpers, until the inbox is the adapter's own event source (`test_adapter_boundary`) |
-| Composition root | `compose.py` | The one place that builds the chat adapter (`client_from_env`) and names what the entry points hold: `BusClient`, the chat port and the registration port on one object, and the chat's address for the inbox |
+| Entry points | `server.py` (MCP tools, instructions), `hookapi.py` (hook API, RT-6.17), `hosted.py` (host process, RT-6.18), `websocket_inbox.py` (inbox) | Take requests and events and drive the bus logic. They import no `client.py`: `server.py` and `hosted.py` hold a `compose.BusClient` that `compose.client_from_env` builds, and hand on a `ChatPort` wherever the chat is all a function needs; `hookapi.py` takes a `ChatPort` like the bus logic. `websocket_inbox.py` takes a `ChatPort` too, and its live events from an `events.EventSource` (`compose.event_source` when it is handed none): it reads no wire format (`test_adapter_boundary`) |
+| Composition root | `compose.py` | The one place that builds the chat adapter (`client_from_env`) and the inbox's event source for it (`event_source`: Mattermost's WebSocket), and names what the entry points hold: `BusClient`, the chat port and the registration port on one object |
 | Bus logic | `gate.py`, `homes.py`, `owners.py`, `attest.py`, `lease.py`, `life.py`, `receipt.py`, `slim.py`, `files.py`, `attach.py`, `departed.py`, `remind.py`, `stall.py`, `askroute.py`, `mandate.py`, `debug.py`, `ownpost.py`, `unanswered.py`, `stats.py`, `unread.py`, `usage.py`, `release.py`, `selfupdate.py` | Wake gate, the channels the bus watches (home, project channel, lobby, guests) and the lobby's and guests' ids, each left out when it cannot be read (`homes.py`, RT-6.2 step 1, RT-6.22), peer or foreign agent (ADR-001) and the session's responsible human (`owners.responsible_human`), the owner attestation: verified with the pinned keys, never fetched (RT-6.24), lease and roster, the agent's sign of life (`life.py`, RT-6.6 step 1), the 👑's receipts and the claim over a missing one (`receipt.py`, RT-6.6 step 10, RT-6.12 step 7), slim results, a post's files for the agent (RT-6.23), the agent's own files checked by their bytes and its fresh uploads kept for its posts (`attach.py`, RT-6.33), departed agents and agents not here, ask reminders, stall check, ask classes and modes with the fallback to the human (RT-6.25), the home's mandate for a role (RT-6.26), the home's debug setting and its lines about events and posts (RT-6.31), own post, the posts that wait for its answer (`unanswered.py`, RT-6.2 step 2), stats, pending count; the last usage report of the status line, kept in memory (`usage.py`, ADR-008; RT-6.6 step 8); the release notice read from the host's release check, its version in the status, and the check started as a bounded child once a day (`release.py`, RT-6.30), with what self-update will do (RT-6.32); the registrar's release record read and verified on the host for the installer and the check, never by the server (`selfupdate.py`, RT-6.32). Take a `ChatPort`, never import `client.py` |
-| Port | `port.py`, `registration.py` | `ChatPort`, a `typing.Protocol` with the chat operations the bus logic and the entry points call and nothing more; `RegistrationPort`, the bot's life at the registrar, which only the entry points drive |
+| Port | `port.py`, `registration.py`, `events.py` | `ChatPort`, a `typing.Protocol` with the chat operations the bus logic and the entry points call and nothing more; `RegistrationPort`, the bot's life at the registrar, which only the entry points drive; `EventSource`, the chat's live side as the inbox reads it: open (connect and authenticate), `connected`, a stream of events until the connection ends, the typing indicator (RT-6.5), close. Its events (`PostEvent`, `ReactionEvent`, `MembershipEvent`) sit beside the protocol, not in `model.py`: they are what this one port delivers, built of bus types, as `ChatPort`'s results are |
 | Bus types | `model.py` | `Post`, `Thread`, `Me`, `Channel`, `ChannelUser`, `Reaction` and the bus's own rows: only the fields the bus reads; the meanings the core speaks in instead of characters, each once: `Mark` (a mark in a text), `Answer` (yes, no, or the choice of an alternative), `StatusMark` (a custom status state), `Head` |
-| Adapter | `client.py` (`MattermostAdapter`), with `a2a.py` (the bus's props, an ask's card (`attachment_props`), the debug card and the debug view of props (`with_debug`, `props_view`), and the wire door to `symbols.py`) and `lease.py` (status, crown, roster); `symbols.py` (Mattermost's emoji and shortcodes for the meanings) | The only code that reads or writes Mattermost's carriers: REST, post props, custom status, unread counters, the registrar's profile. The entry points still compose Mattermost's cards through `a2a.py`'s helpers; those move behind `ChatPort` in a later change |
+| Adapter | `client.py` (`MattermostAdapter`); `mattermost_ws.py` (`MattermostEvents`, the inbox's event source: Mattermost's WebSocket dialled and authenticated as the bot, its messages numbered, its frames read into events through `client.post_of` and `client.reaction_of`, the typing indicator sent); with `a2a.py` (the bus's props, an ask's card (`attachment_props`), the debug card and the debug view of props (`with_debug`, `props_view`), and the wire door to `symbols.py`) and `lease.py` (status, crown, roster); `symbols.py` (Mattermost's emoji and shortcodes for the meanings) | The only code that reads or writes Mattermost's carriers: REST, post props, custom status, unread counters, the registrar's profile. The entry points still compose Mattermost's cards through `a2a.py`'s helpers; those move behind `ChatPort` in a later change |
 | Bus state | `watermark.py`, the state files of `session_file.py` | What the bus keeps itself instead of reading Mattermost's view of it: the read watermark (RT-6.2), the latest own post, asks, reminders, stall; the registrar session a server holds (`session_file.SessionInfo`) and whether a session file's process still runs (`session_file._pid_alive`) |
 | Shared helpers | `ids.py` (`InvalidId`, `mm_id`, `mm_name`), `config.py` (`env`), `sandbox.py` (`corral_sandbox`, `sandbox_refusal`) | What the entry points and the adapter both need without importing the adapter: Mattermost's id and name shape checks, done before an id or name goes into an API path (#81), which an entry point may use without importing `client.py` (a later chat adapter brings its own); a setting with a manifest's unexpanded `${VAR}` read as unset; the corral sandbox markers (RT-6.18). They import no `client.py`; `client.py` re-exports them and the helpers it gave to `a2a.py`, `homes.py`, `owners.py` and `session_file.py`, so `client.X` is the moved `X` (`test_adapter_boundary`) |
 
@@ -95,7 +95,9 @@ account of a DM by the chat's own rule); membership, status and
 presence (`member_channels`, `view_channel`, `channel_users`, `is_member`, `presences`, `set_presence`,
 `set_custom_status`, `clear_custom_status`); posting (`post`, `post_sync`,
 `post_by_name_sync`); reading (`thread`, `channel_posts`, newest first as stored,
-`list_recent`, oldest first with links read, `posts_after`, `reactions`, `add_reaction`). Nothing crosses it as Mattermost's JSON: a channel that is not
+`list_recent`, oldest first with links read, `posts_after`, `with_links`, which
+reads the links of a post from `channel_posts` or `posts_after` as the bus reads
+them (RT-6.15), `reactions`, `add_reaction`). Nothing crosses it as Mattermost's JSON: a channel that is not
 there comes back as `model.NotFound`, one the bot may not see as
 `model.NotAllowed`, never as Mattermost's HTTP status, so a later adapter
 without HTTP (NATS, ADR-014) raises the same two. `MattermostAdapter`
@@ -110,9 +112,11 @@ its core reaches the chat system only through its `ProviderPort`, whose
 Mattermost adapter binds the owner with `assign_bot`.
 
 **Bus types.** A post is built once where it enters the server
-(`client.post_of`: the client's post and read calls, the WebSocket inbox),
-with the transport fields typed and what the props say (webhook, the bus's
-kind, intent, `to`) read once. `Post`, `Me` and `Channel` keep the JSON as
+(`client.post_of`: the client's post and read calls, the WebSocket event
+source `mattermost_ws.py`), with the transport fields typed and what the props
+say (webhook, the bus's kind, intent, `to`) read once. The posts the inbox
+makes up itself (an ask's reaction, its own events such as a stall) have no
+props; it builds them as `Post` with the values `post_of` would read. `Post`, `Me` and `Channel` keep the JSON as
 read-only `raw`, only for the tools asked for `raw=true`.
 
 **Read watermark.** What waits for an agent is counted from the bus's own mark
@@ -128,16 +132,20 @@ them, so the `Stop` hook counts what `wait_for_events` can hand over (RT-6.2).
 
 **Checks.** `mcp/tests/test_adapter_boundary.py` checks that only the adapter
 modules read carriers or a post's JSON keys (listing the few that read such
-keys on JSON that is no post), that the bus-logic modules import no
-`client.py`, use no member the port lacks, that no port member returns
-JSON, and that only `compose.py` (and, until it is an event source,
-`websocket_inbox.py`) imports `client.py`. The tests share one fake of the port, `FakeChat` in
+keys on JSON that is no post), that the bus-logic modules, `hookapi.py` and
+`websocket_inbox.py` import no `client.py`, use no member the port lacks, that
+no port member returns JSON, and that only `compose.py` and `mattermost_ws.py`
+import `client.py`. The tests share one fake of the port, `FakeChat` in
 `mcp/tests/fakes.py`: canned answers and a record of what was posted, no
 Mattermost emulator, with every port member and nothing else, each with the
 port's signature (the same test compares them, mypy checks the file and that
 the fake satisfies the port). `FakeRegistrar` beside it does the same for
 `RegistrationPort`: a bot to register, one to take over, and a record of
-what was asked (`test_registration`).
+what was asked (`test_registration`). `FakeEvents` stands in for the inbox's
+`EventSource`, with `frames()` reading Mattermost's WebSocket messages into
+events as `mattermost_ws.py` does; `test_mattermost_ws` checks that module
+itself, and `test_inbox_risks` drives the inbox through it, dialling a fake
+socket.
 
 ### Decision: port and adapter (0.49.0)
 

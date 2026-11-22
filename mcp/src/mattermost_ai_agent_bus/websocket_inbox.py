@@ -1,22 +1,26 @@
-"""WebSocket inbox: classify posts and wait for relevant events."""
+"""WebSocket inbox: classify posts and wait for relevant events.
+
+The live events come from an events.EventSource (Mattermost's WebSocket,
+mattermost_ws.py, unless the inbox is handed another); the inbox reads no
+wire format and talks to the chat through the port.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
+import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
-from websockets.asyncio.client import connect as ws_connect
-
-from . import (a2a, askroute, asks, departed, gate, lease, mandate, ownpost, receipt, unread,
-               watermark)
-from .client import post_of, reaction_of, read_links, with_links, ws_url_from_http
+from . import (a2a, askroute, asks, compose, departed, gate, lease, mandate, ownpost, receipt,
+               unread, watermark)
 from .compose import BusClient
+from .events import ChatEvent, EventSource, MembershipEvent, PostEvent, ReactionEvent
 from .homes import guest_ids, lobby_ids, watched_channel_ids
 from .model import Channel, Post, Reaction, UnreadChannel
 
@@ -35,7 +39,7 @@ class ClassifiedEvent:
     kind: str  # mention | dm | watched_channel | reaction (to an open ask) | OWN_EVENTS
     post: Post
     channel: Channel | None = None
-    raw: dict[str, Any] | None = None
+    raw: Mapping[str, Any] | None = None
     # RT-6.16: why the post wakes nobody here; "" when it is not gated.
     gated: str = ""
     # RT-6.21: the departed agents it mentions, for the agent that answers.
@@ -53,15 +57,29 @@ class ClassifiedEvent:
     edited: bool = False
 
 
-# WebSocket events that change the bot's channels (RT-6.22): the watched and
-# guest channels are read again when they name the bot.
-MEMBERSHIP = ("user_added", "user_removed")
-
-# RT-6.12 step 3: Mattermost sends an edit as post_edited (same id, edit_at
-# set). It wakes the bot only when it made the post a mention or DM to it,
-# once per post, and only within a day of the post.
-EDITED = "post_edited"
+# RT-6.12 step 3: an edited post (PostEvent.edited) wakes the bot only when
+# the edit made it a mention or DM to it, once per post, and only within a
+# day of the post.
 ADDRESSED = ("mention", "dm")
+
+# An older ask's question, `🙋 @<human> — **<need>**`, as client.ask_title
+# reads it from a post without props (RT-6.11 step 1).
+_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+
+
+def _made_up(raw: dict[str, Any], *, id: str, message: str, create_at: int, root_id: str = "",
+             channel_id: str = "", user_id: str = "") -> Post:
+    """A post the server makes up (a reaction to an ask, RT-6.11; an event of
+    its own, RT-6.19), as client.post_of reads `raw`, which holds these
+    values and no props: its kind, PR and branch come from its text."""
+    kind = a2a.kind_of(raw)
+    bold = _BOLD.search(message) if kind == a2a.ASK else None
+    return Post(id=id, channel_id=channel_id, root_id=root_id, user_id=user_id,
+                create_at=create_at, message=message, kind=kind, intent=a2a.intent_of(raw),
+                to=a2a.ALL if a2a.to_all(raw) else "", pr=a2a.pr_of(raw),
+                branch=a2a.branch_of(raw), crowned=a2a.crowned(raw),
+                title=" ".join(bold[1].split()) if bold else "",
+                props=MappingProxyType({}), raw=MappingProxyType(dict(raw)))
 
 
 def classify_post(
@@ -114,8 +132,6 @@ class WebSocketInbox:
     lobby_channel_ids: set[str] = field(default_factory=set)
     # The lists were read here (not handed in): they follow membership changes.
     _derived: bool = field(default=False, repr=False, init=False)
-    _ws: Any = field(default=None, repr=False, init=False)
-    _seq: int = field(default=1, repr=False, init=False)
     # Events the channel pusher took and has not acknowledged (take / ack / nack):
     # still unhandled, so they count as waiting for the watermark and the counters.
     _out: list[ClassifiedEvent] = field(default_factory=list, repr=False, init=False)
@@ -167,6 +183,13 @@ class WebSocketInbox:
     # poll checks again at once (hookapi.ring, ADR-009 phase 1); None: nothing.
     on_queue: Callable[[], None] | None = None
     _gate_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False, init=False)
+    # Where the live events come from (events.py); None: the chat's own,
+    # compose.event_source(client).
+    source: EventSource | None = None
+    _source: EventSource = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._source = self.source if self.source is not None else compose.event_source(self.client)
 
     async def ensure_identity(self) -> None:
         me = await self.client.get_me()
@@ -182,25 +205,22 @@ class WebSocketInbox:
         """Read the watched and guest channels again (RT-6.2 step 1, RT-6.22):
         at connect, and when a WebSocket event says the bot joined or left a
         channel. Unreadable memberships leave the guests out, the rest stays."""
-        forget = getattr(self.client, "forget_guests", None)
-        if forget is not None:
-            forget()
+        self.client.forget_guests()
         self.guest_channel_ids = await guest_ids(self.client)
         self.lobby_channel_ids = await lobby_ids(self.client)
         self.watched_channel_ids = await watched_channel_ids(self.client)
         self._derived = True
 
-    async def _on_membership(self, msg: dict[str, Any]) -> None:
-        """user_added / user_removed naming this bot: someone added it to a
+    async def _on_membership(self, event: MembershipEvent) -> None:
+        """A membership change naming this bot: someone added it to a
         channel (a guest channel now) or removed it (RT-6.22)."""
-        data, where = msg.get("data") or {}, msg.get("broadcast") or {}
         me = self._bot_user_id
-        if not self._derived or not me or me not in (data.get("user_id"), where.get("user_id")):
+        if not self._derived or not me or me not in event.user_ids:
             return
         try:
             await self.refresh_channels()
         except Exception as exc:  # noqa: BLE001 — the old lists stay
-            log.warning("channels not read again after %s: %s", msg.get("event"), exc)
+            log.warning("channels not read again after %s: %s", event.name, exc)
 
     def _guest_drop(self, post: Post, kind: str) -> bool:
         """RT-6.22: a post in a guest channel that neither names this agent nor
@@ -246,8 +266,8 @@ class WebSocketInbox:
 
     @property
     def connected(self) -> bool:
-        """Whether the socket is open, so a post now reaches this inbox."""
-        return self._ws is not None
+        """Whether the event source is connected, so a post now reaches this inbox."""
+        return self._source.connected
 
     async def _channel(self, channel_id: str) -> Channel:
         if channel_id not in self._channel_cache:
@@ -255,18 +275,15 @@ class WebSocketInbox:
         return self._channel_cache[channel_id]
 
     async def ensure_connected(self) -> None:
-        """The socket, opened if it is not (one connect at a time)."""
+        """The event source, opened if it is not (one connect at a time)."""
         async with self._connecting:
-            if self._ws is None:
+            if not self._source.connected:
                 await self.connect()
 
     async def connect(self) -> None:
         await self.ensure_identity()
-        if not self.client.token:
-            raise RuntimeError("bot token required for WebSocket")
-        url = ws_url_from_http(self.client.base_url)
-        self._ws = await ws_connect(url)
         try:
+            await self._source.open()  # connected (and authenticated) as the bot
             await self._open()
         except BaseException:
             # Cancelled (a long poll's deadline) or failed half way: nothing is
@@ -275,29 +292,16 @@ class WebSocketInbox:
             if self._reader is not None:
                 self._reader.cancel()
                 self._reader = None
-            ws, self._ws = self._ws, None
-            if ws is not None:
-                try:
-                    await ws.close()
-                except Exception:  # noqa: BLE001 — already gone
-                    pass
+            try:
+                await self._source.close()
+            except Exception:  # noqa: BLE001 — already gone
+                pass
             raise
 
     async def _open(self) -> None:
-        auth = {
-            "seq": self._seq,
-            "action": "authentication_challenge",
-            "data": {"token": self.client.token},
-        }
-        self._seq += 1
-        await self._ws.send(json.dumps(auth))
-        deadline = asyncio.get_event_loop().time() + 15
-        while asyncio.get_event_loop().time() < deadline:
-            raw = await asyncio.wait_for(self._ws.recv(), timeout=15)
-            msg = json.loads(raw)
-            event = msg.get("event")
-            if event in ("hello", "authorized") or msg.get("status") == "OK":
-                break
+        """The source is open: the reader starts before the backfill, so a
+        post arriving while the backfill reads is not missed (_seen_ids drops
+        the doubles)."""
         await self._before_backfill()
         self._reader = asyncio.create_task(self._read_loop())
         await self._backfill()
@@ -333,7 +337,7 @@ class WebSocketInbox:
         # read from the mark: never before the bot existed, at most a day back.
         for entry, posts in unhandled:
             for unlinked in posts:
-                post = with_links(unlinked, getattr(self.client, "permalink_base", ""))
+                post = self.client.with_links(unlinked)
                 kind = classify_post(
                     post,
                     bot_user_id=self._bot_user_id,
@@ -367,7 +371,7 @@ class WebSocketInbox:
     def start_typing(self, channel_id: str, parent_id: str = "") -> None:
         """Show the bot as typing in channel_id (thread parent_id) for a while."""
         self.stop_typing()
-        if self.typing_sec <= 0 or not channel_id or self._ws is None:
+        if self.typing_sec <= 0 or not channel_id or not self._source.connected:
             return
         self._typing = asyncio.create_task(self._typing_loop(channel_id, parent_id))
 
@@ -384,15 +388,11 @@ class WebSocketInbox:
         # so the sender sees it wherever they are looking.
         parents = [parent_id, ""] if parent_id else [""]
         while loop.time() < deadline:
-            ws = self._ws
-            if ws is None:
+            if not self._source.connected:
                 return
             try:
                 for parent in parents:
-                    data = {"channel_id": channel_id, "parent_id": parent}
-                    msg = {"action": "user_typing", "seq": self._seq, "data": data}
-                    self._seq += 1
-                    await ws.send(json.dumps(msg))
+                    await self._source.typing(channel_id, parent)
             except Exception as exc:  # noqa: BLE001
                 # Cosmetic: never let the indicator disturb delivery.
                 log.debug("typing indicator stopped: %s", exc)
@@ -408,60 +408,41 @@ class WebSocketInbox:
             except asyncio.CancelledError:
                 pass
             self._reader = None
-        if self._ws is not None:
-            await self._ws.close()
-            self._ws = None
+        await self._source.close()
 
     async def _read_loop(self) -> None:
-        assert self._ws is not None
+        stream = self._source.events()
         try:
-            async for raw in self._ws:
-                try:
-                    msg = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                if msg.get("event") == "reaction_added":
-                    await self._on_reaction_event(msg)
-                    continue
-                if msg.get("event") in MEMBERSHIP:
-                    await self._on_membership(msg)
-                    continue
-                if msg.get("event") in ("posted", EDITED):
-                    await self._on_post(msg)
+            async for event in stream:
+                await self._on_event(event)
         except asyncio.CancelledError:
-            # close() cancels us and owns the socket from here on.
+            # close() cancels us and owns the connection from here on.
             raise
         except Exception as exc:  # noqa: BLE001
             log.error("websocket reader stopped: %s", exc)
-        # Reached on a dropped connection or a clean server-side close. Drop the
-        # dead socket so the next wait_for_events reconnects: otherwise _ws stays
-        # set, nothing feeds the queue, and every later call times out silently —
-        # the agent goes deaf with no error anywhere.
-        self._ws = None
+        # Reached on a dropped connection, a clean server-side close or an
+        # event that failed here. The stream ends, so the source reads as not
+        # connected and the next wait_for_events reconnects: otherwise nothing
+        # feeds the queue and every later call times out silently — the agent
+        # goes deaf with no error anywhere.
+        await stream.aclose()
         self._reader = None
 
-    async def _on_post(self, msg: dict[str, Any]) -> None:
-        """A post from the stream, new (`posted`) or edited (`post_edited`):
-        classified, dropped (RT-6.22), gated (RT-6.16) and queued alike."""
-        data = msg.get("data") or {}
-        post_raw = data.get("post")
-        if isinstance(post_raw, str):
-            try:
-                found = json.loads(post_raw)
-            except json.JSONDecodeError:
-                return
-        elif isinstance(post_raw, dict):
-            found = post_raw
+    async def _on_event(self, event: ChatEvent) -> None:
+        if isinstance(event, ReactionEvent):
+            await self._on_reaction(event)
+        elif isinstance(event, MembershipEvent):
+            await self._on_membership(event)
         else:
-            return
-        if not isinstance(found, dict) or not found:
-            return
-        # RT-6.15: the bus's permalinks as bare ids, odd links written out.
-        post = post_of(read_links(found, getattr(self.client, "permalink_base", "")))
-        edited = msg.get("event") == EDITED
+            await self._on_post(event)
+
+    async def _on_post(self, event: PostEvent) -> None:
+        """A post from the stream, new or edited (RT-6.12 step 3):
+        classified, dropped (RT-6.22), gated (RT-6.16) and queued alike."""
+        post, edited = event.post, event.edited
         if edited and not self._edit_may_wake(post):
             return
-        channel_type = data.get("channel_type")
+        channel_type = event.channel_type
         channel = None
         cid = post.channel_id
         if cid and not channel_type:
@@ -493,16 +474,16 @@ class WebSocketInbox:
             self._seen_ids.add(pid)
             if kind in ADDRESSED:
                 self._addressed.add(pid)
-        event = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=msg, edited=edited,
-                                guest=cid in self.guest_channel_ids,
-                                lobby=cid in self.lobby_channel_ids)
-        await self._gate(event, channel_type)
-        await self._departed(event)
+        queued = ClassifiedEvent(kind=kind, post=post, channel=channel, raw=event.raw, edited=edited,
+                                 guest=cid in self.guest_channel_ids,
+                                 lobby=cid in self.lobby_channel_ids)
+        await self._gate(queued, channel_type)
+        await self._departed(queued)
         if not edited:
             # ADR-007 step 3, amendment step 2: the 👑's receipt owed, or a watch
             # for the holder's (RT-6.12 step 7); a crown_taken naming this agent.
-            await receipt.arrived(self.client, post, self._bot_user_id, bool(event.gated))
-        await self._put(event)
+            await receipt.arrived(self.client, post, self._bot_user_id, bool(queued.gated))
+        await self._put(queued)
 
     def _edit_may_wake(self, post: Post) -> bool:
         """RT-6.12 step 3: an edit wakes at most once per post, never for one
@@ -511,16 +492,9 @@ class WebSocketInbox:
         return bool(post.id and post.edit_at and post.id not in self._addressed
                     and post.create_at > time.time() * 1000 - unread.DAY_MS)
 
-    async def _on_reaction_event(self, msg: dict[str, Any]) -> None:
-        raw = (msg.get("data") or {}).get("reaction")
-        try:
-            reaction = json.loads(raw) if isinstance(raw, str) else (raw or {})
-        except json.JSONDecodeError:
-            return
-        cid = (msg.get("broadcast") or {}).get("channel_id", "")
-        if isinstance(reaction, dict):
-            receipt.heard(reaction_of(reaction))  # the holder's 👀 or ⏳ on a watched post
-            await self._queue_reaction(reaction_of(reaction), cid)
+    async def _on_reaction(self, event: ReactionEvent) -> None:
+        receipt.heard(event.reaction)  # the holder's 👀 or ⏳ on a watched post
+        await self._queue_reaction(event.reaction, event.channel_id)
 
     async def _queue_reaction(self, reaction: Reaction, channel_id: str) -> None:
         """Queue a reaction to one of this bot's open asks (RT-6.11).
@@ -537,8 +511,10 @@ class WebSocketInbox:
         if key in self._seen_ids or asks.was_seen(self._bot_user_id, key):
             return
         self._seen_ids.add(key)
-        post = post_of({"id": key, "root_id": pid, "channel_id": channel_id, "user_id": user,
-                        "create_at": reaction.create_at, "message": f":{emoji}:"})
+        post = _made_up({"id": key, "root_id": pid, "channel_id": channel_id, "user_id": user,
+                         "create_at": reaction.create_at, "message": f":{emoji}:"},
+                        id=key, root_id=pid, channel_id=channel_id, user_id=user,
+                        create_at=reaction.create_at, message=f":{emoji}:")
         event = ClassifiedEvent(kind="reaction", post=post, raw={"emoji": emoji, "ask": pid})
         await self._gate_reaction(event)
         await self._queue.put(event)
@@ -668,8 +644,9 @@ class WebSocketInbox:
     def notify(self, kind: str, message: str) -> None:
         """Queue an event the server raises itself, with no post behind it
         (RT-6.19: a stall); delivered like any other."""
-        self._queue.put_nowait(ClassifiedEvent(kind=kind, post=post_of({
-            "id": "", "message": message, "create_at": int(time.time() * 1000)})))
+        now = int(time.time() * 1000)
+        self._queue.put_nowait(ClassifiedEvent(kind=kind, post=_made_up(
+            {"id": "", "message": message, "create_at": now}, id="", message=message, create_at=now)))
         self._queued()
 
     def _queued(self) -> None:
@@ -685,9 +662,9 @@ class WebSocketInbox:
 
     def holds(self, channel_id: str) -> bool | None:
         """Whether events of this channel wait in the queue; None while the
-        socket is not connected, so nothing is known about what arrived.
+        event source is not connected, so nothing is known about what arrived.
         A gated post (RT-6.16) does not count: it keeps no counter up."""
-        if self._ws is None:
+        if not self._source.connected:
             return None
         return any(e.post.channel_id == channel_id and not e.gated for e in self._waiting())
 
@@ -723,7 +700,7 @@ class WebSocketInbox:
         to that newest one again, not just to itself. Unconnected, nothing
         moves: the backfill still has to read from the mark."""
         cid, pid, created = post.channel_id, post.id, post.create_at
-        if self._ws is None or not (self._bot_user_id and cid and pid and created):
+        if not self._source.connected or not (self._bot_user_id and cid and pid and created):
             return
         behind = self._behind.setdefault(cid, {})
         behind[pid] = created
@@ -832,7 +809,7 @@ class WebSocketInbox:
         if agent:
             self.stop_typing()
         # Always through the lock: a connect that another caller (a long poll)
-        # has under way is waited for, not skipped (its `_ws` is set early).
+        # has under way is waited for, not skipped (the source reads as connected early).
         await self.ensure_connected()
         if self._getter is not None and not self._getter.done():
             self._getter.cancel()

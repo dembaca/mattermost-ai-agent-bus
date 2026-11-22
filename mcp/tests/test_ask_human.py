@@ -11,7 +11,7 @@ from mattermost_ai_agent_bus.client import post_of
 from mattermost_ai_agent_bus.model import Reaction
 from mattermost_ai_agent_bus.websocket_inbox import ClassifiedEvent, WebSocketInbox
 
-from fakes import FakeChat
+from fakes import FakeChat, FakeEvents, read_frames
 
 BOT = "b" * 26
 HUMAN = "h" * 26
@@ -98,13 +98,8 @@ async def test_resolve_puts_a_check_mark_and_closes_the_ask(monkeypatch):
 
 
 def _inbox(client):
-    inbox = WebSocketInbox(client=client, watched_channel_ids={"c1"})
+    inbox = WebSocketInbox(client=client, watched_channel_ids={"c1"}, source=FakeEvents())
     inbox._bot_user_id, inbox._bot_username = BOT, "agent-vtpm-hogan-1"
-
-    class _Dead:
-        async def close(self):
-            pass
-    inbox._ws = _Dead()
     return inbox
 
 
@@ -122,10 +117,10 @@ async def test_a_thumbs_up_on_an_open_ask_reaches_the_agent_once(monkeypatch):
     inbox = _inbox(c)
     monkeypatch.setattr(server, "_get_inbox", lambda: inbox)
     asks.add(BOT, ASK)
-    await inbox._on_reaction_event(_reaction_event("+1"))
-    await inbox._on_reaction_event(_reaction_event("+1"))  # duplicate
-    await inbox._on_reaction_event(_reaction_event("+1", post_id="o" * 26))  # not an ask
-    await inbox._on_reaction_event(_reaction_event("+1", user=BOT))  # own
+    await read_frames(inbox, _reaction_event("+1"))
+    await read_frames(inbox, _reaction_event("+1"))  # duplicate
+    await read_frames(inbox, _reaction_event("+1", post_id="o" * 26))  # not an ask
+    await read_frames(inbox, _reaction_event("+1", user=BOT))  # own
     items = json.loads(await server.wait_for_events(timeout_sec=1))
     assert len(items) == 1
     item = items[0]
@@ -634,8 +629,8 @@ async def test_an_answer_more_than_24_hours_after_the_ask_comes_expired(monkeypa
     asks._write(BOT, {ASK: now - asks.APPROVAL_SEC - 60, fresh: now - 60}, set(),
                 {ASK: "dembaca", fresh: "kollegin"})
     ms = int(now * 1000)
-    await inbox._on_reaction_event(_reaction_event("+1", at=ms))
-    await inbox._on_reaction_event(_reaction_event("+1", post_id=fresh, at=ms))
+    await read_frames(inbox, _reaction_event("+1", at=ms))
+    await read_frames(inbox, _reaction_event("+1", post_id=fresh, at=ms))
     await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post=post_of({
         "id": "r" * 26, "root_id": ASK, "user_id": HUMAN, "channel_id": "c1",
         "create_at": ms, "message": "yes"})))
@@ -748,10 +743,10 @@ async def test_the_wait_for_an_ask_ends_at_the_first_trusted_answer(monkeypatch,
     await server.ask_human(need="Merge #62 now?", context="CI is green.")
     asked = asks._read(BOT)[0][ASK]
     later = int((asked + 90) * 1000)
-    await inbox._on_reaction_event(_reaction_event("eyes", at=later))          # a remark
-    await inbox._on_reaction_event(_reaction_event("+1", user="o" * 26, at=later))  # not trusted
-    await inbox._on_reaction_event(_reaction_event("+1", at=later))
-    await inbox._on_reaction_event(_reaction_event("-1", at=later + 60_000))   # second answer
+    await read_frames(inbox, _reaction_event("eyes", at=later))          # a remark
+    await read_frames(inbox, _reaction_event("+1", user="o" * 26, at=later))  # not trusted
+    await read_frames(inbox, _reaction_event("+1", at=later))
+    await read_frames(inbox, _reaction_event("-1", at=later + 60_000))   # second answer
     await inbox._queue.put(ClassifiedEvent(kind="watched_channel", post=post_of({
         "id": "r" * 26, "root_id": ASK, "user_id": HUMAN, "channel_id": "c1",
         "create_at": later + 120_000, "message": "yes, as said"})))
@@ -905,26 +900,26 @@ async def test_a_reaction_names_its_answer_as_chosen(monkeypatch):
     inbox = _inbox(c)
     monkeypatch.setattr(server, "_get_inbox", lambda: inbox)
     await server.ask_human(need="Which order?", kind="question", answers=["A", "B", "C"])
-    await inbox._on_reaction_event(_reaction_event("two"))
+    await read_frames(inbox, _reaction_event("two"))
     item = json.loads(await server.wait_for_events(timeout_sec=1))[0]
     assert item["choice"] == 2 and item["chosen"] == "B"
     asks.resolve(BOT, ASK)
     c.posted.clear()
     await server.ask_human(need="Merge?", decision="Merge it", answers=["go", "wait"])
-    await inbox._on_reaction_event(_reaction_event("-1", at=2))
+    await read_frames(inbox, _reaction_event("-1", at=2))
     item = json.loads(await server.wait_for_events(timeout_sec=1))[0]
     assert item["answer"] == "no" and item["chosen"] == "wait" and "choice" not in item
     asks.resolve(BOT, ASK)
     await server.ask_human(need="Merge again?", decision="Merge it", answers=["go", "wait"])
-    await inbox._on_reaction_event(_reaction_event("white_check_mark", at=3))
+    await read_frames(inbox, _reaction_event("white_check_mark", at=3))
     assert json.loads(await server.wait_for_events(timeout_sec=1))[0]["chosen"] == "go"
     asks.resolve(BOT, ASK)
     await server.ask_human(need="Merge once more?", decision="Merge it", answers=["go", "wait"])
-    await inbox._on_reaction_event(_reaction_event("x", at=4))
+    await read_frames(inbox, _reaction_event("x", at=4))
     assert json.loads(await server.wait_for_events(timeout_sec=1))[0]["chosen"] == "wait"
     old = "q" * 26
     asks.add(BOT, old)  # an ask from before 0.71.15: no ANSWERS=, so nothing is named
-    await inbox._on_reaction_event(_reaction_event("+1", post_id=old, at=5))
+    await read_frames(inbox, _reaction_event("+1", post_id=old, at=5))
     item = json.loads(await server.wait_for_events(timeout_sec=1))[0]
     assert item["answer"] == "yes" and "chosen" not in item
 

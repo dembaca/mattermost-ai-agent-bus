@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
-from fakes import WORK, FakeChat
+from fakes import WORK, FakeChat, FakeEvents
 from mattermost_ai_agent_bus import channel, departed, gate, server, session_file
 from mattermost_ai_agent_bus.client import MattermostAdapter, post_of
 from mattermost_ai_agent_bus.model import ChannelUser
@@ -25,14 +25,6 @@ def _status(emoji, minutes, text=""):
     at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     return {"customStatus": json.dumps({"emoji": emoji, "text": text, "duration": "date_and_time",
                                         "expires_at": at.isoformat()})}
-
-
-class _FakeWs:
-    def __init__(self):
-        self.sent = []
-
-    async def send(self, raw):
-        self.sent.append(json.loads(raw))
 
 
 class Bus:
@@ -99,7 +91,9 @@ class Bus:
 
         monkeypatch.setattr(self.client, "_api", api)
         monkeypatch.setattr(gate, "_coord", None)
-        self.inbox = WebSocketInbox(client=self.client, watched_channel_ids={PROJ})
+        self.events = FakeEvents(connected=False)
+        self.inbox = WebSocketInbox(client=self.client, watched_channel_ids={PROJ},
+                                    source=self.events)
         self.inbox._bot_user_id, self.inbox._bot_username = ME, "agent-me"
 
     async def arrive(self, pid, message, *, user=HUMAN, root="", props=None):
@@ -343,15 +337,14 @@ async def test_the_answering_crown_types_in_the_thread(bus, monkeypatch, gated):
     shows typing in that thread, as for a human's plain post; a gated post
     is no task."""
     _crown()
-    ws = _FakeWs()
-    bus.inbox._ws = ws
+    bus.events.connected = True
     monkeypatch.setattr(server, "_get_inbox", lambda: bus.inbox)
     e = await bus.arrive("r" * 26, "@agent-far wäre das", root="q" * 26)
     e.gated = gated
     await server._typing_for_task([e], await server._event_items([e]))
     await asyncio.sleep(0)
     bus.inbox.stop_typing()
-    typing = [m["data"] for m in ws.sent if m["action"] == "user_typing"]
+    typing = bus.events.typed
     assert typing[:2] == ([] if gated else [{"channel_id": PROJ, "parent_id": "q" * 26},
                                             {"channel_id": PROJ, "parent_id": ""}])
 
