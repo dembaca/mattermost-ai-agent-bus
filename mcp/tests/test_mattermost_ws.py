@@ -246,50 +246,95 @@ async def test_aclose_disconnects_and_a_cancelled_read_does_not(dialled):
     assert not events.connected
 
 
+class Counting(Socket):
+    """A socket that counts its closes: what the tests assert on, not the
+    fake's `closed` flag, which the real ClientConnection does not have."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.closes = 0
+
+    async def close(self) -> None:
+        self.closes += 1
+        await super().close()
+
+
 async def test_aclose_closes_the_socket_it_forgets(dialled):
     """#250: a stream the inbox ends (an event failed in its handler) closes
-    the socket, once, and the source reads as not connected."""
-    events = await _opened(dialled, sock := Socket({"event": "hello"}))
-    await events.events().aclose()
-    assert sock.closed and not events.connected
-    await events.events().aclose()  # again: nothing left to close
-    assert sock.closed
-
-
-async def test_a_socket_already_closed_is_not_closed_twice(dialled):
-    """#250: a socket that was closed or dropped elsewhere is left alone."""
-    class Counting(Socket):
-        def __init__(self, *a, **kw):
-            super().__init__(*a, **kw)
-            self.closes = 0
-
-        async def close(self) -> None:
-            self.closes += 1
-            await super().close()
-
-    # Closed by someone else before the stream ended.
+    the socket once, and a later stream closes nothing, its socket being gone."""
     events = await _opened(dialled, sock := Counting({"event": "hello"}))
-    await sock.close()
     await events.events().aclose()
+    assert sock.closes == 1 and not events.connected
+    await events.events().aclose()  # a stream with no socket: closes nothing
     assert sock.closes == 1
 
-    # Dropped: the stream ended by a failure, the socket is gone already.
-    events = await _opened(dialled, dropped := Counting({"event": "hello"}))
-    dropped.closed = True
+
+async def test_a_dropped_socket_is_not_closed_on_the_way_out(dialled):
+    """#250: the stream ends by a failure (the socket dropped), so there is
+    nothing left to close: aclose() closes nothing."""
+    events = await _opened(dialled, sock := Counting(
+        {"event": "hello"}, error=ConnectionClosedError(None, None)))
+    with pytest.raises(ConnectionClosedError):
+        async for _ in events.events():
+            pass
+    assert not events.connected
     await events.events().aclose()
-    assert dropped.closes == 0
+    assert sock.closes == 0
 
 
 async def test_open_closes_a_socket_still_open_before_dialling(dialled):
     """#250: open() over a source that is still connected closes the old
     socket first, so there is never a second connection beside the first."""
-    old = Socket({"event": "hello"})
+    old = Counting({"event": "hello"})
     events = await _opened(dialled, old)
-    new = Socket({"event": "hello"})
+    new = Counting({"event": "hello"})
     dialled["next"] = new
     await events.open()
-    assert old.closed and not new.closed and events.connected
+    assert old.closes == 1 and new.closes == 0 and events.connected
     assert len(dialled["urls"]) == 2
+
+
+async def test_an_old_stream_does_not_close_a_new_socket(dialled):
+    """#250: a stream keeps the socket it was opened on, so ending it after the
+    source dialled again closes nothing: the new connection stays."""
+    events = await _opened(dialled, old := Counting({"event": "hello"}))
+    stream = events.events()
+    fresh = Counting({"event": "hello"})
+    dialled["next"] = fresh
+    await events.open()  # old closed here, fresh dialled
+    await stream.aclose()
+    assert old.closes == 1 and fresh.closes == 0 and events.connected
+
+
+async def test_closing_wait_bounded(dialled, monkeypatch):
+    """#250: a socket whose close never finishes costs CLOSE_SEC at most, then
+    the reader goes on: the inbox is not held up by a discarded socket."""
+    monkeypatch.setattr(mattermost_ws, "CLOSE_SEC", 0.05)
+
+    class Hangs(Socket):
+        async def close(self) -> None:
+            await asyncio.Event().wait()
+
+    events = await _opened(dialled, Hangs({"event": "hello"}))
+    started = asyncio.get_event_loop().time()
+    await events.events().aclose()  # returns, no exception
+    assert asyncio.get_event_loop().time() - started < 1.0
+    assert not events.connected
+
+
+async def test_the_close_of_a_real_client_connection_does_not_raise(dialled):
+    """#250: against websockets' own ClientConnection, which has no `closed`
+    attribute at all: aclose() must not look for one."""
+    from websockets.asyncio.client import ClientConnection
+    from websockets.protocol import State
+
+    ws = ClientConnection.__new__(ClientConnection)  # never dialled
+    ws.protocol = type("P", (), {"state": State.CLOSED})()
+    ws.close_connection_task = None
+    events = MattermostEvents(_client())
+    events._ws = ws
+    await events.events().aclose()  # no AttributeError
+    assert not events.connected
 
 
 async def test_close_closes_the_socket(dialled):

@@ -51,8 +51,10 @@ class EventStream(Protocol):
     """One connection's events, in the order they came. It ends when the
     connection closes (the iteration stops) or drops (it raises), and when
     the reader stops reading it (aclose): the source then reads as not
-    connected, so the next read connects again. A cancelled read leaves the
-    source as it is: close() owns the connection then."""
+    connected and drops the connection that stream was opened on, so the next
+    read connects again; a source that still held it closes it, best effort
+    and time-bounded. A cancelled read leaves the source as it is: close()
+    owns the connection then."""
 
     def __aiter__(self) -> EventStream: ...
 

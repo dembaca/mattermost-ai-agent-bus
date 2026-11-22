@@ -32,6 +32,11 @@ EDITED = "post_edited"
 # How long the server has to answer the authentication challenge.
 HELLO_SEC = 15
 
+# How long closing a socket the source no longer wants may take (#250): its
+# close handshake waits up to close_timeout (10 s), and the inbox connects
+# again meanwhile. A timeout there is no loss: the transport is dropped.
+CLOSE_SEC = 2.0
+
 
 def event_of(raw: str | bytes, permalink_base: str) -> ChatEvent | None:
     """One WebSocket frame as the inbox reads it: a post (posted,
@@ -106,13 +111,19 @@ class Wire(Protocol):
 
 
 async def _close_quietly(ws: Any) -> None:
-    """Close a socket the source no longer tracks (#250), best effort: a socket
-    that is already closed or dropped is left alone, an error while closing is
-    logged, and the caller goes on either way. `None`: nothing to do."""
-    if ws is None or ws.closed:
+    """Close a socket the source no longer tracks (#250), best effort: an error
+    while closing is logged and the caller goes on either way, and waiting is
+    bounded by CLOSE_SEC, so a socket that does not answer costs the inbox no
+    more than that before it connects again. `None`: nothing to do.
+
+    No check for an already closed socket: websockets' ClientConnection has no
+    `closed` (only the legacy API had), and `close()` is harmless to repeat."""
+    if ws is None:
         return
     try:
-        await ws.close()
+        await asyncio.wait_for(ws.close(), timeout=CLOSE_SEC)
+    except asyncio.CancelledError:
+        raise  # the reader was cancelled: close() owns the socket then
     except Exception as exc:  # noqa: BLE001 — closing must never fail the reader
         log.info("closing the WebSocket: %s", exc)
 
@@ -184,11 +195,14 @@ class MattermostEvents:
 class _Frames:
     """The open socket's frames as events (events.EventStream). Its end, a
     drop or aclose() drop the socket, so the next read reconnects: a dead
-    socket left set would leave the inbox deaf with no error anywhere."""
+    socket left set would leave the inbox deaf with no error anywhere. It
+    keeps the socket it was opened on, and only lets go of that one, never of
+    a socket the source dialled since (#250)."""
 
     def __init__(self, source: MattermostEvents) -> None:
         self._source = source
-        self._frames = aiter(source._ws) if source._ws is not None else None
+        self._ws = source._ws
+        self._frames = aiter(self._ws) if self._ws is not None else None
 
     def __aiter__(self) -> _Frames:
         return self
@@ -208,12 +222,13 @@ class _Frames:
             raise
 
     async def aclose(self) -> None:
-        """Stop reading and close the socket this stream leaves behind (#250):
-        best effort, no exception, and a socket the source already dropped is
-        not closed twice."""
-        ws = self._source._ws
+        """Stop reading and close the socket this stream leaves behind, waiting
+        at most CLOSE_SEC for it: best effort, no exception out, and nothing at
+        all when the source already let this socket go. See _close_quietly."""
+        ws = self._source._ws if self._source._ws is self._ws else None
         self._end()
         await _close_quietly(ws)
 
     def _end(self) -> None:
-        self._source._ws = None
+        if self._source._ws is self._ws:
+            self._source._ws = None
