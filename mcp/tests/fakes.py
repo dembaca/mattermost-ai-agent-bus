@@ -479,10 +479,10 @@ class FakeBus(FakeChat):
     registration members go to `registrar`, whose bot the chat speaks as.
 
     Unlike FakeChat, the bot's posts are kept: each gets a new id and a later
-    create_at, goes first into `posts` (as channel_posts reads them) and is
-    remembered as the adapter remembers its own posts (client._remember:
-    unanswered.answered, and ownpost.record in the work channel), so the
-    hook API and the exit read back what the server posted.
+    create_at and goes first into `posts` (as channel_posts reads them); one
+    sent with post() is also remembered as the adapter's post() remembers it
+    (client._remember: unanswered.answered, and ownpost.record in the work
+    channel), so the hook API and the exit read back what the server posted.
     """
 
     def __init__(self, registrar: FakeRegistrar | None = None, **chat: Any) -> None:
@@ -547,14 +547,15 @@ class FakeBus(FakeChat):
 
     # --- the bot's posts, kept -----------------------------------------------
     def _kept(self, message: str, channel_id: str, root_id: str,
-              props: Mapping[str, Any] | None, file_ids: Sequence[str] = ()) -> Post:
+              props: Mapping[str, Any] | None, file_ids: Sequence[str] = (), *,
+              remember: bool = True) -> Post:
         self.serial += 1
         self.clock += 1_000
         post = post_of({"id": f"{self.serial:0>26}", "message": message, "user_id": self.me.id,
                         "channel_id": channel_id, "root_id": root_id, "create_at": self.clock,
                         "props": dict(props or {}), "file_ids": list(file_ids)})
         self.posts.insert(0, post)
-        if self.bot_id:
+        if remember and self.bot_id:
             unanswered.answered(self.bot_id, channel_id, post)
             if channel_id == WORK:
                 ownpost.record(self.bot_id, channel_id, post)
@@ -570,10 +571,11 @@ class FakeBus(FakeChat):
 
     def post_sync(self, message: str, *, channel_id: str, root_id: str = "",
                   props: dict[str, Any] | None = None, timeout: float = 5.0) -> Post:
-        """Recorded in `sent_sync` as by FakeChat, kept and remembered."""
+        """Recorded in `sent_sync` as by FakeChat, and kept; not remembered:
+        the adapter's post_sync does no _remember either."""
         super().post_sync(message, channel_id=channel_id, root_id=root_id, props=props,
                           timeout=timeout)
-        return self._kept(message, channel_id, root_id, props)
+        return self._kept(message, channel_id, root_id, props, remember=False)
 
     def arrive(self, post: Mapping[str, Any]) -> PostEvent:
         """Someone else's post in the work channel (unless it names another):

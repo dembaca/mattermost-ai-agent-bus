@@ -136,9 +136,8 @@ keys on JSON that is no post), that the bus-logic modules, `hookapi.py` and
 `websocket_inbox.py` import no `client.py`, use no member the port lacks, that
 no port member returns JSON, that only `mattermost_ws.py` reads a WebSocket
 frame's envelope (`data`, `broadcast`), that only `compose.py` and
-`mattermost_ws.py` import `client.py`, and that no entry point (`server.py`,
-`hosted.py`, `hookapi.py`, `websocket_inbox.py`) imports `client.py` or
-`mattermost_ws.py`. The tests share one fake of the port, `FakeChat` in
+`mattermost_ws.py` import `client.py`, and only `compose.py` imports
+`mattermost_ws.py`, so `server.py` and `hosted.py` import neither. The tests share one fake of the port, `FakeChat` in
 `mcp/tests/fakes.py`: canned answers and a record of what was posted, no
 Mattermost emulator, with every port member and nothing else, each with the
 port's signature (the same test compares them, mypy checks the file and that
@@ -171,8 +170,8 @@ last post and handoff, and the exit's BYE and unregistering.
   only through `RegistrationPort` and the live events only through
   `EventSource`. `compose.py` is the composition root, the one place that
   builds the adapter and its event source; a second adapter (NATS) is chosen
-  there and nowhere else. `test_server_on_fakes` runs the whole server on
-  stand-ins to show it.
+  there and nowhere else. The whole-server test
+  (`mcp/tests/test_server_on_fakes.py`) runs the server on stand-ins to show it.
 
 **Why registration stays outside the port.** Registering a bot is no chat
 operation: it goes to the registrar (a separate service with its own

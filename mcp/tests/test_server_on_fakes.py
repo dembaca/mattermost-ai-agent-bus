@@ -15,7 +15,7 @@ import httpx
 import pytest
 from fakes import BOT, WORK, FakeBus, FakeEvents, FakeRegistrar
 
-from mattermost_ai_agent_bus import asks, compose, hookapi, ownpost, server, stats
+from mattermost_ai_agent_bus import asks, compose, hookapi, ownpost, sandbox, server, stats
 from mattermost_ai_agent_bus.events import ReactionEvent
 from mattermost_ai_agent_bus.model import Reaction
 
@@ -48,7 +48,11 @@ async def wired(monkeypatch):
                         ("_adopt_tried", False), ("_roots_pending", False), ("_exit_handled", False),
                         ("_confirmed", None), ("_hook_api", None)):
         monkeypatch.setattr(server, name, value)
-    monkeypatch.setattr(server, "corral_sandbox", lambda: None)
+    # What a running server collects: its threads and tasks, its background work.
+    for name in ("_my_threads", "_my_roots", "_my_tasks", "_background"):
+        monkeypatch.setattr(server, name, set())
+    for marker in sandbox.SANDBOX_MARKERS:  # outside a corral sandbox: it self-registers (RT-6.18)
+        monkeypatch.delenv(marker, raising=False)
     monkeypatch.setattr(stats, "_uid", "")
     monkeypatch.delenv("MM_RESPONSIBLE_HUMAN", raising=False)
     yield bus, source, built
@@ -105,7 +109,9 @@ async def test_the_whole_server_runs_on_stand_ins(wired):
 
     # 5. The hook API (RT-6.17) answers from the same stand-ins, through the
     # server's own client getter: a mention that came while nobody waited
-    # counts, the last own post is the note, the handoff names the posts.
+    # counts; /v1/last-post reads the own-post record the adapter keeps (here
+    # FakeBus, as client._remember does), which names the note; the handoff
+    # names the own posts.
     bus.arrive({"id": "n" * 26, "user_id": HUMAN, "message": "@agent-agent-x and #13?"})
     api = hookapi.HookAPI(server._bus_client)
     await api.start(write_file=False)
