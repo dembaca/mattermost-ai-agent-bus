@@ -60,6 +60,7 @@ from anyio.streams.buffered import BufferedByteReceiveStream
 from . import a2a, session_file
 
 if TYPE_CHECKING:
+    from .compose import BusClient
     from .port import ChatPort
 
 log =logging.getLogger(__name__)
@@ -437,7 +438,7 @@ async def byte_transport(receive: BufferedByteReceiveStream, send: Any) -> Async
             tg.cancel_scope.cancel()
 
 
-def _load_server(client: Any) -> Serve:
+def _load_server(client: BusClient | None) -> Serve:
     from . import server
 
     if client is not None:
@@ -457,7 +458,7 @@ class Host:
     one at a time. The server is loaded on the first one, after its session
     values are applied; later ones keep those."""
 
-    def __init__(self, key: str, *, client: Any = None, serve: Serve | None = None,
+    def __init__(self, key: str, *, client: BusClient | None = None, serve: Serve | None = None,
                  apply: Callable[[Mapping[str, str]], None] = apply_session) -> None:
         self._key = key.encode()
         self._serve = serve
@@ -572,14 +573,15 @@ def write_ready(path: Path, pid: int, port: int, hook: str) -> None:
 
 
 @asynccontextmanager
-async def services(key: str, client: Any) -> AsyncIterator[str]:
+async def services(key: str, client: BusClient) -> AsyncIterator[str]:
     """Hook API (same key, own port) and lease heartbeat for the whole session
     (RT-6.17, RT-6.6), with the ask reminders and the stall check (RT-6.19):
     the hooks call before any relay connects and after one closed. Yields the
     hook API's endpoint."""
     from . import attest, hookapi, lease, release, stall
 
-    async def get_client() -> Any:
+    async def get_client() -> ChatPort:
+        # The services need the chat alone; BusClient is one (compose).
         return client
 
     api = hookapi.HookAPI(get_client, key=key)
@@ -632,7 +634,12 @@ async def run_host(host: Host, *, ready_file: Path, key: str = "", with_services
     listener = await anyio.create_tcp_listener(local_host=LOOPBACK, local_port=0)
     port = listener.extra(SocketAttribute.local_port)
     async with AsyncExitStack() as stack:
-        hook = await stack.enter_async_context(services(key, host.client)) if with_services else ""
+        # The services need the chat: the daemon always has one (_daemon builds
+        # the client or exits), and without one there are no hooks to serve.
+        if with_services and host.client is None:
+            raise RuntimeError("services need the bus client")
+        hook = (await stack.enter_async_context(services(key, host.client))
+                if with_services and host.client is not None else "")
         async with listener, anyio.create_task_group() as tg:
             tg.start_soon(listener.serve, host.handle)
             if signals or keep_signals:
@@ -648,7 +655,7 @@ async def run_host(host: Host, *, ready_file: Path, key: str = "", with_services
     return why[0]
 
 
-def exit_work(client: Any, keep: bool = False) -> None:
+def exit_work(client: BusClient | None, keep: bool = False) -> None:
     """BYE, stats, offline, unregister: when the session ends, never when a
     relay disconnects; also when no relay ever connected. With keep (postEnd
     keeps the bot, RT-6.18 step 9) offline only."""
