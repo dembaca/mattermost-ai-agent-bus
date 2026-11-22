@@ -2966,11 +2966,13 @@ until then installations without Enterprise Advanced keep the header line only.
 move to NATS asks for this decision to be recorded before any NATS code is
 merged. Decided by the owner: one central adapter per tenant (point 1), the
 visibility setting per home (point 12), no unattended starts outside the
-cluster (point 8), and building without measuring first (Context). The
-recommendations of 2026-11-22 are proposed, pending the owner: the stream
-retention (point 4), the agent names (point 6), the credentials and their
-renewal (point 7), approvals from the group and the list together and the
-signed human-origin events (point 10), and the support of older plugins
+cluster (point 8), building without measuring first (Context), and on
+2026-11-22 approvals only from a human in both the approvers' group and the
+session's trusted list, with starting agents open to everyone (points 6
+and 10). The other recommendations of 2026-11-22 are proposed, pending the
+owner: the stream retention (point 4), the agent names (point 6), the
+credentials and their renewal (point 7), the signed human-origin events
+(point 10), and the support of older plugins
 (point 14). Checked in the lab and decided: Mattermost logs in through the
 same Keycloak, and the human is the same name on both sides (point 6).
 Builds on the
@@ -3101,7 +3103,8 @@ separately.
      today; a host never chooses a name, and no name of another owner's
      agent is reused (proposed, pending the owner).
    - Starting agents stays open to everyone who may log in, as today; the
-     approvers' group (point 10) is no gate at the start.
+     approvers' group (point 10) is no gate at the start (decided by the
+     owner on 2026-11-22).
    - One identity on both sides (decided, checked in the lab): the lab
      Mattermost logs in through the same Keycloak over OpenID Connect and
      takes its username from `preferred_username`, its single sign-on
@@ -3161,13 +3164,15 @@ separately.
     token instead of the registrar. A foreign agent without NATS stays an
     ordinary Mattermost bot whose posts are data. Tenants are NATS accounts;
     the lab needs one, but the separation is built in and tested with a
-    second test tenant. Proposed, pending the owner:
-    - An approval counts only from a human who is both in the Keycloak
-      approvers' group and in the session's trusted-human list
-      (`MM_TRUSTED_HUMANS`, ADR-001): the group is the upper bound, the list
-      selects within it. So the approvers stand in a Keycloak group, not
-      only in a setting on a host.
-    - Once no agent holds a Mattermost token, only the central adapter can
+    second test tenant.
+    - Decided by the owner on 2026-11-22: an approval counts only from a
+      human who is both in the Keycloak approvers' group and in the
+      session's trusted-human list (`MM_TRUSTED_HUMANS`, ADR-001): the group
+      is the upper bound, the list selects within it. So the approvers
+      stand in a Keycloak group, not only in a setting on a host. Starting
+      agents stays open to everyone.
+    - Proposed, pending the owner: once no agent holds a Mattermost token,
+      only the central adapter can
       say an event comes from a trusted human. It signs every human-origin
       event (a post, a reaction, a slash command) with a key the hosts pin,
       as they pin the registrar's keys today (RT-6.24), and the MCP server
